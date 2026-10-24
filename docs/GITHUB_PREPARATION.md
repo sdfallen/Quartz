@@ -55,6 +55,16 @@ mevcut Python ortamıyla test ediliyor.
 ## Uzak repo durumu
 
 Hazırlık sırasında GitHub CLI veya kayıtlı GitHub hesabı bulunmadı; GitHub
-entegrasyonu henüz bağlı değildi. Uzak repo oluşturulmuş veya dosyalar
-yüklenmiş sayılmaz. Hesap bağlantısından sonra özel repo oluşturulmalı,
-yalnız yayın dalı gönderilmeli ve API ile görünürlük/commit doğrulanmalıdır.
+entegrasyonu henüz bağlı değildi.
+
+25 Ekim 2026: kullanıcı bağlantı kurduğunu bildirdi; eklenti kurulu/etkin
+doğrulandı, fakat bu sohbetin araçlarında repo oluşturma/yükleme çağrıları
+açılmadı. Bunun yerine Git Credential Manager'ın resmi tarayıcı girişi
+kullanıldı. GitHub REST API hesabı `sdfallen` olarak doğruladı; aynı API ile
+`https://github.com/sdfallen/Quartz` reposu **private=true** olarak oluşturuldu.
+Hesap tokenı dosyaya, komut argümanına veya rapora yazılmadı.
+
+Gönderilecek tek dal: `codex/github-private-ready` → uzak `main`.
+Eski `master`, checkpoint referansları ve test branch'leri gönderilmeyecek.
+Yükleme sonrası commit ve görünürlük ayrıca doğrulanmalıdır; repo oluşturma
+yanıtı tek başına kaynakların yüklenmiş olduğunun kanıtı değildir.
