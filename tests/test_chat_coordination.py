@@ -116,9 +116,17 @@ class LogTests(unittest.TestCase):
 
 class CoordinationTests(unittest.TestCase):
     def setUp(self):
+        # Real local Squad roundtrips need external tools, unlike source mocks.
+        from core.squad_adapter import SquadAdapter
+        try:
+            SquadAdapter._find_executable()
+        except FileNotFoundError:
+            self.skipTest('Integration requires a local Squad CLI installation')
+        helper = Path(__file__).resolve().parents[1] / 'build/desktop-helper/QuartzDesktopMCP.exe'
+        if not helper.is_file():
+            self.skipTest('Integration requires the built observer guard helper (see README)')
         self.temp = tempfile.TemporaryDirectory(prefix="quartz-coord-test-")
         self.root = Path(self.temp.name); self.log = self.root/"events.log"; self.log.write_text("fixture ready")
-        from core.squad_adapter import SquadAdapter
         self.squad = SquadAdapter(self.root); self.squad.initialize()
         self.desktop=Operator(); self.reader=Reader(); self.events=[]
         self.service=ChatCoordination(self.desktop,lambda *args:self.events.append(args),

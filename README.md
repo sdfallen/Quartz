@@ -54,6 +54,13 @@ Güvenli test çalıştırıcı yerel `.env` dosyasını yüklemez; SDK kurulumu
 yalnız sahte test anahtarı kullanır. Model sağlayıcıları testlerde mock edilir,
 log/hafıza geçici alana yönlendirilir; canlı model veya GUI kabulü değildir. Canlı kabul scriptleri
 `scripts/` altındadır; çalıştırmadan önce ilgili kapsamı ve izinleri okuyun.
+Gerçek yerel Squad roundtrip testleri Squad CLI veya derlenmiş guard yardımcısı
+yoksa açıkça SKIPPED raporlanır. Bunları da çalıştırmak için Squad'ı kurun ve
+yardımcıyı üretin (EXE repoya gönderilmez):
+
+```powershell
+python -m PyInstaller --noconfirm --onefile --console --name QuartzDesktopMCP --distpath build/desktop-helper --workpath build/helper-work --specpath build/helper-spec core/desktop_mcp.py
+```
 
 `build.py` ayrı staging dizininde paket üretir. `--deploy` yalnız kapalı Quartz
 için test ve veri koruma doğrulamasıyla, eski dağıtımı yedekleyerek devreye

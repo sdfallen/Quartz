@@ -30,6 +30,12 @@ verdi; önceki yerel ortam bu bağımlılığı gizliyordu. Yalnız güvenli tes
 çalıştırıcı değiştirildi: gerçek `.env` yüklenmiyor, test istemcileri sahte
 anahtarla kuruluyor. Bu düzeltme gerçek model kabulü değildir.
 
+İkinci temiz klon koşusu 379 testte yalnız altı gerçek Squad koordinasyon
+testini, repoya bilerek konulmayan derlenmiş guard EXE eksikliği yüzünden
+çalıştıramadı. Entegrasyon sınıfı artık gerçek dış bağımlılıkları baştan denetler;
+eksikler SKIPPED olarak görünür, sahte başarı veya güvenlik korumasını kaldırma
+yapılmaz. Yardımcı derleme komutu README'dedir; CLI/EXE üretim kontrolleri korunur.
+
 CI tanımı eklendi; uzak GitHub Actions koşusu henüz çalıştırılmadı. Yeni bir
 Python ortamına bağımlılık kurma testi de henüz yapılmadı; temiz Git klonu
 mevcut Python ortamıyla test ediliyor.
