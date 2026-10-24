@@ -40,6 +40,18 @@ CI tanımı eklendi; uzak GitHub Actions koşusu henüz çalıştırılmadı. Ye
 Python ortamına bağımlılık kurma testi de henüz yapılmadı; temiz Git klonu
 mevcut Python ortamıyla test ediliyor.
 
+## Son doğrulama
+
+- Kaynak ağacı: 207 dosya; staged içerik ve yalnız yayın dalının geçmişi PASS.
+- İlk yerel tam koşu: 379 test PASS.
+- Son değişen koordinasyon/yayın testleri: 27 test PASS (yerel CLI/guard mevcut).
+- Son temiz klon: 379 test, **367 PASS / 12 SKIPPED / 0 hata**.
+  Atlanan 12 testin tamamı guard EXE gerektiren gerçek Squad entegrasyon sınıfı.
+- Gömülü JavaScript syntax kontrolü PASS.
+- Kaynak kullanıcı veri dosyaları önceki teslim hash'leriyle aynı;
+  çalışan paket EXE'si değişmedi.
+- Git çalışma ağacı yayın snapshot'ına alındı; eski `master` ve yedekler silinmedi.
+
 ## Uzak repo durumu
 
 Hazırlık sırasında GitHub CLI veya kayıtlı GitHub hesabı bulunmadı; GitHub
