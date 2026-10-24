@@ -50,8 +50,9 @@ python -B scripts/audit_publish.py --history
 python build.py --require-brand
 ```
 
-Güvenli test çalıştırıcı model sağlayıcılarını mock eder ve log/hafızayı geçici
-alana yönlendirir; canlı model veya GUI kabulü değildir. Canlı kabul scriptleri
+Güvenli test çalıştırıcı yerel `.env` dosyasını yüklemez; SDK kurulumu için
+yalnız sahte test anahtarı kullanır. Model sağlayıcıları testlerde mock edilir,
+log/hafıza geçici alana yönlendirilir; canlı model veya GUI kabulü değildir. Canlı kabul scriptleri
 `scripts/` altındadır; çalıştırmadan önce ilgili kapsamı ve izinleri okuyun.
 
 `build.py` ayrı staging dizininde paket üretir. `--deploy` yalnız kapalı Quartz
