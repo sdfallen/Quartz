@@ -160,7 +160,7 @@ class IPCServer:
     def stop(self):
         self._running = False
         if self._agent_chat is not None:
-            self._agent_chat.cancel_active()
+            self._agent_chat.close()
         if self._agent_center is not None:
             self._agent_center.shutdown()
         if self._server:

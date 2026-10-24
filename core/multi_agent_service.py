@@ -14,6 +14,7 @@ from core.codex_runtime import CodexRuntime
 from core.project_registry import ProjectRegistry
 from core.squad_adapter import SquadAdapter
 from core.workspace_checkpoint import create_checkpoint, snapshot_workspace_files, changed_workspace_files
+from core.source_verification import verify_changed_python
 
 
 class MultiAgentService:
@@ -88,8 +89,14 @@ class MultiAgentService:
                 time.sleep(0.15)
             after = snapshot_workspace_files(project_path)
             changed, warning = changed_workspace_files(project_path, before, after)
+            validation = verify_changed_python(project_path, changed, warning=warning)
             with self._lock:
-                self._file_changes[run_id] = {"files_changed": changed, "evidence_warning": warning}
+                self._file_changes[run_id] = {"files_changed": changed, "evidence_warning": warning,
+                    "source_validation": validation}
+        except Exception as exc:
+            with self._lock:
+                self._file_changes[run_id] = {"files_changed":[], "evidence_warning":str(exc),
+                    "source_validation":{"level":"SOURCE/STATIC", "status":"NOT TESTED", "tests_executed":False}}
         finally:
             with self._lock:
                 if self._writers.get(key, {}).get("owner") == run_id:
@@ -135,6 +142,18 @@ class MultiAgentService:
 
     def select_project(self, project_id: str) -> dict:
         return self.projects.select(project_id)
+
+    def local_status(self, project_id=None):
+        """Cheap UI seed: never probe CLIs, initialize Squad, or grant access."""
+        project = self.projects.get(project_id) if project_id else self.projects.selected()
+        with self._lock:
+            codex = dict(self._probe_cache[1] or {})
+            antigravity = dict(self._antigravity_probe_cache[1] or {})
+        return {"projects": self.projects.list(), "project": project,
+                "codex": codex, "antigravity": antigravity,
+                "squad": {"checking":True, "mode":"task-isolated" if project.get("workflow") == "warband" else "project",
+                          "message":"Bağlantı arka planda kontrol ediliyor."},
+                "single_writer": self._writer_status(project["path"])}
 
     @staticmethod
     def _task_squad_status(squad):
@@ -580,8 +599,14 @@ class MultiAgentService:
             run["files_changed"] = sorted(set(run.get("files_changed", [])) |
                                           set(evidence.get("files_changed", [])))
             run["evidence_warning"] = evidence.get("evidence_warning", "")
+            run["source_validation"] = evidence.get("source_validation", {})
         return run
-        raise KeyError(f"Run not found: {run_id}")
+
+    def run_evidence(self, run_id):
+        """Read-only receipt; no runtime probe, command or implicit retest."""
+        from copy import deepcopy
+        with self._lock:
+            return deepcopy(self._file_changes.get(run_id, {}))
 
     def get_collaboration(self, collaboration_id: str) -> dict:
         with self._lock:

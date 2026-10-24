@@ -22,6 +22,8 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from core.chat_coordination import ApprovedLog
+from core.atomic_json import atomic_write_json
+from core.task_outcome import cleanup_step, execution_outcome, stop_summary
 from core.desktop_agents import mcp_command, write_operator_hooks, ensure_antigravity_tool_grants
 from core.squad_adapter import SquadAdapter
 
@@ -259,9 +261,10 @@ class NaturalDesktopTask:
                     data, status = json.dumps(result, ensure_ascii=False).encode(), 200
                 except Exception as exc:
                     data, status = json.dumps({"error": str(exc)}).encode(), 403
-                self.send_response(status); self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(data))); self.end_headers()
-                try: self.wfile.write(data)
+                try:
+                    self.send_response(status); self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(data))); self.end_headers()
+                    self.wfile.write(data)
                 except (BrokenPipeError, ConnectionError): pass
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.server.daemon_threads = True
@@ -346,11 +349,17 @@ class NaturalDesktopTask:
         if (not self.pending and same_targets and logs == set(self.approved_logs)
                 and (not targets or self.broker.status()["active"])):
             return {"status":"already_approved", "next":"desktop_focus once, otherwise desktop_observe"}
-        self.broker.stop("awaiting explicit scope approval")
-        self.connection = None
-        self.latest = None
+        # A log-only request grants NOTHING until consent, but must not revoke
+        # the operator's unchanged, already-approved input lease. New process
+        # identities/windows still revoke the old lease immediately.
+        preserve_input = bool(same_targets and self.connection and self.broker.status()["active"])
+        if not preserve_input:
+            self.broker.stop("awaiting explicit scope approval")
+            self.connection = None
+            self.latest = None
         self.pending = {"id": uuid.uuid4().hex, "task_id": self.job["id"], "conversation_id": self.job["conversation_id"],
                         "reason": reason, "targets": list(targets.values()), "logs": sorted(logs),
+                        "preserve_input": preserve_input,
                         "operator": self.job["roles"]["operator"], "expires_at": min(time.time() + 600, self.job["expires_at"])}
         self._event(provider, "Uygulama erişimi gerekiyor: " + reason, permission_request=self.pending["id"])
         self.changed.notify_all()
@@ -376,8 +385,17 @@ class NaturalDesktopTask:
                 logs = {p: ApprovedLog(root / p, root) for p in pending["logs"]}
                 targets = pending["targets"]
                 if targets:
-                    self.connection = self.broker.grant([t["handle"] for t in targets], self.job["roles"]["operator"],
-                        confirmed=True, seconds=max(30, int(self.job["expires_at"] - time.time())), expected_targets=targets)
+                    if pending.get("preserve_input"):
+                        if not self.connection or not self.broker.status()["active"]:
+                            raise PermissionError("Existing input lease ended; request fresh application consent")
+                        for target in targets:
+                            fresh = self.broker.backend.identity(target["handle"])
+                            if fresh != target:
+                                raise PermissionError("Window identity changed; new input consent required")
+                            self.broker.backend.validate_target(fresh)
+                    else:
+                        self.connection = self.broker.grant([t["handle"] for t in targets], self.job["roles"]["operator"],
+                            confirmed=True, seconds=max(30, int(self.job["expires_at"] - time.time())), expected_targets=targets)
                 self.approved_targets = {t["handle"]: t for t in targets}
                 self.approved_logs = logs
                 self.pending = None
@@ -577,27 +595,43 @@ class NaturalDesktopTask:
         with self.changed:
             if self.stopped.is_set(): return self.status()
             self.stopped.set(); self.tokens.clear(); self.pending = None
-            self.broker.stop(reason); self.connection = None
-            if self.warband: self.warband.shutdown()
+            self.connection = None
             if self.job:
                 self.job["status"] = reason; self.job["finished_at"] = time.time()
+                self.job["cleanup"] = {"status":"running", "steps":[]}
             self.changed.notify_all()
-        # Do not hold the task lock while a CLI/tool call is being cancelled.
-        for runtime, rid in list(self.runs.values()): runtime.cancel(rid)
-        for workspace in self.workspaces:
-            try: workspace.cleanup()
-            except OSError: pass
+        # Authority is revoked above. External release operations must not hold
+        # the task lock or prevent independent resources from being released.
+        report = self.job["cleanup"] if self.job else {"status":"running", "steps":[]}
+        cleanup_step(report, "broker", lambda: self.broker.stop(reason))
+        if self.warband:
+            cleanup_step(report, "warband", self.warband.shutdown)
+        for provider, (runtime, rid) in list(self.runs.items()):
+            cleanup_step(report, "runtime:" + provider, lambda runtime=runtime, rid=rid: runtime.cancel(rid))
+        for index, workspace in enumerate(list(self.workspaces)):
+            cleanup_step(report, "workspace:" + str(index), workspace.cleanup)
         self.workspaces.clear()
-        self.broker.context_provider = None
+        cleanup_step(report, "broker-context", lambda: setattr(self.broker, "context_provider", None))
         if self.server:
-            self.server.shutdown(); self.server.server_close(); self.server = None
+            server = self.server
+            cleanup_step(report, "tool-server-shutdown", server.shutdown)
+            cleanup_step(report, "tool-server-close", server.server_close)
+            self.server = None
         if self.job:
             self.job["broker_audit"] = list(self.broker.audit)
-            self._event("quartz", "Görev yürütmesi sona erdi: " + reason + ". Kanıt sonucu: " + self.job["verification"]["status"] +
-                        ".\n\n---TEKNIK_AYRINTILAR---\nKanıt klasörü: " + str(self.evidence))
-            (self.evidence / "result.json").write_text(json.dumps(self.job, ensure_ascii=False, indent=2), encoding="utf-8")
+            cleanup_step(report, "chat-event", lambda: self._event("quartz",
+                stop_summary(reason, self.job["verification"]) +
+                "\n\n---TEKNIK_AYRINTILAR---\nExecution: " + reason + "; evidence: " + self.job["verification"]["status"] +
+                "\nKanıt klasörü: " + str(self.evidence)))
+            cleanup_step(report, "squad-close", lambda: self.squad.complete_task(
+                self.agent_ids[self.job["roles"]["operator"]], self.job["task_id"],
+                "Execution " + reason + "; evidence verdict: " + self.job["verification"]["status"]))
+            report["status"] = "failed" if any(s["status"] == "failed" for s in report["steps"]) else "completed"
+            self.job["outcome"] = execution_outcome(reason, self.job["verification"], report)
             try:
-                self.squad.complete_task(self.agent_ids[self.job["roles"]["operator"]], self.job["task_id"],
-                    "Execution " + reason + "; evidence verdict: " + self.job["verification"]["status"])
-            except Exception as exc: self.job["cleanup_error"] = str(exc)
+                atomic_write_json(self.evidence / "result.json", self.job)
+            except Exception as exc:
+                report["steps"].append({"name":"result-persistence", "status":"failed", "error":str(exc)})
+                report["status"] = "failed"
+                self.job["outcome"]["cleanup_status"] = "failed"
         return self.status()

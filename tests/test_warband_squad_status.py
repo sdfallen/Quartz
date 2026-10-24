@@ -54,7 +54,12 @@ class WarbandSquadStatusTests(unittest.TestCase):
             agents = MagicMock()
             agents.status.return_value = {'squad': {'installed': True, 'initialized': False,
                 'mode': 'task-isolated', 'ready': True, 'message': 'Task scoped', 'error': ''}}
-            result = AgentChatService(agents, Path(directory) / 'chats.json').status()['squad']
+            chat = AgentChatService(agents, Path(directory) / 'chats.json')
+            chat.status()  # First poll is non-blocking and starts discovery.
+            worker = chat._diagnostics.worker
+            if worker: worker.join(1)
+            result = chat.status()['squad']
+            chat.close()
             self.assertFalse(result['connected'])
             self.assertEqual(result['mode'], 'task-isolated')
             self.assertTrue(result['ready'])

@@ -1779,10 +1779,16 @@ _HTML = r"""
     const match = marker.exec(text);
     const summary = match ? text.slice(0, match.index).trimEnd() : text;
     let details = match ? text.slice(match.index + match[0].length) : '';
-    const state = ({failed:'Başarısız', cancelled:'Durduruldu', blocked:'Henüz doğrulanmadı',
+    let state = ({failed:'Başarısız', cancelled:'Durduruldu', blocked:'Henüz doğrulanmadı',
       awaiting_approval:'Kullanıcı onayı bekleniyor'})[msg?.status || meta.status] || '';
+    if ((msg?.status || meta.status) === 'completed' && ['project','full'].includes(meta.permission_level)) {
+      const check = meta.host_evidence?.source_validation;
+      state = check?.status === 'FAILED' ? 'Ajan bitti; kaynak sözdizimi kontrolü başarısız.'
+        : check?.status === 'VERIFIED' ? 'Python sözdizimi doğrulandı; çalışma/test başarısı doğrulanmış değil.'
+        : 'Ajan yanıtı tamamlandı; bağımsız çalışma/test kanıtı yok.';
+    }
     const evidence = {};
-    for (const key of ['error','run_id','squad_task_id','checkpoint','files_changed','performance','permission_level','review_scope']) {
+    for (const key of ['error','run_id','squad_task_id','checkpoint','files_changed','performance','permission_level','review_scope','host_evidence']) {
       if (meta[key] != null && meta[key] !== '') evidence[key] = meta[key];
     }
     if (Object.keys(evidence).length) details += (details ? '\n\n' : '') + JSON.stringify(evidence, null, 2);
@@ -1859,7 +1865,11 @@ _HTML = r"""
     const badge = document.getElementById('squadBadge');
     if (!badge || !squad) return;
     if (activeTaskSquad?.conversation_id === conversationId) squad = activeTaskSquad;
-    if (squad.connected) {
+    if (squad.checking && !activeTaskSquad) {
+      badge.classList.remove('warn');
+      badge.textContent = 'Squad: Kontrol ediliyor';
+      badge.title = 'Sohbet kullanılabilir; bağlantı arka planda doğrulanıyor.';
+    } else if (squad.connected) {
       badge.classList.remove('warn');
       badge.textContent = 'Squad: Bağlı';
       badge.title = `Squad veritabanı aktif (${squad.version || 'v0.7.6'}) · ${squad.database || squad.db_path || ''}`;
@@ -2260,7 +2270,10 @@ _HTML = r"""
     }
   }
 
+  let chatPollBusy = false;
   async function pollAgentTurn() {
+    if (chatPollBusy) return;
+    chatPollBusy = true;
     try {
       const poll = await window.pywebview.api.chat_poll();
       if (poll.status !== 'ok') return;
@@ -2297,6 +2310,7 @@ _HTML = r"""
         activeBotBubble = null;
       }
     } catch (_) {}
+    finally { chatPollBusy = false; }
   }
 
   let savedResponseDetail = 'short';

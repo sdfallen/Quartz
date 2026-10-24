@@ -21,6 +21,7 @@ from core.codex_runtime import CodexRuntime
 from core.desktop_agents import mcp_command
 from core.response_style import communication_instruction
 from core.squad_adapter import SquadAdapter
+from core.task_outcome import cleanup_step, execution_outcome
 
 
 def write_observer_hooks(directory):
@@ -103,6 +104,7 @@ class ChatCoordination:
         self.observer_run = None; self.temp = None; self.squad = None
         self.lock = threading.RLock()
         self.release_lock = threading.Lock()
+        self._released = False
 
     def propose(self, text, project, conversation_id, models, *, allow_defaults=False):
         if not isinstance(text,str) or not text.strip() or len(text)>8000:
@@ -176,7 +178,7 @@ class ChatCoordination:
             operator, observer = plan["roles"]["operator"], plan["roles"]["observer"]
             task = squad.create_task("manager", agent_ids[operator], "Quartz onaylı pencere/log görevi", plan["scope"])
             squad.ack_task(agent_ids[operator], task["id"])
-            self.squad = squad; self.cancel.clear(); self.notes.clear()
+            self.squad = squad; self.cancel.clear(); self.notes.clear(); self._released = False
             self.job = {**plan, "status":"starting", "target":target, "targets":targets, "launches":launches, "log":str(log.path),
                         "seconds":seconds,"task_id":task["id"],"squad_agents":agent_ids,"started_at":time.time(),"events":[],"analysis_rounds":0}
             self.pending = None
@@ -285,29 +287,40 @@ class ChatCoordination:
                     if chunk["text"]: self._analyze(chunk); last_analysis = time.monotonic()
             self.job["status"] = terminal_status if not self.cancel.is_set() else "cancelled"
         except Exception as exc:
-            self.job["status"] = "failed"; self._event("quartz","Başarısız. Koordineli görev durduruldu.\n\n---TEKNIK_AYRINTILAR---\n"+str(exc))
+            self.job["status"] = "cancelled" if self.cancel.is_set() else "failed"
+            if not self.cancel.is_set():
+                self._event("quartz","Başarısız. Koordineli görev durduruldu.\n\n---TEKNIK_AYRINTILAR---\n"+str(exc))
         finally:
             self._release()
 
     def _release(self):
         with self.release_lock:
-            self.desktop.stop(); self.desktop.broker.context_provider = None
-            if self.observer_runtime and self.observer_run: self.observer_runtime.cancel(self.observer_run)
-            if self.temp: self.temp.cleanup(); self.temp = None
+            if self._released: return
+            self._released = True
+            report = {"status":"running", "steps":[]}
+            if self.job: self.job['cleanup'] = report
+            cleanup_step(report, 'desktop', self.desktop.stop)
+            cleanup_step(report, 'broker-context', lambda: setattr(self.desktop.broker, 'context_provider', None))
+            if self.observer_runtime and self.observer_run:
+                cleanup_step(report, 'observer', lambda: self.observer_runtime.cancel(self.observer_run))
+            if self.temp:
+                cleanup_step(report, 'workspace', self.temp.cleanup)
+                self.temp = None
             if self.job and not self.job.get("squad_closed"):
-                try:
+                def close_squad():
                     self.squad.complete_task(self._agent(self.job["roles"]["operator"]),self.job["task_id"],
                         "Coordination execution closed: " + self.job["status"] + ". Goal requires actual UI/log evidence; not inferred from process completion.")
                     self.job["squad_closed"] = True
-                except Exception as exc:
-                    self.job["cleanup_error"] = str(exc)
+                cleanup_step(report, 'squad', close_squad)
+            report['status'] = 'failed' if any(s['status'] == 'failed' for s in report['steps']) else 'completed'
+            if self.job:
+                self.job['outcome'] = execution_outcome(self.job['status'], cleanup=report)
 
     def stop(self):
         self.cancel.set()
-        self.desktop.stop()
         if self.job and self.job["status"] in {"starting","running"}: self.job["status"] = "cancelled"
-        if self.thread and self.thread is not threading.current_thread(): self.thread.join(timeout=5)
         self._release()
+        if self.thread and self.thread is not threading.current_thread(): self.thread.join(timeout=5)
         return self.status()
 
     def status(self):

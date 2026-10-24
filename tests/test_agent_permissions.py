@@ -135,6 +135,8 @@ class AgentPermissionTests(unittest.TestCase):
         chat.store.get_agent_model.return_value = {}
         chat.agent_service = self.service
         chat._lock = threading.RLock()
+        chat._active_turn = {'status':'running', 'conversation_id':'c', 'message_id':'m',
+                             'message_ids':['m'], 'run_ids':[]}
         chat._is_turn_cancelled = MagicMock(return_value=False)
         chat._set_turn_progress = MagicMock()
         chat._extract_metrics = MagicMock(return_value={})
@@ -156,7 +158,8 @@ class AgentPermissionTests(unittest.TestCase):
             ({'errors':['Antigravity permission policy denied: command']}, 'failed'),
             ({'result':'Codex görüşündeki eksik nokta budur.'}, 'completed'),
         ])
-        self.service.dispatch_antigravity = MagicMock(return_value={'run':{'id':'fake'}})
+        self.service.dispatch_antigravity = MagicMock(side_effect=[
+            {'run':{'id':'first'}}, {'run':{'id':'review-retry'}}])
         answer = chat._execute_antigravity_bubble(
             'c', 'm', 'Codex kanıtı: test özeti', 'test', False, False,
             use_session=False, base_meta={'collaboration':True},
@@ -164,6 +167,8 @@ class AgentPermissionTests(unittest.TestCase):
         self.assertIn('proje dosyaları bağımsız doğrulanmadı', answer)
         self.assertIn('Codex görüşündeki eksik nokta', answer)
         self.assertEqual(self.service.dispatch_antigravity.call_count, 2)
+        self.assertEqual(chat._stream_antigravity_run.call_args.args[2], 'review-retry')
+        self.assertEqual(chat._stream_antigravity_run.call_args.args[3]['run_id'], 'review-retry')
         retry_call = self.service.dispatch_antigravity.call_args
         self.assertIn('Do not call any tool, command', retry_call.args[0])
         self.assertIn('Codex kanıtı: test özeti', retry_call.args[0])
@@ -188,9 +193,11 @@ class AgentPermissionTests(unittest.TestCase):
     def test_readonly_agy_stale_session_retries_without_permissions(self):
         chat = self.bubble_chat()
         chat._stream_antigravity_run = MagicMock(side_effect=[({'errors':['stale session']}, 'failed'), ({'result':'ok'}, 'completed')])
-        self.service.dispatch_antigravity = MagicMock(return_value={'run':{'id':'fake'}})
+        self.service.dispatch_antigravity = MagicMock(side_effect=[
+            {'run':{'id':'first'}}, {'run':{'id':'agy-retry'}}])
         self.assertEqual(chat._execute_antigravity_bubble('c','m','test','test',False,False), 'ok')
         self.assertEqual(self.service.dispatch_antigravity.call_count, 2)
+        self.assertEqual(chat._stream_antigravity_run.call_args.args[3]['run_id'], 'agy-retry')
         retry = self.service.dispatch_antigravity.call_args.kwargs
         self.assertFalse(retry['write']); self.assertFalse(retry['confirm_write']); self.assertFalse(retry['full_access'])
 
@@ -205,9 +212,11 @@ class AgentPermissionTests(unittest.TestCase):
     def test_readonly_codex_stale_session_stays_readonly(self):
         chat=self.bubble_chat()
         chat._stream_codex_run=MagicMock(side_effect=[({'errors':['stale session']},'failed'),({'result':'ok'},'completed')])
-        self.service.dispatch_codex=MagicMock(return_value={'run':{'id':'fake'}})
+        self.service.dispatch_codex=MagicMock(side_effect=[
+            {'run':{'id':'first'}}, {'run':{'id':'codex-retry'}}])
         self.assertEqual(chat._execute_codex_bubble('c','m','test','test',False,False),'ok')
         self.assertEqual(self.service.dispatch_codex.call_count,2)
+        self.assertEqual(chat._stream_codex_run.call_args.args[3]['run_id'],'codex-retry')
         retry=self.service.dispatch_codex.call_args.kwargs
         self.assertFalse(retry['write']);self.assertFalse(retry['confirm_write']);self.assertFalse(retry['full_access'])
 

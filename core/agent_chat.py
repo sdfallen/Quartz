@@ -6,11 +6,13 @@ import logging
 import re
 import threading
 import time
+import uuid
 from pathlib import Path
 
 from core.conversation_store import ConversationStore
 from core.multi_agent_service import MultiAgentService
 from core.response_style import communication_instruction, DETAIL_MARKER
+from core.async_snapshot import AsyncSnapshot
 
 log = logging.getLogger(__name__)
 
@@ -23,7 +25,7 @@ class AgentChatService:
         self.store = ConversationStore(store_path)
         self._lock = threading.RLock()
         self._active_turn: dict | None = None
-        self._status_cache: tuple[float, str | None, dict] = (0.0, None, {})
+        self._diagnostics = AsyncSnapshot(self.agent_service.status)
 
     def _next_sequence(self, conv: dict) -> int:
         messages = conv.get("messages", [])
@@ -34,21 +36,12 @@ class AgentChatService:
         with self._lock:
             conv = self.store.get_active()
             project_id = conv.get("project_id")
-            now = time.monotonic()
-            cached_at, cached_pid, raw_status = self._status_cache
-            need_refresh = not raw_status or (now - cached_at > 15.0) or (cached_pid != project_id)
-
-        if need_refresh:
-            fetched = self.agent_service.status(project_id)
-            with self._lock:
-                if isinstance(fetched, dict):
-                    raw_status = fetched
-                    self._status_cache = (time.monotonic(), project_id, raw_status)
-                else:
-                    raw_status = {}
-
-        with self._lock:
-            conv = self.store.get_active()
+            try:
+                seed = self.agent_service.local_status(project_id) if hasattr(self.agent_service, 'local_status') else {}
+            except Exception as exc:
+                seed = {'error': str(exc)}
+            raw_status, diagnostics = self._diagnostics.read(project_id, seed if isinstance(seed, dict) else {})
+            self._enrich_messages(conv.get('messages', []))
             codex_probe = raw_status.get("codex", {}) if isinstance(raw_status, dict) else {}
             agy_probe = raw_status.get("antigravity", {}) if isinstance(raw_status, dict) else {}
             squad_info = raw_status.get("squad", {}) if isinstance(raw_status, dict) else {}
@@ -56,13 +49,6 @@ class AgentChatService:
             squad_connected = bool(squad_info.get("installed")) and bool(squad_info.get("initialized")) and not squad_err
 
             models_catalog = raw_status.get("models") if isinstance(raw_status, dict) else None
-            if not isinstance(models_catalog, dict) and hasattr(self.agent_service, "list_models"):
-                try:
-                    models_val = self.agent_service.list_models()
-                    if isinstance(models_val, dict):
-                        models_catalog = models_val
-                except Exception:
-                    models_catalog = None
             if not isinstance(models_catalog, dict):
                 models_catalog = {
                     "codex": {
@@ -80,6 +66,15 @@ class AgentChatService:
                         "models": [],
                     },
                 }
+                # Preserve the user's selection while discovery is pending;
+                # placeholder defaults must not silently replace saved models.
+                for provider, selected in (conv.get('models') or {}).items():
+                    if provider in models_catalog and selected.get('model'):
+                        models_catalog[provider].update(default_model=selected['model'],
+                            default_effort=selected.get('effort', 'low'), models=[
+                                {'id':selected['model'], 'label':selected['model'],
+                                 'default_effort':selected.get('effort', 'low'),
+                                 'efforts':models_catalog[provider]['efforts']}])
 
             return {
                 "active_conversation": conv,
@@ -87,7 +82,9 @@ class AgentChatService:
                 "conversations": self.store.list(),
                 "active_turn": dict(self._active_turn) if self._active_turn else None,
                 "models": models_catalog,
+                "diagnostics": diagnostics,
                 "squad": {
+                    "checking": bool(squad_info.get('checking')),
                     "connected": squad_connected,
                     "mode": squad_info.get("mode", "project"),
                     "ready": squad_info.get("ready", False),
@@ -142,7 +139,7 @@ class AgentChatService:
 
     def switch_project(self, project_id: str) -> dict:
         with self._lock:
-            if self._active_turn and self._active_turn.get("status") == "running":
+            if self._active_turn and self._active_turn.get("status") in {"running", "cancelling"}:
                 raise RuntimeError("Aktif görev bitmeden proje değiştirilemez; önce görevi durdurun.")
             project = self.agent_service.select_project(project_id)
             conversations = self.store.list()
@@ -150,10 +147,12 @@ class AgentChatService:
                 if item.get("project_id") == project["id"] or (
                     item.get("project_id") is None and project["id"] == "squad-pilot"
                 ):
-                    self._status_cache = (0.0, None, {})
                     return self.store.select(item["id"])
-            self._status_cache = (0.0, None, {})
             return self.new_conversation(project_id=project["id"])
+
+    def close(self):
+        self._diagnostics.close()
+        return self.cancel_active()
 
     def select_conversation(self, conversation_id: str) -> dict:
         with self._lock:
@@ -339,7 +338,7 @@ class AgentChatService:
             raise PermissionError("Yazma yetkisi için açık kullanıcı onayı gerekli.")
 
         with self._lock:
-            if self._active_turn and self._active_turn.get("status") == "running":
+            if self._active_turn and self._active_turn.get("status") in {"running", "cancelling"}:
                 raise RuntimeError("Zaten devam eden bir yanıt üretimi var. Lütfen bekleyin veya iptal edin.")
 
             if conversation_id:
@@ -394,7 +393,7 @@ class AgentChatService:
 
             turn_state = {
                 "conversation_only": conversation_only,
-                "turn_id": f"turn-{int(time.time() * 1000)}",
+                "turn_id": "turn-" + uuid.uuid4().hex,
                 "conversation_id": cid,
                 "message_id": bot_msg["id"],
                 "message_ids": [bot_msg["id"]],
@@ -426,7 +425,7 @@ class AgentChatService:
     def continue_discussion(self, conversation_id: str | None = None) -> dict:
         """Trigger 1 additional mutual evaluation round between Codex and Antigravity in Birlikte mode."""
         with self._lock:
-            if self._active_turn and self._active_turn.get("status") == "running":
+            if self._active_turn and self._active_turn.get("status") in {"running", "cancelling"}:
                 raise RuntimeError("Zaten devam eden bir yanıt üretimi var. Lütfen bekleyin veya iptal edin.")
             conv = self.store.get(conversation_id) if conversation_id else self.store.get_active()
             cid = conv["id"]
@@ -466,7 +465,7 @@ class AgentChatService:
             )
 
             turn_state = {
-                "turn_id": f"turn-{int(time.time() * 1000)}",
+                "turn_id": "turn-" + uuid.uuid4().hex,
                 "conversation_id": cid,
                 "message_id": codex_msg["id"],
                 "conversation_only": all((m.get("metadata") or {}).get("conversation_only", True)
@@ -527,7 +526,7 @@ class AgentChatService:
                 log.warning("Cancel run %s failed: %s", rid, exc)
 
         with self._lock:
-            if self._active_turn:
+            if self._active_turn and self._active_turn.get("turn_id") == turn.get("turn_id"):
                 self._active_turn["status"] = "cancelled"
             cid = turn["conversation_id"]
             all_mids = list(turn.get("message_ids") or [])
@@ -562,6 +561,7 @@ class AgentChatService:
         try:
             conv = self.store.get(cid)
             messages = conv.get("messages", [])
+            self._enrich_messages(messages)
             msg = next((m for m in messages if m["id"] == mid), None)
             meta = dict(msg["metadata"]) if (msg and msg.get("metadata")) else {}
             if turn.get("progress_step") and "progress_step" not in meta:
@@ -586,6 +586,17 @@ class AgentChatService:
         except Exception as exc:
             return {"active": False, "error": str(exc)}
 
+    def _enrich_messages(self, messages):
+        # Detached read model only. Polling neither rewrites history nor runs
+        # project tests. An absent receipt is never treated as a passed check.
+        for item in messages[-200:]:
+            meta = item.get('metadata') or {}
+            run_id = meta.get('run_id')
+            if run_id and hasattr(self.agent_service, 'run_evidence'):
+                evidence = self.agent_service.run_evidence(run_id)
+                if isinstance(evidence, dict) and evidence:
+                    meta['host_evidence'] = evidence
+
     def _is_turn_cancelled(self, initial_msg_id: str | None = None) -> bool:
         with self._lock:
             if not self._active_turn:
@@ -597,10 +608,14 @@ class AgentChatService:
                 or self._active_turn.get("status") in {"cancelling", "cancelled"}
             )
 
-    def _set_turn_progress(self, step_text: str, current_msg_id: str | None = None, run_id: str | None = None):
+    def _set_turn_progress(self, step_text: str, current_msg_id: str | None = None, run_id: str | None = None,
+                           *, owner_msg_id: str | None = None):
         with self._lock:
-            if not self._active_turn:
-                return
+            if not self._active_turn or self._active_turn.get("status") != "running":
+                return False
+            owner = owner_msg_id or current_msg_id
+            if not owner or self._is_turn_cancelled(owner):
+                return False
             self._active_turn["progress_step"] = step_text
             if current_msg_id:
                 self._active_turn["message_id"] = current_msg_id
@@ -612,6 +627,29 @@ class AgentChatService:
                 rids = self._active_turn.setdefault("run_ids", [])
                 if run_id not in rids:
                     rids.append(run_id)
+            return True
+
+    def _finish_turn(self, owner_msg_id, status):
+        """Only this generation's live owner can make its terminal transition."""
+        if status not in {"completed", "failed"}:
+            raise ValueError("Invalid worker terminal state")
+        with self._lock:
+            if not self._active_turn or self._active_turn.get("status") != "running" or self._is_turn_cancelled(owner_msg_id):
+                return False
+            self._active_turn["status"] = status
+            self._active_turn["run_id"] = None
+            return True
+
+    def _publish_run_update(self, cid, msg_id, content, metadata, *, provider=None, session=None):
+        """The cancellation fence and persistence share one ownership lock."""
+        with self._lock:
+            if not getattr(self, '_active_turn', None) or self._is_turn_cancelled(msg_id) or self._active_turn.get('status') != 'running':
+                return False
+            if provider and session:
+                self.store.set_agent_session(cid, provider, session)
+            if metadata is not None:
+                self.store.update_message_content(cid, msg_id, content, metadata=metadata)
+            return True
 
     def _run_chat_turn(self, cid: str, msg_id: str, agent: str, prompt: str,
                        project_id: str | None, write: bool, confirm_write: bool, full_access: bool = False):
@@ -632,11 +670,10 @@ class AgentChatService:
             err_text = self._format_error(agent, exc)
             with self._lock:
                 target_mid = (self._active_turn or {}).get("message_id") or msg_id
-                if self._active_turn:
-                    self._active_turn["status"] = "failed"
-                self.store.update_message_content(
-                    cid, target_mid, err_text, metadata={"status": "failed", "error": str(exc)}
-                )
+                if self._finish_turn(msg_id, "failed"):
+                    self.store.update_message_content(
+                        cid, target_mid, err_text, metadata={"status": "failed", "error": str(exc)}
+                    )
         finally:
             if agent in {"collaboration", "both"}:
                 self._finish_group_task(cid, msg_id, project_id)
@@ -712,6 +749,7 @@ class AgentChatService:
         )
 
         run_id = dispatch_res["run"]["id"]
+        meta['run_id'] = run_id
         meta["checkpoint"] = dispatch_res["run"].get("checkpoint")
         meta["permission_level"] = "full" if full_access else ("project" if write else "read-only")
         squad_info = dispatch_res.get("squad") or {}
@@ -755,6 +793,7 @@ class AgentChatService:
                     conversation_id=None, model=selected_model, effort=selected_effort,
                 )
                 run_id = retry_res["run"]["id"]
+                meta["run_id"] = run_id
                 meta["review_scope"] = "supplied-text-only"
                 self._set_turn_progress("Antigravity verilen metni araçsız inceliyor...", current_msg_id=msg_id, run_id=run_id)
                 run, status = self._stream_antigravity_run(cid, msg_id, run_id, meta, save_session=False)
@@ -766,6 +805,7 @@ class AgentChatService:
                     full_access=False, conversation_id=None, model=selected_model, effort=selected_effort,
                 )
                 run_id = retry_res["run"]["id"]
+                meta["run_id"] = run_id
                 self._set_turn_progress("Antigravity salt-okunur yeni oturumla yanıtlıyor...", current_msg_id=msg_id, run_id=run_id)
                 run, status = self._stream_antigravity_run(cid, msg_id, run_id, meta, save_session=use_session)
 
@@ -784,8 +824,7 @@ class AgentChatService:
                 "usage": run.get("usage"),
                 "metrics": self._extract_metrics(run, bubble_t0),
             })
-            self.store.update_message_content(cid, msg_id, final_content, metadata=meta)
-            return final_content
+            return final_content if self._publish_run_update(cid, msg_id, final_content, meta) else ""
 
         errors = run.get("errors", [])
         err_msg = "\n".join(errors) if errors else "Antigravity görevi tamamlayamadı."
@@ -806,16 +845,17 @@ class AgentChatService:
             content = run.get("result", "")
             progress = run.get("progress_log", [])
             new_session = run.get("conversation_id")
-            if save_session and new_session and new_session != last_session_saved:
-                self.store.set_agent_session(cid, "antigravity", new_session)
-                last_session_saved = new_session
-
-            if content != last_content or status != last_status:
+            session = new_session if save_session and new_session != last_session_saved else None
+            changed = content != last_content or status != last_status
+            step_meta = None
+            if changed:
                 step_meta = dict(meta)
                 step_meta.update({"status": status, "progress": progress})
-                self.store.update_message_content(cid, msg_id, content, metadata=step_meta)
-                last_content = content
-                last_status = status
+            if not self._publish_run_update(cid, msg_id, content, step_meta, provider='antigravity', session=session):
+                self.agent_service.cancel(run_id)
+                return run, "cancelled"
+            last_content, last_status = content, status
+            if session: last_session_saved = session
 
             if status in self.agent_service.antigravity.TERMINAL:
                 break
@@ -841,8 +881,7 @@ class AgentChatService:
         if self._is_turn_cancelled(msg_id):
             return
         with self._lock:
-            if self._active_turn and self._active_turn.get("message_id") == msg_id:
-                self._active_turn["status"] = "completed"
+            self._finish_turn(msg_id, "completed")
 
     def _execute_codex_bubble(self, cid: str, msg_id: str, full_prompt: str,
                               project_id: str | None, write: bool, confirm_write: bool,
@@ -887,6 +926,7 @@ class AgentChatService:
         )
 
         run_id = dispatch_res["run"]["id"]
+        meta['run_id'] = run_id
         meta["checkpoint"] = dispatch_res["run"].get("checkpoint")
         meta["permission_level"] = "full" if full_access else ("project" if write else "read-only")
         squad_info = dispatch_res.get("squad") or {}
@@ -920,6 +960,7 @@ class AgentChatService:
                     model=selected_model, effort=selected_effort,
                 )
                 run_id = retry_res["run"]["id"]
+                meta["run_id"] = run_id
                 self._set_turn_progress("Codex yeni oturumla yanıtlıyor...", current_msg_id=msg_id, run_id=run_id)
                 run, status = self._stream_codex_run(cid, msg_id, run_id, meta, save_session=use_session)
 
@@ -933,8 +974,7 @@ class AgentChatService:
                 "usage": run.get("usage"),
                 "metrics": self._extract_metrics(run, bubble_t0),
             })
-            self.store.update_message_content(cid, msg_id, final_content, metadata=meta)
-            return final_content
+            return final_content if self._publish_run_update(cid, msg_id, final_content, meta) else ""
 
         errors = run.get("errors", [])
         err_msg = "\n".join(errors) if errors else "Codex görevi tamamlayamadı."
@@ -954,16 +994,17 @@ class AgentChatService:
             status = run.get("status")
             content = run.get("result", "")
             new_thread = run.get("thread_id")
-            if save_session and new_thread and new_thread != last_thread_saved:
-                self.store.set_agent_session(cid, "codex", new_thread)
-                last_thread_saved = new_thread
-
-            if content != last_content or status != last_status:
+            session = new_thread if save_session and new_thread != last_thread_saved else None
+            changed = content != last_content or status != last_status
+            step_meta = None
+            if changed:
                 step_meta = dict(meta)
                 step_meta.update({"status": status})
-                self.store.update_message_content(cid, msg_id, content, metadata=step_meta)
-                last_content = content
-                last_status = status
+            if not self._publish_run_update(cid, msg_id, content, step_meta, provider='codex', session=session):
+                self.agent_service.cancel(run_id)
+                return run, "cancelled"
+            last_content, last_status = content, status
+            if session: last_thread_saved = session
 
             if status in self.agent_service.codex.TERMINAL:
                 break
@@ -989,11 +1030,16 @@ class AgentChatService:
         if self._is_turn_cancelled(msg_id):
             return
         with self._lock:
-            if self._active_turn and self._active_turn.get("message_id") == msg_id:
-                self._active_turn["status"] = "completed"
+            self._finish_turn(msg_id, "completed")
 
     def _create_group_bubble(self, cid: str, sender: str, recipient: str,
-                             squad_task_id: str | None, round_num: int) -> dict:
+                             squad_task_id: str | None, round_num: int, *, owner_msg_id: str) -> dict:
+        with self._lock:
+            if self._is_turn_cancelled(owner_msg_id) or self._active_turn.get("status") != "running":
+                raise RuntimeError("Eski/iptal edilmiş tur yeni mesaj oluşturamaz")
+            return self._append_group_bubble(cid, sender, recipient, squad_task_id, round_num, owner_msg_id)
+
+    def _append_group_bubble(self, cid, sender, recipient, squad_task_id, round_num, owner_msg_id):
         conv = self.store.get(cid)
         seq = self._next_sequence(conv)
         model_cfg = self.store.get_agent_model(cid, sender)
@@ -1014,7 +1060,7 @@ class AgentChatService:
                 "progress": [],
             },
         )
-        self._set_turn_progress(f"{sender.upper()} → {recipient.upper()} yanıtlıyor...", current_msg_id=msg["id"])
+        self._set_turn_progress(f"{sender.upper()} → {recipient.upper()} yanıtlıyor...", current_msg_id=msg["id"], owner_msg_id=owner_msg_id)
         return msg
 
     def _run_collaboration_turn(self, cid: str, first_msg_id: str, prompt: str, project_id: str | None,
@@ -1120,8 +1166,7 @@ class AgentChatService:
                         MultiAgentService.ANTIGRAVITY_ID, "@all", reply, task_id=squad_task_id, project_id=project_id
                     )
             with self._lock:
-                if self._active_turn and not self._is_turn_cancelled():
-                    self._active_turn["status"] = "completed"
+                self._finish_turn(first_msg_id, "completed")
             return
 
         # ── TUR 1: Codex ve Antigravity'nin Bağımsız Yanıtları (PARALEL BAŞLATILIR) ──
@@ -1142,7 +1187,7 @@ class AgentChatService:
         # Create Antigravity's Round 1 bubble immediately so both bubbles exist and stream in parallel
         agy_r1_msg = self._create_group_bubble(
             cid, sender="antigravity", recipient="all",
-            squad_task_id=squad_task_id, round_num=1,
+            squad_task_id=squad_task_id, round_num=1, owner_msg_id=first_msg_id,
         )
         agy_r1_id = agy_r1_msg["id"]
         agy_r1_meta = dict(agy_r1_msg.get("metadata") or {})
@@ -1203,7 +1248,7 @@ class AgentChatService:
                         text_out, task_id=squad_task_id, project_id=project_id,
                     )
             except Exception as exc:
-                if self._is_turn_cancelled():
+                if self._is_turn_cancelled(first_msg_id):
                     return
                 err_msg = self._format_error("codex", exc)
                 codex_r1_meta.update({"status": "failed", "error": str(exc)})
@@ -1232,7 +1277,7 @@ class AgentChatService:
                         text_out, task_id=squad_task_id, project_id=project_id,
                     )
             except Exception as exc:
-                if self._is_turn_cancelled():
+                if self._is_turn_cancelled(first_msg_id):
                     return
                 err_msg = self._format_error("antigravity", exc)
                 agy_r1_meta.update({"status": "failed", "error": str(exc)})
@@ -1243,7 +1288,7 @@ class AgentChatService:
         t_codex_r1.start()
         if write:
             t_codex_r1.join()
-            if not self._is_turn_cancelled():
+            if not self._is_turn_cancelled(first_msg_id):
                 t_agy_r1.start()
                 t_agy_r1.join()
         else:
@@ -1251,7 +1296,7 @@ class AgentChatService:
             t_codex_r1.join()
             t_agy_r1.join()
 
-        if self._is_turn_cancelled():
+        if self._is_turn_cancelled(first_msg_id):
             return
 
         codex_r1_ok = r1_state["codex_ok"]
@@ -1271,16 +1316,15 @@ class AgentChatService:
                 squad_connected=squad_connected,
                 project_id=project_id,
                 precreated_codex_msg_id=None,
+                owner_msg_id=first_msg_id,
             )
 
-        if self._is_turn_cancelled():
+        if self._is_turn_cancelled(first_msg_id):
             return
 
         with self._lock:
-            if self._active_turn:
-                successful = (codex_r1_ok and agy_r1_ok) if write else (codex_r1_ok or agy_r1_ok)
-                self._active_turn["status"] = "completed" if successful else "failed"
-                self._active_turn["run_id"] = None
+            successful = (codex_r1_ok and agy_r1_ok) if write else (codex_r1_ok or agy_r1_ok)
+            self._finish_turn(first_msg_id, "completed" if successful else "failed")
 
     def _run_mutual_evaluation_round(
         self,
@@ -1293,9 +1337,12 @@ class AgentChatService:
         squad_task_id: str | None,
         squad_connected: bool,
         project_id: str | None,
+        owner_msg_id: str,
         precreated_codex_msg_id: str | None = None,
     ):
         """Run one controlled mutual evaluation round where both agents read Squad messages and respond in parallel."""
+        if self._is_turn_cancelled(owner_msg_id):
+            return
         received_for_codex = []
         received_for_agy = []
         if squad_connected:
@@ -1336,7 +1383,7 @@ class AgentChatService:
         else:
             codex_r2_msg = self._create_group_bubble(
                 cid, sender="codex", recipient="antigravity",
-                squad_task_id=squad_task_id, round_num=round_num,
+                squad_task_id=squad_task_id, round_num=round_num, owner_msg_id=owner_msg_id,
             )
             codex_r2_id = codex_r2_msg["id"]
             codex_r2_meta = dict(codex_r2_msg.get("metadata") or {})
@@ -1348,7 +1395,7 @@ class AgentChatService:
 
         agy_r2_msg = self._create_group_bubble(
             cid, sender="antigravity", recipient="codex",
-            squad_task_id=squad_task_id, round_num=round_num,
+            squad_task_id=squad_task_id, round_num=round_num, owner_msg_id=owner_msg_id,
         )
         agy_r2_id = agy_r2_msg["id"]
         agy_r2_meta = dict(agy_r2_msg.get("metadata") or {})
@@ -1395,7 +1442,7 @@ class AgentChatService:
                         codex_r2_text, task_id=squad_task_id, project_id=project_id,
                     )
             except Exception as exc:
-                if self._is_turn_cancelled():
+                if self._is_turn_cancelled(owner_msg_id):
                     return
                 err_msg = self._format_error("codex", exc)
                 codex_r2_meta.update({"status": "failed", "error": str(exc)})
@@ -1413,7 +1460,7 @@ class AgentChatService:
                         agy_r2_text, task_id=squad_task_id, project_id=project_id,
                     )
             except Exception as exc:
-                if self._is_turn_cancelled():
+                if self._is_turn_cancelled(owner_msg_id):
                     return
                 err_msg = self._format_error("antigravity", exc)
                 agy_r2_meta.update({"status": "failed", "error": str(exc)})
@@ -1458,23 +1505,21 @@ class AgentChatService:
                 squad_connected=squad_connected,
                 project_id=project_id,
                 precreated_codex_msg_id=first_msg_id,
+                owner_msg_id=first_msg_id,
             )
-            if self._is_turn_cancelled():
+            if self._is_turn_cancelled(first_msg_id):
                 return
             with self._lock:
-                if self._active_turn:
-                    self._active_turn["status"] = "completed"
-                    self._active_turn["run_id"] = None
+                self._finish_turn(first_msg_id, "completed")
         except Exception as exc:
             if self._is_turn_cancelled(first_msg_id):
                 return
             err_text = self._format_error("collaboration", exc)
             with self._lock:
-                if self._active_turn:
-                    self._active_turn["status"] = "failed"
-                self.store.update_message_content(
-                    cid, first_msg_id, err_text, metadata={"status": "failed", "error": str(exc)}
-                )
+                if self._finish_turn(first_msg_id, "failed"):
+                    self.store.update_message_content(
+                        cid, first_msg_id, err_text, metadata={"status": "failed", "error": str(exc)}
+                    )
 
     @staticmethod
     def _format_error(agent: str, exc: Exception) -> str:
