@@ -1,0 +1,77 @@
+# Secrets and machine-local configuration
+.env
+.env.*
+!.env.example
+
+# User data and runtime state
+chat_history.json
+quartz_conversations.json
+jarvis_memory.json
+quartz_memory.json
+quartz_operation.json
+quartz_tasks.json
+quartz_workflows.json
+quartz_agent_runs.json
+quartz_projects.json
+mobile_access.json
+mcp_skills.json
+*.log
+*.log.*
+*.log-*
+vision_captures/
+labs/
+.quartz/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite*
+*.pem
+*.key
+*.pfx
+*.p12
+credentials.json
+token.json
+tokens.json
+auth.json
+auth-state.json
+
+# Python caches and local tooling
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Build and installer output
+build/
+dist/
+Quartz 1.0.0 Setup/
+*.exe
+*.msi
+
+# Runtime-managed plugins, upgrades and agent metadata
+plugins/installed/
+plugins/disabled/
+plugins/pending/
+upgrades/backups/
+upgrades/plugin_registry.json
+upgrades/upgrade_history.json
+.agents/
+.squad/
+
+# Local attachments and editor/OS noise
+.codex-remote-attachments/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local source review / generated publication reports
+QUARTZ_KAPSAMLI_KAYNAK_KOD_INCELEME_RAPORU_*.txt
+

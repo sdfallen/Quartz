@@ -1,0 +1,37 @@
+{
+  "source_png": "C:\\Users\\LENAVO\\Desktop\\Jarvis config\\715d52a3-0f49-49c1-9fe1-b6733ea89145.png",
+  "source_ico": "C:\\Users\\LENAVO\\Desktop\\Jarvis config\\download.ico",
+  "supplied_ico_preserved": true,
+  "sizes": [
+    [
+      16,
+      16
+    ],
+    [
+      24,
+      24
+    ],
+    [
+      32,
+      32
+    ],
+    [
+      48,
+      48
+    ],
+    [
+      64,
+      64
+    ],
+    [
+      128,
+      128
+    ],
+    [
+      256,
+      256
+    ]
+  ],
+  "png_sha256": "3f4476174968ab0285a0b478600187ed57092940c664172424435f9468538c46",
+  "ico_sha256": "aa1f33584830240ba3dc8d619fd6a04febe50c586799c5c2474a1211e593c621"
+}

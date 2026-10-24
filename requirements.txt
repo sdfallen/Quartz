@@ -1,0 +1,18 @@
+# Versions observed in the working Windows Python 3.13 environment.
+openai==2.38.0
+python-dotenv==1.2.2
+psutil==7.2.2
+Pillow==12.2.0
+PyAutoGUI==0.9.54
+pyperclip==1.11.0
+pywinauto==0.6.9; sys_platform == "win32"
+pywebview==6.2.1
+mss==10.2.0
+pynput==1.8.2
+requests==2.34.2
+mcp==1.28.0
+pywin32==312; sys_platform == "win32"
+pythonnet==3.1.0; sys_platform == "win32"
+SpeechRecognition==3.17.0
+pyttsx3==2.99
+PyAudio==0.2.14; sys_platform == "win32"

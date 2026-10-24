@@ -1,0 +1,95 @@
+/* Quartz Workspace: quiet surfaces, one sage accent, content-first layout. */
+:root { --cyan:#a9bf9b; --text:#ededeb; --txt:#ededeb; --txt-dim:#aaaDA5; --txt-faint:#858b7e; --mint:#a9bf9b; --muted:#94958f; --accent:#a9bf9b; }
+* { animation:none !important; text-shadow:none !important; }
+html,body { font-family:'Segoe UI',system-ui,sans-serif !important; background:#141517 !important; color:#ededeb; }
+body { padding:0 !important; }
+.shell { width:100%;max-width:none;height:100vh;margin:0;border:0;border-radius:0;background:#141517;box-shadow:none;padding:0; }
+.titlebar {height:54px;min-height:54px;padding:0 20px;background:#18191b;border-bottom:1px solid #2a2b2d;gap:12px;}
+.brand {font:600 17px 'Segoe UI',sans-serif;letter-spacing:-.4px;color:#eeefeb;}
+.brand {display:flex;align-items:center;gap:9px;}
+.brand-icon {display:block;width:28px;height:28px;object-fit:contain;border-radius:5px;}
+.orb-wrap,.signature-mark,.signature-main,.signature-intro,.clock,.titlebar .voice-toggle:not(#btnPanels) {display:none !important;}
+.status-pill {border:0;background:none;color:#94958f;font-size:11px;box-shadow:none;}
+.status-pill .dot {background:#a9bf9b;box-shadow:none;}
+.titlebar .win-btn,.titlebar #btnPanels {background:transparent;border:0;color:#a6a7a1;border-radius:6px;font:12px 'Segoe UI',sans-serif;}
+.titlebar #btnPanels:hover {background:#27282b;color:#eceee8;}
+.body {display:grid !important;grid-template-columns:250px minmax(0,1fr);gap:0;flex:1;min-height:0;padding:0;}
+body:not(.show-panels) .rail.left,.rail.left {display:flex !important;flex-direction:column;width:auto;min-width:0;padding:22px 14px;background:#191a1c;border-right:1px solid #2a2b2d;gap:16px;overflow-y:auto;}
+.workspace-nav-title {font-size:11px;color:#989b92;font-weight:600;letter-spacing:.05em;text-transform:uppercase;margin:2px 8px 8px;}
+.workspace-project {display:flex;gap:6px;align-items:center;}
+.workspace-project select {flex:1;min-width:0;}
+.conversation-list {flex:1;min-height:100px;overflow:auto;}
+.conversation-entry {display:block;text-align:left;width:100%;border:0;background:none;border-radius:7px;padding:10px;color:#b7bab1;font:13px 'Segoe UI',sans-serif;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:3px 0;}
+.conversation-entry:hover,.conversation-entry.active {background:#2a2d28;color:#e7eddc;}
+.conversation-row {display:flex;align-items:center;gap:3px;min-width:0;}
+.conversation-row .conversation-entry {flex:1;min-width:0;}
+.conversation-delete {flex:none;width:28px;height:30px;border:0;border-radius:6px;background:transparent;color:#94958f;cursor:pointer;font:19px 'Segoe UI',sans-serif;}
+.conversation-delete:hover,.conversation-delete:focus-visible {color:#f4aaa1;background:#412825;}
+.project-chats-delete {text-align:left;white-space:normal;border:1px solid #38302f;border-radius:6px;padding:8px;background:transparent;color:#bd9e99;font:11px 'Segoe UI',sans-serif;cursor:pointer;}
+.project-chats-delete:hover {background:#302321;color:#f4aaa1;}
+.rail.left .card {border:0;background:none;box-shadow:none;padding:8px 4px;margin-top:auto;}
+.card-label {font:11px 'Segoe UI',sans-serif;letter-spacing:.04em;color:#93988b;}
+.chat-col {min-width:0;border:0;border-radius:0;background:#141517;box-shadow:none;display:flex;flex-direction:column;overflow:hidden;}
+body:not(.show-panels):not(.compact) .chat-col {max-width:none;margin:0;width:auto;}
+.chat-header {background:none;border:0;border-bottom:1px solid #262729;border-radius:0;margin:0;backdrop-filter:none;padding:18px 28px;gap:12px;display:flex;flex-wrap:wrap;}
+.chat-title-group {flex:1;min-width:180px;gap:10px;}
+.chat-conv-title {font:600 15px 'Segoe UI',sans-serif;letter-spacing:0;color:#edece7;}
+.squad-badge {font:10px 'Segoe UI',sans-serif;border:1px solid #394332;border-radius:5px;color:#a8bc94;background:#20261e;padding:3px 6px;}
+.agent-seg-group,.chat-controls-group {background:none;border:0;box-shadow:none;}
+.agent-seg-btn {font:12px 'Segoe UI',sans-serif;color:#aaa;border:0;border-radius:6px;padding:7px 10px;letter-spacing:0;}
+.agent-seg-btn.active {background:#2d3528;color:#dce7d2;box-shadow:none;}
+.agent-seg-btn.active[data-agent] {background:#2d3528;color:#dce7d2;border:0;box-shadow:none;}
+.chat-models-bar {width:100%;gap:8px;padding:3px 0 0;}
+.model-selector-pill,.model-selector-pill.active-agy,.model-selector-pill.active-codex {background:#1c1d20;border:1px solid #303235;border-radius:6px;box-shadow:none;}
+.pill-agent-name {font:10px 'Segoe UI',sans-serif;letter-spacing:0;color:#9da493;}
+.model-selector-pill.active-agy .pill-agent-name,.model-selector-pill.active-codex .pill-agent-name {color:#aab79b;}
+.model-selector-pill select,.project-picker,.agent-select {font:12px 'Segoe UI',sans-serif;background:#202124;color:#d5d8cf;border:1px solid #343638;border-radius:6px;padding:7px;box-shadow:none;}
+.model-selector-pill select {border:0;background:transparent;padding:5px;}
+.model-selector-pill option {background:#202124;color:#ddd;}
+.chat {padding:26px max(24px,calc((100% - 850px)/2));gap:24px;background:none;scrollbar-color:#42463e transparent;}
+.msg {max-width:100%;margin-bottom:24px;}
+.msg .bubble {background:transparent;border:0;box-shadow:none;border-radius:10px;padding:5px 0;color:#dddeda;font:14px/1.75 'Segoe UI',sans-serif;overflow-wrap:anywhere;}
+.msg.bot .bubble,.msg.bot.sender-antigravity .bubble,.msg.bot.sender-codex .bubble,.msg.sys .bubble {background:transparent;border:0;box-shadow:none;border-radius:0;padding:5px 0;}
+.msg.user {align-self:flex-end;max-width:88%;}
+.msg.user .bubble {padding:12px 18px;background:#27292d;border:1px solid #303337;color:#eee;}
+.msg-meta {margin-bottom:5px;gap:8px;}
+.msg-sender-tag,.msg-sender-tag.tag-codex,.msg-sender-tag.tag-antigravity,.msg-sender-tag.tag-user {font:600 11px 'Segoe UI',sans-serif;border:0;background:none;padding:0;color:#b9c8a9;letter-spacing:0;}
+.msg-ts,.msg-model-tag,.msg-seq-tag {font:10px 'Segoe UI',sans-serif;color:#72776d;background:none;border:0;}
+.technical-details {margin-top:12px;font:12px/1.6 'Segoe UI',sans-serif;color:#aaa;border-top:1px solid #30322e;padding-top:9px;}
+.technical-details summary {cursor:pointer;color:#aab79b;}
+.technical-details pre {background:#1c1e20;padding:12px;border-radius:6px;max-height:480px;overflow:auto;}
+.thinking-row {margin:0 auto;width:calc(100% - 48px);max-width:850px;border:0;background:transparent;color:#8d9883;font:12px 'Segoe UI',sans-serif;}
+.thinking-row .d {background:#a9bf9b;}
+.inputbar {margin:12px auto 22px;width:calc(100% - 48px);max-width:850px;border:1px solid #41473b;border-radius:12px;background:#202225;padding:8px 10px;box-shadow:none;}
+.inputbar:focus-within {border-color:#6a7959;box-shadow:none;}
+#msgInput {font:14px 'Segoe UI',sans-serif;background:transparent;color:#eee;min-height:34px;}
+#msgInput::placeholder {color:#878d80;}
+#btnMic {display:none;}
+#btnSend {background:#a9bf9b;border:0;color:#1b2117;border-radius:7px;box-shadow:none;}
+.chat-tool-btn,.control-btn,.qa-btn,.coordination-card button {font:12px 'Segoe UI',sans-serif;border:1px solid #3b4135;background:#252a22;color:#d2dcc7;box-shadow:none;border-radius:6px;letter-spacing:0;}
+.coordination-card {padding:16px;margin:8px 0 20px;border:1px solid #444e39;border-radius:10px;background:#1e231c;display:flex;flex-wrap:wrap;gap:9px;}
+.coordination-card p,.coordination-card label {width:100%;font:12px/1.6 'Segoe UI',sans-serif;color:#bac5ae;margin:0;overflow-wrap:anywhere;}
+.coordination-card select {max-width:100%;padding:7px;color:#ddd;background:#242b20;border:1px solid #4a553d;border-radius:5px;}
+.coordination-card button {padding:8px 12px;max-width:100%;overflow:hidden;text-overflow:ellipsis;}
+.coordination-card input {margin-right:8px;accent-color:#a9bf9b;}
+.msg:has(> .coordination-card),.msg:has(> button.control-btn) {display:block;width:100%;max-width:100%;}
+.coordination-card {box-sizing:border-box;width:100%;}
+.desktop-task-bar {display:flex;align-items:center;gap:12px;padding:10px 24px;border-bottom:1px solid #30352c;background:#191d19;flex-wrap:wrap;}
+.desktop-task-copy {display:flex;flex-direction:column;flex:1;min-width:180px;font:11px/1.5 'Segoe UI',sans-serif;color:#9da494;}
+.desktop-task-copy strong {color:#d4ddc8;font-size:12px;font-weight:600;}
+.desktop-task-bar button {padding:8px 12px;cursor:pointer;}
+.desktop-task-bar [hidden] {display:none !important;}
+.desktop-task-bar[data-state="active"] {border-color:#67834e;background:#202a1d;}
+.desktop-task-bar[data-state="pending"] {border-color:#71653f;}
+.desktop-task-bar button:disabled {opacity:.45;cursor:default;}
+.desktop-task-draft textarea {resize:vertical;width:100%;min-height:80px;padding:10px;border:1px solid #48543d;border-radius:6px;background:#171b16;color:#e8ecdf;font:13px/1.5 'Segoe UI',sans-serif;}
+.rail.right,body:not(.show-panels) .rail.right {display:none !important;}
+body.show-panels .rail.right {display:flex !important;position:fixed;right:0;top:54px;bottom:0;width:370px;max-width:95vw;z-index:40;padding:18px;background:#1b1d1f;border-left:1px solid #3b3e37;overflow-y:auto;box-shadow:-15px 0 35px #0005;}
+.rail.right .card {background:#202326;border:1px solid #343830;border-radius:8px;box-shadow:none;padding:12px;}
+.agent-panel {background:#191c1e;border:1px solid #404739;box-shadow:0 20px 70px #0006;border-radius:12px;}
+.agent-head h2 {font:600 16px 'Segoe UI',sans-serif;letter-spacing:0;}
+.agent-sub {color:#8d9883;font:11px 'Segoe UI',sans-serif;}
+.agent-overlay {background:#0007;backdrop-filter:none;}
+.agent-status-card,.agent-row {background:#212524;border-color:#343a30;box-shadow:none;border-radius:7px;}
+@media(max-width:800px) {.body{grid-template-columns:180px minmax(0,1fr);} .chat-header{padding:12px;} .chat{padding:18px;} .chat-controls-group{flex-wrap:wrap;} .pill-agent-name{display:none;}}
+@media(max-width:540px) {.body{grid-template-columns:minmax(0,1fr);} .rail.left,body:not(.show-panels) .rail.left{display:none !important;} .chat-models-bar{flex-wrap:wrap;} .inputbar{margin-bottom:10px;} }
