@@ -39,6 +39,17 @@ def child(folder):
 
 
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == '--journal-producer':
+        from core.writer_journal import WriterJournal
+        root=Path(sys.argv[2]); journal=WriterJournal(root/'writers.json')
+        key=journal.reserve(str(root/'project'),False,'codex')
+        worker=subprocess.Popen([sys.executable,'-B','-c','import time; time.sleep(12)'],
+            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        journal.update(key,stage='active',run_id='owned-sleep-fixture',pid=worker.pid)
+        print(json.dumps({'claim':key,'worker_pid':worker.pid}),flush=True)
+        return 0  # Deliberately leave ONLY this authored sleep child to exit naturally.
+    if '--journal' in sys.argv[1:]: return journal_probe()
     if len(sys.argv) == 3 and sys.argv[1] == '--child':
         child(sys.argv[2]); return 0
     from core.conversation_store import ConversationStore
@@ -77,6 +88,52 @@ def main():
             'status':'VERIFIED' if all(checks.values()) else 'FAILED', 'checks':checks}
     (destination/'result.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(json.dumps({**report, 'evidence':str(destination/'result.json')}, indent=2))
+    return 0 if report['status']=='VERIFIED' else 1
+
+
+def journal_probe():
+    from core.writer_journal import WriterJournal
+    destination=ROOT/'labs'/('runtime-journal-'+time.strftime('%Y%m%d-%H%M%S'))
+    destination.mkdir(parents=True,exist_ok=False)
+    report={'scope':'Real separate producer and owned sleep process; no GUI, model or user task; no process killed'}
+    with tempfile.TemporaryDirectory(prefix='quartz-journal-probe-') as folder:
+        root=Path(folder); (root/'project').mkdir()
+        try:
+            producer=subprocess.run([sys.executable,'-B',str(Path(__file__).resolve()),'--journal-producer',folder],
+                capture_output=True,text=True,timeout=15,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+            if producer.returncode: raise RuntimeError(producer.stderr[-500:])
+            data=json.loads(producer.stdout); journal=WriterJournal(root/'writers.json')
+            before=journal.inspect(data['claim'])
+            reserve_blocked=False; ack_blocked=False
+            try: journal.reserve(str(root/'project'),False,'codex')
+            except RuntimeError: reserve_blocked=True
+            try: journal.acknowledge(data['claim'],confirmed=True,external_review=True)
+            except RuntimeError: ack_blocked=True
+            deadline=time.monotonic()+25
+            while journal.inspect(data['claim'])['process_state']=='live':
+                if time.monotonic()>deadline: raise TimeoutError('Owned sleep fixture did not naturally exit')
+                time.sleep(.25)
+            after=journal.inspect(data['claim'])
+            unconfirmed_blocked=False
+            try: journal.acknowledge(data['claim'])
+            except PermissionError: unconfirmed_blocked=True
+            acknowledged=journal.acknowledge(data['claim'],confirmed=True,external_review=True)
+            replacement=journal.reserve(str(root/'project'),False,'codex')
+            journal.finish(replacement)
+            checks={'producer_exited':producer.returncode==0,
+                'host_gone_writer_live':before['owner_state'] in {'gone','replaced'} and before['process_state']=='live',
+                'new_writer_blocked':reserve_blocked,'live_writer_not_overridden_by_confirmation':ack_blocked,
+                'natural_worker_exit':after['process_state'] in {'gone','replaced'},
+                'explicit_review_required':unconfirmed_blocked,
+                'no_authority_or_replay_restored':not acknowledged['permissions_restored'] and not acknowledged['automatic_replay'],
+                'review_archived':Path(acknowledged['archive']).is_file(),
+                'no_claim_left':not WriterJournal(root/'writers.json').recovery_status()['claims']}
+            report.update(status='VERIFIED' if all(checks.values()) else 'FAILED',checks=checks,
+                original_worker_pid=data['worker_pid'],before=before,after=after)
+        except Exception as exc: report.update(status='BLOCKED',error=str(exc))
+    (destination/'result.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
+    print(json.dumps({k:v for k,v in report.items() if k not in {'before','after'}},indent=2))
+    print('Evidence:',destination/'result.json')
     return 0 if report['status']=='VERIFIED' else 1
 
 

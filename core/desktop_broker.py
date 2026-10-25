@@ -27,6 +27,7 @@ class DesktopBroker:
         self.stop_reason = "not started"
         self.stop_detail = None
         self.context_provider = None
+        self.admission_guard = None
 
     def windows(self):
         return self.backend.windows()
@@ -36,6 +37,8 @@ class DesktopBroker:
             raise PermissionError("Explicit desktop-control confirmation required")
         if provider not in {"codex", "antigravity"}:
             raise ValueError("Select one input operator")
+        if self.admission_guard is not None:
+            self.admission_guard()  # May veto, never grants or restores authority.
         with self._lock:
             if self._session and self.clock() < self._session["expires"]:
                 raise RuntimeError("Another desktop operator owns the input lease")

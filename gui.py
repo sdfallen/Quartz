@@ -293,7 +293,15 @@ class Api:
             if self._desktop_agents is None:
                 from core.desktop_agents import DesktopAgentService
                 self._desktop_agents = DesktopAgentService()
+                self._desktop_agents.broker.admission_guard = self._writer_recovery_input_guard
             return self._desktop_agents
+
+    def _writer_recovery_input_guard(self):
+        result = ipc_send('writer_recovery_status')
+        if result.get('status') != 'ok' or not isinstance(result.get('data'), dict):
+            raise PermissionError('Yazıcı kurtarma durumu doğrulanmadan yeni masaüstü yetkisi verilemez.')
+        if result['data'].get('blocked'):
+            raise PermissionError('Önce kesilen yazıcı görevini inceleyin; yeni masaüstü yetkisi açılmadı.')
 
     def desktop_operator_windows(self):
         try:
@@ -423,6 +431,19 @@ class Api:
     # ── Agent Chat API ──────────────────────────────────────
     def chat_status(self) -> dict:
         return ipc_send("chat_status")
+
+    def chat_prepare_resume(self, conversation_id, message_id):
+        try:
+            self._chat_delete_guard()
+            return ipc_send('chat_prepare_resume', {'conversation_id':conversation_id, 'message_id':message_id})
+        except Exception as exc: return {'status':'error','data':str(exc)}
+
+    def writer_recovery_inspect(self, claim_id):
+        return ipc_send('writer_recovery_inspect', {'claim_id':claim_id})
+
+    def writer_recovery_acknowledge(self, claim_id, confirmed=False, external_review=False):
+        return ipc_send('writer_recovery_acknowledge', {'claim_id':claim_id,
+            'confirmed':confirmed is True, 'external_review':external_review is True})
 
     def chat_response_detail(self, level: str) -> dict:
         return ipc_send("chat_response_detail", {"level": level})
@@ -1303,6 +1324,9 @@ _HTML = r"""
           <select class="project-picker" id="mainProjectSelect" title="Aktif Proje" aria-label="Aktif Proje"></select>
           <button class="chat-tool-btn" id="btnAddProject" title="Windows klasör seçicisiyle proje ekle">＋ Proje</button>
           <span class="project-tag" id="writerBadge" style="display:none"></span>
+          <details id="writerRecoveryPanel" hidden style="max-width:720px;font-size:12px">
+            <summary>Kesilen yazıcı görevi — inceleme gerekli</summary><div id="writerRecoveryBody"></div>
+          </details>
           <span class="project-tag" id="chatProjectTag" title="Çalışma Alanı" style="display:none">SquadPilot</span>
           <span class="squad-badge" id="squadBadge" title="Squad Mesajlaşma Altyapısı">Squad: Bağlı</span>
         </div>
@@ -1808,6 +1832,22 @@ _HTML = r"""
       state.style.cssText = 'font-size:11px;opacity:.8;margin-bottom:5px'; bubble.append(state);
     }
     const body = document.createElement('div'); body.textContent = view.summary; bubble.append(body);
+    if (msg?.status === 'interrupted' && msg.id) {
+      const resume = document.createElement('button'); resume.className = 'control-btn';
+      resume.textContent = 'Yeni görev taslağı hazırla';
+      resume.onclick = async () => {
+        const result = await window.pywebview.api.chat_prepare_resume(currentConvId, msg.id);
+        if (result.status !== 'ok') { logLine(String(result.data || 'Taslak hazırlanamadı')); return; }
+        const fresh = await window.pywebview.api.chat_new('Devam taslağı',result.data.agent,result.data.project_id || '');
+        if (fresh.status !== 'ok') { logLine(String(fresh.data || 'Yeni taslak sohbeti açılamadı')); return; }
+        await loadActiveConversation(); // New conversation has no provider sessions.
+        document.getElementById('mainPermissionLevel').value = 'read-only';
+        window.__writeConfirmed = false;
+        inputEl.value = result.data.draft; inputEl.focus();
+        logLine(result.data.warning); // Deliberately no sendAgentMessage call.
+      };
+      bubble.append(resume);
+    }
     if (view.details) {
       const details = document.createElement('details'); details.className = 'technical-details'; details.open = view.open;
       const title = document.createElement('summary'); title.textContent = 'Teknik ayrıntılar';
@@ -2220,11 +2260,52 @@ _HTML = r"""
     });
   }
 
+  let writerRecoveryKey = '';
+  function renderWriterRecovery(data) {
+    data = data || {};
+    const key = JSON.stringify(data); if (key === writerRecoveryKey) return;
+    writerRecoveryKey = key;
+    const panel = document.getElementById('writerRecoveryPanel');
+    const body = document.getElementById('writerRecoveryBody');
+    panel.hidden = !data.blocked; body.replaceChildren();
+    if (data.error) { const text=document.createElement('p'); text.textContent='Yazıcı kaydı okunamıyor: '+data.error; body.append(text); }
+    for (const claim of data.claims || []) {
+      const row=document.createElement('div'); const label=document.createElement('p');
+      label.textContent=`${claim.provider || 'Ajan'} · ${claim.project} · ${claim.stage}`;
+      const inspect=document.createElement('button'); inspect.className='control-btn'; inspect.textContent='Süreç durumunu incele';
+      const details=document.createElement('pre'); details.style.whiteSpace='pre-wrap';
+      const confirmation=document.createElement('label'); const check=document.createElement('input'); check.type='checkbox';
+      confirmation.append(check,document.createTextNode('Harici süreçleri ve dosya durumunu kontrol ettim.'));
+      const ack=document.createElement('button'); ack.className='control-btn'; ack.textContent='İncelemeyi onayla; engeli kaldır'; ack.disabled=true;
+      let inspected=false; check.onchange=()=>{ ack.disabled=!inspected || !check.checked; };
+      inspect.onclick=async()=>{
+        const result=await window.pywebview.api.writer_recovery_inspect(claim.id);
+        details.textContent=JSON.stringify(result.data,null,2); inspected=result.status==='ok';
+        ack.disabled=!inspected || !check.checked;
+      };
+      ack.onclick=async()=>{
+        if (!inspected || !check.checked || !window.confirm('Eski görev yeniden çalıştırılmayacak; izin verilmeyecek. Harici etkinliği kontrol ettiyseniz yalnız engel kaydını kaldırın.')) return;
+        const result=await window.pywebview.api.writer_recovery_acknowledge(claim.id,true,true);
+        if (result.status!=='ok') { details.textContent=String(result.data); return; }
+        await loadActiveConversation();
+      };
+      row.append(label,inspect,details,confirmation,ack); body.append(row);
+    }
+  }
+
+  function agentProgressText(progress) {
+    const names={codex:'Codex',antigravity:'Antigravity'};
+    const states={running:'çalışıyor',completed:'tamamlandı',failed:'başarısız',cancelling:'durduruluyor',cancelled:'durduruldu'};
+    return Object.entries(progress || {}).filter(([key])=>key in names)
+      .map(([key,value])=>`${names[key]}: ${states[value.status] || 'hazırlanıyor'}${value.status==='running' && value.step ? ' — '+value.step : ''}`).join(' | ');
+  }
+
   async function loadActiveConversation() {
     try {
       const resp = await window.pywebview.api.chat_status();
       if (resp.status !== 'ok') return false;
       const data = resp.data;
+      renderWriterRecovery(data.writer_recovery);
       document.getElementById('responseDetail').value = data.preferences?.response_detail || 'short';
       savedResponseDetail = document.getElementById('responseDetail').value;
       updateAntigravitySafety(data.agents?.antigravity);
@@ -2294,7 +2375,9 @@ _HTML = r"""
       }
 
       if (data.metadata) {
-        if (data.metadata.progress_step) {
+        if (Object.keys(data.agent_progress || {}).length) {
+          thinkingText.textContent = agentProgressText(data.agent_progress);
+        } else if (data.metadata.progress_step) {
           thinkingText.textContent = data.metadata.progress_step;
         } else if (Array.isArray(data.metadata.progress) && data.metadata.progress.length > 0) {
           thinkingText.textContent = data.metadata.progress[data.metadata.progress.length - 1];

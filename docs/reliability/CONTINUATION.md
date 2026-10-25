@@ -1,5 +1,29 @@
 # Devam notu — 25 Ekim 2026
 
+## En güncel üçüncü dilim
+
+Güncel rapor `docs/reliability/RUNTIME_RECOVERY_20261025.md`. Önceki dilimler
+tarihsel referanstır. Kalıcı WriterJournal, PID/create-time/EXE readback,
+çakışan scope için fail-closed admission, açık dış inceleme/arşiv ve otomatik
+kill/replay olmayan çözüm akışı eklendi. Kaynak wrapper'ın gerçek terminal
+durumuna rağmen kayıtlı süreç canlıysa claim bırakılmaz. Normal shutdown
+observer'ları bounded settle eder. Broker'ın GUI-local admission veto'su grant
+öncesinde dosyadan taze okur; cached UI bilgisi izin vermez.
+Kesilen mesajdan yeni oturumsuz, read-only sohbet taslağı hazırlanır; otomatik
+send yok. İki ajan progress'i ayrı kayıt/gösterimdir. Son kapı 451 test:
+449 PASS + 2 expectedFailure; 34 parity PASS. EXE SHA256
+`76013abf5c2f0c7871130290d0fec210b9443b6220b84f060a5634b0bafd2421`.
+Deployment receipt `quartz-orphan-package-20261025/deployment-receipt.json`
+backup dizininde. Gerçek ayrı host/worker process probe, Codex authored writer,
+iki CLI ve per-agent progress sonuçları raporda. Yeni GUI screenshot hâlâ
+BLOCKED: bind refresh + bir retry timeout. UIA açılışı var; kart/draft/input
+görevi live kabul edilmedi. ASTER ve güvenlik ayarlarına dokunulmadı.
+Kendi test penceresi normal Alt+F4 ile kapatıldı; süreç/pencere kalmadı. Kök ve
+kurulu korunan kullanıcı JSON/.env hash'leri aynı. Yeni kod değişmedikçe bu
+paketi yeniden derleme veya eski süreç/CLI kanıtlarını sebepsiz tekrar etme.
+
+## İkinci dilim — tarihsel
+
 ## En güncel ikinci dilim
 
 Güncel rapor: `docs/reliability/FOLLOWUP_20261025.md`. Aşağıdaki ilk dilim

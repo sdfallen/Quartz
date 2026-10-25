@@ -32,7 +32,8 @@ def writer_probe():
                        '    def test_negative(self):\n        self.assertEqual(add(-3, 1), -2)\n', encoding='utf-8')
         original_test = hashlib.sha256(test.read_bytes()).hexdigest()
         receipt_path = root/'receipts.json'
-        service = MultiAgentService(projects=[{'id':'fixture','path':str(project)}], evidence_store=receipt_path)
+        service = MultiAgentService(projects=[{'id':'fixture','path':str(project)}], evidence_store=receipt_path,
+                                    journal_store=root/'writer_claims.json')
         try:
             result = service.dispatch_codex(
                 'Disposable authored acceptance fixture. Edit ONLY arithmetic.py so add(a,b) returns a+b. '
@@ -59,7 +60,8 @@ def writer_probe():
                 'authored_tests_unchanged':unchanged,
                 'host_authored_tests_pass':observed is not None and observed.returncode==0,
                 'durable_source_receipt':receipt.get('source_validation',{}).get('status')=='VERIFIED' and bool(receipt.get('historical')),
-                'writer_released':not service._writer_status(str(project))['locked']}
+                'writer_released':not service._writer_status(str(project))['locked'],
+                'durable_claim_released':not service._writer_journal.recovery_status()['claims']}
             report.update(checks=checks, run=run, receipt=receipt, checkpoint=result['run'].get('checkpoint'),
                           host_test_output=(observed.stdout+observed.stderr) if observed else '',
                           status='VERIFIED' if all(checks.values()) else 'FAILED')
@@ -100,6 +102,9 @@ def main():
                 time.sleep(.25)
             conv = chat.store.get(cid)
             report['turn'] = dict(chat._active_turn or {})
+            report['per_agent_progress_verified'] = all(
+                report['turn'].get('agent_progress',{}).get(p,{}).get('status') == 'completed'
+                for p in ('codex','antigravity'))
             report['max_host_poll_seconds'] = max(latencies, default=0)
             report['messages'] = conv['messages']
             for provider in ('codex','antigravity'):
@@ -119,7 +124,7 @@ def main():
             chat.close(); service.shutdown()
             worker = chat._diagnostics.worker
             if worker: worker.join(45)
-    report['status'] = 'VERIFIED' if len(report['providers']) == 2 and all(
+    report['status'] = 'VERIFIED' if report.get('per_agent_progress_verified') and len(report['providers']) == 2 and all(
         r['status'] == 'VERIFIED' for r in report['providers'].values()) else 'FAILED'
     (destination/'result.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
     print(json.dumps({'status':report['status'], 'evidence':str(destination/'result.json'),

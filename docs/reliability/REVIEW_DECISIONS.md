@@ -1,5 +1,9 @@
 # Bağımsız incelemenin entegrasyon kararı
 
+Üçüncü dilim: F05 agent-keyed progress eklendi ve kontrat normal regresyona
+yükseltildi. Güncel koşu 451 test / 2 expectedFailure; güncel değerlendirme
+`RUNTIME_RECOVERY_20261025.md` içinde. Aşağıdaki ilk dilim yorumları tarihseldir.
+
 Bu tablo ilk dilimin tarihsel kararlarını anlatır. İkinci dilimde F01 dil kapsamı
 genişletilip iki expectedFailure ve iki eski-hata assertion'ı doğru davranış
 regresyonuna dönüştürüldü; güncel durum `FOLLOWUP_20261025.md` içinde. Özgün

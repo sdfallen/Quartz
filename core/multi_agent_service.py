@@ -16,6 +16,7 @@ from core.squad_adapter import SquadAdapter
 from core.workspace_checkpoint import create_checkpoint, snapshot_workspace_files, changed_workspace_files
 from core.source_verification import verify_changed_python
 from core.run_evidence_store import RunEvidenceStore
+from core.writer_journal import WriterJournal
 
 
 class MultiAgentService:
@@ -33,7 +34,7 @@ class MultiAgentService:
     )
 
     def __init__(self, projects=None, squad_executable=None, codex_executable=None,
-                 antigravity_executable=None, project_store=None, evidence_store=None):
+                 antigravity_executable=None, project_store=None, evidence_store=None, journal_store=None):
         from pathlib import Path
         self.projects = ProjectRegistry(projects, storage_path=project_store)
         self.codex = CodexRuntime(codex_executable)
@@ -51,10 +52,14 @@ class MultiAgentService:
         self._squad_conn_cache: dict[str, tuple[float, dict]] = {}
         self._collaborations = {}
         self._writers: dict[str, dict] = {}
+        self._writer_threads = {}
         self._file_changes: dict[str, dict] = {}
         if evidence_store is None and project_store is not None:
             evidence_store = Path(project_store).parent / '.quartz' / 'run_evidence.json'
         self._evidence_store = RunEvidenceStore(evidence_store)
+        if journal_store is None and project_store is not None:
+            journal_store = Path(project_store).parent / '.quartz' / 'writer_claims.json'
+        self._writer_journal = WriterJournal(journal_store)
         self._text_workspaces = {}
 
     def _start_writer(self, provider: str, project: dict, start, *args, **kwargs) -> dict:
@@ -69,29 +74,44 @@ class MultiAgentService:
                     raise RuntimeError("Çakışan proje/tam yetki yazıcısı var; önce o görev tamamlanmalı.")
             self._writers[key] = {"owner": None, "agent": provider, "pending": True, "exclusive": exclusive}
         try:
+            claim = self._writer_journal.reserve(key, exclusive, provider)
+            starting = False
+            with self._lock:
+                self._writers[key]['journal_claim'] = claim
             checkpoint = create_checkpoint(project["path"])
             if (checkpoint.get("status") not in {"git", "snapshot"}
                     or not checkpoint.get("complete") or not checkpoint.get("archive")):
                 raise RuntimeError(checkpoint.get("warning") or "Doğrulanmış checkpoint olmadan yazma başlatılamaz.")
             before = snapshot_workspace_files(project["path"])
+            self._writer_journal.update(claim, stage='starting')
+            starting = True
             run = start(*args, **kwargs)
             run["checkpoint"] = checkpoint
+            self._writer_journal.update(claim, stage='active', run_id=run['id'], pid=run.get('pid'))
             with self._lock:
-                self._writers[key] = {"owner": run["id"], "agent": provider, "pending": False, "exclusive": exclusive}
+                self._writers[key] = {"owner": run["id"], "agent": provider, "pending": False, "exclusive": exclusive, "journal_claim":claim}
             runtime = self.codex if provider == "codex" else self.antigravity
-            threading.Thread(target=self._watch_writer,
-                             args=(key, run["id"], runtime, project["path"], before),
-                             name=f"quartz-writer-{run['id'][:8]}", daemon=True).start()
+            worker = threading.Thread(target=self._watch_writer,
+                             args=(key, run["id"], runtime, project["path"], before, claim),
+                             name=f"quartz-writer-{run['id'][:8]}", daemon=True)
+            with self._lock: self._writer_threads[run['id']] = worker
+            worker.start()
             return run
         except Exception:
+            # A start call may have spawned a process before raising. Durable
+            # uncertainty must survive; never remove it just to allow a retry.
+            if 'claim' in locals() and not starting:
+                self._writer_journal.finish(claim)
             with self._lock:
                 self._writers.pop(key, None)
             raise
 
-    def _watch_writer(self, key: str, run_id: str, runtime, project_path: str, before: dict) -> None:
+    def _watch_writer(self, key: str, run_id: str, runtime, project_path: str, before: dict, claim=None) -> None:
+        terminal_observed = False
         try:
             while runtime.get(run_id)["status"] not in runtime.TERMINAL:
                 time.sleep(0.15)
+            terminal_observed = True
             after = snapshot_workspace_files(project_path)
             changed, warning = changed_workspace_files(project_path, before, after)
             validation = verify_changed_python(project_path, changed, warning=warning)
@@ -109,7 +129,13 @@ class MultiAgentService:
                 self._file_changes[run_id] = {"files_changed":[], "evidence_warning":str(exc),
                     "source_validation":{"level":"SOURCE/STATIC", "status":"NOT TESTED", "tests_executed":False}}
         finally:
+            if terminal_observed:
+                try: self._writer_journal.finish(claim, verify_process=True)
+                except (OSError, ValueError, RuntimeError) as exc:
+                    with self._lock:
+                        self._file_changes.setdefault(run_id, {})['recovery_warning'] = str(exc)
             with self._lock:
+                self._writer_threads.pop(run_id, None)
                 if self._writers.get(key, {}).get("owner") == run_id:
                     self._writers.pop(key, None)
 
@@ -164,7 +190,7 @@ class MultiAgentService:
                 "codex": codex, "antigravity": antigravity,
                 "squad": {"checking":True, "mode":"task-isolated" if project.get("workflow") == "warband" else "project",
                           "message":"Bağlantı arka planda kontrol ediliyor."},
-                "single_writer": self._writer_status(project["path"])}
+                "single_writer": self._writer_status(project["path"]), "writer_recovery":self.writer_recovery_status()}
 
     @staticmethod
     def _task_squad_status(squad):
@@ -205,6 +231,7 @@ class MultiAgentService:
             "runs": self._enriched_runs(),
             "collaborations": self._collaboration_list(), "error": error,
             "single_writer": self._writer_status(project["path"]),
+            "writer_recovery":self.writer_recovery_status(refresh=True),
             "gemini": {
                 "status": "retired",
                 "message": "Bireysel Gemini CLI erişimi sona erdi; Antigravity kullanılıyor.",
@@ -661,9 +688,19 @@ class MultiAgentService:
         return runtime.cancel(run_id)
 
     def shutdown(self):
-        self.codex.shutdown()
-        if self.antigravity is not None:
-            self.antigravity.shutdown()
+        errors = []
+        for runtime in (self.codex, self.antigravity):
+            if runtime is not None:
+                try: runtime.shutdown()
+                except Exception as exc: errors.append(str(exc))
+        # Give owned terminal observers a bounded opportunity to commit receipts
+        # and release claims before normal app exit kills daemon threads.
+        deadline = time.monotonic() + 3
+        with self._lock: workers = list(self._writer_threads.values())
+        for worker in workers:
+            if worker is not threading.current_thread() and worker.is_alive():
+                worker.join(max(0, deadline-time.monotonic()))
+        if errors: raise RuntimeError('Runtime cleanup failed: ' + '; '.join(errors))
 
     def _squad(self, project_id) -> SquadAdapter:
         path = self.projects.resolve(project_id)
@@ -734,7 +771,31 @@ class MultiAgentService:
             writer = self._writers.get(os.path.normcase(str(project_path)))
             if writer:
                 return {"locked": True, **writer}
+        recovery = self.writer_recovery_status()
+        for claim in recovery['claims']:
+            if self._writer_journal.conflicts(os.path.normcase(str(project_path)), False, claim):
+                return {'locked':True, 'owner':claim.get('run_id'), 'agent':claim.get('provider'), 'recovery_required':True}
+        if recovery.get('error'):
+            return {'locked':True, 'owner':None, 'agent':None, 'recovery_required':True, 'error':recovery['error']}
         return {"locked": False, "owner": None, "agent": None}
+
+    def writer_recovery_status(self, *, refresh=False):
+        if refresh: self._writer_journal.refresh()
+        raw = self._writer_journal.recovery_status()
+        with self._lock:
+            managed = {w.get('journal_claim') for w in self._writers.values()}
+        raw['claims'] = [c for c in raw['claims'] if c['id'] not in managed]
+        raw['blocked'] = bool(raw['claims'] or raw.get('error'))
+        return raw
+
+    def inspect_writer_recovery(self, claim_id):
+        if not any(c['id'] == claim_id for c in self.writer_recovery_status(refresh=True)['claims']):
+            raise PermissionError('Aktif veya değişmiş yazıcı bu akıştan incelenemez.')
+        return self._writer_journal.inspect(claim_id)
+
+    def acknowledge_writer_recovery(self, claim_id, *, confirmed=False, external_review=False):
+        self.inspect_writer_recovery(claim_id)
+        return self._writer_journal.acknowledge(claim_id, confirmed=confirmed, external_review=external_review)
 
     def _antigravity_status(self, now):
         if self.antigravity is None:

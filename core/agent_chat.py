@@ -8,6 +8,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from copy import deepcopy
 
 from core.conversation_store import ConversationStore
 from core.multi_agent_service import MultiAgentService
@@ -81,10 +82,11 @@ class AgentChatService:
                 "active_conversation": conv,
                 "preferences": self.store.preferences(),
                 "conversations": self.store.list(),
-                "active_turn": dict(self._active_turn) if self._active_turn else None,
+                "active_turn": deepcopy(self._active_turn) if self._active_turn else None,
                 "models": models_catalog,
                 "diagnostics": diagnostics,
                 "recovery": self.recovery,
+                "writer_recovery": self.agent_service.writer_recovery_status() if hasattr(self.agent_service, 'writer_recovery_status') else {},
                 "squad": {
                     "checking": bool(squad_info.get('checking')),
                     "connected": squad_connected,
@@ -155,6 +157,24 @@ class AgentChatService:
     def close(self):
         self._diagnostics.close()
         return self.cancel_active()
+
+    def prepare_resume(self, conversation_id, message_id):
+        """Return an editable draft only. No dispatch, permission or session reuse."""
+        with self._lock:
+            if self._active_turn and self._active_turn.get('status') in {'running','cancelling'}:
+                raise RuntimeError('Önce aktif görevi bitirin veya durdurun.')
+            conv = self.store.get(conversation_id)
+            messages = conv.get('messages', [])
+            index = next((i for i,m in enumerate(messages) if m['id'] == message_id), None)
+            if index is None or messages[index].get('status') != 'interrupted':
+                raise ValueError('Yalnız kesilmiş görevin taslağı hazırlanabilir.')
+            previous = next((m for m in reversed(messages[:index]) if m.get('role') == 'user'), None)
+            if not previous: raise ValueError('Orijinal kullanıcı görevi bulunamadı.')
+            return {'draft':previous['content'], 'conversation_id':conversation_id,
+                    'project_id':conv.get('project_id'), 'agent':conv.get('agent','codex'),
+                    'message_id':message_id, 'permission_level':'read-only',
+                    'warning':'Harici süreç ve dosya durumunu yeniden kontrol edin. Bu taslak eski görevi veya izinlerini devam ettirmez.',
+                    'automatic_replay':False, 'permissions_restored':False}
 
     def select_conversation(self, conversation_id: str) -> dict:
         with self._lock:
@@ -505,6 +525,8 @@ class AgentChatService:
             turn = dict(self._active_turn)
             self._active_turn["status"] = "cancelling"
             self._active_turn["cancel_requested"] = True
+            for entry in self._active_turn.get('agent_progress', {}).values():
+                if entry.get('status') not in {'completed','failed','cancelled'}: entry['status'] = 'cancelling'
 
         collab_id = turn.get("collaboration_id")
         if collab_id:
@@ -530,6 +552,8 @@ class AgentChatService:
         with self._lock:
             if self._active_turn and self._active_turn.get("turn_id") == turn.get("turn_id"):
                 self._active_turn["status"] = "cancelled"
+                for entry in self._active_turn.get('agent_progress', {}).values():
+                    if entry.get('status') not in {'completed','failed'}: entry['status'] = 'cancelled'
             cid = turn["conversation_id"]
             all_mids = list(turn.get("message_ids") or [])
             if turn.get("message_id") and turn["message_id"] not in all_mids:
@@ -556,7 +580,7 @@ class AgentChatService:
         with self._lock:
             if not self._active_turn:
                 return {"active": False}
-            turn = dict(self._active_turn)
+            turn = deepcopy(self._active_turn)
             cid = turn["conversation_id"]
             mid = turn["message_id"]
 
@@ -582,6 +606,7 @@ class AgentChatService:
                 "message_id": mid,
                 "content": msg["content"] if msg else "",
                 "metadata": meta,
+                "agent_progress": turn.get('agent_progress', {}),
                 "messages": messages,
                 "single_writer": writer_status,
             }
@@ -611,7 +636,7 @@ class AgentChatService:
             )
 
     def _set_turn_progress(self, step_text: str, current_msg_id: str | None = None, run_id: str | None = None,
-                           *, owner_msg_id: str | None = None):
+                           *, owner_msg_id: str | None = None, agent: str | None = None):
         with self._lock:
             if not self._active_turn or self._active_turn.get("status") != "running":
                 return False
@@ -619,6 +644,10 @@ class AgentChatService:
             if not owner or self._is_turn_cancelled(owner):
                 return False
             self._active_turn["progress_step"] = step_text
+            if agent in {'codex','antigravity'}:
+                self._active_turn.setdefault('agent_progress', {})[agent] = {
+                    'message_id':current_msg_id, 'run_id':run_id, 'step':step_text,
+                    'status':'running', 'updated_at':time.time()}
             if current_msg_id:
                 self._active_turn["message_id"] = current_msg_id
                 mids = self._active_turn.setdefault("message_ids", [])
@@ -640,6 +669,8 @@ class AgentChatService:
                 return False
             self._active_turn["status"] = status
             self._active_turn["run_id"] = None
+            for entry in self._active_turn.get('agent_progress', {}).values():
+                if entry.get('status') not in {'completed','failed','cancelled'}: entry['status'] = status
             return True
 
     def _publish_run_update(self, cid, msg_id, content, metadata, *, provider=None, session=None):
@@ -651,6 +682,12 @@ class AgentChatService:
                 self.store.set_agent_session(cid, provider, session)
             if metadata is not None:
                 self.store.update_message_content(cid, msg_id, content, metadata=metadata)
+                agent = metadata.get('agent') or provider
+                progress = self._active_turn.setdefault('agent_progress', {})
+                entry = progress.get(agent, {})
+                if agent in {'codex','antigravity'} and entry.get('message_id', msg_id) == msg_id:
+                    progress[agent] = {**entry, 'message_id':msg_id, 'status':metadata.get('status','running'),
+                                       'run_id':metadata.get('run_id'), 'updated_at':time.time()}
             return True
 
     def _run_chat_turn(self, cid: str, msg_id: str, agent: str, prompt: str,
@@ -764,7 +801,7 @@ class AgentChatService:
             if self._is_turn_cancelled(msg_id):
                 self.agent_service.cancel(run_id)
                 return ""
-            self._set_turn_progress("Antigravity yanıtlıyor...", current_msg_id=msg_id, run_id=run_id)
+            self._set_turn_progress("Antigravity yanıtlıyor...", current_msg_id=msg_id, run_id=run_id, agent='antigravity')
 
         run, status = self._stream_antigravity_run(cid, msg_id, run_id, meta, save_session=use_session)
         if self._is_turn_cancelled(msg_id) or status == "cancelled":
@@ -797,7 +834,7 @@ class AgentChatService:
                 run_id = retry_res["run"]["id"]
                 meta["run_id"] = run_id
                 meta["review_scope"] = "supplied-text-only"
-                self._set_turn_progress("Antigravity verilen metni araçsız inceliyor...", current_msg_id=msg_id, run_id=run_id)
+                self._set_turn_progress("Antigravity verilen metni araçsız inceliyor...", current_msg_id=msg_id, run_id=run_id, agent='antigravity')
                 run, status = self._stream_antigravity_run(cid, msg_id, run_id, meta, save_session=False)
             elif (not write and not full_access and not has_perm_err and not is_quota_or_model_err
                   and prev_session and status == "failed"):
@@ -808,7 +845,7 @@ class AgentChatService:
                 )
                 run_id = retry_res["run"]["id"]
                 meta["run_id"] = run_id
-                self._set_turn_progress("Antigravity salt-okunur yeni oturumla yanıtlıyor...", current_msg_id=msg_id, run_id=run_id)
+                self._set_turn_progress("Antigravity salt-okunur yeni oturumla yanıtlıyor...", current_msg_id=msg_id, run_id=run_id, agent='antigravity')
                 run, status = self._stream_antigravity_run(cid, msg_id, run_id, meta, save_session=use_session)
 
         if self._is_turn_cancelled(msg_id) or status == "cancelled":
@@ -941,7 +978,7 @@ class AgentChatService:
             if self._is_turn_cancelled(msg_id):
                 self.agent_service.cancel(run_id)
                 return ""
-            self._set_turn_progress("Codex yanıtlıyor...", current_msg_id=msg_id, run_id=run_id)
+            self._set_turn_progress("Codex yanıtlıyor...", current_msg_id=msg_id, run_id=run_id, agent='codex')
 
         run, status = self._stream_codex_run(cid, msg_id, run_id, meta, save_session=use_session)
         if self._is_turn_cancelled(msg_id) or status == "cancelled":
@@ -963,7 +1000,7 @@ class AgentChatService:
                 )
                 run_id = retry_res["run"]["id"]
                 meta["run_id"] = run_id
-                self._set_turn_progress("Codex yeni oturumla yanıtlıyor...", current_msg_id=msg_id, run_id=run_id)
+                self._set_turn_progress("Codex yeni oturumla yanıtlıyor...", current_msg_id=msg_id, run_id=run_id, agent='codex')
                 run, status = self._stream_codex_run(cid, msg_id, run_id, meta, save_session=use_session)
 
         if self._is_turn_cancelled(msg_id) or status == "cancelled":
@@ -1062,7 +1099,7 @@ class AgentChatService:
                 "progress": [],
             },
         )
-        self._set_turn_progress(f"{sender.upper()} → {recipient.upper()} yanıtlıyor...", current_msg_id=msg["id"], owner_msg_id=owner_msg_id)
+        self._set_turn_progress(f"{sender.upper()} → {recipient.upper()} yanıtlıyor...", current_msg_id=msg["id"], owner_msg_id=owner_msg_id, agent=sender)
         return msg
 
     def _run_collaboration_turn(self, cid: str, first_msg_id: str, prompt: str, project_id: str | None,

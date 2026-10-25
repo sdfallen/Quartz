@@ -88,3 +88,33 @@ assert(agentMessageView('Done',message,'short').state.includes('başarısız'));
 message.status='interrupted';
 assert(agentMessageView('Partial',message,'short').state.includes('otomatik sürdürülmedi'));
 ''')
+
+    def test_per_agent_labels_keep_both_results_visible(self):
+        source=gui._HTML.split('  function agentProgressText(',1)[1].split('  async function loadActiveConversation()',1)[0]
+        self.node('function agentProgressText('+source+r'''
+const assert=require('assert');
+const text=agentProgressText({codex:{status:'completed'},antigravity:{status:'running',step:'checking'},evil:{status:'completed'}});
+assert(text.includes('Codex: tamamlandı'));assert(text.includes('Antigravity: çalışıyor'));
+assert(!text.includes('evil'));assert.equal(agentProgressText({}),'');
+''')
+
+    def test_resume_button_creates_fresh_readonly_draft_without_sending(self):
+        source=gui._HTML.split('  function renderMessageBody(',1)[1].split('  function appendMsg(',1)[0]
+        self.node('function renderMessageBody('+source+r'''
+const assert=require('assert');let clicked,created=0,loaded=0;
+const level={value:'short'},permission={value:'full'};
+global.document={getElementById:id=>id==='responseDetail'?level:permission,createElement:tag=>{
+ const element={style:{},append:()=>{}};if(tag==='button')clicked=element;return element;}};
+global.currentConvId='old';global.inputEl={value:'',focus:()=>{}};global.logLine=()=>{};
+global.agentMessageView=()=>({summary:'partial',state:'interrupted',details:''});
+global.loadActiveConversation=async()=>{loaded++};
+global.window={__writeConfirmed:true,pywebview:{api:{
+ chat_prepare_resume:async()=>({status:'ok',data:{draft:'Review only',agent:'codex',project_id:'p',warning:'Review first'}}),
+ chat_new:async(title,agent,project)=>{created++;assert.equal(agent,'codex');assert.equal(project,'p');return {status:'ok'}},
+ chat_send:()=>{throw new Error('must not dispatch')}
+}}};
+renderMessageBody({dataset:{},replaceChildren:()=>{},append:()=>{}},'partial',{id:'m',status:'interrupted'});
+(async()=>{await clicked.onclick();assert.equal(created,1);assert.equal(loaded,1);
+assert.equal(permission.value,'read-only');assert.equal(window.__writeConfirmed,false);assert.equal(inputEl.value,'Review only');
+})().catch(e=>{console.error(e);process.exitCode=1});
+''')

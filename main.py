@@ -228,6 +228,22 @@ class IPCServer:
         if action == "chat_status":
             return {"status": "ok", "data": self._get_agent_chat().status()}
 
+        if action == 'chat_prepare_resume':
+            data = req.get('data') or {}
+            return {'status':'ok', 'data':self._get_agent_chat().prepare_resume(data.get('conversation_id'), data.get('message_id'))}
+
+        if action == 'writer_recovery_inspect':
+            return {'status':'ok', 'data':self._get_agent_center().inspect_writer_recovery((req.get('data') or {}).get('claim_id'))}
+
+        if action == 'writer_recovery_status':
+            return {'status':'ok', 'data':self._get_agent_center().writer_recovery_status(refresh=True)}
+
+        if action == 'writer_recovery_acknowledge':
+            data = req.get('data') or {}
+            return {'status':'ok', 'data':self._get_agent_center().acknowledge_writer_recovery(
+                data.get('claim_id'), confirmed=data.get('confirmed') is True,
+                external_review=data.get('external_review') is True)}
+
         if action == "chat_coordination_message":
             data = req.get("data") or {}
             return {"status":"ok", "data":self._get_agent_chat().coordination_message(

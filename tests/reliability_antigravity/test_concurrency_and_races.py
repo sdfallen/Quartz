@@ -118,11 +118,10 @@ class ConcurrencyAndRacesReliabilityTests(unittest.TestCase):
         self.assertEqual(active["message_id"], "msg-agy-1")
         self.assertNotIn("msg-codex-1", active["message_id"])
 
-    @unittest.expectedFailure
     def test_contract_f05_collaboration_turn_should_track_per_agent_progress(self):
         """CONTRACT TEST: A multi-agent turn must track concurrent agent progress in structured state.
 
-        Marked as expectedFailure until Codex introduces per-agent progress tracking in _active_turn.
+        Codex follow-up: promoted from expectedFailure after per-agent progress was added.
         """
         agent_svc = Mock()
         store_path = self.root / "conv.json"

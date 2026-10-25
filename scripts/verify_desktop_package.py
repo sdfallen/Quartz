@@ -26,7 +26,7 @@ def main():
     for module in ("gui", "main", "core.agent_chat", "core.conversation_store", "core.response_style", "core.local_ipc",
                    "core.desktop_agents", "core.desktop_control", "core.desktop_native", "core.desktop_broker",
                    "core.desktop_mcp", "core.desktop_launch", "core.desktop_task_ui", "core.natural_desktop", "core.warband_workspace", "core.project_registry", "core.multi_agent_service", "core.message_intent", "core.codex_runtime", "core.antigravity_runtime", "core.chat_coordination", "core.branding",
-                   "core.async_snapshot", "core.task_outcome", "core.source_verification", "core.run_evidence_store"):
+                   "core.async_snapshot", "core.task_outcome", "core.source_verification", "core.run_evidence_store", "core.writer_journal"):
         source = ROOT / (module.replace(".", "/") + ".py")
         if module not in pyz.toc:
             # desktop_mcp is a standalone helper, not imported into the GUI.
