@@ -27,9 +27,9 @@ def message_intent(text):
     # Explanatory questions do not execute the operation being discussed.
     explicit = re.search(
         r'\b(?:incele(?:yin|yiniz|yip|yerek)?|düzelt(?:in|iniz)?|derle(?:yin)?|geliştir(?:in)?|'
-        r'çalıştır(?:ın|in)?|başlat(?:ın)?|aç(?:ın|in)?|oku(?:yun)?|araştır(?:ın)?|'
+        r'çalıştır(?:ın|in)?|başlat(?:ın)?|başla(?:yın|yınız)?|aç(?:ın|in)?|oku(?:yun)?|araştır(?:ın)?|'
         r'tıkla(?:yın)?|yükle(?:yin)?|kaydet|sil|ekle(?:yin)?|oluştur(?:un)?|'
-        r'test et|kontrol et|test edip|kontrol edip|debug yap|test yap|bi(?:r)? test bakalım|dene(?:yin)?|bul|tara|yaz|güncelle|değiştir|çöz(?:ün)?|kapat(?:ın)?)\b', value)
+        r'test (?:et|edin|ediniz)|kontrol (?:et|edin|ediniz)|test edip|kontrol edip|debug yap|test yap|bi(?:r)? test bakalım|dene(?:yin)?|bul|tara|yaz|güncelle|değiştir|çöz(?:ün)?|kapat(?:ın)?)\b', value)
     polite = re.search(
         r'\b(?:inceleyebilir|inceler|düzeltebilir|düzeltir|açabilir|açar|çalıştırabilir|çalıştırır|'
         r'bakabilir|bakar|test edebilir|test eder|kontrol edebilir|kontrol eder|çözebilir|çözer|'

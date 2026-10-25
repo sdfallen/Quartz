@@ -77,7 +77,7 @@ class Api:
         self._natural = None
         self._natural_start_lock = threading.Lock()
 
-    def natural_start(self, text, conversation_id, project_id, models):
+    def natural_start(self, text, conversation_id, project_id, models, permission_level='read-only'):
         """Start reasoning/tool selection, NOT a desktop grant."""
         try:
             with self._natural_start_lock:
@@ -98,7 +98,10 @@ class Api:
                     if result.get("status") != "ok": raise RuntimeError("Görev sohbet günlüğüne yazılamadı")
                 emit(conversation_id, "user", text, {})
                 self._natural = NaturalDesktopTask(self._desktop_service(), emit)
-                result = self._natural.start(text, project, conversation_id, models)
+                context = '\n\n'.join(str(m.get('sender') or m.get('role')) + ': ' + str(m.get('content') or '')[:1200]
+                    for m in (data.get('active_conversation',{}).get('messages') or [])[-8:])[-10000:]
+                result = self._natural.start(text, project, conversation_id, models,
+                    requested_permission_level=permission_level, conversation_context=context)
                 return {"status":"ok", "data":{"handled":True, "natural_started":True, "task":result}}
         except Exception as exc: return {"status":"error", "data":str(exc)}
 
@@ -127,16 +130,34 @@ class Api:
                 self._coordination = ChatCoordination(self._desktop_service(), emit)
         return self._coordination
 
-    def coordination_route(self, text, conversation_id, project_id, models):
+    def coordination_route(self, text, conversation_id, project_id, models, permission_level='read-only'):
         try:
             import re
             from core.message_intent import message_intent, tools_disallowed
             from core.desktop_task_ui import desktop_intent, desktop_help
+            if permission_level not in {'read-only','project','full'}: raise ValueError('Geçersiz dosya yetkisi seçimi')
             message_kind = message_intent(text)
             if tools_disallowed(text):
                 for service in (self._natural, self._coordination):
                     if service is not None and service.status().get("active"):
                         service.stop()
+            # Scope introspection is host data, not a model guessing which
+            # permissions the dropdown may have granted. No native service or
+            # project work is started by this query.
+            if (not tools_disallowed(text) and not re.search(r'masaüst|bilgisayar|pencere|ekran',text,re.I)
+                    and re.search(r'\b(?:yetkilerinizi|yetkileriniz|yetkiniz|erişiminiz|izinleriniz)\b', text, re.I)
+                    and re.search(r'kontrol|nedir|neler|var mı|varmı', text, re.I)):
+                labels={'read-only':'Salt Okunur','project':'Proje Yetkisi','full':'Tam Yetki (dosya erişimi)'}
+                reply='Seçili dosya modu: '+labels[permission_level]+'. Bu önayar yeni dosya görevine uygulanır; çalışan görevin yetkisini değiştirmez. '
+                if self._natural and self._natural.status().get('active'):
+                    reply+='Etkin görev kapsamlı MCP araçlarıyla çalışıyor; gerçek uygulama/UM yetkisi kendi onayına bağlıdır. '
+                else:
+                    reply+='Şu an bu sorgu yeni bir ajan veya bilgisayar kontrolü başlatmadı. '
+                reply+='Yapılacak işi bu sohbete yazabilirsiniz; gerekli kapsam onayı burada istenir. Dosya modu, masaüstü veya Universal Modder izninin yerine geçmez.'
+                for sender,content in (('user',text),('quartz',reply)):
+                    result=ipc_send('chat_coordination_message',{'conversation_id':conversation_id,'sender':sender,'content':content})
+                    if result.get('status')!='ok': raise RuntimeError('Yetki durumu sohbete yazılamadı')
+                return {'status':'ok','data':{'handled':True,'permission_status':reply}}
             intent = desktop_intent(text)
             if intent == "help":
                 view = self.desktop_task_status()["data"]
@@ -166,14 +187,14 @@ class Api:
                 if active:
                     service.instruct(text)
                     return {"status":"ok","data":{"handled":True,"instructed":True}}
-                return self.natural_start(text,conversation_id,project_id,models)
+                return self.natural_start(text,conversation_id,project_id,models,permission_level)
             project_state=ipc_send("chat_status")
             project_data=project_state.get("data") if project_state.get("status")=="ok" else {}
             if not isinstance(project_data,dict): project_data={}
             selected_project=next((p for p in project_data.get("projects",[])
                                    if p.get("id")==project_id),None)
             if selected_project and selected_project.get("workflow")=="warband" and message_kind == "task":
-                return self.natural_start(text,conversation_id,project_id,models)
+                return self.natural_start(text,conversation_id,project_id,models,permission_level)
             roles = proposed_roles(text)
             if roles is None:
                 if active and service.status()["job"]["conversation_id"] == conversation_id:
@@ -512,12 +533,13 @@ class Api:
 
     def chat_send(self, message: str, agent: str = "", conversation_id: str = "",
                   write: bool = False, confirm_write: bool = False,
-                  permission_level: str = "read-only") -> dict:
+                  permission_level: str = "read-only", requested_permission_level: str | None = None) -> dict:
         return ipc_send("chat_send", {
             "message": message, "agent": agent or None,
             "conversation_id": conversation_id or None,
             "write": bool(write), "confirm_write": bool(confirm_write),
             "permission_level": permission_level or ("project" if write else "read-only"),
+            "requested_permission_level": requested_permission_level or permission_level,
         })
 
     def chat_poll(self) -> dict:
@@ -1342,6 +1364,7 @@ _HTML = r"""
             <option value="read-only" selected>Salt Okunur</option>
           </select>
           <input type="checkbox" id="mainWriteToggle" style="display:none">
+          <span id="permissionSelectionHint" aria-live="polite" style="font-size:11px;max-width:280px;color:#aaa">Seçili dosya modu: Salt Okunur · yeni görev için</span>
           <div class="agent-badge-select" title="Aktif Ajan" style="display:none">
             <span style="font-size:10px">◈</span>
             <select id="mainAgentSelect">
@@ -1842,6 +1865,7 @@ _HTML = r"""
         if (fresh.status !== 'ok') { logLine(String(fresh.data || 'Yeni taslak sohbeti açılamadı')); return; }
         await loadActiveConversation(); // New conversation has no provider sessions.
         document.getElementById('mainPermissionLevel').value = 'read-only';
+        updatePermissionSelectionHint();
         window.__writeConfirmed = false;
         inputEl.value = result.data.draft; inputEl.focus();
         logLine(result.data.warning); // Deliberately no sendAgentMessage call.
@@ -2464,20 +2488,36 @@ _HTML = r"""
     setTimeout(() => { cancelBtn.disabled = false; setThinking(false); }, 1000);
   });
 
+  function updatePermissionSelectionHint() {
+    const select=document.getElementById('mainPermissionLevel');
+    const hint=document.getElementById('permissionSelectionHint');
+    const labels={'read-only':'Salt Okunur',project:'Proje Yetkisi',full:'Tam Yetki'};
+    const level=select?.value || 'read-only';
+    if(hint){hint.textContent=`${labels[level] || labels['read-only']} · yeni dosya görevi`;
+      hint.title='Seçim anında güncellenir; çalışan ajanın yetkisini değiştirmez. Uygulama ve Universal Modder kapsam onayları ayrıdır.';}
+    window.__writeConfirmed=false;
+  }
+  const permissionSelect=document.getElementById('mainPermissionLevel');
+  if(permissionSelect){permissionSelect.addEventListener('change',updatePermissionSelectionHint);updatePermissionSelectionHint();}
+
   let coordinationRouting = false;
   async function sendAgentMessage() {
     const text = inputEl.value.trim();
     if (!text || coordinationRouting) return;
+    // Freeze the selected mode for THIS submitted message, not a later poll
+    // or a dropdown edit while routing is awaiting the backend.
+    const selectedPermissionLevel=document.getElementById('mainPermissionLevel')?.value || 'read-only';
     coordinationRouting = true;
     let coordinated;
     try { coordinated = await window.pywebview.api.coordination_route(text, currentConvId, mainProjectSelect.value,
-      {codex:{model:codexModelSelect.value,effort:codexEffortSelect.value},antigravity:{model:agyModelSelect.value,effort:agyEffortSelect.value}}); }
+      {codex:{model:codexModelSelect.value,effort:codexEffortSelect.value},antigravity:{model:agyModelSelect.value,effort:agyEffortSelect.value}},selectedPermissionLevel); }
     catch(e) { appendMsg('err','QUARTZ',String(e)); return; }
     finally { coordinationRouting = false; }
     if (coordinated.status !== 'ok') { appendMsg('err','QUARTZ',coordinated.data); return; }
     if (coordinated.data?.handled) {
       inputEl.value = '';
       if (coordinated.data.plan) showCoordinationApproval(coordinated.data);
+      else if(coordinated.data.permission_status) await loadActiveConversation();
       else if(coordinated.data.desktop_help) showDesktopHelp(coordinated.data.desktop_help);
       else if(!coordinated.data.natural_started) appendMsg('bot','QUARTZ',coordinated.data.stopped ? 'Görev durduruldu.' : 'Talimat iletildi; yetki kapsamı değişmedi.');
       await refreshDesktopTaskState();
@@ -2488,7 +2528,7 @@ _HTML = r"""
 
     const writeSelect = document.getElementById('mainPermissionLevel');
     const conversationOnly = coordinated.data?.intent === 'conversation';
-    const permissionLevel = conversationOnly ? 'read-only' : (writeSelect ? writeSelect.value : 'read-only');
+    const permissionLevel = conversationOnly ? 'read-only' : selectedPermissionLevel;
     const isWrite = permissionLevel === 'full' || permissionLevel === 'project';
     const confirmWrite = isWrite;
     const agent = mainAgentSelect ? mainAgentSelect.value : 'antigravity';
@@ -2518,7 +2558,7 @@ _HTML = r"""
     activeBotBubble = botWrap.querySelector('.bubble');
 
     try {
-      const resp = await window.pywebview.api.chat_send(text, agent, currentConvId, isWrite, confirmWrite, permissionLevel);
+      const resp = await window.pywebview.api.chat_send(text, agent, currentConvId, isWrite, confirmWrite, permissionLevel, selectedPermissionLevel);
       if (resp.status !== 'ok') {
         setThinking(false);
         activeBotBubble.textContent = 'Hata: ' + (resp.data || 'Bilinmeyen hata');
@@ -3293,10 +3333,7 @@ _HTML = r"""
     pollTasks();
     pollUiEvents();
     checkApiSetup();
-    const writeSelectEl = document.getElementById('mainPermissionLevel');
-    if (writeSelectEl) {
-      writeSelectEl.addEventListener('change', () => { window.__writeConfirmed = false; });
-    }
+    updatePermissionSelectionHint();
     inputEl.focus();
     try {
       const perms = await window.pywebview.api.tool_permissions();

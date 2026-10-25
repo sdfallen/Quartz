@@ -106,6 +106,7 @@ const level={value:'short'},permission={value:'full'};
 global.document={getElementById:id=>id==='responseDetail'?level:permission,createElement:tag=>{
  const element={style:{},append:()=>{}};if(tag==='button')clicked=element;return element;}};
 global.currentConvId='old';global.inputEl={value:'',focus:()=>{}};global.logLine=()=>{};
+global.updatePermissionSelectionHint=()=>{};
 global.agentMessageView=()=>({summary:'partial',state:'interrupted',details:''});
 global.loadActiveConversation=async()=>{loaded++};
 global.window={__writeConfirmed:true,pywebview:{api:{

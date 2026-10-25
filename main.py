@@ -336,6 +336,7 @@ class IPCServer:
                 write=is_write,
                 confirm_write=confirmed,
                 full_access=level == "full",
+                requested_permission_level=data.get('requested_permission_level') or level,
             )
             return {"status": "ok", "data": res}
 

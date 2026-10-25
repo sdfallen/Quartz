@@ -17,10 +17,11 @@ from core.agent_chat import AgentChatService
 from core.multi_agent_service import MultiAgentService
 
 
-def writer_probe():
+def writer_probe(via_chat=False, switch_mode=False):
     """Explicit, disposable coding acceptance; not automatic project test execution."""
     from core.run_evidence_store import RunEvidenceStore
-    destination = ROOT/'labs'/('reliability-writer-' + time.strftime('%Y%m%d-%H%M%S'))
+    prefix='permission-chat-switch-' if switch_mode else 'permission-chat-writer-' if via_chat else 'reliability-writer-'
+    destination = ROOT/'labs'/(prefix + time.strftime('%Y%m%d-%H%M%S'))
     destination.mkdir(parents=True, exist_ok=False)
     report = {'scope':'Real Codex writer on a disposable authored fixture; not GUI or arbitrary project test execution'}
     with tempfile.TemporaryDirectory(prefix='quartz-writer-probe-') as folder:
@@ -34,13 +35,48 @@ def writer_probe():
         receipt_path = root/'receipts.json'
         service = MultiAgentService(projects=[{'id':'fixture','path':str(project)}], evidence_store=receipt_path,
                                     journal_store=root/'writer_claims.json')
+        chat = None
         try:
-            result = service.dispatch_codex(
-                'Disposable authored acceptance fixture. Edit ONLY arithmetic.py so add(a,b) returns a+b. '
+            prompt = ('Kodu düzelt. Disposable authored acceptance fixture. Edit ONLY arithmetic.py so add(a,b) returns a+b. '
                 'Do not change test_add.py. Do not inspect parent folders, other projects, network, or UI. '
-                'After editing run python -B -m unittest test_add.py in this directory and report observed results.',
-                project_id='fixture', chat_mode=True, write=True, confirm_write=True,
-                model='gpt-6-luna', effort='low')
+                'After editing run python -B -m unittest test_add.py in this directory and report observed results.')
+            deadline=time.monotonic()+180
+            if via_chat:
+                chat=AgentChatService(service, root/'chat.json')
+                cid=chat.new_conversation(project_id='fixture')['id']
+                chat.set_agent_model(cid,'codex',model='gpt-6-luna',effort='low')
+                if switch_mode:
+                    chat.send_message('Kodu incele. Read ONLY arithmetic.py in this disposable fixture. '
+                        'Explain why add(2,3) is wrong. Do not edit files, inspect parent folders, use network or UI.',
+                        agent='codex',conversation_id=cid,requested_permission_level='read-only')
+                    while chat.poll_active().get('active'):
+                        if time.monotonic() >= deadline:
+                            chat.cancel_active(); raise TimeoutError('Read-only chat timed out')
+                        time.sleep(.25)
+                    first=dict(chat._active_turn or {})
+                    first_id=(first.get('run_ids') or [None])[-1]
+                    first_run=service.get_run(first_id) if first_id else {}
+                    report['read_only_turn']=first; report['read_only_run']=first_run
+                    if (first_run.get('status')!='completed' or first_run.get('sandbox')!='read-only'
+                            or source.read_text(encoding='utf-8')!='def add(a, b):\n    return a - b\n'):
+                        raise RuntimeError('Read-only baseline was not preserved')
+                    deadline=time.monotonic()+180
+                chat.send_message(prompt,agent='codex',conversation_id=cid,write=True,
+                                  confirm_write=True,requested_permission_level='project')
+                while chat.poll_active().get('active'):
+                    if time.monotonic() >= deadline:
+                        chat.cancel_active(); raise TimeoutError('Chat writer timed out')
+                    time.sleep(.25)
+                report['chat_turn']=dict(chat._active_turn or {})
+                rid=(report['chat_turn'].get('run_ids') or [None])[-1]
+                if not rid: raise RuntimeError('Chat did not dispatch a real writer run')
+                report['chat_messages']=chat.store.get(cid)['messages']
+                message=next(m for m in reversed(report['chat_messages']) if m.get('metadata',{}).get('run_id')==rid)
+                result={'run':{**service.get_run(rid),'checkpoint':message['metadata'].get('checkpoint')}}
+            else:
+                result = service.dispatch_codex(prompt,
+                    project_id='fixture', chat_mode=True, write=True, confirm_write=True,
+                    model='gpt-6-luna', effort='low')
             rid=result['run']['id']; deadline=time.monotonic()+180
             while service.codex.get(rid)['status'] not in service.codex.TERMINAL:
                 if time.monotonic() >= deadline:
@@ -62,12 +98,17 @@ def writer_probe():
                 'durable_source_receipt':receipt.get('source_validation',{}).get('status')=='VERIFIED' and bool(receipt.get('historical')),
                 'writer_released':not service._writer_status(str(project))['locked'],
                 'durable_claim_released':not service._writer_journal.recovery_status()['claims']}
+            if via_chat:
+                checks['requested_project_preserved']=report['chat_turn'].get('requested_permission_level')=='project'
+                checks['effective_project_preserved']=report['chat_turn'].get('permission_level')=='project'
+                checks['file_task_not_stripped']=report['chat_turn'].get('conversation_only') is False
             report.update(checks=checks, run=run, receipt=receipt, checkpoint=result['run'].get('checkpoint'),
                           host_test_output=(observed.stdout+observed.stderr) if observed else '',
                           status='VERIFIED' if all(checks.values()) else 'FAILED')
         except Exception as exc:
             report.update(status='BLOCKED', error=str(exc))
         finally:
+            if chat: chat.close()
             service.shutdown()
     (destination/'result.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps({'status':report['status'],'evidence':str(destination/'result.json'),'checks':report.get('checks',{}),
@@ -76,6 +117,8 @@ def writer_probe():
 
 
 def main():
+    if '--chat-switch' in sys.argv[1:]: return writer_probe(via_chat=True,switch_mode=True)
+    if '--chat-writer' in sys.argv[1:]: return writer_probe(via_chat=True)
     if '--writer' in sys.argv[1:]: return writer_probe()
     destination = ROOT/'labs'/('reliability-live-' + time.strftime('%Y%m%d-%H%M%S'))
     destination.mkdir(parents=True, exist_ok=False)

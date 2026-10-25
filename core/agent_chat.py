@@ -347,11 +347,14 @@ class AgentChatService:
 
     def send_message(self, text: str, agent: str | None = None,
                      conversation_id: str | None = None, write: bool = False,
-                     confirm_write: bool = False, full_access: bool = False) -> dict:
+                     confirm_write: bool = False, full_access: bool = False,
+                     requested_permission_level: str | None = None) -> dict:
         text = str(text or "").strip()
         if not text:
             raise ValueError("Mesaj boş olamaz.")
         from core.message_intent import message_intent
+        requested_permission_level = requested_permission_level or ('full' if full_access else 'project' if write else 'read-only')
+        if requested_permission_level not in {'read-only','project','full'}: raise ValueError('Invalid requested permission level')
         conversation_only = message_intent(text) != "task"
         if conversation_only:
             write = full_access = confirm_write = False
@@ -382,6 +385,7 @@ class AgentChatService:
                     "conversation_id": cid,
                     "squad_task_id": None,
                     "sequence": user_seq,
+                    "requested_permission_level":requested_permission_level,
                 },
             )
 
@@ -400,6 +404,7 @@ class AgentChatService:
                 cid, "assistant", "", sender=first_sender,
                 metadata={
                     "status": "starting",
+                    "requested_permission_level":requested_permission_level,
                     "agent": first_sender,
                     "sender": first_sender,
                     "recipient": first_recipient,
@@ -415,6 +420,8 @@ class AgentChatService:
 
             turn_state = {
                 "conversation_only": conversation_only,
+                "requested_permission_level":requested_permission_level,
+                "permission_level":'full' if full_access else 'project' if write else 'read-only',
                 "turn_id": "turn-" + uuid.uuid4().hex,
                 "conversation_id": cid,
                 "message_id": bot_msg["id"],
@@ -693,6 +700,17 @@ class AgentChatService:
     def _run_chat_turn(self, cid: str, msg_id: str, agent: str, prompt: str,
                        project_id: str | None, write: bool, confirm_write: bool, full_access: bool = False):
         try:
+            with self._lock:
+                if self._is_turn_cancelled(msg_id): return
+                turn = self._active_turn or {}
+                selected = turn.get('requested_permission_level','read-only')
+                effective = turn.get('permission_level','read-only')
+                chat_only = bool(turn.get('conversation_only'))
+            prompt = (f'[HOST PERMISSION CONTEXT] Selected file-mode preference: {selected}; '
+                      f'effective file mode of this run: {effective}; text-only conversation: {chat_only}. '
+                      'A preference change does not upgrade a running task or grant desktop/UM access. '
+                      'For text-only dialogue tools are intentionally off, not absent from Quartz generally. '
+                      'Never claim a grant or live observation from this context.\n\n') + prompt
             if agent == "antigravity":
                 self._run_antigravity_turn(cid, msg_id, prompt, project_id, write, confirm_write, full_access)
             elif agent == "codex":
