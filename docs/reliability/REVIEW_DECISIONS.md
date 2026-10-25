@@ -1,5 +1,11 @@
 # Bağımsız incelemenin entegrasyon kararı
 
+Bu tablo ilk dilimin tarihsel kararlarını anlatır. İkinci dilimde F01 dil kapsamı
+genişletilip iki expectedFailure ve iki eski-hata assertion'ı doğru davranış
+regresyonuna dönüştürüldü; güncel durum `FOLLOWUP_20261025.md` içinde. Özgün
+Antigravity rapor dosyaları değiştirilmedi. Güncel tam koşuda 3 expectedFailure
+kalır; bunlar otomatik olarak kritik ürün kusuru diye yorumlanmaz.
+
 Antigravity'nin dosyaları `docs/reliability/antigravity/` altında özgün teslim
 olarak tutulur. Üretim dosyalarını kendisi değiştirmedi. Ana geliştirici aşağıdaki
 kararları kaynak ve bağımsız testlerle verdi; rapordaki her öneri zorunlu sözleşme

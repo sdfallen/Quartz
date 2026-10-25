@@ -195,6 +195,9 @@ class NaturalDesktopTask:
             self._serve()
             self.broker.context_provider = lambda: list(self.notes[-12:])
         try:
+            # Durable chat lifecycle before launching either external runtime.
+            # Contains no broker token, snapshot, connection URL or permission.
+            self._event("quartz", "Görev hazırlanıyor; henüz bilgisayar kontrol izni verilmedi.")
             # Both CLI processes run concurrently; neither holds an input lease yet.
             for provider in selected:
                 self._launch_provider(provider)
@@ -419,7 +422,8 @@ class NaturalDesktopTask:
     def _event(self, sender, content, **metadata):
         event = {"sender": sender, "content": content, "at": time.time(), **metadata}
         self.job["events"].append(event)
-        self.emit(self.job["conversation_id"], sender, content, {"natural_task": self.job["id"], **metadata})
+        self.emit(self.job["conversation_id"], sender, content,
+                  {**metadata, "natural_task": self.job["id"], "task_status":self.job["status"]})
 
     def _message(self, provider, text):
         if not isinstance(text, str) or not 1 <= len(text.strip()) <= 6000: raise ValueError("Bounded message required")

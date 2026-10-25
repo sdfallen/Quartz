@@ -1779,13 +1779,14 @@ _HTML = r"""
     const match = marker.exec(text);
     const summary = match ? text.slice(0, match.index).trimEnd() : text;
     let details = match ? text.slice(match.index + match[0].length) : '';
-    let state = ({failed:'Başarısız', cancelled:'Durduruldu', blocked:'Henüz doğrulanmadı',
+    let state = ({failed:'Başarısız', cancelled:'Durduruldu', interrupted:'Önceki oturum kesildi; otomatik sürdürülmedi', blocked:'Henüz doğrulanmadı',
       awaiting_approval:'Kullanıcı onayı bekleniyor'})[msg?.status || meta.status] || '';
     if ((msg?.status || meta.status) === 'completed' && ['project','full'].includes(meta.permission_level)) {
       const check = meta.host_evidence?.source_validation;
       state = check?.status === 'FAILED' ? 'Ajan bitti; kaynak sözdizimi kontrolü başarısız.'
         : check?.status === 'VERIFIED' ? 'Python sözdizimi doğrulandı; çalışma/test başarısı doğrulanmış değil.'
         : 'Ajan yanıtı tamamlandı; bağımsız çalışma/test kanıtı yok.';
+      if (meta.host_evidence?.historical) state = 'Önceki oturumun kaynak kanıtı: ' + state;
     }
     const evidence = {};
     for (const key of ['error','run_id','squad_task_id','checkpoint','files_changed','performance','permission_level','review_scope','host_evidence']) {

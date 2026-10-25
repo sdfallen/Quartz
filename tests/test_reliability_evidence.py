@@ -81,6 +81,10 @@ const message={status:'completed',metadata:{permission_level:'project'}};
 assert(agentMessageView('Tests passed',message,'short').state.includes('kanıtı yok'));
 message.metadata.host_evidence={source_validation:{status:'VERIFIED'}};
 assert(agentMessageView('Done',message,'short').state.includes('test başarısı doğrulanmış değil'));
+message.metadata.host_evidence.historical=true;
+assert(agentMessageView('Done',message,'short').state.includes('Önceki oturumun kaynak kanıtı'));
 message.metadata.host_evidence.source_validation.status='FAILED';
 assert(agentMessageView('Done',message,'short').state.includes('başarısız'));
+message.status='interrupted';
+assert(agentMessageView('Partial',message,'short').state.includes('otomatik sürdürülmedi'));
 ''')

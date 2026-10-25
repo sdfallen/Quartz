@@ -23,12 +23,10 @@ class MessageIntentReliabilityTests(unittest.TestCase):
         self.assertEqual(message_intent("Pencereyi kontrol edebilir misin?"), "task")
         self.assertEqual(message_intent("Pencereyi kontrol edebilir misiniz?"), "task")
 
-    def test_reproduce_f01_vowel_harmony_polite_classified_as_conversation(self):
-        """F-01 PROVEN DEFECT: Polite forms with back vowel harmony ('mısınız', 'mısın', 'musunuz')
-        and aorist polite forms ('eder misiniz', 'inceler misiniz') are classified as 'conversation'.
+    def test_regression_f01_vowel_harmony_polite_is_task(self):
+        """Codex follow-up: original defect reproduced in f456185; now a regression.
 
-        In core/message_intent.py:31, regex only checks '...edebilir... misin'.
-        Vowel harmony forms with 'mısınız' / 'mısın' / 'musunuz' or aorist 'eder/inceler' fail to match.
+        Original reviewer report and baseline remain in Git/checkpoints.
         """
         back_vowel_polite_commands = [
             "Pencereye bakar mısınız?",
@@ -42,12 +40,12 @@ class MessageIntentReliabilityTests(unittest.TestCase):
             actual = message_intent(cmd)
             self.assertEqual(
                 actual,
-                "conversation",
-                f"F-01 Defect confirmed: polite request '{cmd}' was classified as 'conversation' instead of 'task'",
+                "task",
+                f"F-01 regression: polite request '{cmd}' should be a task",
             )
 
-    def test_reproduce_f01_english_commands_classified_as_conversation(self):
-        """F-01 PROVEN DEFECT: English command keywords are absent, routing all English tasks to conversation."""
+    def test_regression_f01_english_commands_are_tasks(self):
+        """Codex follow-up: preserve reviewer cases as positive regression coverage."""
         english_commands = [
             "Open Notepad and check logs",
             "Fix the bug in settings screen",
@@ -58,26 +56,24 @@ class MessageIntentReliabilityTests(unittest.TestCase):
             actual = message_intent(cmd)
             self.assertEqual(
                 actual,
-                "conversation",
-                f"F-01 Defect confirmed: English command '{cmd}' classified as 'conversation' instead of 'task'",
+                "task",
+                f"F-01 regression: English request '{cmd}' should be a task",
             )
 
-    @unittest.expectedFailure
     def test_contract_f01_vowel_harmony_and_aorist_polite_should_be_task(self):
         """CONTRACT TEST: Back-vowel and aorist polite requests must be recognized as 'task'.
 
-        Marked as expectedFailure until Codex patches core/message_intent.py.
+        Codex follow-up: fixed and promoted from expectedFailure.
         """
         self.assertEqual(message_intent("Pencereye bakar mısınız?"), "task")
         self.assertEqual(message_intent("Testleri çalıştırır mısınız?"), "task")
         self.assertEqual(message_intent("Hata loglarını inceler misiniz?"), "task")
         self.assertEqual(message_intent("Bu sorunu çözebilir misiniz?"), "task")
 
-    @unittest.expectedFailure
     def test_contract_f01_basic_english_commands_should_be_task(self):
         """CONTRACT TEST: Common English task verbs must be recognized as 'task'.
 
-        Marked as expectedFailure until Codex adds basic English action verbs to core/message_intent.py.
+        Codex follow-up: fixed and promoted from expectedFailure.
         """
         self.assertEqual(message_intent("Open Notepad and check the logs"), "task")
         self.assertEqual(message_intent("Inspect and fix the bug in settings"), "task")

@@ -8,6 +8,8 @@ from pathlib import Path
 import sys
 import tempfile
 import time
+import subprocess
+import hashlib
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -15,7 +17,64 @@ from core.agent_chat import AgentChatService
 from core.multi_agent_service import MultiAgentService
 
 
+def writer_probe():
+    """Explicit, disposable coding acceptance; not automatic project test execution."""
+    from core.run_evidence_store import RunEvidenceStore
+    destination = ROOT/'labs'/('reliability-writer-' + time.strftime('%Y%m%d-%H%M%S'))
+    destination.mkdir(parents=True, exist_ok=False)
+    report = {'scope':'Real Codex writer on a disposable authored fixture; not GUI or arbitrary project test execution'}
+    with tempfile.TemporaryDirectory(prefix='quartz-writer-probe-') as folder:
+        root = Path(folder); project = root/'project'; project.mkdir()
+        source = project/'arithmetic.py'; source.write_text('def add(a, b):\n    return a - b\n', encoding='utf-8')
+        test = project/'test_add.py'
+        test.write_text('import unittest\nfrom arithmetic import add\nclass Tests(unittest.TestCase):\n'
+                       '    def test_sum(self):\n        self.assertEqual(add(2, 3), 5)\n'
+                       '    def test_negative(self):\n        self.assertEqual(add(-3, 1), -2)\n', encoding='utf-8')
+        original_test = hashlib.sha256(test.read_bytes()).hexdigest()
+        receipt_path = root/'receipts.json'
+        service = MultiAgentService(projects=[{'id':'fixture','path':str(project)}], evidence_store=receipt_path)
+        try:
+            result = service.dispatch_codex(
+                'Disposable authored acceptance fixture. Edit ONLY arithmetic.py so add(a,b) returns a+b. '
+                'Do not change test_add.py. Do not inspect parent folders, other projects, network, or UI. '
+                'After editing run python -B -m unittest test_add.py in this directory and report observed results.',
+                project_id='fixture', chat_mode=True, write=True, confirm_write=True,
+                model='gpt-6-luna', effort='low')
+            rid=result['run']['id']; deadline=time.monotonic()+180
+            while service.codex.get(rid)['status'] not in service.codex.TERMINAL:
+                if time.monotonic() >= deadline:
+                    service.cancel(rid); raise TimeoutError('Disposable writer timed out')
+                time.sleep(.25)
+            while service._writer_status(str(project))['locked']:
+                if time.monotonic() >= deadline: raise TimeoutError('Writer receipt did not settle')
+                time.sleep(.1)
+            run=service.get_run(rid); receipt=RunEvidenceStore(receipt_path).get(rid)
+            unchanged=hashlib.sha256(test.read_bytes()).hexdigest()==original_test
+            # Host executes only the explicitly authored test fixture after
+            # verifying its test file was not edited, never unknown user tests.
+            observed = subprocess.run([sys.executable,'-B','-m','unittest','test_add.py'], cwd=project,
+                capture_output=True,text=True,timeout=15) if unchanged else None
+            checks={'runtime_completed':run['status']=='completed',
+                'checkpoint_complete':bool(result['run'].get('checkpoint',{}).get('complete')),
+                'authored_tests_unchanged':unchanged,
+                'host_authored_tests_pass':observed is not None and observed.returncode==0,
+                'durable_source_receipt':receipt.get('source_validation',{}).get('status')=='VERIFIED' and bool(receipt.get('historical')),
+                'writer_released':not service._writer_status(str(project))['locked']}
+            report.update(checks=checks, run=run, receipt=receipt, checkpoint=result['run'].get('checkpoint'),
+                          host_test_output=(observed.stdout+observed.stderr) if observed else '',
+                          status='VERIFIED' if all(checks.values()) else 'FAILED')
+        except Exception as exc:
+            report.update(status='BLOCKED', error=str(exc))
+        finally:
+            service.shutdown()
+    (destination/'result.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+    print(json.dumps({'status':report['status'],'evidence':str(destination/'result.json'),'checks':report.get('checks',{}),
+                      'error':report.get('error','')},indent=2))
+    return 0 if report['status']=='VERIFIED' else 1
+
+
 def main():
+    if '--writer' in sys.argv[1:]: return writer_probe()
     destination = ROOT/'labs'/('reliability-live-' + time.strftime('%Y%m%d-%H%M%S'))
     destination.mkdir(parents=True, exist_ok=False)
     report = {'scope':'Real synthetic CLI chat, not live desktop/UI acceptance', 'providers':{}}

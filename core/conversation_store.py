@@ -73,6 +73,61 @@ class ConversationStore:
         with self._lock:
             return dict(self._preferences)
 
+    def recover_interrupted(self):
+        """Mark abandoned messages, never replay work or restore permissions.
+
+        Called only by the owning chat service at startup. Preserve the original
+        JSON payload locally before atomically updating the conversation file.
+        Failure leaves both memory and the old conversation file unchanged.
+        """
+        with self._lock:
+            candidate = deepcopy(self._conversations)
+            recovered = []
+            now = time.time()
+            active_states = {'starting', 'running', 'queued', 'pending', 'cancelling', 'awaiting_approval'}
+            for cid, conv in candidate.items():
+                # Natural desktop events are completed chat messages even while
+                # their enclosing task is running. Only the LAST lifecycle event
+                # for a task can establish whether it was abandoned.
+                last_task_event = {}
+                for msg in conv.get('messages', []):
+                    meta = msg.get('metadata') or {}
+                    if meta.get('natural_task') and 'task_status' in meta:
+                        last_task_event[meta['natural_task']] = msg.get('id')
+                for msg in conv.get('messages', []):
+                    meta = msg.get('metadata') or {}
+                    abandoned_task = (meta.get('natural_task') and
+                        last_task_event.get(meta['natural_task']) == msg.get('id') and
+                        meta.get('task_status') in active_states)
+                    if msg.get('role') != 'assistant' or (msg.get('status') not in active_states and not abandoned_task):
+                        continue
+                    meta = msg.setdefault('metadata', {})
+                    meta.update(status='interrupted', recovered_at=now,
+                        recovery_reason='Application restarted before a terminal result',
+                        automatic_replay=False, permissions_restored=False)
+                    if abandoned_task: meta['task_status'] = 'interrupted'
+                    msg['status'] = 'interrupted'
+                    if not msg.get('content', '').strip():
+                        msg['content'] = 'Önceki oturum kesildi. Görev otomatik sürdürülmedi; devam etmeden önce durumu kontrol edin.'
+                    provider = msg.get('sender')
+                    if provider in {'codex', 'antigravity'}:
+                        conv.setdefault('sessions', {})[provider] = None
+                    recovered.append({'conversation_id':cid, 'message_id':msg.get('id')})
+            if not recovered:
+                return {'status':'unchanged', 'messages':[], 'automatic_replay':False}
+            backup = self.path.parent / '.quartz' / 'recovery' / (uuid.uuid4().hex + '.json')
+            # Copy the original JSON rather than normalized/in-memory content.
+            original = load_json(self.path, None)
+            if not isinstance(original, dict):
+                raise OSError('Cannot preserve conversation store before recovery')
+            atomic_write_json(backup, original)
+            payload = {'active_id':self._active_id, 'conversations':candidate,
+                       'preferences':self._preferences}
+            atomic_write_json(self.path, payload)
+            self._conversations = candidate
+            return {'status':'recovered', 'messages':recovered, 'backup':str(backup),
+                    'automatic_replay':False, 'permissions_restored':False}
+
     def set_response_detail(self, level):
         if level not in {"short", "normal", "technical"}:
             raise ValueError("Geçersiz yanıt ayrıntısı")

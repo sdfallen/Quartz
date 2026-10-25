@@ -1,5 +1,25 @@
 # Devam notu — 25 Ekim 2026
 
+## En güncel ikinci dilim
+
+Güncel rapor: `docs/reliability/FOLLOWUP_20261025.md`. Aşağıdaki ilk dilim
+kayıtları tarihsel referanstır. Kibar Türkçe/İngilizce niyet, yarım chat ve
+Natural lifecycle kesinti tespiti, bounded durable SOURCE receipt eklendi.
+Yeni EXE `fcdbc6273c6e8b567f0dd005da15e21f63d653501623d3432291ed66dfe67250`.
+Kurulu paket 33 parity kontrolü ve 429 test (426 PASS + 3 expectedFailure)
+kapısını geçti. Yeni receipt dizini `quartz-recovery-package-20261025`.
+İnsan verisi değiştirilmeden ayrı süreç recovery probe ve gerçek Codex authored
+writer probe VERIFIED. Güncel kanıt yolları FOLLOWUP raporunda.
+GUI görüntü yakalama hâlâ BLOCKED; safe input ile normal kapatma dışında GUI
+görevi oynanmadı, güvenlik/izin kartı otomatik onaylanmadı. Kullanıcı kapalı
+ekran/uzak oturum koşulunu bildirdi; source bug/root cause diye genellenmedi.
+Kendi test süreci normal Alt+F4 ile kapandı, süreç/pencere yokluğu doğrulandı.
+Kaynak ve kurulu korunan kullanıcı JSON/.env dosyaları hash-eşit.
+Orphan runtime uzlaştırması/otomatik görev replay henüz yok; kesinti tespiti
+eski harici süreçlerin öldüğü anlamına gelmez. ASTER/Gate B kapsam dışı.
+
+## İlk dilim — tarihsel
+
 Başlangıç `36a2d9e`, çalışma dalı `codex/reliability-kernel-20261025`.
 Üretim kaynakları paketlendi ve kaynak imzaları doğrulandı. Yeni kod değişirse
 paketin kabulünü devralma; yeniden derle ve imza/regresyon kapısını çalıştır.

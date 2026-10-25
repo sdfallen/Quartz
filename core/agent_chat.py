@@ -23,6 +23,7 @@ class AgentChatService:
     def __init__(self, agent_service: MultiAgentService, store_path: str | Path):
         self.agent_service = agent_service
         self.store = ConversationStore(store_path)
+        self.recovery = self.store.recover_interrupted()
         self._lock = threading.RLock()
         self._active_turn: dict | None = None
         self._diagnostics = AsyncSnapshot(self.agent_service.status)
@@ -83,6 +84,7 @@ class AgentChatService:
                 "active_turn": dict(self._active_turn) if self._active_turn else None,
                 "models": models_catalog,
                 "diagnostics": diagnostics,
+                "recovery": self.recovery,
                 "squad": {
                     "checking": bool(squad_info.get('checking')),
                     "connected": squad_connected,

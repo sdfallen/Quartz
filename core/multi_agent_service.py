@@ -15,6 +15,7 @@ from core.project_registry import ProjectRegistry
 from core.squad_adapter import SquadAdapter
 from core.workspace_checkpoint import create_checkpoint, snapshot_workspace_files, changed_workspace_files
 from core.source_verification import verify_changed_python
+from core.run_evidence_store import RunEvidenceStore
 
 
 class MultiAgentService:
@@ -32,7 +33,8 @@ class MultiAgentService:
     )
 
     def __init__(self, projects=None, squad_executable=None, codex_executable=None,
-                 antigravity_executable=None, project_store=None):
+                 antigravity_executable=None, project_store=None, evidence_store=None):
+        from pathlib import Path
         self.projects = ProjectRegistry(projects, storage_path=project_store)
         self.codex = CodexRuntime(codex_executable)
         self.antigravity = None
@@ -50,6 +52,9 @@ class MultiAgentService:
         self._collaborations = {}
         self._writers: dict[str, dict] = {}
         self._file_changes: dict[str, dict] = {}
+        if evidence_store is None and project_store is not None:
+            evidence_store = Path(project_store).parent / '.quartz' / 'run_evidence.json'
+        self._evidence_store = RunEvidenceStore(evidence_store)
         self._text_workspaces = {}
 
     def _start_writer(self, provider: str, project: dict, start, *args, **kwargs) -> dict:
@@ -91,8 +96,14 @@ class MultiAgentService:
             changed, warning = changed_workspace_files(project_path, before, after)
             validation = verify_changed_python(project_path, changed, warning=warning)
             with self._lock:
-                self._file_changes[run_id] = {"files_changed": changed, "evidence_warning": warning,
+                receipt = {"files_changed": changed, "evidence_warning": warning,
                     "source_validation": validation}
+                self._file_changes[run_id] = receipt
+            try:
+                self._evidence_store.put(run_id, receipt)
+            except (OSError, ValueError) as exc:
+                with self._lock:
+                    self._file_changes[run_id]['persistence_warning'] = str(exc)
         except Exception as exc:
             with self._lock:
                 self._file_changes[run_id] = {"files_changed":[], "evidence_warning":str(exc),
@@ -606,7 +617,8 @@ class MultiAgentService:
         """Read-only receipt; no runtime probe, command or implicit retest."""
         from copy import deepcopy
         with self._lock:
-            return deepcopy(self._file_changes.get(run_id, {}))
+            receipt = deepcopy(self._file_changes.get(run_id, {}))
+        return receipt or self._evidence_store.get(run_id)
 
     def get_collaboration(self, collaboration_id: str) -> dict:
         with self._lock:
