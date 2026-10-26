@@ -15,11 +15,13 @@ NORMAL_CHAT_DESKTOP_NOTICE = (
 
 
 def desktop_intent(text):
-    value = str(text or "").casefold().strip()
-    if re.search(r"warband|aster|gate\s*b",value) and re.search(r"test et|dene|derle|incele|düzelt|geliştir|oyunu aç|kontrol et",value):
-        return "task"
+    from core.message_intent import instruction_text, message_intent, tools_disallowed
+    value = instruction_text(text).strip()
+    if tools_disallowed(text): return None
+    kind = message_intent(text)
+    if re.search(r"warband|aster|gate\s*b",value) and kind == 'task': return "task"
     if re.search(r"kendin(?:ize|e|iz).{0,40}(?:yetki|izin|erişim)",value): return "help"
-    subject = re.search(r"masaüst|masaustu|bilgisayar|pencere|fare|klavye|not\s*defteri|notepad|uygulama|ekran|chrome|edge|firefox|youtube|tarayıcı", value)
+    subject = re.search(r"masaüst|masaustu|bilgisayar|pencere|fare|klavye|not\s*defteri|notepad|uygulama|ekran|chrome|edge|firefox|youtube|tarayıcı|oyun|window|application|browser|screenshot|button", value)
     if not subject: return None
     access = re.search(r"yetki|erişim|erisim|kontrol|hak|izin", value)
     if access and (re.search(r"nasıl|neden|niye|var mı|varmı|yok|versem|verebilir|verebil|alabilir|alabil|açabilir|açabil|mümkün", value)
@@ -27,10 +29,10 @@ def desktop_intent(text):
         return "help"
     if re.search(r"kontrol etme\b|kontrol etmeyin\b|kontrolünü alma\b|yönetme\b|istemiyorum", value):
         return "help" if access else None
-    if re.search(r"kontrol(?:ünü|unu)?\s+(?:al|et)|yönet(?:in|ir|ebilir)?|kullan(?:arak|ın|in)?\b|tıkla|tusla|tuşla|pencere.{0,60}geç|not\s*defteri.{0,40}aç|notepad.{0,40}aç|görev.{0,25}başlat", value):
-        return "task"
-    if re.search(r"aç(?:ıp|ın|in)?\b|incele\b|düzelt\b|gir\b|göster\b|ekran görüntüsü al|sorunu (?:bul|çöz)", value) and not re.search(r"(?:sınıf|fonksiyon|regex|kodunu)\b", value):
-        return "task"
+    # The same task decision drives chat and desktop routing. A polite verb is
+    # not a capability question, and quoted/sample commands cannot start work.
+    if kind == 'task' and not re.search(r'\b(?:sınıf|sınıfını|fonksiyon|fonksiyonunu|regex|kodunu|class|function)\b',value):
+        return 'task'
     if access: return "help"
     return None
 

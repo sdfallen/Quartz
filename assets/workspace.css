@@ -82,7 +82,6 @@ body:not(.show-panels):not(.compact) .chat-col {max-width:none;margin:0;width:au
 .desktop-task-bar[data-state="active"] {border-color:#67834e;background:#202a1d;}
 .desktop-task-bar[data-state="pending"] {border-color:#71653f;}
 .desktop-task-bar button:disabled {opacity:.45;cursor:default;}
-.desktop-task-draft textarea {resize:vertical;width:100%;min-height:80px;padding:10px;border:1px solid #48543d;border-radius:6px;background:#171b16;color:#e8ecdf;font:13px/1.5 'Segoe UI',sans-serif;}
 .rail.right,body:not(.show-panels) .rail.right {display:none !important;}
 body.show-panels .rail.right {display:flex !important;position:fixed;right:0;top:54px;bottom:0;width:370px;max-width:95vw;z-index:40;padding:18px;background:#1b1d1f;border-left:1px solid #3b3e37;overflow-y:auto;box-shadow:-15px 0 35px #0005;}
 .rail.right .card {background:#202326;border:1px solid #343830;border-radius:8px;box-shadow:none;padding:12px;}

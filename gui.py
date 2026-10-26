@@ -185,6 +185,8 @@ class Api:
             from core.chat_coordination import proposed_roles
             if intent == "task":
                 if active:
+                    if service.status()["job"]["conversation_id"] != conversation_id:
+                        raise PermissionError("Başka sohbette görev sürüyor; önce o görevi durdurun")
                     service.instruct(text)
                     return {"status":"ok","data":{"handled":True,"instructed":True}}
                 return self.natural_start(text,conversation_id,project_id,models,permission_level)
@@ -202,7 +204,7 @@ class Api:
                     service.instruct(text)
                     return {"status":"ok","data":{"handled":True,"instructed":True}}
                 return {"status":"ok","data":{"handled":False,"intent":"conversation" if message_kind != "task" else "task"}}
-            return self.coordination_prepare(text,conversation_id,project_id,models)
+            return self.natural_start(text,conversation_id,project_id,models,permission_level)
         except Exception as exc:
             return {"status":"error","data":str(exc)}
 
@@ -1423,12 +1425,11 @@ _HTML = r"""
         </div>
       </div>
       <div class="desktop-task-bar" id="desktopTaskBar" data-state="normal">
-        <button type="button" class="control-btn" id="btnDesktopTask" accesskey="b" title="Alt+B · Görevi hazırlar; kontrol yetkisi vermez">Bilgisayar görevi başlat</button>
         <div class="desktop-task-copy" aria-live="polite">
           <strong id="desktopTaskLabel">Normal sohbet</strong>
           <span id="desktopTaskDetail">Dosya erişimi ayrı; masaüstü kontrolü görev onayı gerektirir.</span>
         </div>
-        <button type="button" class="control-btn" id="btnDesktopTaskStop" hidden>Kontrolü durdur</button>
+        <button type="button" class="control-btn" id="btnDesktopTaskStop" hidden>Görevi durdur</button>
       </div>
       <div class="chat" id="chat"></div>
       <button type="button" class="jump-bottom-btn" id="btnJumpBottom" title="En son mesaja git">Yeni mesajlar ↓</button>
@@ -2516,9 +2517,7 @@ _HTML = r"""
     if (coordinated.status !== 'ok') { appendMsg('err','QUARTZ',coordinated.data); return; }
     if (coordinated.data?.handled) {
       inputEl.value = '';
-      if (coordinated.data.plan) showCoordinationApproval(coordinated.data);
-      else if(coordinated.data.permission_status) await loadActiveConversation();
-      else if(coordinated.data.desktop_help) showDesktopHelp(coordinated.data.desktop_help);
+      if(coordinated.data.permission_status || coordinated.data.desktop_help) await loadActiveConversation();
       else if(!coordinated.data.natural_started) appendMsg('bot','QUARTZ',coordinated.data.stopped ? 'Görev durduruldu.' : 'Talimat iletildi; yetki kapsamı değişmedi.');
       await refreshDesktopTaskState();
       await pollNaturalTask();
@@ -2687,10 +2686,6 @@ _HTML = r"""
   initializeWorkspaceLayout();
 
   let desktopView={code:'normal',stop_ref:null};
-  function desktopModels() {
-    return {codex:{model:codexModelSelect.value,effort:codexEffortSelect.value},
-            antigravity:{model:agyModelSelect.value,effort:agyEffortSelect.value}};
-  }
   function renderDesktopTaskState(view) {
     desktopView=view;
     document.getElementById('desktopTaskBar').dataset.state=view.code;
@@ -2698,7 +2693,6 @@ _HTML = r"""
     document.getElementById('desktopTaskDetail').textContent=(view.conversation_id&&view.conversation_id!==currentConvId?'Başka bir sohbetin görevi. ':'')+view.detail;
     const stop=document.getElementById('btnDesktopTaskStop');
     stop.hidden=!view.stop_ref;stop.disabled=!view.stop_ref;
-    document.getElementById('btnDesktopTask').disabled=view.control_active||view.code==='preparing';
     for(const card of document.querySelectorAll('[data-desktop-plan]')) {
       const stillPending=card.dataset.desktopPlan===view.pending_id;
       const start=card.querySelector('[data-desktop-approve]');
@@ -2716,94 +2710,12 @@ _HTML = r"""
       document.getElementById('desktopTaskDetail').textContent='Erişim var veya bırakıldı varsayılmıyor. '+String(e);
     }
   }
-  function showDesktopHelp(text) {
-    const wrap=appendMsg('bot','QUARTZ',text);
-    const button=document.createElement('button');button.className='control-btn';button.textContent='Bilgisayar görevi hazırla';
-    button.onclick=()=>showDesktopTaskDraft();wrap.append(button);
-  }
-  function showDesktopTaskDraft() {
-    if(thinking){appendMsg('err','QUARTZ','Önce devam eden sohbet görevini bitirin veya iptal edin.');return;}
-    if(desktopView.control_active||desktopView.code==='preparing'){appendMsg('bot','QUARTZ','Yeni kapsam için mevcut masaüstü görevini önce durdurun.');return;}
-    const existing=document.querySelector('[data-desktop-draft]');if(existing){existing.querySelector('textarea').focus();return;}
-    const cid=currentConvId;
-    const wrap=appendMsg('bot','QUARTZ','Bu bir görev hazırlığıdır; henüz masaüstü izni vermez. Varsayılan: Codex operatör, Gemini yalnız proje logunu inceler.');
-    const panel=document.createElement('div');panel.className='coordination-card desktop-task-draft';panel.dataset.desktopDraft='1';
-    const task=document.createElement('textarea');task.setAttribute('aria-label','Bilgisayar görevi');task.maxLength=8000;task.rows=3;
-    task.placeholder='Örneğin: Test Penceresi A düğmesini bir kez çalıştır, B penceresine geç ve sonucu kontrol et.';
-    task.value=inputEl.value;
-    const prepare=document.createElement('button');prepare.textContent='Pencereleri ve izni seç';
-    const cancel=document.createElement('button');cancel.textContent='Vazgeç';cancel.onclick=()=>wrap.remove();
-    const message=document.createElement('p');
-    prepare.onclick=async()=>{
-      if(!task.value.trim()){message.textContent='Önce yapılacak görevi yazın.';return;}
-      if(currentConvId!==cid){message.textContent='Sohbet değişti; bu sohbette yeni görev hazırlayın.';return;}
-      if(thinking||coordinationRouting){message.textContent='Devam eden isteği bekleyin.';return;}
-      prepare.disabled=true;coordinationRouting=true;
-      try {
-        const r=await window.pywebview.api.coordination_prepare(task.value.trim(),cid,mainProjectSelect.value,desktopModels());
-        if(r.status!=='ok')throw new Error(r.data);
-        wrap.remove();showCoordinationApproval(r.data);await refreshDesktopTaskState();
-      }catch(e){message.textContent=String(e);prepare.disabled=false;}
-      finally{coordinationRouting=false;}
-    };
-    panel.append(task,prepare,cancel,message);wrap.append(panel);task.focus();scrollToBottom(true);
-  }
-  document.getElementById('btnDesktopTask').onclick=()=>showDesktopTaskDraft();
   document.getElementById('btnDesktopTaskStop').onclick=async()=>{
     const ref=desktopView.stop_ref;if(!ref)return;
     const r=await window.pywebview.api.desktop_task_stop(ref);
     if(r.status!=='ok')appendMsg('err','QUARTZ',r.data);
     await refreshDesktopTaskState();
   };
-
-  function showCoordinationApproval(data) {
-    const plan = data.plan;
-    const wrap = appendMsg('bot','QUARTZ','Görev hazır. Başlatmadan önce pencereleri, uygulamaları, logu ve süreyi birlikte onaylayın.');
-    const panel = document.createElement('div'); panel.className = 'coordination-card';
-    panel.dataset.desktopPlan=plan.id;
-    const role = document.createElement('p');
-    role.textContent = `${plan.roles.operator === 'codex' ? 'Codex' : 'Antigravity'} · Pencere kontrolü / ${plan.roles.observer === 'codex' ? 'Codex' : 'Antigravity'} · Log analizi`;
-    const scope = document.createElement('p'); scope.textContent = plan.scope;
-    const target = document.createElement('div'); target.setAttribute('aria-label','Onaylanacak pencereler');
-    for (const win of data.windows || []) {
-      const row=document.createElement('label');row.style.display='block';
-      const check=document.createElement('input');check.type='checkbox';check.value=win.handle;check.dataset.windowHandle=win.handle;
-      row.append(check,document.createTextNode(`${win.title} · PID ${win.pid} · HWND ${win.handle} · ${win.exe}`));target.append(row);
-    }
-    const apps=document.createElement('div');const appIds=[];
-    const addApp=document.createElement('button');addApp.textContent='İsteğe bağlı: açılacak EXE seç';
-    addApp.onclick=async()=>{const r=await window.pywebview.api.coordination_pick_app(plan.id);if(r.status==='ok'&&r.data){
-      appIds.push(r.data.id);const line=document.createElement('p');line.textContent=`Bir kez açılacak: ${r.data.exe} · SHA256 ${r.data.sha256}`;apps.append(line);
-    }else if(r.status!=='ok'){status.textContent=r.data;}};
-    const seconds = document.createElement('select'); seconds.setAttribute('aria-label','İzin süresi');
-    for (const value of [60,180,300,600]) { const option=document.createElement('option'); option.value=value; option.textContent=`${value/60} dakika`; seconds.append(option); }
-    seconds.value=300;
-    const log = document.createElement('button'); log.textContent='Proje logunu seç'; let logPath='';
-    log.onclick=async()=>{const result=await window.pywebview.api.coordination_pick_log();if(result.status==='ok'&&result.data){logPath=result.data;log.textContent=logPath;} };
-    const info=document.createElement('p'); info.textContent='Yalnız seçili pencereler arasında geçiş; tek operatör. Seçilen EXE yalnız bir kez, parametresiz açılabilir; alt süreçler/yeni HWND otomatik devralınmaz. Bu EXE için OS sandbox garantisi değildir. Odak kaybı görevi durdurur. Yeni kapsam yeni onay ister. Logun son 16 KB bölümü ve yeni satırlar gözlemciyle paylaşılır; gözlemci araçları kapalıdır. Warband yalnız ayrı UM koruma adaptörüyle kullanılabilir; bu köprüde kapalıdır.';
-    const confirm=document.createElement('input'); confirm.type='checkbox'; confirm.id='confirm-'+plan.id;
-    const label=document.createElement('label'); label.htmlFor=confirm.id; label.append(confirm,document.createTextNode('Seçtiğim pencereleri, EXE açılışlarını, logu, süreyi, görev kapsamını ve veri paylaşımını onaylıyorum.'));
-    const start=document.createElement('button'); start.textContent='Onayla ve başlat';
-    start.dataset.desktopApprove=plan.id;
-    const status=document.createElement('p');status.dataset.coordinationStatus=plan.id;
-    start.onclick=async()=>{
-      const handles=[...target.querySelectorAll('input:checked')].map(c=>Number(c.value));
-      if(!confirm.checked||!handles.length||!logPath){status.textContent='En az bir pencere ve log seçip onay kutusunu işaretleyin.';return;}
-      start.disabled=true;
-      const result=await window.pywebview.api.coordination_approve(plan.id,handles,logPath,Number(seconds.value),true,true,appIds);
-      status.textContent=result.status==='ok'?'Görev başladı. Sohbete “durdur” yazabilir veya aşağıdaki düğmeyi kullanabilirsiniz.':result.data;
-      if(result.status!=='ok')start.disabled=false;
-      else { target.querySelectorAll('input').forEach(c=>c.disabled=true);addApp.disabled=true;seconds.disabled=true;log.disabled=true;confirm.disabled=true;pollCoordination(); }
-      await refreshDesktopTaskState();
-    };
-    const stop=document.createElement('button');stop.textContent='Görevi durdur';stop.dataset.coordinationStop=plan.id;
-    stop.disabled=true;
-    stop.onclick=async()=>{const result=await window.pywebview.api.coordination_stop(plan.id);status.textContent=result.status==='ok'?'Durduruldu.':result.data;await refreshDesktopTaskState();};
-    const abandon=document.createElement('button');abandon.textContent='Onay isteğini iptal et';
-    abandon.dataset.desktopAbandon=plan.id;
-    abandon.onclick=async()=>{const r=await window.pywebview.api.coordination_cancel_plan(plan.id);status.textContent=r.status==='ok'?'İstek iptal edildi; kontrol verilmedi.':r.data;await refreshDesktopTaskState();};
-    panel.append(role,scope,target,addApp,apps,seconds,log,info,label,start,abandon,stop,status);wrap.append(panel);scrollToBottom(true);
-  }
 
   let coordinationTimer=null;
   async function pollNaturalTask() {

@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import time
 from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
@@ -28,12 +29,36 @@ def main():
     backend=NoInputBackend();broker=DesktopBroker(backend)
     service=NaturalDesktopTask(SimpleNamespace(broker=broker,windows=backend.windows),lambda *a:None,evidence_root=destination/"evidence")
     models={"codex":{"model":"gpt-6-luna","effort":"low"},"antigravity":{"model":"gemini-3.8-flash-low","effort":"low"}}
-    prompt=("Codex, bu yalnız CLI/MCP/Squad bağlantı testi. task_context çağır, task_message ile 'CODEX_TRANSPORT_OK' gönder, "
+    prompt=("Codex, açık test uygulamasının araç bağlantısını incele. Bu yalnız CLI/MCP/Squad bağlantı testi. task_context çağır, task_message ile 'CODEX_TRANSPORT_OK' gönder, "
             "sonra sonlandır. Ekran/izin/dosya isteme, masaüstü testi yaptığını söyleme. "
             "Gemini, aynı bağlantı testinde task_context çağır, task_message ile 'GEMINI_TRANSPORT_OK' gönder. "
             "Codex notu ve bitiş durumu gelince kısa son yanıtını ver. Native backend bu testte boş; grafik kabul DEĞİL.")
     try:
-        service.start(prompt,{"path":str(destination)},"transport-only",models)
+        chat_entry='--chat-entry' in sys.argv[1:]
+        bridge=None;factory=None;store=None
+        if chat_entry:
+            import gui
+            from core.conversation_store import ConversationStore
+            store=ConversationStore(destination/'isolated-chat.json')
+            cid=store.get_active()['id']
+            project={'id':'fixture','path':str(destination)}
+            def ipc(action,data=None):
+                if action=='chat_status':
+                    return {'status':'ok','data':{'active_conversation':store.get(cid),'active_turn':None,'projects':[project]}}
+                if action=='chat_coordination_message':
+                    store.append_message(cid,'user' if data['sender']=='user' else 'assistant',data['content'],
+                        sender=data['sender'],metadata=data.get('metadata'))
+                    return {'status':'ok'}
+                raise AssertionError('Unexpected isolated IPC operation: '+action)
+            def create(desktop,emit):service.emit=emit;return service
+            bridge=patch('gui.ipc_send',side_effect=ipc);bridge.start()
+            factory=patch('core.natural_desktop.NaturalDesktopTask',side_effect=create);factory.start()
+            api=gui.Api();api._desktop_service=lambda:SimpleNamespace(broker=broker,windows=backend.windows)
+            routed=api.coordination_route(prompt,cid,project['id'],models)
+            if routed.get('status')!='ok' or not routed.get('data',{}).get('natural_started'):
+                raise RuntimeError('Main-chat routing did not start task: '+str(routed))
+        else:
+            service.start(prompt,{"path":str(destination)},"transport-only",models)
         deadline=time.monotonic()+150
         while service.status()["active"] and time.monotonic()<deadline:time.sleep(.5)
         if service.status()["active"]:service.stop("transport test timeout")
@@ -44,11 +69,15 @@ def main():
                  and all(r["status"]=="completed" for r in runs.values()) and not broker.audit)
         compact={p:{k:r.get(k) for k in ("status","model","effort","started_at","finished_at","errors","result","progress_log")} for p,r in runs.items()}
         record={"coverage":"Real CLI/MCP/Squad transport only; synthetic task; no native input, GUI or approval acceptance",
+                "entry":"main-chat Api.coordination_route with isolated store/IPC" if chat_entry else 'NaturalDesktopTask.start',
                 "passed":verdict,"runs":compact,"events":service.job["events"],"history":service.squad.history(),"broker_audit":broker.audit}
         (destination/"transport-result.json").write_text(json.dumps(record,ensure_ascii=False,indent=2),encoding="utf-8")
         print(json.dumps({"directory":str(destination),"passed":verdict,"statuses":{p:r["status"] for p,r in runs.items()}},ensure_ascii=False))
         return 0 if verdict else 1
-    finally:service.stop();broker.close()
+    finally:
+        service.stop();broker.close()
+        if factory:factory.stop()
+        if bridge:bridge.stop()
 
 
 if __name__=="__main__":raise SystemExit(main())

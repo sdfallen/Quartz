@@ -12,9 +12,13 @@ from tests.test_chat_coordination import Operator, MODELS
 
 
 class IntentTests(unittest.TestCase):
-    def test_visible_task_entry_has_a_non_granting_keyboard_shortcut(self):
-        self.assertIn('id="btnDesktopTask" accesskey="b"',gui._HTML)
+    def test_chat_is_the_only_task_entry_and_status_stop_remain(self):
+        self.assertNotIn('id="btnDesktopTask"',gui._HTML)
+        self.assertNotIn('showDesktopTaskDraft',gui._HTML)
+        self.assertNotIn('showCoordinationApproval',gui._HTML)
+        self.assertNotIn('coordination_prepare(',gui._HTML)
         self.assertIn('id="desktopTaskLabel">Normal sohbet',gui._HTML)
+        self.assertIn('id="btnDesktopTaskStop"',gui._HTML)
     def test_plain_requests_need_no_magic_two_agent_sentence(self):
         for text in ("Masaüstünü kontrol et", "Bilgisayar kontrolünü al", "A penceresine tıkla", "Not Defteri penceresini kullan", "Notepad aç"):
             with self.subTest(text=text):self.assertEqual(desktop_intent(text),"task")
