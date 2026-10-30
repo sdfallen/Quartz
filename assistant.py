@@ -23,7 +23,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Union, get_args, get_origin
 
-from openai import OpenAI
+from core.low_spec_optimizer import LazyClientProxy
+
+
+def _make_openai_client(**kwargs):
+    from openai import OpenAI as _RealOpenAI
+    return _RealOpenAI(**kwargs)
+
+
+def OpenAI(**kwargs):
+    return LazyClientProxy(lambda: _make_openai_client(**kwargs))
 
 import system_controller as sc
 import advanced_controller as ac
@@ -1691,7 +1700,7 @@ class AssistantOrchestrator:
         self._provider_manager = ProviderManager(
             self._provider_name, self._model, self._configured)
         self._bind_llm()
-        if self._configured and self._provider_name in {"nvidia", "groq", "github"}:
+        if client is not None and self._configured and self._provider_name in {"nvidia", "groq", "github"}:
             self._provider_manager.probe_async(self._client)
         get_pref = getattr(memory, "get_preference", lambda _k, default=False: default)
         self._safe_mode = bool(get_pref("safe_mode", False))

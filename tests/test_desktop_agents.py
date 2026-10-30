@@ -60,7 +60,8 @@ class DesktopRuntimeTests(unittest.TestCase):
         self.assertEqual(parsed["default_tools_approval_mode"], "approve")
         self.assertEqual(set(parsed["enabled_tools"]), {"desktop_focus", "desktop_observe", "desktop_act", "desktop_windows", "desktop_switch", "desktop_launch",
             "task_context", "desktop_request_access", "task_wait", "task_message", "task_read_log", "desktop_verify",
-            "warband_status","warband_request_access","warband_source","warband_run","warband_log","warband_verify","warband_observe","warband_start_game","warband_act"})
+            "warband_status","warband_request_access","warband_source","warband_run","warband_log","warband_verify","warband_observe","warband_start_game","warband_act",
+            "jarvis_open_app", "jarvis_media_web", "jarvis_system_info", "jarvis_input"})
         self.assertNotIn("hidden", value)
 
     def test_agy_rules_are_exact_and_preserve_denials_and_other_settings(self):
@@ -73,7 +74,7 @@ class DesktopRuntimeTests(unittest.TestCase):
             self.assertEqual(result["other"], 42)
             self.assertEqual(result["permissions"]["deny"], ["command(*)"])
             rules = result["permissions"]["allow"]
-            self.assertEqual(len(rules), 22)
+            self.assertEqual(len(rules), 26)
             self.assertNotIn("mcp(*)", rules)
             self.assertNotIn("command(*)", rules)
             backups = list(path.parent.glob("settings.before-*.json"))

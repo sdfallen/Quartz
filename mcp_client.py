@@ -18,8 +18,18 @@ log = get_logger(__name__)
 
 # ── Try importing MCP SDK ─────────────────────────────
 try:
-    from mcp import ClientSession, StdioServerParameters
-    from mcp.client.stdio import stdio_client
+    import importlib.util as _mcp_spec
+    if _mcp_spec.find_spec("mcp") is None:
+        raise ImportError("mcp")
+    def StdioServerParameters(*a, **kw):
+        from mcp import StdioServerParameters as _S
+        return _S(*a, **kw)
+    def stdio_client(*a, **kw):
+        from mcp.client.stdio import stdio_client as _c
+        return _c(*a, **kw)
+    def ClientSession(*a, **kw):
+        from mcp import ClientSession as _C
+        return _C(*a, **kw)
     MCP_AVAILABLE = True
     log.info("MCP SDK available")
 except ImportError:

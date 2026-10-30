@@ -17,6 +17,7 @@ import time
 import uuid
 
 from core.antigravity_runtime import AntigravityRuntime
+from core.gemini_runtime import google_runtime
 from core.codex_runtime import CodexRuntime
 from core.desktop_agents import mcp_command
 from core.response_style import communication_instruction
@@ -96,7 +97,7 @@ class ApprovedLog:
 
 
 class ChatCoordination:
-    def __init__(self, desktop, emit, *, codex_factory=CodexRuntime, agy_factory=AntigravityRuntime):
+    def __init__(self, desktop, emit, *, codex_factory=CodexRuntime, agy_factory=google_runtime):
         self.desktop, self.emit = desktop, emit
         self.factories = {"codex":codex_factory, "antigravity":agy_factory}
         self.pending = None; self.job = None; self.notes = deque(maxlen=12)

@@ -17,7 +17,8 @@ from core.process_tree import stop_process_tree
 class CodexRuntime:
     TERMINAL = {"completed", "failed", "cancelled"}
     SUPPORTED_EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"]
-    PROBE_TTL = 120.0
+    PROBE_TTL = 300.0
+    _SHARED_PROBE_CACHE: dict[str, tuple[float, dict]] = {}
 
     def __init__(self, executable=None):
         self.executable = None
@@ -30,10 +31,19 @@ class CodexRuntime:
         self._runs = {}
         self._processes = {}
         self._writers = {}
-        self._probe_cache: tuple[float, dict] = (0.0, {})
+        shared = self._SHARED_PROBE_CACHE.get(str(self.executable or ""))
+        if shared and (time.monotonic() - shared[0] < self.PROBE_TTL):
+            self._probe_cache: tuple[float, dict] = (shared[0], dict(shared[1]))
+        else:
+            self._probe_cache = (0.0, {})
 
     @staticmethod
     def _find_executable(explicit=None) -> str:
+        from core.cli_installer import resolve_cli
+        try:
+            return resolve_cli("codex", explicit)
+        except FileNotFoundError:
+            pass
         bundled = []
         local_app_data = os.getenv("LOCALAPPDATA")
         if local_app_data:
@@ -134,8 +144,14 @@ class CodexRuntime:
                 "error": self._init_error or "Codex CLI was not found",
             }
         now = time.monotonic()
+        cache_key = str(self.executable or "")
         with self._lock:
             cached_at, cached = self._probe_cache
+            if not cached and cached_at == 0.0:
+                shared = self._SHARED_PROBE_CACHE.get(cache_key)
+                if shared and (now - shared[0] < self.PROBE_TTL):
+                    cached_at, cached = shared[0], dict(shared[1])
+                    self._probe_cache = (cached_at, dict(cached))
             if not force and cached and cached.get("ready") and (now - cached_at < self.PROBE_TTL):
                 return dict(cached)
 
@@ -154,7 +170,10 @@ class CodexRuntime:
             "error": "" if authenticated else (login_text or "Authentication required"),
         }
         with self._lock:
-            self._probe_cache = (time.monotonic(), dict(result))
+            stamp = time.monotonic()
+            self._probe_cache = (stamp, dict(result))
+            if result.get("ready"):
+                self._SHARED_PROBE_CACHE[cache_key] = (stamp, dict(result))
         return result
 
     def start(self, prompt, project_path, *, sandbox="read-only", approval="never",
@@ -260,7 +279,8 @@ class CodexRuntime:
         command = self._command(args)
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
-            process_options = {"env": desktop_env} if desktop_env is not None else {}
+            from core.cli_installer import cli_environment
+            process_options = {"env": desktop_env if desktop_env is not None else cli_environment()}
             process = subprocess.Popen(
                 command, cwd=str(project), stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -365,15 +385,26 @@ class CodexRuntime:
 
     def _command(self, args):
         suffix = Path(self.executable).suffix.lower()
+        if suffix in {".js", ".mjs", ".cjs"}:
+            from core.cli_installer import node_command
+            return node_command(self.executable, args)
         if os.name == "nt" and suffix in {".cmd", ".bat"}:
+            if suffix == ".cmd":
+                try:
+                    from core.cli_installer import node_command
+                    return node_command(self.executable, args)
+                except Exception:
+                    pass
             command_text = subprocess.list2cmdline([self.executable, *args])
             return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c", command_text]
         return [self.executable, *args]
 
     def _probe(self, args) -> dict:
+        from core.cli_installer import cli_environment
         try:
             completed = subprocess.run(
                 self._command(args), stdin=subprocess.DEVNULL,
+                env=cli_environment(),
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=15, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 check=False,

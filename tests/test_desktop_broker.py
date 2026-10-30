@@ -81,6 +81,49 @@ class BrokerTests(unittest.TestCase):
         with self.assertRaises(PermissionError): self.act(token, first["snapshot_id"])
         self.assertFalse(self.broker.status()["active"])
         self.assertTrue(self.backend.leases[0].closed)
+
+    def test_persistent_focus_recovery_refreshes_without_replaying_input(self):
+        token = self.broker.grant(1, "codex", confirmed=True, persistent_control=True)["token"]
+        first = self.broker.call(token, {"name": "desktop_focus"})
+        self.backend.foreground = False
+        self.assertTrue(self.broker.status()["active"])
+        refreshed = self.act(token, first["snapshot_id"])
+        self.assertTrue(refreshed["action_skipped"])
+        self.assertTrue(refreshed["focus_recovered"])
+        self.assertEqual(self.backend.actions, [])
+        self.assertNotEqual(first["snapshot_id"], refreshed["snapshot_id"])
+        self.act(token, refreshed["snapshot_id"])
+        self.assertEqual(len(self.backend.actions), 1)
+
+    def test_failed_recovery_is_bounded_and_keeps_task_without_input(self):
+        token = self.broker.grant(1, "codex", confirmed=True, persistent_control=True)["token"]
+        first = self.broker.call(token, {"name": "desktop_focus"})
+        self.backend.foreground = False
+        self.backend.focus = MagicMock()
+        with self.assertRaises(PermissionError): self.act(token, first["snapshot_id"])
+        self.backend.focus.assert_called_once()
+        self.assertEqual(self.backend.actions, [])
+        self.assertTrue(self.broker.status()["active"])
+        self.assertIsNone(self.broker._session["snapshot"])
+
+    def test_recovery_cannot_cross_locked_session_or_replaced_window(self):
+        token = self.broker.grant(1, "codex", confirmed=True, persistent_control=True)["token"]
+        first = self.broker.call(token, {"name": "desktop_focus"})
+        self.backend.foreground = False
+        self.backend.focus = MagicMock()
+        self.backend.validate_input_session = MagicMock(side_effect=PermissionError("locked"))
+        with self.assertRaises(PermissionError): self.act(token, first["snapshot_id"])
+        self.backend.focus.assert_not_called()
+        self.backend.target["pid"] += 1
+        with self.assertRaises(PermissionError): self.broker.call(token, {"name": "desktop_observe"})
+        self.assertFalse(self.broker.status()["active"])
+
+    def test_stop_never_recovers_focus(self):
+        token = self.broker.grant(1, "codex", confirmed=True, persistent_control=True)["token"]
+        self.broker.stop()
+        self.backend.focus = MagicMock()
+        with self.assertRaises(PermissionError): self.broker.call(token, {"name": "desktop_observe"})
+        self.backend.focus.assert_not_called()
     def test_pid_or_start_time_reuse_revokes(self):
         for field in ("pid", "started", "exe"):
             token, first = self.focus()

@@ -1,0 +1,9 @@
+{
+  "name": "squad",
+  "version": "0.7.6",
+  "license": "MIT",
+  "source": "https://github.com/mco-org/squad",
+  "sha256": "f9db55141d6b6a908786bd50c12cf245c081bb4eaef53a3439e0d61ca1d5faa0",
+  "platform": "Windows x86_64",
+  "origin": "Existing local C:/squad/squad.exe, copied without modification"
+}

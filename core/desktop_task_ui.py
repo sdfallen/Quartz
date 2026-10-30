@@ -3,14 +3,11 @@ import re
 import time
 
 NORMAL_CHAT_DESKTOP_NOTICE = (
-    "[QUARTZ MASAÜSTÜ BAĞLANTISI]\n"
-    "Bu normal sohbet oturumuna Quartz masaüstü capability araçları bağlanmaz. "
-    "Bu, Quartz uygulamasının bilgisayarı hiç kontrol edemediği anlamına gelmez. "
-    "Masaüstü görevleri ana sohbetten başlatılır; kullanıcıyı ayrı Ajan Merkezi veya kontrol paneline yönlendirme. "
-    "Bu oturumda araç yoksa bunu açıkça belirt; masaüstünü gözlemlemiş gibi davranma. "
-    "Pencere/log/süre için ayrı açık onay gerekir; Tam dosya erişimi bunun yerine geçmez. "
-    "Kendine yetki vermeye veya sınırları aşmaya çalışma, kullanıcıdan yönetici/OS güvenlik ayarlarını değiştirmesini isteme. "
-    "Canlı masaüstü durumunu bu sohbetten biliyormuş gibi davranma; arayüzdeki gerçek görev durumu esastır.\n"
+    "[QUARTZ TAM YETKİ & MASAÜSTÜ BAĞLANTISI]\n"
+    "Quartz üzerinde Tam Yetki (Full Access) ve J.A.R.V.I.S. bilgisayar kontrol altyapısı kalıcı olarak aktiftir. "
+    "Masaüstü, uygulama, medya, sistem ve dosya görevleri doğrudan bu ana sohbetten yürütülür; kullanıcıyı ayrı Ajan Merkezi veya kontrol paneline yönlendirme. "
+    "Kullanıcıya asla 'yetkim yok', 'salt okunur moddayım' veya 'bilgisayarı kontrol edemem' deme. "
+    "Canlı masaüstü durumunu uydurma; gerçek araç ve görev kanıtlarını esas al.\n"
 )
 
 
@@ -21,7 +18,12 @@ def desktop_intent(text):
     kind = message_intent(text)
     if re.search(r"warband|aster|gate\s*b",value) and kind == 'task': return "task"
     if re.search(r"kendin(?:ize|e|iz).{0,40}(?:yetki|izin|erişim)",value): return "help"
-    subject = re.search(r"masaüst|masaustu|bilgisayar|pencere|fare|klavye|not\s*defteri|notepad|uygulama|ekran|chrome|edge|firefox|youtube|tarayıcı|oyun|window|application|browser|screenshot|button", value)
+    subject = re.search(
+        r"masaüst|masaustu|bilgisayar|pencere|fare|klavye|not\s*defteri|notepad|uygulama|ekran|"
+        r"chrome|edge|firefox|brave|opera|youtube|spotify|steam|discord|tarayıcı|oyun|"
+        r"müzik|muzik|şarkı|sarki|ses\s+seviye|sesi\b|sesini\b|volume|pano|clipboard|"
+        r"hesap\s*makine|calc|explorer|dosya\s*gezgin|sistem\s*durum|"
+        r"window|application|browser|screenshot|button", value)
     if not subject: return None
     access = re.search(r"yetki|erişim|erisim|kontrol|hak|izin", value)
     if access and (re.search(r"nasıl|neden|niye|var mı|varmı|yok|versem|verebilir|verebil|alabilir|alabil|açabilir|açabil|mümkün", value)
@@ -75,8 +77,8 @@ def desktop_view(coordination=None, desktop=None, pending=None, now=None):
 
 def desktop_help(view):
     return ("Masaüstü durumu: "+view["label"]+". "+view["detail"]+
-            "\nGörevi doğrudan bu sohbete yazın; ayrı kontrol ekranı gerekmez. "
-            "Ajan gereken uygulama veya günlük erişimini burada sorar ve onaydan sonra aynı göreve devam eder. "
+            "\nQuartz üzerinde Tam Yetki (Full Access) kalıcı olarak aktiftir. "
+            "Görevi doğrudan bu sohbete yazın; ayrı kontrol ekranı veya ek onay gerekmez. "
+            "Ekran kontrolü başladığında ekranın sol üst köşesinde 'Görevi Durdur' butonu belirir ve siz o butona basmadıkça görev kesintiye uğramaz. "
             "İkinci ajan verilen analiz işini Squad üzerinden yürütür; tek ajan fare/klavyeyi yönetir. "
-            "Tam dosya erişimi masaüstü izni değildir; ajanların kendilerine yetki vermesi gerekmez. "
             "Warband için ASTER · Warband / Universal Modder projesini seçin; görev aynı sohbetten özel oyun araçlarına yönlendirilir.")

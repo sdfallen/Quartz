@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+import os
 
 from core.squad_adapter import SquadAdapter
 
@@ -23,6 +24,14 @@ class SquadAdapterTests(unittest.TestCase):
         output = '{"id":"worker","role":"worker","status":"active"}\n'
         with patch.object(self.adapter, "_checked", return_value={"stdout": output}):
             self.assertEqual(self.adapter.agents()[0]["id"], "worker")
+
+    def test_packaged_squad_is_found_without_global_install(self):
+        root = Path(self.tmp.name) / "bundle"
+        executable = root / "assets/bin/squad.exe"
+        executable.parent.mkdir(parents=True)
+        executable.touch()
+        with patch('core.squad_adapter.shutil.which', return_value=None), patch.dict(os.environ, {}, clear=True), patch('core.squad_adapter.sys._MEIPASS',str(root),create=True):
+            self.assertEqual(SquadAdapter._find_executable(),str(executable.resolve()))
 
     def test_task_and_history_output_are_parsed(self):
         task_output = (

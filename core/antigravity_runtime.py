@@ -22,7 +22,9 @@ class AntigravityRuntime:
     SUPPORTED_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
     DEFAULT_MODEL = "gemini-4-argon-medium"
     DEFAULT_EFFORT = "medium"
-    PROBE_TTL = 120.0
+    PROBE_TTL = 300.0
+    _SHARED_PROBE_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
+    _SHARED_MODELS_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
 
     def __init__(self, executable=None):
         self.executable = self._find_executable(executable)
@@ -30,27 +32,40 @@ class AntigravityRuntime:
         self._runs = {}
         self._processes = {}
         self._writers = {}
-        self._probe_cache: dict | None = None
-        self._probe_cache_at: float = 0.0
-        self._models_cache: dict | None = None
-        self._models_cache_at: float = 0.0
+        cache_key = self._cache_key()
+        now = time.monotonic()
+        shared_probe = self._SHARED_PROBE_CACHE.get(cache_key)
+        if shared_probe and (now - shared_probe[0]) < self.PROBE_TTL:
+            self._probe_cache: dict | None = dict(shared_probe[1])
+            self._probe_cache_at: float = shared_probe[0]
+        else:
+            self._probe_cache = None
+            self._probe_cache_at = 0.0
+        shared_models = self._SHARED_MODELS_CACHE.get(cache_key)
+        if shared_models and (now - shared_models[0]) < self.PROBE_TTL:
+            self._models_cache: dict | None = dict(shared_models[1])
+            self._models_cache_at: float = shared_models[0]
+        else:
+            self._models_cache = None
+            self._models_cache_at = 0.0
+
+    def _cache_key(self) -> tuple[str, str]:
+        return (str(getattr(self, "backend", "agy")), str(self.executable or ""))
 
     @staticmethod
     def _find_executable(explicit=None) -> str:
-        local = Path(os.getenv("LOCALAPPDATA", "")) / "agy" / "bin" / "agy.exe"
-        candidates = [
-            explicit, os.getenv("QUARTZ_ANTIGRAVITY_PATH"),
-            shutil.which("agy.exe"), shutil.which("agy"), local,
-        ]
-        for candidate in candidates:
-            if candidate and Path(candidate).is_file():
-                return str(Path(candidate).resolve())
-        raise FileNotFoundError("Antigravity CLI (agy) was not found")
+        from core.cli_installer import resolve_cli
+        return resolve_cli("agy", explicit)
 
     def list_models(self, force: bool = False) -> dict:
         """Discover supported models and efforts directly from `agy models`."""
         now = time.monotonic()
+        cache_key = self._cache_key()
         with self._lock:
+            if self._models_cache is None and self._models_cache_at == 0.0:
+                shared = self._SHARED_MODELS_CACHE.get(cache_key)
+                if shared and (now - shared[0]) < self.PROBE_TTL:
+                    self._models_cache_at, self._models_cache = shared[0], dict(shared[1])
             if not force and self._models_cache is not None and (now - self._models_cache_at) < self.PROBE_TTL:
                 return dict(self._models_cache)
 
@@ -94,11 +109,18 @@ class AntigravityRuntime:
         with self._lock:
             self._models_cache = result
             self._models_cache_at = time.monotonic()
+            if models:
+                self._SHARED_MODELS_CACHE[cache_key] = (self._models_cache_at, dict(result))
         return dict(result)
 
     def probe(self, force: bool = False) -> dict:
         now = time.monotonic()
+        cache_key = self._cache_key()
         with self._lock:
+            if self._probe_cache is None and self._probe_cache_at == 0.0:
+                shared = self._SHARED_PROBE_CACHE.get(cache_key)
+                if shared and (now - shared[0]) < self.PROBE_TTL:
+                    self._probe_cache_at, self._probe_cache = shared[0], dict(shared[1])
             if not force and self._probe_cache is not None and (now - self._probe_cache_at) < self.PROBE_TTL:
                 return dict(self._probe_cache)
 
@@ -128,6 +150,8 @@ class AntigravityRuntime:
         with self._lock:
             self._probe_cache = res
             self._probe_cache_at = time.monotonic()
+            if authenticated:
+                self._SHARED_PROBE_CACHE[cache_key] = (self._probe_cache_at, dict(res))
         return dict(res)
 
     def start(self, prompt, project_path, *, write=False, full_access=False,
@@ -157,6 +181,7 @@ class AntigravityRuntime:
         sandbox_label = "danger-full-access" if full_access else ("workspace-write" if effective_write else "sandbox")
 
         run_id = uuid.uuid4().hex
+        timeout_seconds = self._parse_timeout_seconds(timeout)
         project_key = os.path.normcase(str(project))
         with self._lock:
             if effective_write and project_key in self._writers:
@@ -167,6 +192,7 @@ class AntigravityRuntime:
                 "sandbox": sandbox_label,
                 "approval": "always-proceed" if effective_write else "configured-policy",
                 "started_at": time.time(),
+                "timeout_seconds": timeout_seconds,
                 "first_event_at": None, "first_text_at": None,
                 "finished_at": None, "exit_code": None,
                 "conversation_id": conversation_id,
@@ -204,9 +230,10 @@ class AntigravityRuntime:
         if desktop_connection is not None:
             from core.desktop_agents import connection_environment
             process_options["env"] = connection_environment(desktop_connection)
+        process_options = self._process_options(process_options, project, desktop_connection, tool_guard)
         try:
             process = subprocess.Popen(
-                [self.executable, *args], cwd=str(project), stdin=subprocess.DEVNULL,
+                self._command(args), cwd=str(project), stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 encoding="utf-8", errors="replace", creationflags=flags,
                 **process_options,
@@ -298,6 +325,15 @@ class AntigravityRuntime:
             except Exception:
                 pass
 
+    def _command(self, args):
+        return [self.executable, *args]
+
+    def _process_options(self, options, project, desktop_connection, tool_guard):
+        return options
+
+    def _normalize_event(self, event):
+        return event
+
     def _probe(self, args, timeout=15) -> dict:
         try:
             completed = subprocess.run(
@@ -322,6 +358,7 @@ class AntigravityRuntime:
                 event = json.loads(line)
             except json.JSONDecodeError:
                 event = {"event": "raw", "text": line}
+            event = self._normalize_event(event)
             with self._lock:
                 record = self._runs[run_id]
                 if record.get("first_event_at") is None:
@@ -343,15 +380,15 @@ class AntigravityRuntime:
                         record.setdefault("progress_log", []).append(f"Tool {tool_name}: {tool_state}")
                         tool_info = step.get("tool_info") or {}
                         params = tool_info.get("parameters") or {}
-                        if tool_state in {"DONE", "ERROR"} and tool_name == "run_command":
+                        if tool_state in {"DONE", "ERROR"} and tool_name in {"run_command", "run_shell_command"}:
                             record["commands"].append({
-                                "command": str(params.get("CommandLine") or "")[:1000],
+                                "command": str(params.get("CommandLine") or params.get("command") or "")[:1000],
                                 "exit_code": tool_info.get("exit_code"),
                                 "output": str(tool_info.get("output") or tool_info.get("error") or "")[:4000],
                             })
                         if tool_state == "DONE" and tool_name in {
-                            "create_file", "edit_file", "delete_file", "write_to_file",
-                            "replace_file_content", "multi_replace_file_content", "notebook_edit",
+                            "create_file", "edit_file", "delete_file", "write_to_file", "write_file",
+                            "replace", "replace_file_content", "multi_replace_file_content", "notebook_edit",
                         }:
                             path = str(params.get("Path") or params.get("TargetFile") or
                                        params.get("file_path") or params.get("path") or "")
@@ -390,17 +427,48 @@ class AntigravityRuntime:
                 with self._lock:
                     self._runs[run_id]["errors"].append(line)
 
+    @staticmethod
+    def _parse_timeout_seconds(timeout) -> float:
+        if isinstance(timeout, (int, float)):
+            return max(1.0, float(timeout))
+        raw = str(timeout or "10m").strip().lower()
+        try:
+            if raw.endswith("ms"):
+                return max(1.0, float(raw[:-2]) / 1000.0)
+            if raw.endswith("s"):
+                return max(1.0, float(raw[:-1]))
+            if raw.endswith("m"):
+                return max(1.0, float(raw[:-1]) * 60.0)
+            if raw.endswith("h"):
+                return max(1.0, float(raw[:-1]) * 3600.0)
+            return max(1.0, float(raw))
+        except ValueError:
+            return 600.0
+
     def _wait(self, run_id, process, project_key, stdout_thread, stderr_thread):
-        code = process.wait()
+        with self._lock:
+            timeout_sec = self._runs.get(run_id, {}).get("timeout_seconds") or 600.0
+        timed_out = False
+        try:
+            code = process.wait(timeout=timeout_sec)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            stop_process_tree(process, timeout=5)
+            try:
+                code = process.wait(timeout=5)
+            except Exception:
+                code = -1
         stdout_thread.join(timeout=5)
         stderr_thread.join(timeout=5)
         with self._lock:
             record = self._runs[run_id]
             record["exit_code"] = code
             record["finished_at"] = time.time()
+            if timed_out:
+                record["errors"].append(f"Task timed out after {timeout_sec:g}s")
             if record["cancel_requested"]:
                 record["status"] = "cancelled"
-            elif (code == 0 and record.get("remote_status") in self.SUCCESS
+            elif (not timed_out and code == 0 and record.get("remote_status") in self.SUCCESS
                   and record["result"] and not record["denied_actions"]):
                 record["status"] = "completed"
             else:

@@ -1,5 +1,13 @@
 #define MyAppName "Quartz"
+#ifndef MyAppVersion
 #define MyAppVersion "1.0.0"
+#endif
+#ifndef PackageDir
+  #error PackageDir is required; use build_installer.ps1 with a clean audited package.
+#endif
+#ifndef ReleaseOutput
+  #error ReleaseOutput is required.
+#endif
 #define MyAppPublisher "Ali Mehdi"
 #define MyAppExeName "Quartz.exe"
 ; Require the approved Q rather than silently falling back to legacy ring art.
@@ -15,12 +23,12 @@ VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=Quartz Desktop Assistant Setup
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
-DefaultDirName={autopf}\Quartz
+DefaultDirName={localappdata}\Programs\Quartz
 DefaultGroupName=Quartz
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
-OutputDir=..\dist\installer
+OutputDir={#ReleaseOutput}
 OutputBaseFilename=QuartzSetup-{#MyAppVersion}
 SetupIconFile={#BrandIcon}
 UninstallDisplayIcon={app}\{#MyAppExeName}
@@ -40,13 +48,14 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
-Name: "startup"; Description: "Quartz'ı Windows açılışında başlat"; GroupDescription: "Başlangıç"; Flags: checkedonce
+Name: "startup"; Description: "Quartz'ı Windows açılışında başlat"; GroupDescription: "Başlangıç"; Flags: unchecked
 
 [Files]
-Source: "..\dist\Quartz\Quartz.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\dist\Quartz\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PackageDir}\Quartz.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PackageDir}\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; README is optional documentation; EXE, runtime resources and brand ICO remain required.
-Source: "..\dist\Quartz\README.txt"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PackageDir}\README.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PackageDir}\release-manifest.json"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Quartz"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"; AppUserModelID: "AliMehdi.Quartz.Workspace"

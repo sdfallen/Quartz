@@ -68,6 +68,11 @@ def start_gui():
     """Import and run the GUI directly."""
     log("Starting GUI...")
     try:
+        try:
+            from core.low_spec_optimizer import configure_webview_environment
+            configure_webview_environment()
+        except Exception:
+            pass
         from gui import QuartzUI
         app = QuartzUI()
         log("GUI created successfully")
@@ -98,6 +103,10 @@ if __name__ == "__main__":
     log("Quartz Entry Point Started")
     log(f"BASE_DIR: {BASE_DIR}")
     log(f"Frozen: {getattr(sys, 'frozen', False)}")
+
+    from core.windows_prerequisites import ensure_webview2
+    if not ensure_webview2():
+        sys.exit(1)
 
     # Start the window immediately while the backend imports in parallel.
     start_backend_thread()

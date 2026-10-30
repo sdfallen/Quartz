@@ -34,6 +34,14 @@ token.json
 tokens.json
 auth.json
 auth-state.json
+oauth_creds.json
+cli_connections.json
+gemini-oauth-check.json
+quartz_deleted_chats/
+.gemini/
+.codex/
+.agy/
+node_modules/
 
 # Python caches and local tooling
 __pycache__/
@@ -74,4 +82,7 @@ Desktop.ini
 
 # Local source review / generated publication reports
 QUARTZ_KAPSAMLI_KAYNAK_KOD_INCELEME_RAPORU_*.txt
+
+# Small MIT-licensed coordination helper shipped with the Windows package.
+!assets/bin/squad.exe
 

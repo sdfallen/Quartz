@@ -138,7 +138,7 @@ class SchedulerAgent(BaseAgent):
     # ── Internal ──────────────────────────────────────
 
     def _check_tasks(self):
-        now = datetime.now().strftime("%H:%M")
+        now_dt = datetime.now(); now = now_dt.strftime("%H:%M"); run_stamp = now_dt.strftime("%Y-%m-%d %H:%M")
 
         # Atomic: collect due tasks AND mark
         # last_run in one lock acquisition
@@ -150,11 +150,11 @@ class SchedulerAgent(BaseAgent):
                 if (task["done"]
                         and not task["repeat"]):
                     continue
-                if task.get("last_run") == now:
+                if task.get("last_run") == run_stamp:
                     continue
                 # Mark immediately to prevent
                 # double execution
-                task["last_run"] = now
+                task["last_run"] = run_stamp
                 due_tasks.append(dict(task))
 
         # Execute outside lock

@@ -90,5 +90,48 @@ body.show-panels .rail.right {display:flex !important;position:fixed;right:0;top
 .agent-sub {color:#8d9883;font:11px 'Segoe UI',sans-serif;}
 .agent-overlay {background:#0007;backdrop-filter:none;}
 .agent-status-card,.agent-row {background:#212524;border-color:#343a30;box-shadow:none;border-radius:7px;}
+.diagnostics-card {flex-direction:column;align-items:stretch;gap:10px;padding:14px 16px;margin:8px 0 18px;border:1px solid #3c4536;border-radius:10px;background:#1a1e19;transition:border-color .16s ease,background-color .16s ease;}
+.diagnostics-card.diag-complete-pass[data-verdict="PASS"] {border-color:#5b7a48;background:#1b2219;}
+.diagnostics-card[data-verdict="FAIL"],.diagnostics-card[data-state="failed"] {border-color:#6e3d38;background:#211919;}
+.diagnostics-card[data-verdict="PARTIAL"],.diagnostics-card[data-verdict="UNKNOWN"] {border-color:#635739;background:#1e1d18;}
+.diagnostics-card[data-state="cancelled"] {border-color:#3b3e3a;background:#181a18;}
+.diag-head {display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;}
+.diag-title-wrap {display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0;}
+.diag-title {font:600 13px 'Segoe UI',sans-serif;color:#e5eadc;letter-spacing:.01em;}
+.diag-rea-tag {font:600 10px 'Segoe UI',sans-serif;padding:2px 6px;border-radius:4px;border:1px solid #3f4a37;background:#232920;color:#b2c4a3;}
+.diag-actions {display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.diag-badge {font:600 11px 'Segoe UI',sans-serif;padding:3px 8px;border-radius:5px;border:1px solid #41483b;background:#232821;color:#cfd7c6;}
+.diag-badge[data-badge="PASS"] {border-color:#557343;background:#22301d;color:#cce3be;}
+.diag-badge[data-badge="FAIL"] {border-color:#78403b;background:#2f1d1b;color:#f2b8b2;}
+.diag-badge[data-badge="PARTIAL"],.diag-badge[data-badge="UNKNOWN"] {border-color:#6b5c37;background:#2b2619;color:#e6d09c;}
+.diag-badge[data-badge="NOT_TESTED"],.diag-badge[data-badge="CANCELLED"] {border-color:#434642;background:#222422;color:#b4b8b0;}
+.diag-progress-row {display:flex;flex-direction:column;gap:5px;width:100%;}
+.diag-phase-line {display:flex;justify-content:space-between;align-items:baseline;gap:8px;font:11.5px/1.4 'Segoe UI',sans-serif;color:#b6bfa9;}
+.diag-phase-pct {font:600 11px 'Segoe UI',sans-serif;color:#9da891;}
+.diag-progress-bar {width:100%;height:6px;border-radius:4px;background:#262a24;overflow:hidden;border:1px solid #32382f;}
+.diag-progress-fill {height:100%;width:0%;background:#96ac88;border-radius:3px;transition:width .18s ease;}
+.diag-progress-fill[data-fill="PASS"] {background:#86b36d;}
+.diag-progress-fill[data-fill="FAIL"] {background:#cf7066;}
+.diag-progress-fill[data-fill="PARTIAL"],.diag-progress-fill[data-fill="UNKNOWN"] {background:#c4a156;}
+.diag-progress-fill[data-fill="CANCELLED"] {background:#6c7069;}
+.diag-counts {display:flex;flex-wrap:wrap;gap:6px;font:11px 'Segoe UI',sans-serif;color:#9ea695;}
+.diag-count-pill {padding:2px 7px;border-radius:4px;background:#20241f;border:1px solid #31372e;}
+.diag-checks {display:flex;flex-direction:column;gap:6px;width:100%;}
+.diag-check-row {display:flex;flex-direction:column;gap:4px;padding:8px 10px;border-radius:7px;background:#161916;border:1px solid #2c3129;}
+.diag-check-top {display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;}
+.diag-check-title {font:600 12px 'Segoe UI',sans-serif;color:#dde3d4;}
+.diag-status-pill {font:600 10px 'Segoe UI',sans-serif;padding:2px 6px;border-radius:4px;border:1px solid #3d4339;background:#222620;color:#c7d0be;}
+.diag-status-pill[data-status="PASS"] {border-color:#4f6b3e;background:#1f2c1b;color:#c7dfba;}
+.diag-status-pill[data-status="FAIL"] {border-color:#753e39;background:#2d1c1a;color:#f0b3ad;}
+.diag-status-pill[data-status="UNKNOWN"] {border-color:#685936;background:#292418;color:#e3cc96;}
+.diag-status-pill[data-status="NOT_TESTED"] {border-color:#41453f;background:#202220;color:#aeb3aa;}
+.diag-check-msg {font:12px/1.5 'Segoe UI',sans-serif;color:#b8c1ae;overflow-wrap:anywhere;}
+.diag-limitations {padding:8px 10px;border-radius:6px;background:#171917;border:1px solid #2b2f29;font:11px/1.5 'Segoe UI',sans-serif;color:#99a191;}
+.diag-limitations ul {margin:4px 0 0 16px;padding:0;}
+.diag-evidence,.diag-meta-details {margin-top:4px;border-top:1px solid #292e27;padding-top:5px;font:11.5px/1.5 'Segoe UI',sans-serif;color:#9ea796;}
+.diag-evidence summary,.diag-meta-details summary {cursor:pointer;color:#a8b899;font-weight:600;}
+.diag-evidence pre,.diag-meta-details pre {margin-top:5px;padding:8px 10px;border-radius:5px;background:#121412;border:1px solid #272b25;color:#c6cfc0;font:11px/1.45 Consolas,'JetBrains Mono',monospace;white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto;}
+@media (prefers-reduced-motion: reduce) { .diagnostics-card,.diag-progress-fill,.diag-badge {transition:none !important;animation:none !important;} }
+body.low-spec .diagnostics-card,body.low-spec .diag-progress-fill,body.ui-idle .diagnostics-card,body.ui-idle .diag-progress-fill {transition:none !important;animation:none !important;}
 @media(max-width:800px) {.body{grid-template-columns:180px minmax(0,1fr);} .chat-header{padding:12px;} .chat{padding:18px;} .chat-controls-group{flex-wrap:wrap;} .pill-agent-name{display:none;}}
 @media(max-width:540px) {.body{grid-template-columns:minmax(0,1fr);} .rail.left,body:not(.show-panels) .rail.left{display:none !important;} .chat-models-bar{flex-wrap:wrap;} .inputbar{margin-bottom:10px;} }

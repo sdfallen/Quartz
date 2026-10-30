@@ -76,12 +76,48 @@ class DesktopController:
                     continue
             return {"windows": result[:80]}
 
+    @staticmethod
+    def _get_descendants(win, max_depth=None, max_elements=None):
+        if max_depth is None or max_elements is None:
+            try:
+                from core.low_spec_optimizer import detect_hardware_profile
+                prof = detect_hardware_profile()
+                if max_depth is None:
+                    max_depth = prof["max_uia_depth"]
+                if max_elements is None:
+                    max_elements = prof["max_uia_elements"]
+            except Exception:
+                max_depth = max_depth or 5
+                max_elements = max_elements or 250
+        try:
+            return list(win.descendants(depth=max_depth)[:max_elements])
+        except Exception:
+            pass
+        # Robust BFS fallback if win.descendants raises AttributeError on detached elements
+        elements = []
+        queue = [(win, 0)]
+        while queue and len(elements) < max_elements:
+            curr, depth = queue.pop(0)
+            if depth >= max_depth:
+                continue
+            try:
+                children = curr.children()
+            except Exception:
+                continue
+            for child in children:
+                elements.append(child)
+                if len(elements) >= max_elements:
+                    break
+                if depth + 1 < max_depth:
+                    queue.append((child, depth + 1))
+        return elements
+
     def _inspect(self, desktop, handle, query=""):
         win = self._window(desktop, handle)
         snapshot_id = uuid.uuid4().hex[:12]
         elements, references = [], {}
-        # Limit both tree depth and returned data for large Chromium documents.
-        for element in win.descendants(depth=7)[:800]:
+        # Bounded depth and elements for fast, responsive inspection (adaptive via hardware profile)
+        for element in self._get_descendants(win):
             try:
                 item = self._describe(element)
                 if not item["visible"] or item["password"]:
@@ -126,7 +162,7 @@ class DesktopController:
             if win.process_id() != snapshot["pid"]:
                 raise ValueError("Window process changed; inspect again")
             matches = []
-            for element in win.descendants(depth=7)[:800]:
+            for element in self._get_descendants(win):
                 try:
                     current = self._describe(element)
                     if (current["runtime_id"] and current["runtime_id"] == expected["runtime_id"]
@@ -153,7 +189,7 @@ class DesktopController:
                 element.set_edit_text(text)
             else:
                 getattr(element, action)()
-            time.sleep(.3)
+            time.sleep(.1)
             try:
                 after = self._inspect(desktop, snapshot["handle"])
             except Exception as exc:

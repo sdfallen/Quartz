@@ -8,6 +8,7 @@ radar/hex/core canvas UI with a single breathing
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -76,6 +77,38 @@ class Api:
         self._coordination_lock = threading.Lock()
         self._natural = None
         self._natural_start_lock = threading.Lock()
+        self._onboarding = None
+
+    def _onboarding_service(self):
+        if self._onboarding is None:
+            from core.onboarding import OnboardingService
+            self._onboarding = OnboardingService()
+        return self._onboarding
+
+    def onboarding_status(self, force=False):
+        try:
+            return {"status": "ok", "data": self._onboarding_service().status(force=force)}
+        except Exception:
+            return {"status": "error", "data": "Bağlantı durumu okunamadı; yeniden deneyin"}
+
+    def onboarding_begin(self, operation, provider, key=""):
+        try:
+            return {"status": "ok", "data": self._onboarding_service().begin(operation, provider, key)}
+        except Exception as exc:
+            return {"status": "error", "data": str(exc)}
+
+    def onboarding_refresh(self):
+        return ipc_send("onboarding_refresh")
+
+    def diagnostics_start(self, include_rea: bool = True) -> dict:
+        return ipc_send("diagnostics_start", {"include_rea": include_rea})
+
+    def diagnostics_status(self, job_id: str | None = None) -> dict:
+        payload = {"job_id": job_id} if job_id not in (None, "") else {}
+        return ipc_send("diagnostics_status", payload)
+
+    def diagnostics_cancel(self, job_id: str) -> dict:
+        return ipc_send("diagnostics_cancel", {"job_id": job_id})
 
     def natural_start(self, text, conversation_id, project_id, models, permission_level='read-only'):
         """Start reasoning/tool selection, NOT a desktop grant."""
@@ -100,7 +133,11 @@ class Api:
                 self._natural = NaturalDesktopTask(self._desktop_service(), emit)
                 context = '\n\n'.join(str(m.get('sender') or m.get('role')) + ': ' + str(m.get('content') or '')[:1200]
                     for m in (data.get('active_conversation',{}).get('messages') or [])[-8:])[-10000:]
-                result = self._natural.start(text, project, conversation_id, models,
+                task_text = text
+                selected_agent = (data.get('active_conversation') or {}).get('agent')
+                if selected_agent in {'codex', 'antigravity'} and not re.search(r'\b(codex|gemini|antigravity)\b', text, re.I):
+                    task_text = ('Codex, ' if selected_agent == 'codex' else 'Gemini, ') + text
+                result = self._natural.start(task_text, project, conversation_id, models,
                     requested_permission_level=permission_level, conversation_context=context)
                 return {"status":"ok", "data":{"handled":True, "natural_started":True, "task":result}}
         except Exception as exc: return {"status":"error", "data":str(exc)}
@@ -147,17 +184,34 @@ class Api:
             if (not tools_disallowed(text) and not re.search(r'masaüst|bilgisayar|pencere|ekran',text,re.I)
                     and re.search(r'\b(?:yetkilerinizi|yetkileriniz|yetkiniz|erişiminiz|izinleriniz)\b', text, re.I)
                     and re.search(r'kontrol|nedir|neler|var mı|varmı', text, re.I)):
-                labels={'read-only':'Salt Okunur','project':'Proje Yetkisi','full':'Tam Yetki (dosya erişimi)'}
-                reply='Seçili dosya modu: '+labels[permission_level]+'. Bu önayar yeni dosya görevine uygulanır; çalışan görevin yetkisini değiştirmez. '
+                reply='Aktif yetki sistemi: Tam Yetki (tüm dosya ve bilgisayar erişimi). Bu kalıcı yetki yeni görevlere uygulanır; çalışan görevin yetkisini değiştirmez. '
                 if self._natural and self._natural.status().get('active'):
-                    reply+='Etkin görev kapsamlı MCP araçlarıyla çalışıyor; gerçek uygulama/UM yetkisi kendi onayına bağlıdır. '
+                    reply+='Etkin görev kapsamlı MCP araçlarıyla çalışıyor; sol üstteki "Görevi Durdur" butonuna basılmadıkça görev kesilmez. '
                 else:
                     reply+='Şu an bu sorgu yeni bir ajan veya bilgisayar kontrolü başlatmadı. '
-                reply+='Yapılacak işi bu sohbete yazabilirsiniz; gerekli kapsam onayı burada istenir. Dosya modu, masaüstü veya Universal Modder izninin yerine geçmez.'
+                reply+='Yapılacak işi doğrudan bu sohbete yazabilirsiniz; Codex ve Antigravity Tam Yetki ile hazırdır.'
                 for sender,content in (('user',text),('quartz',reply)):
                     result=ipc_send('chat_coordination_message',{'conversation_id':conversation_id,'sender':sender,'content':content})
                     if result.get('status')!='ok': raise RuntimeError('Yetki durumu sohbete yazılamadı')
                 return {'status':'ok','data':{'handled':True,'permission_status':reply}}
+            if (not tools_disallowed(text) and message_kind != "conversation"
+                    and re.search(r'\b(öz\s*teşhis\w*|özteşhis\w*|self[\s-]*diagnos\w*|kendini\s+teşhis\s+et\w*|rea\s+(?:ile\s+)?teşhis\w*)\b', text, re.I)):
+                if re.search(r'\b(dur|durdur|iptal)\b', text, re.I):
+                    current = self.diagnostics_status()
+                    if current.get("status") != "ok":
+                        return current
+                    job = current.get("data") or {}
+                    if job.get("state") == "running" and job.get("id"):
+                        cancelled = self.diagnostics_cancel(job["id"])
+                        if cancelled.get("status") != "ok":
+                            return cancelled
+                        return {"status": "ok", "data": {"handled": True, "diagnostics_cancelled": True, "diagnostics": cancelled.get("data"), "user_text": text}}
+                    return {"status": "ok", "data": {"handled": True, "diagnostics_status": job, "user_text": text}}
+                include_rea = not bool(re.search(r'\brea\s*(?:olmadan|kapalı|hariç|yok)\b', text, re.I))
+                started = self.diagnostics_start(include_rea=include_rea)
+                if started.get("status") != "ok":
+                    return started
+                return {"status": "ok", "data": {"handled": True, "diagnostics_started": True, "diagnostics": started.get("data"), "user_text": text}}
             intent = desktop_intent(text)
             if intent == "help":
                 view = self.desktop_task_status()["data"]
@@ -182,6 +236,24 @@ class Api:
             if active and re.fullmatch(r"\s*(dur|durdur|görevi durdur|kontrolü durdur|iptal et)[.!]?\s*", text, re.I):
                 ipc_send("chat_coordination_message", {"conversation_id":conversation_id,"sender":"user","content":text})
                 return {"status":"ok","data":{"handled":True,"stopped":service.stop()}}
+            if not active and message_kind == 'continuation' and re.fullmatch(
+                    r'\s*(devam et|devam|sürdür|dur|durdur|görevi durdur|kontrolü durdur|iptal et)[.!]?\s*',text,re.I):
+                state=ipc_send('chat_status')
+                if state.get('status')!='ok': raise RuntimeError('Güncel görev durumu okunamadı')
+                data=state.get('data') or {}
+                if (data.get('active_conversation') or {}).get('id')!=conversation_id:
+                    raise PermissionError('Sohbet değişti; güncel sohbetten gönderin')
+                running=(data.get('active_turn') or {}).get('status') in {'running','cancelling'}
+                if running:
+                    reply='Dosya/sohbet ajanı hâlâ çalışıyor. Bu mesaj yeni bir görev başlatmadı; ilerlemeyi sohbetten izleyebilirsiniz.'
+                elif re.search(r'dur|iptal',text,re.I):
+                    reply='Şu anda durdurulacak etkin bir görev yok.'
+                else:
+                    reply='Şu anda devam eden bir görev yok. Kaldığımız işi kısaca belirtin; bu sohbette yeni görev olarak sürdürelim. Önceki işlem otomatik tekrarlanmadı.'
+                for sender,content in (('user',text),('quartz',reply)):
+                    result=ipc_send('chat_coordination_message',{'conversation_id':conversation_id,'sender':sender,'content':content})
+                    if result.get('status')!='ok': raise RuntimeError('Görev durumu sohbete yazılamadı')
+                return {'status':'ok','data':{'handled':True,'continuation_status':reply}}
             from core.chat_coordination import proposed_roles
             if intent == "task":
                 if active:
@@ -243,6 +315,8 @@ class Api:
                     if pending:
                         view.update(code="pending", label="Uygulama izni bekleniyor", control_active=False,
                                     pending_id=pending["id"], detail=pending["reason"])
+                    elif state.get('stopping'):
+                        view.update(code='released',label='Görev durduruluyor',detail='Yeni girdi kapalı; başlamış çağrı ve temizlik tamamlanıyor.')
                     elif not view["control_active"]:
                         view.update(code="preparing", label="Ajanlar çalışıyor", detail="Henüz ekran kontrol izni verilmedi; görev araçları değerlendiriliyor.")
                     if state.get("warband") and not pending:
@@ -561,10 +635,30 @@ class Api:
                 disk_pct = disk.percent
             except Exception:
                 disk_pct = 0
+            from core.low_spec_optimizer import (
+                cleanup_stale_cli_artifacts,
+                detect_hardware_profile,
+                trim_working_set,
+            )
+            prof = detect_hardware_profile()
+            if not getattr(self, "_startup_housekeeping_done", False):
+                self._startup_housekeeping_done = True
+                threading.Thread(
+                    target=lambda: (
+                        time.sleep(6.0),
+                        trim_working_set(force=True, include_children=True),
+                        cleanup_stale_cli_artifacts(),
+                    ),
+                    daemon=True,
+                    name="quartz-low-spec-housekeeping",
+                ).start()
+            elif prof["low_spec_mode"]:
+                trim_working_set(force=False, min_interval_sec=45.0, include_children=True)
             return {
                 "cpu": round(cpu, 1),
                 "mem": round(mem.percent, 1),
                 "disk": round(disk_pct, 1),
+                "low_spec": prof["low_spec_mode"],
             }
         except Exception:
             return {"cpu": 0, "mem": 0, "disk": 0}
@@ -764,6 +858,10 @@ _HTML = r"""
   @keyframes breathe {
     0%, 100% { transform: scale(1); filter: brightness(1); }
     50%      { transform: scale(1.08); filter: brightness(1.18); }
+  }
+  body.ui-idle .orb-ring, body.ui-idle .orb-core,
+  body.low-spec:not(.thinking-active) .orb-ring, body.low-spec:not(.thinking-active) .orb-core {
+    animation-play-state: paused;
   }
   .brand {
     font-family: 'Rajdhani', sans-serif; font-weight: 700;
@@ -1292,9 +1390,56 @@ _HTML = r"""
   .api-submit:disabled { opacity:.5; cursor:wait; }
   .api-error { min-height:18px; margin-top:10px; color:#ffc2ca; font-size:11px; }
   .privacy-note { color:var(--txt-faint)!important; font-size:10.5px!important; margin-bottom:0!important; }
+  @keyframes quartz-control-pulse {
+    0%, 100% { box-shadow: inset 0 0 28px rgba(52,234,255,.16), 0 0 18px rgba(52,234,255,.22); border-color: rgba(52,234,255,.68); }
+    50% { box-shadow: inset 0 0 46px rgba(52,234,255,.28), 0 0 28px rgba(52,234,255,.38); border-color: rgba(52,234,255,.95); }
+  }
+  body.screen-control-active .shell {
+    animation: quartz-control-pulse 2.2s infinite ease-in-out;
+  }
+  .screen-control-hud {
+    -webkit-app-region: no-drag;
+    position: fixed; top: 12px; left: 14px; z-index: 9999;
+    display: inline-flex; align-items: center; gap: 12px;
+    padding: 7px 12px 7px 14px; border-radius: 12px;
+    background: rgba(5, 13, 21, 0.94);
+    border: 1.5px solid rgba(52, 234, 255, 0.78);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.65), 0 0 20px rgba(52, 234, 255, 0.25);
+    backdrop-filter: blur(10px);
+  }
+  .screen-control-hud[hidden] { display: none !important; }
+  .screen-control-hud .hud-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--cyan); box-shadow: 0 0 10px var(--cyan);
+  }
+  .screen-control-hud .hud-meta { display: flex; flex-direction: column; line-height: 1.15; }
+  .screen-control-hud .hud-title {
+    font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 11.5px;
+    letter-spacing: 0.08em; color: var(--cyan);
+  }
+  .screen-control-hud .hud-sub { font-size: 10px; color: var(--txt-dim); }
+  .screen-control-hud .hud-stop-btn {
+    padding: 6px 12px; border-radius: 8px; border: 1px solid rgba(255, 110, 128, 0.65);
+    background: linear-gradient(180deg, #e12d4b, #b81d38); color: #fff;
+    font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 11.5px;
+    letter-spacing: 0.06em; cursor: pointer; transition: all .15s ease;
+  }
+  .screen-control-hud .hud-stop-btn:hover {
+    background: linear-gradient(180deg, #ff3b5c, #d42240);
+    box-shadow: 0 0 14px rgba(255, 59, 92, 0.55);
+  }
 </style>
 </head>
 <body>
+
+<div class="screen-control-hud" id="screenControlHud" hidden>
+  <span class="hud-dot"></span>
+  <div class="hud-meta">
+    <span class="hud-title" id="screenControlHudTitle">QUARTZ KONTROLDE</span>
+    <span class="hud-sub" id="screenControlHudSub">Yalnız bu tuşla durdurulur</span>
+  </div>
+  <button type="button" class="hud-stop-btn" id="btnHudStopTask">⏹ GÖREVİ DURDUR</button>
+</div>
 
 <div class="shell">
 
@@ -1360,13 +1505,11 @@ _HTML = r"""
           <button type="button" class="agent-seg-btn" data-agent="collaboration">◈ Birlikte</button>
         </div>
         <div class="chat-controls-group">
-          <select class="project-picker" id="mainPermissionLevel" title="CLI işlem ve dosya erişim yetkisi" aria-label="İşlem Yetkisi">
-            <option value="full">Tam Yetki (Tüm Dosyalar)</option>
-            <option value="project">Proje Yetkisi</option>
-            <option value="read-only" selected>Salt Okunur</option>
+          <select class="project-picker" id="mainPermissionLevel" title="Tam Yetki (Tek Yetki Sistemi)" aria-label="İşlem Yetkisi" style="display:none">
+            <option value="full" selected>Tam Yetki</option>
           </select>
-          <input type="checkbox" id="mainWriteToggle" style="display:none">
-          <span id="permissionSelectionHint" aria-live="polite" style="font-size:11px;max-width:280px;color:#aaa">Seçili dosya modu: Salt Okunur · yeni görev için</span>
+          <input type="checkbox" id="mainWriteToggle" style="display:none" checked>
+          <span id="permissionSelectionHint" aria-live="polite" style="font-size:11px;max-width:280px;color:#34eaff;font-weight:600">◉ Tam Yetki Aktif</span>
           <div class="agent-badge-select" title="Aktif Ajan" style="display:none">
             <span style="font-size:10px">◈</span>
             <select id="mainAgentSelect">
@@ -1376,6 +1519,7 @@ _HTML = r"""
             </select>
           </div>
           <button class="chat-tool-btn" id="btnContinueCollab" style="display:none" title="Birlikte modunda ajanlar arası tartışmayı 1 tur daha sürdür">⇄ +1 Tur</button>
+          <button type="button" class="chat-tool-btn" id="btnSelfDiagnostics" title="Quartz öz teşhisini bu sohbette başlat">◈ Öz Teşhis</button>
           <button class="chat-tool-btn" id="btnNewChat" title="Yeni Sohbet Başlat">＋ Yeni</button>
         </div>
         <div class="chat-models-bar" id="chatModelsBar">
@@ -1474,6 +1618,7 @@ _HTML = r"""
         <div class="card-label">Sağlayıcı Yöneticisi</div>
         <div class="log-box" id="providerStatus">Kontrol ediliyor...</div>
         <button class="control-btn" id="btnProviderProbe" style="margin-top:7px;width:100%">Bağlantıyı Test Et</button>
+        <button class="control-btn" id="btnCliConnections" style="margin-top:7px;width:100%">Hesaplar ve CLI kurulumu</button>
       </div>
       <div class="card">
         <div class="card-label">Oturum</div>
@@ -1508,6 +1653,27 @@ _HTML = r"""
 <div class="signature-intro" id="signatureIntro" aria-hidden="true">
   <div class="intro-brand">QUARTZ</div>
   <div class="intro-credit">CREATED BY <strong>ALI MEHDI</strong></div>
+</div>
+
+<div class="api-setup" id="cliSetup" role="dialog" aria-modal="true" aria-labelledby="cliWelcome">
+  <div class="api-panel" style="max-width:570px;max-height:90vh;overflow:auto">
+    <h2 id="cliWelcome">Quartz'a Hoş Geldiniz</h2>
+    <p>Tek bir hesapla başlayabilirsiniz. Codex veya Antigravity masaüstü uygulaması gerekmez. Hafif CLI araçlarını Quartz sizin için kurar.</p>
+    <label for="cliProvider">BAĞLANTI</label>
+    <select id="cliProvider"><option value="codex">Codex / OpenAI</option><option value="gemini">Gemini / Google</option></select>
+    <div id="cliProviderState" class="log-box" aria-live="polite">Bağlantılar kontrol ediliyor…</div>
+    <button class="api-submit" id="cliAccount">Hesabımla bağlan</button>
+    <p>Google hesabı bağımsız Antigravity CLI ile bağlanır; Desktop gerekmez. API anahtarı Gemini CLI ve ayrı API kotasını kullanır.</p>
+    <label for="cliKey">VEYA API ANAHTARI</label>
+    <input id="cliKey" type="password" autocomplete="off" spellcheck="false" placeholder="Anahtarınız yalnız bu bilgisayarda saklanır">
+    <button class="api-submit" id="cliValidate">Doğrula ve bağlan</button>
+    <button class="control-btn" id="cliInstall">Hesap için CLI kur (Desktop gerekmez)</button>
+    <button class="control-btn" id="cliCheck">Bağlantıyı kontrol et</button>
+    <div id="cliMessage" class="api-error" role="status" aria-live="polite"></div>
+    <button class="api-submit" id="cliContinue" disabled>Sohbete geç</button>
+    <button class="control-btn" id="cliLater">Şimdi değil</button>
+    <p class="privacy-note">Anahtar .env dosyasında; yalnız bağlantı bilgisi Quartz belleğinde tutulur. Sohbete ve günlüklere anahtar yazılmaz. Kurulum Quartz'a özel klasördedir; sistem PATH ayarı değişmez.</p>
+  </div>
 </div>
 
 <div class="api-setup" id="apiSetup">
@@ -1550,10 +1716,9 @@ _HTML = r"""
           <option value="antigravity">Antigravity</option>
           <option value="collaboration">Codex + Antigravity</option>
         </select>
-        <select class="agent-select" id="agentWrite" aria-label="Görev Yetkisi">
-          <option value="read-only">Salt Okunur</option>
-          <option value="project">Proje Yetkisi</option>
-          <option value="full" disabled>Tam Yetki · bekleniyor</option>
+        <select class="agent-select" id="agentWrite" aria-label="Görev Yetkisi" style="display:none">
+          <option value="full" selected>Tam Yetki</option>
+          <!-- <option value="read-only" selected> -->
         </select>
         <button class="control-btn" id="btnAgentDispatch">AJANA ATA</button>
         <div class="agent-error" id="agentModelSelection">Üstteki sohbet model seçimleri kullanılır.</div>
@@ -1650,12 +1815,70 @@ _HTML = r"""
   signatureIntro.addEventListener('animationend', () => signatureIntro.remove());
 
   async function checkApiSetup() {
-    // CLI ajanları temel çalışma yöntemimiz olduğu için API modalı zorunlu engelleme yapmaz
     try {
-      const response = await window.pywebview.api.ping();
-      // Yalnızca arayüz hazır olunca kontrol et
+      const response = await window.pywebview.api.onboarding_status();
+      if (response.status !== 'ok') return;
+      renderCliStatus(response.data);
+      if (response.data.needs_setup) document.getElementById('cliSetup').classList.add('show');
     } catch (_) {}
   }
+
+  let cliPollTimer = null;
+  let cliState = null;
+  function renderCliStatus(data) {
+    cliState = data;
+    const providers = data.providers || {};
+    document.getElementById('cliProviderState').textContent = ['codex','gemini'].map(p => {
+      const state = providers[p] || {};
+      const label = state.ready ? 'Bağlı' : !state.installed ? 'CLI kurulacak' : state.configured ? 'Bağlantı doğrulanmalı' : 'Hesap bağlantısı bekleniyor';
+      const name = p === 'codex' ? 'Codex' : state.backend === 'agy' ? 'Gemini · Antigravity CLI' : 'Gemini CLI';
+      return `${name}: ${label}${state.auth_message ? '\n' + state.auth_message : ''}`;
+    }).join('\n');
+    document.getElementById('cliMessage').textContent = data.job?.message || '';
+    const busy = data.job?.state === 'running';
+    ['cliValidate','cliAccount','cliInstall'].forEach(id => document.getElementById(id).disabled = busy);
+    document.getElementById('cliContinue').disabled = !Object.values(providers).some(p=>p.ready);
+    document.querySelectorAll('.agent-seg-btn[data-agent]').forEach(button => {
+      const agent = button.dataset.agent;
+      const ready = agent === 'collaboration' ? providers.codex?.ready && providers.gemini?.ready : providers[agent === 'antigravity' ? 'gemini' : 'codex']?.ready;
+      button.disabled = !ready;
+      button.title = ready ? '' : 'Hesaplar ve CLI kurulumu bölümünden bu ajanı bağlayabilirsiniz';
+    });
+    clearTimeout(cliPollTimer);
+    if ((busy || Object.values(providers).some(p=>p.login_pending)) && document.getElementById('cliSetup').classList.contains('show')) cliPollTimer = setTimeout(()=>refreshCliStatus(false), 1500);
+  }
+  async function refreshCliStatus(force=true) {
+    try {
+      const response = await window.pywebview.api.onboarding_status(force);
+      if (response.status !== 'ok') throw Error(response.data);
+      renderCliStatus(response.data);
+    } catch (e) { document.getElementById('cliMessage').textContent = String(e.message || e); }
+  }
+  async function beginCli(operation) {
+    const input = document.getElementById('cliKey');
+    const key = operation === 'key' ? input.value.trim() : '';
+    input.value = '';
+    try {
+      const response = await window.pywebview.api.onboarding_begin(operation, document.getElementById('cliProvider').value, key);
+      if (response.status !== 'ok') throw Error(response.data);
+      await refreshCliStatus(false);
+    } catch (e) { document.getElementById('cliMessage').textContent = String(e.message || e); }
+  }
+  document.getElementById('cliAccount').onclick = ()=>beginCli(document.getElementById('cliProvider').value === 'gemini' ? 'account_agy' : 'account');
+  document.getElementById('cliValidate').onclick = ()=>beginCli('key');
+  document.getElementById('cliInstall').onclick = ()=>beginCli(document.getElementById('cliProvider').value === 'gemini' ? 'install_agy' : 'install');
+  document.getElementById('cliCheck').onclick = ()=>refreshCliStatus(true);
+  document.getElementById('btnCliConnections').onclick = async()=>{ document.getElementById('cliSetup').classList.add('show'); await refreshCliStatus(true); };
+  document.getElementById('cliLater').onclick = ()=>{ clearTimeout(cliPollTimer); document.getElementById('cliSetup').classList.remove('show'); };
+  document.getElementById('cliContinue').onclick = async()=>{
+    const result = await window.pywebview.api.onboarding_refresh();
+    if (result.status !== 'ok') { document.getElementById('cliMessage').textContent=result.data; return; }
+    document.getElementById('cliSetup').classList.remove('show');
+    const provider = cliState?.providers?.gemini?.ready ? 'antigravity' : 'codex';
+    if (currentConvId) await window.pywebview.api.chat_set_agent(currentConvId, provider);
+    syncAgentUI(provider);
+    await loadActiveConversation();
+  };
 
   apiSubmit.addEventListener('click', async () => {
     const key = apiKey.value.trim();
@@ -2031,6 +2254,7 @@ _HTML = r"""
 
   function setThinking(v) {
     thinking = v;
+    document.body.classList.toggle('thinking-active', !!v);
     thinkingRow.classList.toggle('show', v);
     sendBtn.classList.toggle('disabled', v);
     const btnCont = document.getElementById('btnContinueCollab');
@@ -2277,7 +2501,7 @@ _HTML = r"""
         }
         await pollAgentTurn();
         if (chatPollInterval) clearInterval(chatPollInterval);
-        chatPollInterval = setInterval(pollAgentTurn, 300);
+        chatPollInterval = setInterval(pollAgentTurn, 120);
       } catch (e) {
         setThinking(false);
         logLine('Tartışma sürdürme hatası: ' + String(e));
@@ -2355,6 +2579,12 @@ _HTML = r"""
       const activeProjectId = conv.project_id || 'squad-pilot';
       mainProjectSelect.value = activeProjectId;
       if (chatProjectTag) chatProjectTag.textContent = projects.find(p => p.id === activeProjectId)?.name || activeProjectId;
+      const permSelect = document.getElementById('mainPermissionLevel');
+      if (permSelect) {
+        permSelect.value = conv.permission_level || data.preferences?.permission_level || 'full';
+        updatePermissionSelectionHint();
+        window.__writeConfirmed = true;
+      }
       const writer = data.single_writer || {};
       writerBadge.style.display = writer.locked ? 'inline-block' : 'none';
       writerBadge.textContent = writer.locked ? `Yazıcı: ${writer.agent || 'ajan'}` : '';
@@ -2492,16 +2722,17 @@ _HTML = r"""
   function updatePermissionSelectionHint() {
     const select=document.getElementById('mainPermissionLevel');
     const hint=document.getElementById('permissionSelectionHint');
-    const labels={'read-only':'Salt Okunur',project:'Proje Yetkisi',full:'Tam Yetki'};
-    const level=select?.value || 'read-only';
-    if(hint){hint.textContent=`${labels[level] || labels['read-only']} · yeni dosya görevi`;
-      hint.title='Seçim anında güncellenir; çalışan ajanın yetkisini değiştirmez. Uygulama ve Universal Modder kapsam onayları ayrıdır.';}
+    const labels={'read-only':'Tam Yetki',project:'Proje Yetkisi',full:'◉ Tam Yetki Aktif'};
+    const level=select?.value || 'full';
+    if(hint){hint.textContent=`${labels[level] || labels['full']}`;
+      hint.title='Tek Yetki Sistemi (Tam Yetki) kalıcı olarak aktiftir.';}
     window.__writeConfirmed=false;
   }
   const permissionSelect=document.getElementById('mainPermissionLevel');
   if(permissionSelect){permissionSelect.addEventListener('change',updatePermissionSelectionHint);updatePermissionSelectionHint();}
 
   let coordinationRouting = false;
+  window.__writeConfirmed = true;
   async function sendAgentMessage() {
     const text = inputEl.value.trim();
     if (!text || coordinationRouting) return;
@@ -2509,15 +2740,30 @@ _HTML = r"""
     // or a dropdown edit while routing is awaiting the backend.
     const selectedPermissionLevel=document.getElementById('mainPermissionLevel')?.value || 'read-only';
     coordinationRouting = true;
+    const wasThinking = typeof thinking !== 'undefined' ? thinking : false;
+    if (!wasThinking && typeof setThinking === 'function') {
+      setThinking(true);
+      if (typeof thinkingText !== 'undefined' && thinkingText) thinkingText.textContent = 'Görev hazırlanıyor...';
+    }
     let coordinated;
     try { coordinated = await window.pywebview.api.coordination_route(text, currentConvId, mainProjectSelect.value,
       {codex:{model:codexModelSelect.value,effort:codexEffortSelect.value},antigravity:{model:agyModelSelect.value,effort:agyEffortSelect.value}},selectedPermissionLevel); }
     catch(e) { appendMsg('err','QUARTZ',String(e)); return; }
-    finally { coordinationRouting = false; }
+    finally {
+      coordinationRouting = false;
+      if (!wasThinking && typeof setThinking === 'function') setThinking(false);
+    }
     if (coordinated.status !== 'ok') { appendMsg('err','QUARTZ',coordinated.data); return; }
     if (coordinated.data?.handled) {
       inputEl.value = '';
-      if(coordinated.data.permission_status || coordinated.data.desktop_help) await loadActiveConversation();
+      if (coordinated.data.diagnostics_started || coordinated.data.diagnostics_cancelled || coordinated.data.diagnostics_status) {
+        if (coordinated.data.user_text && typeof appendMsg === 'function') appendMsg('user', 'SEN', coordinated.data.user_text, '', 'user', null, false, true);
+        const diagJob = coordinated.data.diagnostics || coordinated.data.diagnostics_status;
+        if (typeof renderSelfDiagnosticsCard === 'function' && diagJob) renderSelfDiagnosticsCard(diagJob);
+        if (typeof scheduleSelfDiagnosticsPoll === 'function' && diagJob?.state === 'running' && diagJob?.id) scheduleSelfDiagnosticsPoll(diagJob.id);
+        return;
+      }
+      if(coordinated.data.permission_status || coordinated.data.desktop_help || coordinated.data.continuation_status) await loadActiveConversation();
       else if(!coordinated.data.natural_started) appendMsg('bot','QUARTZ',coordinated.data.stopped ? 'Görev durduruldu.' : 'Talimat iletildi; yetki kapsamı değişmedi.');
       await refreshDesktopTaskState();
       await pollNaturalTask();
@@ -2582,7 +2828,7 @@ _HTML = r"""
       }
       await pollAgentTurn();
       if (chatPollInterval) clearInterval(chatPollInterval);
-      chatPollInterval = setInterval(pollAgentTurn, 300);
+      chatPollInterval = setInterval(pollAgentTurn, 120);
     } catch (e) {
       setThinking(false);
       activeBotBubble.textContent = 'Hata: ' + String(e);
@@ -2693,6 +2939,14 @@ _HTML = r"""
     document.getElementById('desktopTaskDetail').textContent=(view.conversation_id&&view.conversation_id!==currentConvId?'Başka bir sohbetin görevi. ':'')+view.detail;
     const stop=document.getElementById('btnDesktopTaskStop');
     stop.hidden=!view.stop_ref;stop.disabled=!view.stop_ref;
+    const isControlActive=(view.code==='active'||view.code==='preparing')&&!!view.stop_ref;
+    document.body.classList.toggle('screen-control-active',isControlActive);
+    const hud=document.getElementById('screenControlHud');
+    if(hud){
+      hud.hidden=!isControlActive;
+      const hudSub=document.getElementById('screenControlHudSub');
+      if(hudSub)hudSub.textContent=view.label||'Yalnız bu tuşla durdurulur';
+    }
     for(const card of document.querySelectorAll('[data-desktop-plan]')) {
       const stillPending=card.dataset.desktopPlan===view.pending_id;
       const start=card.querySelector('[data-desktop-approve]');
@@ -2700,6 +2954,9 @@ _HTML = r"""
       const abandon=card.querySelector('[data-desktop-abandon]');if(abandon)abandon.disabled=!stillPending;
     }
   }
+  document.getElementById('btnHudStopTask')?.addEventListener('click',()=>{
+    document.getElementById('btnDesktopTaskStop')?.click();
+  });
   async function refreshDesktopTaskState() {
     try {
       const r=await window.pywebview.api.desktop_task_status();
@@ -2729,6 +2986,16 @@ _HTML = r"""
       if(!pending||card.dataset.naturalPermission!==pending.id||pending.conversation_id!==currentConvId)card.remove();
     }
     if(!pending||pending.conversation_id!==currentConvId||document.querySelector(`[data-natural-permission="${pending.id}"]`))return;
+    if(document.getElementById('mainPermissionLevel')?.value==='full' && pending.kind!=='warband') {
+      try {
+        const autoReply=await window.pywebview.api.natural_approve(pending.id,true);
+        if(autoReply.status==='ok'){
+          logLine('Tam Yetki aktif: Masaüstü kapsamı otomatik onaylandı.');
+          await refreshDesktopTaskState();
+          return;
+        }
+      } catch(_) {}
+    }
     const panel=document.createElement('section');panel.className='coordination-card';panel.dataset.naturalPermission=pending.id;
     panel.setAttribute('aria-label','Görev için uygulama izni');
     const title=document.createElement('strong');title.textContent=pending.kind==='warband'?'Warband görev izni gerekiyor':'Uygulama izni gerekiyor';
@@ -2772,6 +3039,520 @@ _HTML = r"""
     if(response.data.active)coordinationTimer=setTimeout(pollCoordination,1500);
     else if(coordinationTimer){clearTimeout(coordinationTimer);coordinationTimer=null;}
   }
+
+  // ── Self-Diagnostics (REA-Supported Compact Chat Card) ──
+  const DIAG_PHASE_LABELS = {
+    queued: 'Sıraya alındı',
+    scope: 'Kapsam ve kimlik doğrulaması',
+    resources: 'Gerekli kaynak bileşenleri kontrolü',
+    manifest: 'Paket manifesti ve SHA-256 doğrulaması',
+    rea: 'REA statik ikili / arşiv incelemesi',
+    report: 'Teşhis kanıtları kaydediliyor',
+    done: 'Ölçüm tamamlandı',
+  };
+  const DIAG_CHECK_TITLES = {
+    scope: 'İncelenen uygulama kapsamı',
+    resources: 'Gerekli paket bileşenleri',
+    manifest: 'Paket manifesti ve bütünlük',
+    rea: 'REA statik paket incelemesi',
+    inspection: 'Teşhis yürütme durumu',
+  };
+  const DIAG_STATUS_BADGES = {
+    PASS: 'PASS · GEÇTİ',
+    FAIL: 'FAIL · BAŞARISIZ',
+    UNKNOWN: 'UNKNOWN · BELİRSİZ',
+    NOT_TESTED: 'NOT TESTED · TEST EDİLMEDİ',
+  };
+  const DIAG_STATUS_EXPLANATIONS = {
+    PASS: 'Bu kontrol doğrulandı; beklenen yapı ve özet değerleriyle uyumlu.',
+    FAIL: 'Bu kontrolde uyumsuzluk veya eksiklik saptandı; kanıt ayrıntılarını inceleyin.',
+    UNKNOWN: 'Bu kontrolün sonucu mevcut çalışma koşulunda kesinleştirilemedi.',
+    NOT_TESTED: 'Bu kontrol mevcut modda (ör. kaynak kodu modu veya REA seçilmemesi/bulunmaması) çalıştırılmadı.',
+  };
+  const DIAG_SCOPE_NOTICE = 'Not: Başarılı paket kontrolü; model erişimi, arayüz işlevleri, güvenlik veya tüm uygulamanın hatasız olduğu anlamına gelmez.';
+
+  function normalizeDiagStatus(raw) {
+    const val = String(raw || 'UNKNOWN').trim().toUpperCase().replace(/[\s-]+/g, '_');
+    if (val === 'PASS') return 'PASS';
+    if (val === 'FAIL') return 'FAIL';
+    if (val === 'NOT_TESTED') return 'NOT_TESTED';
+    return 'UNKNOWN';
+  }
+
+  function redactDiagText(text) {
+    return String(text || '')
+      .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|nvapi-[A-Za-z0-9_-]{16,}|gsk_[A-Za-z0-9]{16,}|sk-(?:proj-)?[A-Za-z0-9_-]{16,}|AIza[A-Za-z0-9_-]{20,})\b/g, '[gizli]')
+      .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[gizli-anahtar]');
+  }
+
+  function formatDiagEvidence(evidence) {
+    if (!evidence || typeof evidence !== 'object') return '';
+    const keys = Object.keys(evidence).filter(k => evidence[k] !== undefined && evidence[k] !== null && evidence[k] !== '');
+    if (!keys.length) return '';
+    const safeCopy = {};
+    for (const key of keys) {
+      if (/secret|token|password|api_key|report_path/i.test(key)) continue;
+      safeCopy[key] = evidence[key];
+    }
+    if (!Object.keys(safeCopy).length) return '';
+    return redactDiagText(JSON.stringify(safeCopy, null, 2));
+  }
+
+  function buildSelfDiagnosticsView(job) {
+    if (!job || typeof job !== 'object') {
+      return {
+        id: 'invalid',
+        state: 'failed',
+        phase: 'done',
+        phaseLabel: 'Geçersiz teşhis verisi',
+        progress: 0,
+        progressText: 'Başarısız (%0)',
+        message: 'Teşhis durumu okunamadı.',
+        verdictCode: 'UNKNOWN',
+        badgeCode: 'UNKNOWN',
+        badgeText: 'UNKNOWN · BELİRSİZ',
+        fillCode: 'FAIL',
+        isSuccessReady: false,
+        canCancel: false,
+        reaUsed: false,
+        reaTagText: 'REA: Belirsiz',
+        counts: { PASS: 0, FAIL: 0, UNKNOWN: 0, NOT_TESTED: 0 },
+        checks: [],
+        limitations: [],
+        scopeNotice: DIAG_SCOPE_NOTICE,
+        technicalSummaryText: '',
+      };
+    }
+    const state = ['idle', 'running', 'completed', 'cancelled', 'failed'].includes(job.state) ? job.state : 'unknown';
+    const phase = String(job.phase || 'queued');
+    const phaseLabel = DIAG_PHASE_LABELS[phase] || phase;
+    const rawProgress = Number(job.progress);
+    const progress = Number.isFinite(rawProgress) ? Math.max(0, Math.min(100, Math.round(rawProgress))) : 0;
+    const rawChecks = Array.isArray(job.checks) ? job.checks : [];
+    const counts = { PASS: 0, FAIL: 0, UNKNOWN: 0, NOT_TESTED: 0 };
+    const checks = rawChecks.map((item, idx) => {
+      const c = item && typeof item === 'object' ? item : {};
+      const checkId = String(c.id || `check-${idx + 1}`);
+      const status = normalizeDiagStatus(c.status);
+      counts[status] = (counts[status] || 0) + 1;
+      const title = String(c.title || DIAG_CHECK_TITLES[checkId] || checkId);
+      const rawMsg = redactDiagText(c.message || '');
+      const explanation = rawMsg || DIAG_STATUS_EXPLANATIONS[status];
+      return {
+        id: checkId,
+        status,
+        statusBadge: DIAG_STATUS_BADGES[status],
+        title,
+        explanation,
+        statusHint: DIAG_STATUS_EXPLANATIONS[status],
+        evidenceText: formatDiagEvidence(c.evidence),
+      };
+    });
+
+    const rawVerdict = String(job.verdict || 'UNKNOWN').trim().toUpperCase().replace(/[\s-]+/g, '_');
+    const isRunning = state === 'running' || (state === 'idle' && Boolean(job.id));
+    const isSuccessReady = (
+      state === 'completed' &&
+      rawVerdict === 'PASS' &&
+      job.finished_at != null &&
+      checks.length > 0 &&
+      counts.FAIL === 0 &&
+      counts.UNKNOWN === 0 &&
+      counts.NOT_TESTED === 0
+    );
+
+    let verdictCode = 'UNKNOWN';
+    let badgeCode = 'UNKNOWN';
+    let badgeText = 'UNKNOWN · BELİRSİZ';
+    let fillCode = 'UNKNOWN';
+
+    if (isRunning) {
+      verdictCode = 'UNKNOWN';
+      badgeCode = 'RUNNING';
+      badgeText = phase === 'queued' ? 'SIRADA' : 'ÇALIŞIYOR';
+      fillCode = 'RUNNING';
+    } else if (state === 'cancelled') {
+      verdictCode = 'UNKNOWN';
+      badgeCode = 'CANCELLED';
+      badgeText = 'İPTAL EDİLDİ (UNKNOWN)';
+      fillCode = 'CANCELLED';
+    } else if (state === 'failed') {
+      verdictCode = rawVerdict === 'FAIL' ? 'FAIL' : 'UNKNOWN';
+      badgeCode = verdictCode;
+      badgeText = verdictCode === 'FAIL' ? 'FAIL · BAŞARISIZ' : 'TAMAMLANAMADI (UNKNOWN)';
+      fillCode = 'FAIL';
+    } else if (state === 'completed') {
+      if (rawVerdict === 'FAIL' || counts.FAIL > 0) {
+        verdictCode = 'FAIL';
+        badgeCode = 'FAIL';
+        badgeText = 'FAIL · SORUN SAPTANDI';
+        fillCode = 'FAIL';
+      } else if (isSuccessReady) {
+        verdictCode = 'PASS';
+        badgeCode = 'PASS';
+        badgeText = 'PASS · DOĞRULANDI';
+        fillCode = 'PASS';
+      } else if (rawVerdict === 'PARTIAL' || (rawVerdict === 'PASS' && !isSuccessReady)) {
+        verdictCode = 'PARTIAL';
+        badgeCode = 'PARTIAL';
+        badgeText = 'PARTIAL · KISMİ KAPSAM';
+        fillCode = 'PARTIAL';
+      } else {
+        verdictCode = 'UNKNOWN';
+        badgeCode = 'UNKNOWN';
+        badgeText = 'UNKNOWN · BELİRSİZ';
+        fillCode = 'UNKNOWN';
+      }
+    }
+
+    let progressText = `${phaseLabel} · %${progress}`;
+    if (state === 'cancelled') {
+      progressText = `İptal edildi (%${progress} aşamasında durduruldu; başarı sayılmadı)`;
+    } else if (state === 'failed') {
+      progressText = `Tamamlanamadı (%${progress} aşamasında kesildi)`;
+    } else if (state === 'completed') {
+      if (verdictCode === 'PASS') progressText = `Ölçüm tamamlandı (%${progress}) · Tüm kontroller geçti`;
+      else if (verdictCode === 'PARTIAL') progressText = `Ölçüm tamamlandı (%${progress}) · Kısmi kapsam (test edilmeyen/belirsiz adım var)`;
+      else if (verdictCode === 'FAIL') progressText = `Ölçüm tamamlandı (%${progress}) · Sorun bulgusu var`;
+      else progressText = `Ölçüm tamamlandı (%${progress}) · Sonuç belirsiz`;
+    }
+
+    const reaCheck = checks.find(c => c.id === 'rea');
+    const reaUsed = Boolean(job.rea_used);
+    const reaTagText = reaUsed
+      ? 'REA: Kullanıldı'
+      : (reaCheck?.status === 'NOT_TESTED' ? 'REA: Test Edilmedi' : (isRunning ? 'REA: Hazırlanıyor' : 'REA: Devre Dışı'));
+
+    const limitations = Array.isArray(job.limitations)
+      ? job.limitations.map(item => redactDiagText(item)).filter(Boolean)
+      : [];
+
+    const summaryMeta = {
+      schema_version: job.schema_version ?? 1,
+      job_id: job.id || null,
+      state,
+      phase,
+      verdict: verdictCode,
+      progress,
+      rea_used: reaUsed,
+      counts,
+      report_saved: Boolean(job.report_path),
+    };
+
+    return {
+      id: String(job.id || 'latest'),
+      state,
+      phase,
+      phaseLabel,
+      progress,
+      progressText,
+      message: redactDiagText(job.message || ''),
+      verdictCode,
+      badgeCode,
+      badgeText,
+      fillCode,
+      isSuccessReady,
+      canCancel: state === 'running',
+      reaUsed,
+      reaTagText,
+      counts,
+      checks,
+      limitations,
+      scopeNotice: DIAG_SCOPE_NOTICE,
+      technicalSummaryText: JSON.stringify(summaryMeta, null, 2),
+    };
+  }
+
+  let activeDiagJobId = null;
+  let diagPollTimer = null;
+  let diagPollBusy = false;
+
+  function hasActiveDiagnosticsJob() {
+    return Boolean(activeDiagJobId);
+  }
+
+  function renderSelfDiagnosticsCard(job, targetContainer = null) {
+    const container = targetContainer || (typeof chatEl !== 'undefined' ? chatEl : null);
+    if (!container) return null;
+    const view = buildSelfDiagnosticsView(job);
+    const selector = `[data-diagnostics-job="${view.id.replace(/["\\]/g, '')}"]`;
+    let card = container.querySelector ? container.querySelector(selector) : null;
+    const openDetailsKeys = new Set();
+    if (card && card.querySelectorAll) {
+      card.querySelectorAll('details[data-detail-key]').forEach(d => {
+        if (d.open) openDetailsKeys.add(d.dataset.detailKey);
+      });
+    } else {
+      card = document.createElement('section');
+      card.className = 'coordination-card diagnostics-card';
+      card.dataset.diagnosticsJob = view.id;
+      card.setAttribute('aria-label', 'Quartz Öz Teşhis Kartı');
+      container.appendChild(card);
+    }
+
+    card.dataset.state = view.state;
+    card.dataset.verdict = view.verdictCode;
+    card.classList.toggle('diag-complete-pass', view.isSuccessReady);
+    card.replaceChildren();
+
+    // 1. Header: Title + REA tag + Verdict Badge + Cancel Button
+    const head = document.createElement('div');
+    head.className = 'diag-head';
+    const titleWrap = document.createElement('div');
+    titleWrap.className = 'diag-title-wrap';
+    const titleEl = document.createElement('strong');
+    titleEl.className = 'diag-title';
+    titleEl.textContent = 'QUARTZ ÖZ TEŞHİS';
+    const reaTag = document.createElement('span');
+    reaTag.className = 'diag-rea-tag';
+    reaTag.textContent = view.reaTagText;
+    titleWrap.append(titleEl, reaTag);
+
+    const actions = document.createElement('div');
+    actions.className = 'diag-actions';
+    const badge = document.createElement('span');
+    badge.className = 'diag-badge';
+    badge.dataset.badge = view.badgeCode;
+    badge.textContent = view.badgeText;
+    actions.append(badge);
+
+    if (view.canCancel) {
+      const cancelBtnEl = document.createElement('button');
+      cancelBtnEl.type = 'button';
+      cancelBtnEl.className = 'control-btn';
+      cancelBtnEl.dataset.diagnosticsCancel = view.id;
+      cancelBtnEl.textContent = 'İptal Et';
+      cancelBtnEl.onclick = async () => {
+        cancelBtnEl.disabled = true;
+        cancelBtnEl.textContent = 'İptal ediliyor…';
+        await cancelSelfDiagnostics(view.id);
+      };
+      actions.append(cancelBtnEl);
+    }
+    head.append(titleWrap, actions);
+    card.append(head);
+
+    // 2. Progress & Current Message
+    const progRow = document.createElement('div');
+    progRow.className = 'diag-progress-row';
+    const phaseLine = document.createElement('div');
+    phaseLine.className = 'diag-phase-line';
+    const phaseText = document.createElement('span');
+    phaseText.className = 'diag-phase-text';
+    phaseText.textContent = view.message || view.progressText;
+    const phasePct = document.createElement('span');
+    phasePct.className = 'diag-phase-pct';
+    phasePct.textContent = view.progressText;
+    phaseLine.append(phaseText, phasePct);
+
+    const bar = document.createElement('div');
+    bar.className = 'diag-progress-bar';
+    bar.setAttribute('role', 'progressbar');
+    bar.setAttribute('aria-valuemin', '0');
+    bar.setAttribute('aria-valuemax', '100');
+    bar.setAttribute('aria-valuenow', String(view.progress));
+    const fill = document.createElement('div');
+    fill.className = 'diag-progress-fill';
+    fill.dataset.fill = view.fillCode;
+    fill.style.width = `${view.progress}%`;
+    bar.append(fill);
+    progRow.append(phaseLine, bar);
+    card.append(progRow);
+
+    // 3. Status Counts (PASS / FAIL / UNKNOWN / NOT TESTED)
+    const countsRow = document.createElement('div');
+    countsRow.className = 'diag-counts';
+    for (const [code, label] of [
+      ['PASS', `PASS (Geçti): ${view.counts.PASS}`],
+      ['FAIL', `FAIL (Başarısız): ${view.counts.FAIL}`],
+      ['UNKNOWN', `UNKNOWN (Belirsiz): ${view.counts.UNKNOWN}`],
+      ['NOT_TESTED', `NOT TESTED (Test Edilmedi): ${view.counts.NOT_TESTED}`],
+    ]) {
+      const pill = document.createElement('span');
+      pill.className = 'diag-count-pill';
+      pill.dataset.countStatus = code;
+      pill.textContent = label;
+      countsRow.append(pill);
+    }
+    card.append(countsRow);
+
+    // 4. Checks List
+    const checksBox = document.createElement('div');
+    checksBox.className = 'diag-checks';
+    if (!view.checks.length) {
+      const empty = document.createElement('div');
+      empty.className = 'diag-check-msg';
+      empty.textContent = view.canCancel ? 'Kontrol adımları yürütülüyor…' : 'Bu koşuda kontrol adımı kaydı oluşmadı.';
+      checksBox.append(empty);
+    } else {
+      for (const chk of view.checks) {
+        const row = document.createElement('div');
+        row.className = 'diag-check-row';
+        row.dataset.checkId = chk.id;
+        row.dataset.checkStatus = chk.status;
+
+        const top = document.createElement('div');
+        top.className = 'diag-check-top';
+        const cTitle = document.createElement('span');
+        cTitle.className = 'diag-check-title';
+        cTitle.textContent = chk.title;
+        const cStatus = document.createElement('span');
+        cStatus.className = 'diag-status-pill';
+        cStatus.dataset.status = chk.status;
+        cStatus.textContent = chk.statusBadge;
+        top.append(cTitle, cStatus);
+
+        const cMsg = document.createElement('div');
+        cMsg.className = 'diag-check-msg';
+        cMsg.textContent = chk.explanation;
+        row.append(top, cMsg);
+
+        if (chk.evidenceText) {
+          const evDetails = document.createElement('details');
+          evDetails.className = 'technical-details diag-evidence';
+          const detailKey = `ev:${chk.id}`;
+          evDetails.dataset.detailKey = detailKey;
+          evDetails.open = openDetailsKeys.has(detailKey);
+          const evSummary = document.createElement('summary');
+          evSummary.textContent = 'Kanıt ve teknik ayrıntılar';
+          const evPre = document.createElement('pre');
+          evPre.className = 'diag-evidence-pre';
+          evPre.textContent = chk.evidenceText;
+          evDetails.append(evSummary, evPre);
+          row.append(evDetails);
+        }
+        checksBox.append(row);
+      }
+    }
+    card.append(checksBox);
+
+    // 5. Limitations & Scope Notice
+    const limBox = document.createElement('div');
+    limBox.className = 'diag-limitations';
+    const noticeP = document.createElement('p');
+    noticeP.textContent = view.scopeNotice;
+    limBox.append(noticeP);
+    if (view.limitations.length) {
+      const ul = document.createElement('ul');
+      for (const item of view.limitations) {
+        const li = document.createElement('li');
+        li.textContent = item;
+        ul.append(li);
+      }
+      limBox.append(ul);
+    }
+    card.append(limBox);
+
+    // 6. Card-level Technical Summary
+    const metaDetails = document.createElement('details');
+    metaDetails.className = 'technical-details diag-meta-details';
+    metaDetails.dataset.detailKey = 'meta:summary';
+    metaDetails.open = openDetailsKeys.has('meta:summary');
+    const metaSummary = document.createElement('summary');
+    metaSummary.textContent = 'Teşhis özeti ve teknik kayıt';
+    const metaPre = document.createElement('pre');
+    metaPre.textContent = view.technicalSummaryText;
+    metaDetails.append(metaSummary, metaPre);
+    card.append(metaDetails);
+
+    if (typeof scrollToBottom === 'function' && typeof userPinnedToBottom !== 'undefined' && userPinnedToBottom) {
+      scrollToBottom(true);
+    }
+    return card;
+  }
+
+  async function pollSelfDiagnostics(jobId = activeDiagJobId) {
+    if (diagPollBusy || !jobId) return;
+    diagPollBusy = true;
+    let keepPolling = false;
+    try {
+      const resp = await window.pywebview.api.diagnostics_status(jobId);
+      if (resp && resp.status === 'ok' && resp.data) {
+        renderSelfDiagnosticsCard(resp.data);
+        keepPolling = resp.data.state === 'running';
+      }
+    } catch (_) {
+      keepPolling = false;
+    } finally {
+      diagPollBusy = false;
+    }
+    if (keepPolling) {
+      scheduleSelfDiagnosticsPoll(jobId);
+    } else if (activeDiagJobId === jobId) {
+      activeDiagJobId = null;
+      if (diagPollTimer) {
+        clearTimeout(diagPollTimer);
+        diagPollTimer = null;
+      }
+    }
+  }
+
+  function scheduleSelfDiagnosticsPoll(jobId) {
+    if (!jobId) return;
+    activeDiagJobId = jobId;
+    if (diagPollTimer) {
+      clearTimeout(diagPollTimer);
+      diagPollTimer = null;
+    }
+    const hidden = typeof isUiHidden === 'function' && isUiHidden();
+    const lowSpec = typeof lowSpecHardware !== 'undefined' && Boolean(lowSpecHardware);
+    const delay = hidden ? 4000 : (lowSpec ? 1800 : 900);
+    diagPollTimer = setTimeout(() => pollSelfDiagnostics(jobId), delay);
+  }
+
+  async function startSelfDiagnostics(includeRea = true) {
+    try {
+      const resp = await window.pywebview.api.diagnostics_start(Boolean(includeRea));
+      if (!resp || resp.status !== 'ok' || !resp.data) {
+        if (typeof appendMsg === 'function') appendMsg('err', 'QUARTZ', (resp && resp.data) || 'Öz teşhis başlatılamadı');
+        return null;
+      }
+      if (typeof chatEl !== 'undefined' && chatEl?.querySelectorAll) {
+        chatEl.querySelectorAll('[data-welcome="1"]').forEach(el => el.remove());
+      }
+      renderSelfDiagnosticsCard(resp.data);
+      if (resp.data.state === 'running' && resp.data.id) {
+        scheduleSelfDiagnosticsPoll(resp.data.id);
+      }
+      return resp.data;
+    } catch (e) {
+      if (typeof appendMsg === 'function') appendMsg('err', 'QUARTZ', String(e.message || e));
+      return null;
+    }
+  }
+
+  async function cancelSelfDiagnostics(jobId) {
+    if (!jobId) return null;
+    try {
+      const resp = await window.pywebview.api.diagnostics_cancel(jobId);
+      if (!resp || resp.status !== 'ok' || !resp.data) {
+        if (typeof appendMsg === 'function') appendMsg('err', 'QUARTZ', (resp && resp.data) || 'Öz teşhis iptal edilemedi');
+        return null;
+      }
+      renderSelfDiagnosticsCard(resp.data);
+      if (resp.data.state !== 'running' && activeDiagJobId === jobId) {
+        activeDiagJobId = null;
+        if (diagPollTimer) {
+          clearTimeout(diagPollTimer);
+          diagPollTimer = null;
+        }
+      }
+      return resp.data;
+    } catch (e) {
+      if (typeof appendMsg === 'function') appendMsg('err', 'QUARTZ', String(e.message || e));
+      return null;
+    }
+  }
+
+  document.getElementById('btnSelfDiagnostics')?.addEventListener('click', () => {
+    startSelfDiagnostics(true);
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (typeof isUiHidden === 'function' && !isUiHidden() && activeDiagJobId && !diagPollBusy) {
+      pollSelfDiagnostics(activeDiagJobId);
+    }
+  });
+
   safeBtn.addEventListener('click', async () => {
     const r = await window.pywebview.api.set_safe_mode(!safeMode);
     safeMode = !!(r.data && r.data.enabled);
@@ -3130,9 +3911,27 @@ _HTML = r"""
     renderResponse(resp);
   };
 
+  let lastUserActivityAt = Date.now();
+  let lowSpecHardware = false;
+  let idleDesktopTick = 0;
+  function markUserActivity() { lastUserActivityAt = Date.now(); }
+  function isUiHidden() { return !!(document.hidden || document.visibilityState === 'hidden'); }
+  function hasActiveDesktopTask() { return !!desktopView.stop_ref; }
+  function isUiIdle() {
+    return !thinking && !chatPollInterval && !hasActiveDesktopTask() && (Date.now() - lastUserActivityAt > 20000);
+  }
+  ['mousedown', 'keydown', 'focus'].forEach(ev => window.addEventListener(ev, markUserActivity, { passive: true }));
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      markUserActivity();
+      pollUiEvents();
+    }
+  });
+
   async function pollPing() {
-    let nextDelay = 5000;
+    let nextDelay = 600;
     try {
+      nextDelay = isUiHidden() ? 10000 : (isUiIdle() || lowSpecHardware ? 7500 : 5000);
       const r = await window.pywebview.api.ping();
       statusPill.classList.toggle('online', r.online);
       statusPill.classList.toggle('offline', !r.online);
@@ -3167,8 +3966,14 @@ _HTML = r"""
           statusPill.title = `LLM: ${c.llm.status} (${c.llm.provider}) | MCP: ${c.mcp.status} | Vision: ${c.vision.status}`;
         }
       }
-    } catch (e) { nextDelay = 600; }
-    setTimeout(pollPing, nextDelay);
+    } catch (e) {
+      nextDelay = 600;
+      statusPill.classList.remove('online');
+      statusPill.classList.add('offline');
+      statusText.textContent = 'ÇEVRİMDIŞI';
+    } finally {
+      setTimeout(pollPing, nextDelay);
+    }
   }
 
   function fillClass(pct) {
@@ -3176,63 +3981,101 @@ _HTML = r"""
     if (pct > 60) return 'warn';
     return '';
   }
+  let statsPollBusy = false;
   async function pollStats() {
-    try {
-      const s = await window.pywebview.api.get_stats();
-      for (const [key, id] of [['cpu','cpu'], ['mem','mem'], ['disk','disk']]) {
-        const val = s[key] || 0;
-        document.getElementById(id + 'Val').textContent = val.toFixed(1) + '%';
-        const fill = document.getElementById(id + 'Fill');
-        fill.style.width = Math.min(100, val) + '%';
-        fill.className = 'stat-fill ' + fillClass(val);
-      }
-    } catch (e) { /* ignore */ }
-    setTimeout(pollStats, 2000);
+    if (!statsPollBusy && !isUiHidden()) {
+      statsPollBusy = true;
+      try {
+        const s = await window.pywebview.api.get_stats();
+        if (typeof s.low_spec === 'boolean') {
+          lowSpecHardware = s.low_spec;
+          document.body.classList.toggle('low-spec', lowSpecHardware);
+        }
+        for (const [key, id] of [['cpu','cpu'], ['mem','mem'], ['disk','disk']]) {
+          const val = s[key] || 0;
+          document.getElementById(id + 'Val').textContent = val.toFixed(1) + '%';
+          const fill = document.getElementById(id + 'Fill');
+          fill.style.width = Math.min(100, val) + '%';
+          fill.className = 'stat-fill ' + fillClass(val);
+        }
+      } catch (e) { /* ignore */ }
+      finally { statsPollBusy = false; }
+    }
+    const statsDelay = isUiHidden() ? 10000 : (isUiIdle() || lowSpecHardware ? 6000 : 3000);
+    setTimeout(pollStats, statsDelay);
   }
 
+  let tasksPollBusy = false;
   async function pollTasks() {
-    try {
-      const response = await window.pywebview.api.tasks();
-      if (response.status === 'ok') renderTasks(response.data || []);
-    } catch (e) { /* ignore */ }
-    setTimeout(pollTasks, 5000);
+    if (!tasksPollBusy && !isUiHidden()) {
+      tasksPollBusy = true;
+      try {
+        const response = await window.pywebview.api.tasks();
+        if (response.status === 'ok') renderTasks(response.data || []);
+      } catch (e) { /* ignore */ }
+      finally { tasksPollBusy = false; }
+    }
+    const tasksDelay = isUiHidden() ? 12000 : (isUiIdle() || lowSpecHardware ? 9000 : 6000);
+    setTimeout(pollTasks, tasksDelay);
   }
 
+  let uiEventsPollBusy = false;
   async function pollUiEvents() {
-    try {
-      await refreshDesktopTaskState();
-      const response = await window.pywebview.api.ui_events();
-      if (response.status === 'ok') renderUiEvents(response.data || []);
-      if (!chatPollInterval) {
-        const st = await window.pywebview.api.chat_status();
-        if (st.status === 'ok' && st.data) {
-          updateAntigravitySafety(st.data.agents?.antigravity);
-          if (st.data.squad) updateSquadBadge(st.data.squad, st.data.active_conversation?.id);
-          const conv = st.data.active_conversation;
-          if (conv) {
-            const switched = currentConvId !== conv.id;
-            currentConvId = conv.id;
-            renderConversationNavigation(st.data.conversations || []);
-            chatConvTitle.textContent = conv.title || 'Yeni Sohbet';
-            if (conv.agent) syncAgentUI(conv.agent);
-            syncModelCatalogAndSelection(st.data.models, conv.models);
-            if (Array.isArray(conv.messages) && conv.messages.length > 0) {
-              syncConversationMessages(conv.messages, switched);
-            } else if (switched) {
-              await loadActiveConversation();
+    document.body.classList.toggle('ui-idle', isUiIdle());
+    if (!uiEventsPollBusy) {
+      uiEventsPollBusy = true;
+      try {
+        idleDesktopTick = (idleDesktopTick + 1) % 2;
+        if (hasActiveDesktopTask() || !isUiIdle() || idleDesktopTick === 0) {
+          await refreshDesktopTaskState();
+        }
+        const response = await window.pywebview.api.ui_events();
+        if (response.status === 'ok') renderUiEvents(response.data || []);
+        if (!chatPollInterval && (!isUiIdle() || !conversationLoaded || idleDesktopTick === 0)) {
+          const st = await window.pywebview.api.chat_status();
+          if (st.status === 'ok' && st.data) {
+            updateAntigravitySafety(st.data.agents?.antigravity);
+            if (st.data.squad) updateSquadBadge(st.data.squad, st.data.active_conversation?.id);
+            const conv = st.data.active_conversation;
+            if (conv) {
+              const switched = currentConvId !== conv.id;
+              currentConvId = conv.id;
+              renderConversationNavigation(st.data.conversations || []);
+              chatConvTitle.textContent = conv.title || 'Yeni Sohbet';
+              if (conv.agent) syncAgentUI(conv.agent);
+              syncModelCatalogAndSelection(st.data.models, conv.models);
+              if (switched) {
+                const permSelect = document.getElementById('mainPermissionLevel');
+                if (permSelect) {
+                  permSelect.value = conv.permission_level || st.data.preferences?.permission_level || 'full';
+                  updatePermissionSelectionHint();
+                  window.__writeConfirmed = true;
+                }
+              }
+              if (Array.isArray(conv.messages) && conv.messages.length > 0) {
+                syncConversationMessages(conv.messages, switched);
+              } else if (switched) {
+                await loadActiveConversation();
+              }
+            }
+            if (st.data.active_turn && st.data.active_turn.status === 'running') {
+              setThinking(true);
+              await pollAgentTurn();
+            } else if (thinking) {
+              setThinking(false);
             }
           }
-          if (st.data.active_turn && st.data.active_turn.status === 'running') {
-            setThinking(true);
-            await pollAgentTurn();
-          } else if (thinking) {
-            setThinking(false);
-          }
         }
-      }
-      await pollNaturalTask();
-    } catch (_) { /* backend may still be starting */ }
-    setTimeout(pollUiEvents, 1200);
+        if (hasActiveDesktopTask() || !isUiIdle() || idleDesktopTick === 0) {
+          await pollNaturalTask();
+        }
+      } catch (_) { /* backend may still be starting */ }
+      finally { uiEventsPollBusy = false; }
+    }
+    const uiDelay = (isUiHidden() && !thinking && !hasActiveDesktopTask())
+      ? 4500
+      : (isUiIdle() ? (lowSpecHardware ? 3200 : 2200) : (lowSpecHardware ? 1800 : 1200));
+    setTimeout(pollUiEvents, uiDelay);
   }
 
   window.addEventListener('pywebviewready', async () => {
@@ -3246,6 +4089,7 @@ _HTML = r"""
     pollUiEvents();
     checkApiSetup();
     updatePermissionSelectionHint();
+    window.__writeConfirmed = true;
     inputEl.focus();
     try {
       const perms = await window.pywebview.api.tool_permissions();
@@ -3326,6 +4170,8 @@ class QuartzUI:
 
     def run(self):
         from core.branding import application_icon
+        from core.low_spec_optimizer import configure_webview_environment
+        configure_webview_environment()
         icon=application_icon()
         webview.start(icon=str(icon) if icon.is_file() else None)
 

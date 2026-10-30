@@ -168,10 +168,15 @@ class NaturalTaskTests(unittest.TestCase):
         self.assertIsNone(self.task.pending)
         self.assertEqual(self.broker.status()["id"],session)
 
-    def test_focus_loss_remains_fail_closed(self):
+    def test_focus_loss_recovers_with_fresh_observation_and_same_grant(self):
         self.approve();self.call("desktop_focus");self.backend.foreground=False
-        with self.assertRaises(PermissionError):self.call("desktop_observe")
-        self.assertFalse(self.broker.status()["active"])
+        session = self.broker.status()["id"]
+        result = self.call("desktop_observe")
+        self.assertTrue(result["focus_recovered"])
+        self.assertTrue(self.backend.foreground)
+        self.assertTrue(self.broker.status()["active"])
+        self.assertEqual(session, self.broker.status()["id"])
+        self.assertEqual(self.backend.actions, [])
 
     def test_start_runs_both_selected_models_without_granting_input(self):
         from tests.test_chat_coordination import MODELS

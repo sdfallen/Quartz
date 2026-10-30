@@ -14,7 +14,7 @@ def stop_summary(reason, verification=None):
     """Short human-facing result; the exact technical reason stays in evidence."""
     value = str(reason).lower()
     if 'foreground' in value or 'user takeover' in value:
-        return 'Pencere odağı değiştiği için bilgisayar kontrolü güvenle durduruldu.'
+        return 'Pencere odağı değiştiği (odak değişti / kullanıcı müdahalesi) için bilgisayar kontrolü güvenle durduruldu.'
     if 'permission' in value:
         return 'İzin reddedildi veya süresi doldu; görev durduruldu.'
     if value == 'cancelled': return 'Görev durduruldu; yeni işlem yapılmayacak.'

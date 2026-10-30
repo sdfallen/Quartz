@@ -13,7 +13,15 @@ from typing import Optional
 from io import BytesIO
 
 from PIL import Image, ImageDraw
-from openai import OpenAI
+from core.low_spec_optimizer import LazyClientProxy
+
+def _make_vision_client(api_key: str, base_url: str, **kwargs):
+    from openai import OpenAI as _RealOpenAI
+    return _RealOpenAI(api_key=api_key, base_url=base_url, **kwargs)
+
+
+def OpenAI(api_key: str = "", base_url: str = "", **kwargs):
+    return LazyClientProxy(lambda: _make_vision_client(api_key, base_url, **kwargs))
 
 from logger import get_logger
 from config import get_vision_provider

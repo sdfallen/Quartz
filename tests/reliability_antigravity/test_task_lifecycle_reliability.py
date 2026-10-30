@@ -1,27 +1,40 @@
-"""Reliability tests for NaturalDesktopTask lifecycle invariants.
+"""Reliability tests for NaturalDesktopTask lifecycle invariants and Jarvis Full-Control.
 Covers:
-- F-02: Uncleared self.job in stop() prevents instance reuse (raises RuntimeError on next start).
-- F-03: Scope request for read-only logs preserving active desktop broker (verified with Codex's patch).
-- General lifecycle safety: idempotency of stop().
+- F-02 (FIXED): Stopped NaturalDesktopTask instance can be reused cleanly for a subsequent start(), while an active task still rejects concurrent start().
+- F-03 (VERIFIED): Scope request for read-only logs preserves active desktop broker.
+- Jarvis Full Authority (`requested_permission_level='full'`): Auto-approves inline desktop scope and executes `jarvis_*` tools while blocking Warband/protected paths.
 """
-import copy
-import io
-import json
 from pathlib import Path
 import tempfile
-import threading
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from core.natural_desktop import NaturalDesktopTask
 from core.desktop_broker import DesktopBroker
 from tests.test_desktop_broker import FakeBackend
 
 
+class _FakeRuntime:
+    TERMINAL = {"completed", "failed", "cancelled"}
+    executable = "fake-runtime.exe"
+
+    def __init__(self):
+        self.state = {"id": "run-1", "status": "running"}
+
+    def start(self, prompt, workspace, **opts):
+        return self.state
+
+    def get(self, rid):
+        return self.state
+
+    def cancel(self, rid):
+        self.state["status"] = "cancelled"
+
+
 class NaturalTaskLifecycleReliabilityTests(unittest.TestCase):
-    """Verifies lifecycle invariants, state cleanup, and reproduces F-02 and F-03."""
+    """Verifies lifecycle invariants, state cleanup, F-02 fix, F-03, and Jarvis full-control tools."""
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -31,14 +44,20 @@ class NaturalTaskLifecycleReliabilityTests(unittest.TestCase):
         self.desktop = SimpleNamespace(broker=self.broker, windows=self.backend.windows)
         self.events = []
         self.models = {
-            "codex": {"model": "gpt-5", "effort": "medium"},
-            "antigravity": {"model": "gemini-3.8-flash-high", "effort": "high"},
+            "codex": {"model": "gpt-6.1-sol", "effort": "low"},
+            "antigravity": {"model": "gemini-4-argon-medium", "effort": "medium"},
         }
         self.project = {"path": str(self.root), "workflow": "general"}
+        self.fake_squad = Mock()
+        self.fake_squad.initialized = True
+        self.fake_squad.create_task.return_value = {"id": "squad-task-2"}
+        self.fake_squad.receive.return_value = []
+        self.fake_squad.status.return_value = {"installed": True, "initialized": True}
         self.task = NaturalDesktopTask(
             self.desktop,
             lambda *a: self.events.append(a),
-            factories={},
+            factories={"codex": _FakeRuntime, "antigravity": _FakeRuntime},
+            squad_factory=lambda _: self.fake_squad,
             evidence_root=self.root,
         )
 
@@ -66,10 +85,8 @@ class NaturalTaskLifecycleReliabilityTests(unittest.TestCase):
         self.task.evidence.mkdir(parents=True, exist_ok=True)
         self.task.tokens = {"codex": "token-op", "antigravity": "token-obs"}
         self.task.agent_ids = {"codex": "c-task", "antigravity": "g-task"}
-        self.task.squad = Mock()
-        self.task.squad.receive.return_value = []
+        self.task.squad = self.fake_squad
 
-        # Grant window 1 to operator
         req = self.task.call("token-op", {
             "name": "desktop_request_access",
             "arguments": {"handles": [1], "log_paths": [], "reason": "Pencere incelemesi"},
@@ -80,83 +97,149 @@ class NaturalTaskLifecycleReliabilityTests(unittest.TestCase):
         self.assertTrue(self.broker.status()["active"])
         self.assertIsNotNone(self.task.connection)
 
-    def test_reproduce_f02_natural_task_reuse_raises_runtime_error(self):
-        """F-02 PROVEN DEFECT: stop() leaves self.job populated; calling start() again raises RuntimeError.
-
-        In core/natural_desktop.py:157:
-            if self.job or self.broker.status()["active"]:
-                raise RuntimeError("Önceki görevi kapatmadan yeni operatör başlatılamaz")
-        Because self.job is not set to None on stop(), reusing the instance is impossible.
-        """
-        # Advance task to running state
+    def test_active_task_rejects_concurrent_start(self):
+        """While a task is actively running, calling start() raises RuntimeError."""
         self._setup_active_approved_task()
-        self.assertIsNotNone(self.task.job)
-
-        # Stop task
-        self.task.stop("completed")
-
-        # In unpatched code, self.job is NOT None (it still holds the outcome/verification dict)
-        self.assertIsNotNone(self.task.job, "Defect confirmed: self.job was not cleared on stop()")
-
-        # Attempting start() raises RuntimeError
         with self.assertRaises(RuntimeError) as ctx:
-            self.task.start("İkinci görev başlat", self.project, "cid-2", self.models)
+            self.task.start("Eşzamanlı görev", self.project, "cid-2", self.models)
         self.assertIn("Önceki görevi kapatmadan yeni operatör başlatılamaz", str(ctx.exception))
 
-    @unittest.expectedFailure
     def test_contract_f02_natural_task_should_allow_start_after_stop(self):
-        """CONTRACT TEST: A stopped NaturalDesktopTask instance must be reusable for a new task.
-
-        Marked as expectedFailure until Codex clears self.job on stop() or resets finished jobs in start().
-        """
+        """F-02 VERIFIED FIX: A stopped NaturalDesktopTask instance is cleanly reusable for a new task."""
         self._setup_active_approved_task()
         self.task.stop("completed")
-        # In a reliable architecture, start() must succeed cleanly after stop()
-        self.task.start("İkinci görev başlat", self.project, "cid-2", self.models)
+        with patch("core.natural_desktop.subprocess.run", return_value=SimpleNamespace(returncode=0)), \
+             patch("core.natural_desktop.ensure_antigravity_tool_grants"), \
+             patch("core.natural_desktop.write_operator_hooks"):
+            status = self.task.start("İkinci görev başlat", self.project, "cid-2", self.models, requested_permission_level="full")
+        self.assertTrue(status["active"])
         self.assertEqual(self.task.job["scope"], "İkinci görev başlat")
+        self.assertEqual(self.task.job["requested_permission_level"], "full")
 
     def test_f03_verified_log_request_preserves_active_desktop_broker(self):
-        """F-03 VERIFICATION: Requesting read-only logs preserves the active desktop connection.
-
-        In unpatched 36a2d9e, requesting a log path revoked the active broker.
-        With preserve_input logic, unchanged target windows retain their input connection while
-        asking user approval for newly requested log scopes.
-        """
+        """F-03 VERIFICATION: Requesting read-only logs preserves the active desktop connection."""
         self._setup_active_approved_task()
         self.assertTrue(self.broker.status()["active"])
         self.assertIsNotNone(self.task.connection)
 
-        # Create a dummy log file
         log_file = self.root / "app.log"
         log_file.write_text("sample log line\n", encoding="utf-8")
 
-        # Observer requests read-only log access while keeping the EXISTING approved window intact
         req_res = self.task.call("token-obs", {
             "name": "desktop_request_access",
             "arguments": {"handles": [], "log_paths": ["app.log"], "reason": "Log inceleme"},
         })
         self.assertEqual(req_res["status"], "waiting_for_inline_permission")
+        self.assertTrue(self.broker.status()["active"])
+        self.assertIsNotNone(self.task.connection)
 
-        # Active desktop broker and connection MUST remain intact
-        self.assertTrue(
-            self.broker.status()["active"],
-            "Broker must remain active for approved target windows when only log access is requested",
-        )
-        self.assertIsNotNone(
-            self.task.connection,
-            "Active desktop connection must not be prematurely wiped when requesting log scope",
-        )
+    def test_full_permission_auto_approves_scope_and_enables_jarvis_tools(self):
+        """In Tam Yetki ('full') mode, desktop_request_access auto-approves and jarvis_* tools execute."""
+        self.task.job = {
+            "id": "job-full",
+            "conversation_id": "conv-full",
+            "project": {"path": str(self.root)},
+            "scope": "Jarvis tam kontrol testi",
+            "requested_permission_level": "full",
+            "roles": {"operator": "codex", "observer": "antigravity"},
+            "expires_at": time.time() + 600,
+            "status": "running",
+            "events": [],
+            "task_id": "squad-full",
+            "verification": {"status": "NOT VERIFIED"},
+        }
+        self.task.evidence = self.root / "evidence-full"
+        self.task.evidence.mkdir(parents=True, exist_ok=True)
+        self.task.tokens = {"codex": "token-op", "antigravity": "token-obs"}
+        self.task.agent_ids = {"codex": "c-task", "antigravity": "g-task"}
+        self.task.squad = self.fake_squad
+
+        req = self.task.call("token-op", {
+            "name": "desktop_request_access",
+            "arguments": {"handles": [1], "log_paths": [], "reason": "Tam yetkiyle pencere kontrolü"},
+        })
+        self.assertEqual(req["status"], "approved")
+        self.assertTrue(self.broker.status()["active"])
+
+        # Collaborator can read system info (windows)
+        win_info = self.task.call("token-obs", {
+            "name": "jarvis_system_info",
+            "arguments": {"action": "windows"},
+        })
+        self.assertEqual(win_info["status"], "ok")
+        self.assertEqual(len(win_info["windows"]), 1)
+
+        # Collaborator cannot execute operator-only jarvis_open_app
+        with self.assertRaises(PermissionError):
+            self.task.call("token-obs", {
+                "name": "jarvis_open_app",
+                "arguments": {"target": "notepad"},
+            })
+
+        # Protected Warband target is rejected even for operator
+        with self.assertRaises(PermissionError):
+            self.task.call("token-op", {
+                "name": "jarvis_open_app",
+                "arguments": {"target": "C:\\WarbandIsland\\mb_warband.exe"},
+            })
 
     def test_stop_idempotency(self):
         """Verifies that calling stop() repeatedly does not raise unhandled exceptions."""
         self._setup_active_approved_task()
         self.task.stop("reason-1")
-        # Subsequent stop calls should be idempotent and not crash
-        try:
-            self.task.stop("reason-2")
-            self.task.stop("reason-3")
-        except Exception as exc:
-            self.fail(f"Subsequent stop() calls raised unexpected exception: {exc}")
+        self.task.stop("reason-2")
+        self.task.stop("reason-3")
+
+    def test_persistent_screen_control_survives_user_click_until_explicit_stop(self):
+        """Verifies that in Tam Yetki (full) mode, user mouse clicks / foreground focus changes
+        do NOT cancel screen control; control persists until explicit stop ('Görevi Durdur')."""
+        self.task.job = {
+            "id": "job-persist",
+            "conversation_id": "conv-persist",
+            "project": {"path": str(self.root)},
+            "scope": "Kalıcı ekran kontrolü testi",
+            "requested_permission_level": "full",
+            "roles": {"operator": "codex", "observer": "antigravity"},
+            "expires_at": time.time() + 600,
+            "status": "running",
+            "events": [],
+            "task_id": "squad-persist",
+            "verification": {"status": "NOT VERIFIED"},
+        }
+        self.task.evidence = self.root / "evidence-persist"
+        self.task.evidence.mkdir(parents=True, exist_ok=True)
+        self.task.tokens = {"codex": "token-op", "antigravity": "token-obs"}
+        self.task.agent_ids = {"codex": "c-task", "antigravity": "g-task"}
+        self.task.squad = self.fake_squad
+
+        req = self.task.call("token-op", {
+            "name": "desktop_request_access",
+            "arguments": {"handles": [1], "log_paths": [], "reason": "Kalıcı ekran kontrolü"},
+        })
+        self.assertEqual(req["status"], "approved")
+        self.assertTrue(self.broker.status()["active"])
+        self.assertTrue(self.broker.status()["persistent_control"])
+
+        # First focus target, then simulate user clicking another window (foreground = False)
+        self.task.call("token-op", {"name": "desktop_focus", "arguments": {}})
+        self.assertTrue(self.backend.foreground)
+        self.backend.foreground = False
+        # Broker status poll must NOT cancel the session
+        st = self.broker.status()
+        self.assertTrue(st["active"])
+        self.assertEqual(self.task.job["status"], "running")
+
+        # Next agent action automatically re-focuses handle 1 and succeeds
+        obs = self.task.call("token-op", {
+            "name": "desktop_observe",
+            "arguments": {},
+        })
+        self.assertEqual(obs["target"]["handle"], 1)
+        self.assertTrue(self.backend.foreground)
+
+        # Only explicit stop ("Görevi Durdur" button) terminates control
+        self.task.stop("cancelled")
+        self.assertFalse(self.broker.status()["active"])
 
 
 if __name__ == "__main__":

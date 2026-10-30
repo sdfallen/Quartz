@@ -14,7 +14,9 @@ import uuid
 from pathlib import Path
 
 from logger import get_logger, request_context
-from assistant import GitHubAssistant
+def GitHubAssistant(*args, **kwargs):
+    from assistant import GitHubAssistant as _GitHubAssistant
+    return _GitHubAssistant(*args, **kwargs)
 from core.multi_agent_service import MultiAgentService
 from core.agent_chat import AgentChatService
 from core.local_ipc import authorized
@@ -106,8 +108,11 @@ def register_startup() -> None:
 
 class IPCServer:
 
-    def __init__(self, assistant: GitHubAssistant):
-        self._assistant = assistant
+    _diagnostics_creation_lock = threading.Lock()
+
+    def __init__(self, assistant=None):
+        self._assistant_lock = threading.Lock()
+        self._assistant_instance = assistant
         self._server    = None
         self._running   = False
         self._started_at = time.time()
@@ -115,6 +120,66 @@ class IPCServer:
         self._agent_center_lock = threading.Lock()
         self._agent_chat = None
         self._agent_chat_lock = threading.Lock()
+        self._diagnostics = None
+
+    def _get_diagnostics(self):
+        with self._diagnostics_creation_lock:
+            if getattr(self, '_diagnostics', None) is None:
+                from core.self_diagnostics import SelfDiagnosticsService
+                self._diagnostics = SelfDiagnosticsService()
+            return self._diagnostics
+
+    @property
+    def _assistant(self):
+        inst = getattr(self, "_assistant_instance", None)
+        if inst is None:
+            lock = getattr(self, "_assistant_lock", None)
+            if lock is None:
+                self._assistant_lock = lock = threading.Lock()
+            with lock:
+                inst = getattr(self, "_assistant_instance", None)
+                if inst is None:
+                    inst = GitHubAssistant()
+                    self._assistant_instance = inst
+        return inst
+
+    @_assistant.setter
+    def _assistant(self, value):
+        self._assistant_instance = value
+
+    @staticmethod
+    def _lightweight_health_status() -> dict:
+        from config import get_llm_provider
+        provider = get_llm_provider()
+        configured = bool(provider.get("api_key"))
+        status_str = "configured" if configured else "unconfigured"
+        snap = {
+            "provider": provider.get("name", "nvidia"),
+            "model": provider.get("model", ""),
+            "configured": configured,
+            "status": status_str,
+            "last_latency_seconds": None,
+            "last_error": None,
+            "checked_at": None,
+        }
+        return {
+            "llm": {
+                "status": status_str,
+                "configured": configured,
+                "provider": snap["provider"],
+                "model": snap["model"],
+            },
+            "provider_manager": snap,
+            "memory": {"status": "ok"},
+            "vision": {"status": "ok"},
+            "mcp": {"status": "ok"},
+            "history_messages": 0,
+            "pending_confirmation": None,
+            "safe_mode": False,
+            "operation": {"active": None, "workflows": []},
+            "screen_advisor": {"enabled": False, "mode": "active-task-only"},
+            "tool_sources": {},
+        }
 
     def _get_agent_center(self) -> MultiAgentService:
         if self._agent_center is None:
@@ -159,6 +224,8 @@ class IPCServer:
 
     def stop(self):
         self._running = False
+        if getattr(self, '_diagnostics', None) is not None:
+            self._diagnostics.shutdown()
         if self._agent_chat is not None:
             self._agent_chat.close()
         if self._agent_center is not None:
@@ -224,6 +291,55 @@ class IPCServer:
         # even by an authenticated legacy client.
         if str(action).startswith(("desktop_", "desktop_operator_", "coordination_")):
             return {"status": "error", "data": "Desktop control requires a GUI-local task grant"}
+
+        if action in {'diagnostics_start', 'diagnostics_status', 'diagnostics_cancel'}:
+            data = req.get('data')
+            if data is None:
+                data = {}
+            permitted = {'include_rea'} if action == 'diagnostics_start' else {'job_id'}
+            if not isinstance(data, dict) or set(data) - permitted:
+                return {'status': 'error', 'data': 'Geçersiz teşhis parametresi; dış hedef veya komut kabul edilmez'}
+            try:
+                service = self._get_diagnostics()
+                if action == 'diagnostics_start':
+                    result = service.start(include_rea=data.get('include_rea', True))
+                elif action == 'diagnostics_cancel':
+                    result = service.cancel(data.get('job_id'))
+                else:
+                    identity = data.get('job_id')
+                    if identity is not None and not isinstance(identity, str):
+                        raise ValueError('Geçersiz teşhis kimliği')
+                    result = service.status(identity)
+                return {'status': 'ok', 'data': result}
+            except ValueError as exc:
+                return {'status': 'error', 'data': str(exc)}
+
+        if action == "onboarding_refresh":
+            from core.codex_runtime import CodexRuntime
+            from core.gemini_runtime import google_runtime
+            chat = self._get_agent_chat()
+            service = chat.agent_service
+            if (chat.status().get("active_turn") or {}).get("status") in {"running", "cancelling"}:
+                return {"status": "error", "data": "Devam eden görevi bitirdikten sonra yeniden bağlanın"}
+            service.codex = CodexRuntime()
+            previous_backend = getattr(service.antigravity, "backend", "agy")
+            try:
+                service.antigravity = google_runtime()
+                service._antigravity_error = ""
+            except FileNotFoundError:
+                service.antigravity = None
+            current = chat.store.get_active()
+            session = str((current.get("sessions") or {}).get("antigravity") or "")
+            if getattr(service.antigravity, "backend", "agy") == "gemini" and (previous_backend != "gemini" or not session.startswith("gemini:")):
+                chat.store.set_agent_session(current["id"], "antigravity", None)
+                chat.store.update_agent_model(current["id"], "antigravity", model="auto", effort="medium")
+            elif getattr(service.antigravity, "backend", "agy") == "agy" and (previous_backend == "gemini" or session.startswith("gemini:") or ((current.get("models") or {}).get("antigravity") or {}).get("model") == "auto"):
+                from core.antigravity_runtime import AntigravityRuntime
+                chat.store.set_agent_session(current["id"], "antigravity", None)
+                chat.store.update_agent_model(current["id"], "antigravity", model=AntigravityRuntime.DEFAULT_MODEL, effort=AntigravityRuntime.DEFAULT_EFFORT)
+            service._probe_cache = (0.0, None)
+            service._antigravity_probe_cache = (0.0, None)
+            return {"status": "ok", "data": {"refreshed": True}}
 
         if action == "chat_status":
             return {"status": "ok", "data": self._get_agent_chat().status()}
@@ -356,6 +472,8 @@ class IPCServer:
             return {"status": "ok", "data": "pong"}
 
         if action == "health":
+            inst = getattr(self, "_assistant_instance", None)
+            components = inst.health_status() if inst is not None else self._lightweight_health_status()
             return {
                 "status": "ok",
                 "data": {
@@ -363,7 +481,7 @@ class IPCServer:
                     "uptime_seconds": round(time.time() - self._started_at, 1),
                     "pid": os.getpid(),
                     "python": sys.version.split()[0],
-                    "components": self._assistant.health_status(),
+                    "components": components,
                 },
             }
 
@@ -446,7 +564,8 @@ class IPCServer:
                 "enabled": self._assistant.set_screen_advisor(enabled)}}
 
         if action == "ui_events":
-            return {"status": "ok", "data": self._assistant.drain_ui_events()}
+            inst = getattr(self, "_assistant_instance", None)
+            return {"status": "ok", "data": inst.drain_ui_events() if inst is not None else []}
 
         if action == "configure_api":
             data = req.get("data", {})
@@ -461,7 +580,11 @@ class IPCServer:
             return {"status": "ok", "data": _mobile_gateway.access_info()}
 
         if action == "tool_permissions":
-            return {"status": "ok", "data": self._assistant.tool_permissions()}
+            inst = getattr(self, "_assistant_instance", None)
+            if inst is not None:
+                return {"status": "ok", "data": inst.tool_permissions()}
+            from core.tool_registry import get_tool_registry
+            return {"status": "ok", "data": get_tool_registry().permissions()}
 
         if action == "set_tool_source":
             data = req.get("data", {})
@@ -470,7 +593,8 @@ class IPCServer:
             return {"status": "ok", "data": self._assistant.tool_permissions()}
 
         if action == "tasks":
-            return {"status": "ok", "data": self._assistant.list_tasks()}
+            inst = getattr(self, "_assistant_instance", None)
+            return {"status": "ok", "data": inst.list_tasks() if inst is not None else []}
 
         if action == "cancel_task":
             task_id = str(req.get("data", {}).get("task_id", ""))
@@ -530,11 +654,12 @@ def main(register_signals=True):
         signal.signal(signal.SIGTERM, _handle_signal)
         signal.signal(signal.SIGINT,  _handle_signal)
 
-    assistant   = GitHubAssistant()
-    _ipc_server = IPCServer(assistant)
+    from core.low_spec_optimizer import LazyClientProxy
+    _ipc_server = IPCServer(None)
+    lazy_assistant = LazyClientProxy(lambda: _ipc_server._assistant)
     try:
         from mobile_server import MobileGateway
-        _mobile_gateway = MobileGateway(assistant)
+        _mobile_gateway = MobileGateway(lazy_assistant)
         threading.Thread(target=_mobile_gateway.start,
                          name="quartz-mobile", daemon=True).start()
     except Exception as exc:

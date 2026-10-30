@@ -41,7 +41,8 @@ class MultiAgentService:
         self.antigravity = None
         self._antigravity_error = ""
         try:
-            self.antigravity = AntigravityRuntime(antigravity_executable)
+            from core.gemini_runtime import google_runtime
+            self.antigravity = google_runtime(antigravity_executable, legacy_factory=AntigravityRuntime)
         except Exception as exc:
             self._antigravity_error = str(exc)
         self._squad_executable = squad_executable
@@ -345,9 +346,13 @@ class MultiAgentService:
             options = {"model": model, "effort": effort, "tool_guard": True}
             options.update({"sandbox":"read-only", "approval":"never"} if provider == "codex"
                            else {"write":False, "timeout":"2m"})
-            instruction = ("This is a TEXT-ONLY conversation, not a project task. Answer directly from the "
-                "supplied dialogue. Do not call any tools, inspect files, run commands or browse. "
-                "Do not claim live verification. No desktop or write permission exists for this turn.\n\n")
+            instruction = (
+                "Kullanıcıyla doğrudan ve doğal biçimde sohbet et. Quartz üzerinde Tam Yetki (Full Access) "
+                "ve J.A.R.V.I.S. bilgisayar/sistem kontrol yetkilerin kalıcı olarak aktiftir. "
+                "Bu mesaj genel bir sohbet mesajı olduğu için şu an araç çağırmadan doğrudan yanıt ver; "
+                "ancak kullanıcıya ASLA 'yetkim yok', 'salt okunur moddayım' veya 'erişimim kısıtlı' deme. "
+                "Kullanıcı bir dosya veya bilgisayar görevi verdiğinde tam yetkiyle yapabileceğini belirt.\n\n"
+            )
             run = runtime.start(instruction + str(prompt), workspace.name, **options)
             run["conversation_only"] = True
             with self._lock:

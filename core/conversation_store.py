@@ -14,7 +14,7 @@ from core.atomic_json import atomic_write_json, load_json
 class ConversationStore:
     DEFAULT_MODELS = {
         "antigravity": {
-            "model": "gemini-4-argon-medium",
+            "model": "gemini-3.8-flash-medium",
             "effort": "medium",
         },
         "codex": {
@@ -28,7 +28,7 @@ class ConversationStore:
         self._lock = threading.RLock()
         self._conversations: dict[str, dict] = {}
         self._active_id: str | None = None
-        self._preferences = {"response_detail": "short"}
+        self._preferences = {"response_detail": "short", "permission_level": "full"}
         self._load()
 
     @classmethod
@@ -53,10 +53,12 @@ class ConversationStore:
                 level = prefs.get("response_detail", "short") if isinstance(prefs, dict) else "short"
                 if level in {"short", "normal", "technical"}:
                     self._preferences["response_detail"] = level
+                self._preferences["permission_level"] = "full"
             for cdata in self._conversations.values():
                 if isinstance(cdata, dict):
                     cdata["models"] = self._normalize_models(cdata.get("models"))
                     cdata.setdefault("sessions", {"antigravity": None, "codex": None})
+                    cdata["permission_level"] = "full"
             if not self._conversations:
                 self.create(title="Yeni Sohbet")
 
@@ -147,6 +149,7 @@ class ConversationStore:
                     "updated_at": cdata.get("updated_at", 0),
                     "agent": cdata.get("agent", "antigravity"),
                     "project_id": cdata.get("project_id"),
+                    "permission_level": "full",
                     "models": self._normalize_models(cdata.get("models")),
                     "message_count": len(cdata.get("messages", [])),
                     "is_active": cid == self._active_id,
@@ -164,6 +167,7 @@ class ConversationStore:
                 "title": title,
                 "agent": agent,
                 "project_id": project_id,
+                "permission_level": "full",
                 "created_at": now,
                 "updated_at": now,
                 "models": self._normalize_models(models),
@@ -187,6 +191,7 @@ class ConversationStore:
                     return self.create()
             rec = self._conversations[self._active_id]
             rec["models"] = self._normalize_models(rec.get("models"))
+            rec["permission_level"] = "full"
             return dict(rec)
 
     def get(self, conversation_id: str) -> dict:
@@ -195,6 +200,7 @@ class ConversationStore:
                 raise KeyError(f"Conversation not found: {conversation_id}")
             rec = self._conversations[conversation_id]
             rec["models"] = self._normalize_models(rec.get("models"))
+            rec["permission_level"] = "full"
             return dict(rec)
 
     def select(self, conversation_id: str) -> dict:
@@ -204,6 +210,7 @@ class ConversationStore:
             self._active_id = conversation_id
             rec = self._conversations[conversation_id]
             rec["models"] = self._normalize_models(rec.get("models"))
+            rec["permission_level"] = "full"
             self._save()
             return dict(rec)
 

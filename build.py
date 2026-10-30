@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+import os
 
 ROOT=Path(__file__).resolve().parent
 
@@ -23,7 +24,10 @@ def main():
         __import__(module)
     package=Path.home()/".codex/backups"/("quartz-workspace-package-"+time.strftime("%Y%m%d-%H%M%S"))
     package.mkdir(parents=True,exist_ok=False)
-    def run(command): subprocess.run([sys.executable,*command],cwd=ROOT,check=True)
+    env = os.environ.copy()
+    env['PYTHONPYCACHEPREFIX'] = str(package / 'fresh-bytecode')
+    env['PYINSTALLER_CONFIG_DIR'] = str(package / 'isolated-pyinstaller-cache')
+    def run(command): subprocess.run([sys.executable,'-B',*command],cwd=ROOT,check=True,env=env)
     run(["scripts/check_gui_javascript.py"])
     run(["scripts/run_safe_tests.py"])
     run(["-m","PyInstaller","--noconfirm","--onefile","--console","--name","QuartzDesktopMCP",

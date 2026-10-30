@@ -845,17 +845,22 @@ def steam_install_game(game_name: str) -> str:
 #  Typing & keyboard
 # ─────────────────────────────────────────────────────────────────────────────
 
-def type_and_enter(text: str) -> str:
-    """Type text and press Enter."""
+def type_and_enter(text: str, *, press_enter: bool = True, input_guard=None) -> str:
+    """Paste Unicode text, optionally submitting; existing callers still submit."""
     if not PYAUTOGUI_OK:
         return "pyautogui not installed"
     time.sleep(0.5)
-    pyautogui.write(text, interval=0.04)
-    pyautogui.press("enter")
-    return f"Typed and pressed Enter: {text}"
+    if input_guard: input_guard()
+    pyperclip.copy(text)
+    if input_guard: input_guard()
+    pyautogui.hotkey("ctrl", "v")
+    if press_enter:
+        if input_guard: input_guard()
+        pyautogui.press("enter")
+    return "Text pasted and submitted" if press_enter else "Text pasted without submitting"
 
 
-def hotkey(keys: str) -> str:
+def hotkey(keys: str, *, input_guard=None) -> str:
     """
     Press a key combination.
     Example: hotkey('ctrl+c') or hotkey('alt+f4')
@@ -863,6 +868,8 @@ def hotkey(keys: str) -> str:
     if not PYAUTOGUI_OK:
         return "pyautogui not installed"
     parts = [k.strip() for k in keys.split("+")]
+    if not parts or not all(parts): raise ValueError("A non-empty key chord is required")
+    if input_guard: input_guard()
     pyautogui.hotkey(*parts)
     return f"Pressed: {keys}"
 

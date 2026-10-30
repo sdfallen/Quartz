@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -42,6 +43,8 @@ class SquadAdapter:
     @staticmethod
     def _find_executable(explicit=None) -> str:
         candidates = [explicit, os.getenv("QUARTZ_SQUAD_PATH"), shutil.which("squad.exe"), shutil.which("squad")]
+        bundle = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
+        candidates.append(bundle / "assets" / "bin" / "squad.exe")
         candidates.append(r"C:\squad\squad.exe")
         for candidate in candidates:
             if candidate and Path(candidate).is_file():

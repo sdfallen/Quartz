@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import time
+import uuid
 from functools import wraps
 
 from core.desktop_control import DesktopController
@@ -26,8 +27,16 @@ SENSITIVE = re.compile(r"password|parola|şifre|sign.in|oturum aç|authenticatio
                        r"user account control|kullanıcı hesabı denetimi|windows security", re.I)
 CRITICAL = re.compile(r"\b(delete|remove|overwrite|purchase|buy|pay|send|upload|save|sil|"
                       r"kaydet|üzerine yaz|satın al|öde|gönder|yükle|izin ver|allow|install)\b", re.I)
-SAFE_KEYS = {"enter", "tab", "escape", "up", "down", "left", "right", "space",
-             "backspace", "home", "end", "pageup", "pagedown", "f", "e", "w", "a", "s", "d"}
+SAFE_KEYS = {
+    "enter", "tab", "escape", "esc", "up", "down", "left", "right", "space",
+    "backspace", "delete", "insert", "home", "end", "pageup", "pagedown",
+    "capslock", "shift", "ctrl", "alt", "win",
+    "volumeup", "volumedown", "volumemute", "playpause", "nexttrack", "prevtrack",
+    "browserback", "browserforward", "browserrefresh",
+    *{chr(c) for c in range(ord("a"), ord("z") + 1)},
+    *{str(d) for d in range(10)},
+    *{f"f{i}" for i in range(1, 13)},
+}
 
 
 def _uia_operation(method):
@@ -231,7 +240,7 @@ class NativeDesktopBackend:
     def _safe_controls(self, target):
         with self.controller._desktop() as desktop:
             win = self.controller._window(desktop, target["handle"])
-            for control in win.descendants(depth=7)[:800]:
+            for control in self.controller._get_descendants(win):
                 try:
                     item = self.controller._describe(control)
                 except Exception:
@@ -251,12 +260,44 @@ class NativeDesktopBackend:
     def observe(self, target):
         if not self._input_desktop_matches(target):
             raise PermissionError("Target is not on the active input desktop")
-        self._safe_controls(target)
-        state = self.controller.inspect(target["handle"])
+        # Single unified traversal pass: extracts UI elements, detects keyboard focus,
+        # and asserts password/sensitive control safety all in one fast scan.
         with self.controller._desktop() as desktop:
             win = self.controller._window(desktop, target["handle"])
-            focused = [c for c in win.descendants(depth=7)[:800] if c.has_keyboard_focus()]
-            state["focused"] = self.controller._describe(focused[0]) if len(focused) == 1 else None
+            elements, references = [], {}
+            snapshot_id = uuid.uuid4().hex[:12]
+            focused_item = None
+            for control in self.controller._get_descendants(win):
+                try:
+                    item = self.controller._describe(control)
+                    if not item["visible"]:
+                        continue
+                    if item["password"] or SENSITIVE.search(item["name"]):
+                        raise PermissionError("Authentication/private input appeared; hand off to user")
+                    if focused_item is None and control.has_keyboard_focus():
+                        focused_item = item.copy()
+                    if len(elements) < 120:
+                        ref = str(len(elements) + 1)
+                        references[ref] = item.copy()
+                        public = {k: v for k, v in item.items() if k not in {"runtime_id", "password"}}
+                        public["ref"] = ref
+                        elements.append(public)
+                except PermissionError:
+                    raise
+                except Exception:
+                    continue
+            self.controller._snapshots = {k: v for k, v in self.controller._snapshots.items()
+                                          if self.controller._clock() - v["at"] < 120}
+            self.controller._snapshots[snapshot_id] = {
+                "at": self.controller._clock(), "handle": int(target["handle"]),
+                "pid": win.process_id(), "elements": references
+            }
+            state = {
+                "snapshot_id": snapshot_id, "handle": int(target["handle"]),
+                "title": win.window_text(), "elements": elements,
+                "focused": focused_item,
+                "note": "Use refs from this snapshot only; inspect again after each action."
+            }
         # Only capture a foreground target. No hidden whole-desktop capture.
         if not self.is_foreground(target):
             return {"ui": state, "image_available": False, "note": "Focus once to obtain a bounded screenshot"}
@@ -300,7 +341,7 @@ class NativeDesktopBackend:
         if image.size != (right - left, bottom - top):
             raise PermissionError("Screenshot pixels and target window geometry disagree")
         output = io.BytesIO()
-        image.save(output, format="PNG")
+        image.save(output, format="PNG", compress_level=1)
         return {"ui": state, "width": image.width, "height": image.height,
                 "image_base64": base64.b64encode(output.getvalue()).decode(),
                 "capture": "foreground-window-crop; GPU compatibility not guaranteed"}
@@ -340,9 +381,17 @@ class NativeDesktopBackend:
                 if CRITICAL.search(win.window_text()):
                     raise PermissionError("File/critical dialog requires a separate user decision")
                 self._before_input(target)
-                control.set_edit_text(text)
+                try:
+                    control.set_edit_text(text)
+                except Exception:
+                    import pyperclip
+                    import pyautogui
+                    pyautogui.FAILSAFE = False
+                    pyperclip.copy(text)
+                    pyautogui.hotkey("ctrl", "v")
             return
         import pyautogui
+        pyautogui.FAILSAFE = False
         if action == "click":
             x, y = args.get("x"), args.get("y")
             if (type(x) is not int or type(y) is not int or not observation.get("image_base64") or

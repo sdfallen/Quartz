@@ -28,13 +28,26 @@ def message_intent(text):
         return 'conversation'
     if re.fullmatch(r'\s*(?:devam et|devam|sürdür|evet|olur|tamam|dur|durdur|görevi durdur|kontrolü durdur|iptal et)[.!]?\s*', value):
         return 'continuation'
+    # Explanations can mention an imperative without requesting its execution.
+    # Filter individual clauses so "Chrome'u aç; oynat ne işe yarıyor?" still
+    # executes the explicit first clause rather than suppressing the whole task.
+    explanation = re.compile(r'ne işe yar(?:ıyor|ar)|ne (?:anlama gelir|demek)|'
+                             r'\bdemek\b.{0,60}\bm[ıiuü]\b|'
+                             r'hakkında (?:ne düşün|konuş)|what (?:does|is).{0,80}mean|'
+                             r'\bset theory\b')
+    value = '. '.join(part for part in re.split(r'[.!?;,\n]+',value) if not explanation.search(part))
     # Explanatory questions do not execute the operation being discussed.
     explicit = re.search(
         r'\b(?:incele(?:yin|yiniz|yip|yerek)?|düzelt(?:in|iniz)?|derle(?:yin)?|geliştir(?:in)?|'
-        r'çalıştır(?:ın|in)?|başlat(?:ın)?|başla(?:yın|yınız)?|aç(?:ın|in)?|oku(?:yun)?|araştır(?:ın)?|'
+        r'çalıştır(?:ın|in)?|başlat(?:ın)?|başla(?:yın|yınız)?|aç(?:ın|in|ıp)?|oku(?:yun)?|araştır(?:ın)?|'
         r'tıkla(?:yın)?|yükle(?:yin)?|kaydet|sil|ekle(?:yin)?|oluştur(?:un)?|'
-        r'bak(?:ın|ınız)?|gir(?:in|iniz)?|geç(?:in|iniz)?|bas(?:ın|ınız)?|seç(?:in|iniz)?|'
+        r'bak(?:ın|ınız)?|gir(?:in|iniz|ip)?|geç(?:in|iniz)?|bas(?:ın|ınız)?|seç(?:in|iniz|imi\s+yap)?|'
         r'kaydır(?:ın|ınız)?|göster(?:in|iniz)?|yönet(?:in|iniz)?|kullan(?:ın|ınız)?|ekran görüntüsü al|kontrol(?:ünü|unu)?\s+al|'
+        r'yap(?:ın|ınız)?|ayarla(?:yın|yınız)?|düzenle(?:yin|yiniz)?|onar(?:ın)?|indir(?:in)?|kur(?:un)?|kaldır(?:ın)?|'
+        r'taşı(?:yın)?|yenile(?:yin)?|sıfırla(?:yın)?|temizle(?:yin)?|kopyala(?:yın)?|yapıştır(?:ın)?|'
+        r'çal(?:ın)?|oynat(?:ın)?|durdur(?:un)?|duraklat(?:ın)?|kıs(?:ın)?|artır(?:ın)?|yükselt(?:in)?|'
+        r'ara(?:yın)?|izle(?:yin)?|dinle(?:yin)?|uygula(?:yın)?|tamamla(?:yın)?|bitir(?:in)?|harekete\s+geç(?:in)?|'
+        r'analiz\s+(?:et|edin|ediniz|yap|yapın)|'
         r'test (?:et|edin|ediniz)|kontrol (?:et|edin|ediniz)|test edip|kontrol edip|debug yap|test yap|bi(?:r)? test bakalım|dene(?:yin)?|bul|tara|yaz|güncelle|değiştir|çöz(?:ün)?|kapat(?:ın)?)\b', value)
     polite = re.search(
         r'\b(?:inceleyebilir|inceler|düzeltebilir|düzeltir|açabilir|açar|çalıştırabilir|çalıştırır|'
@@ -42,6 +55,8 @@ def message_intent(text):
         r'kapatabilir|kapatır|güncelleyebilir|günceller|araştırabilir|araştırır|derleyebilir|derler|'
         r'ekleyebilir|ekler|silebilir|siler|girebilir|girer|geçebilir|geçer|'
         r'seçebilir|seçer|tıklayabilir|tıklar|basabilir|basar|gösterebilir|gösterir|'
+        r'yapabilir|yapar|ayarlayabilir|ayarlar|düzenleyebilir|düzenler|çalabilir|çalar|oynatabilir|oynatır|'
+        r'kısabilir|kısar|artırabilir|artırır|arayabilir|arar|kopyalayabilir|kopyalar|yapıştırabilir|yapıştırır|'
         r'kaydırabilir|kaydırır|yönetebilir|yönetir|kullanabilir|kullanır)\s*m[iıuü]s[iıuü]n(?:[iıuü]z)?\b', value)
     # Recognize English directives at clause starts, not verbs inside questions
     # such as "How do I run tests?" or "What happens if I open Notepad?".
@@ -50,6 +65,7 @@ def message_intent(text):
         r'(?:(?:can|could|would) you\s+)?(?:please\s+)?'
         r'(?:open(?!\s+source\b)|inspect|fix|run|debug|update|build|close|check|search|'
         r'create|delete|remove|save|read|review|implement|click|press|scroll|navigate|switch|'
+        r'play|pause|mute|set|configure|analyze|solve|'
         r'take a screenshot|test(?=\s+(?:the|this|our|my|an?)\b))\b', value)
     observation = re.search(r'\b(?:ekranda|ekranımda|pencerede|penceremde|açık uygulamada)\s+'
                             r'(?:şu an\s+)?(?:ne görüyorsun|neler var)\s*[?!.]?\s*$',value)
