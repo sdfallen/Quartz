@@ -14,8 +14,10 @@ class ConnectionPollingTests(unittest.TestCase):
 const assert=require('node:assert/strict');
 let cliState=null, cliPollTimer=null; const timers=[];
 const elements=new Map();
-function el(id){if(!elements.has(id))elements.set(id,{textContent:'',disabled:false,classList:{contains:()=>true}});return elements.get(id);}
-const document={getElementById:el,querySelectorAll:()=>[]};
+function node(){const n={textContent:'',disabled:false,dataset:{},attrs:{},children:[],classList:{contains:()=>true},
+ setAttribute(k,v){this.attrs[k]=v},append(...c){this.children.push(...c)},replaceChildren(){this.children=[]}};return n;}
+function el(id){if(!elements.has(id))elements.set(id,node());return elements.get(id);}
+const document={getElementById:el,querySelectorAll:()=>[],createElement:node};
 function clearTimeout(){} function setTimeout(fn,ms){timers.push({fn,ms});return timers.length;}
 function refreshCliStatus(){}
 '''
@@ -26,6 +28,9 @@ assert.equal(el('cliContinue').disabled,true);
 renderCliStatus({job:{state:'done'},providers:{gemini:{installed:true,ready:true,backend:'agy',login_pending:false}}});
 assert.equal(timers.length,1);assert.equal(el('cliContinue').disabled,false);
 assert.match(el('cliProviderState').textContent,/Antigravity CLI/);
+const rows=el('agentConnections').children;
+assert.deepEqual(rows.map(r=>[r.dataset.agentId,r.dataset.state]),[['codex','missing'],['antigravity','ready'],['notion','missing']]);
+assert.equal(rows[2].children[2].textContent,'Bu sürümde bağlantı yok');
 '''
         result=subprocess.run(['node','-e',harness+function+checks],capture_output=True,text=True,encoding='utf-8',timeout=10)
         self.assertEqual(result.returncode,0,result.stderr)

@@ -971,6 +971,7 @@ _HTML_BODY = r"""
           <button type="button" class="agent-seg-btn active" data-agent="antigravity">◈ Antigravity</button>
           <button type="button" class="agent-seg-btn" data-agent="codex">◈ Codex</button>
           <button type="button" class="agent-seg-btn" data-agent="collaboration">◈ Birlikte</button>
+          <button type="button" class="agent-seg-btn agent-seg-unavailable" id="agentSegNotion" data-agent-unavailable="notion" disabled aria-disabled="true" title="Notion bağlantısı bu sürümde yok. Bağlantı eklendiğinde burada seçilebilir olacak.">◈ Notion</button>
         </div>
         <div class="chat-controls-group">
           <select class="project-picker" id="mainPermissionLevel" title="Tam Yetki (Tek Yetki Sistemi)" aria-label="İşlem Yetkisi" style="display:none">
@@ -1312,8 +1313,45 @@ _HTML_BODY = r"""
       button.disabled = !ready;
       button.title = ready ? '' : 'Hesaplar ve CLI kurulumu bölümünden bu ajanı bağlayabilirsiniz';
     });
+    renderAgentConnections(providers);
     clearTimeout(cliPollTimer);
     if ((busy || Object.values(providers).some(p=>p.login_pending)) && document.getElementById('cliSetup').classList.contains('show')) cliPollTimer = setTimeout(()=>refreshCliStatus(false), 1500);
+  }
+  // Sidebar connection list. Shows only states the backend reported; Notion has
+  // no connection in this build, so it is listed as unavailable and never selectable.
+  let agentConnectionView = {providers: null, active: ''};
+  function renderAgentConnections(providers, activeAgent) {
+    if (providers !== undefined) agentConnectionView.providers = providers;
+    if (activeAgent !== undefined) agentConnectionView.active = activeAgent;
+    const box = document.getElementById('agentConnections');
+    if (!box) return;
+    const known = agentConnectionView.providers;
+    const describe = state => {
+      if (!known) return ['unknown', 'Kontrol ediliyor'];
+      if (!state) return ['missing', 'Bağlı değil'];
+      if (state.ready) return ['ready', 'Bağlı'];
+      if (state.login_pending) return ['pending', 'Giriş bekleniyor'];
+      if (!state.installed) return ['missing', 'CLI kurulmamış'];
+      return ['pending', state.configured ? 'Bağlantı doğrulanmalı' : 'Hesap bağlantısı bekleniyor'];
+    };
+    const active = agentConnectionView.active;
+    const rows = [
+      ['codex', 'Codex', describe(known?.codex), active === 'codex' || active === 'collaboration'],
+      ['antigravity', 'Antigravity', describe(known?.gemini), active === 'antigravity' || active === 'collaboration'],
+      ['notion', 'Notion', ['missing', 'Bu sürümde bağlantı yok'], false],
+    ];
+    box.replaceChildren();
+    for (const [id, name, [state, text], current] of rows) {
+      const row = document.createElement('div');
+      row.className = 'agent-conn'; row.setAttribute('role', 'listitem');
+      row.dataset.agentId = id; row.dataset.state = state;
+      row.setAttribute('aria-current', current ? 'true' : 'false');
+      const dot = document.createElement('span'); dot.className = 'conn-dot'; dot.setAttribute('aria-hidden', 'true');
+      const label = document.createElement('span'); label.className = 'conn-name'; label.textContent = name;
+      const detail = document.createElement('span'); detail.className = 'conn-state'; detail.textContent = text;
+      row.append(dot, label, detail);
+      box.append(row);
+    }
   }
   async function refreshCliStatus(force=true) {
     try {
@@ -1546,7 +1584,7 @@ _HTML_BODY = r"""
       const state = document.createElement('div'); state.textContent = view.state;
       state.style.cssText = 'font-size:11px;opacity:.8;margin-bottom:5px'; bubble.append(state);
     }
-    const body = document.createElement('div'); body.textContent = view.summary; bubble.append(body);
+    const body = document.createElement('div'); appendMessageText(body, view.summary); bubble.append(body);
     if (msg?.status === 'interrupted' && msg.id) {
       const resume = document.createElement('button'); resume.className = 'control-btn';
       resume.textContent = 'Yeni görev taslağı hazırla';
@@ -1572,6 +1610,30 @@ _HTML_BODY = r"""
       details.append(title, full); bubble.append(details);
     }
     return true;
+  }
+
+  // Fenced ``` blocks become monospace code panels. Text only: no HTML is parsed.
+  function appendMessageText(container, text) {
+    const value = String(text ?? '');
+    if (!value.includes('```')) { container.textContent = value; return; }
+    const parts = value.split('```');
+    parts.forEach((part, index) => {
+      const isCode = index % 2 === 1 && index < parts.length - 1;
+      if (!isCode) {
+        const prose = (index % 2 === 1 ? '```' + part : part).replace(/^\n+|\n+$/g, '');
+        if (prose) { const segment = document.createElement('div'); segment.textContent = prose; container.append(segment); }
+        return;
+      }
+      const newline = part.indexOf('\n');
+      const lang = newline > 0 ? part.slice(0, newline).trim() : '';
+      const block = document.createElement('div'); block.className = 'msg-code';
+      if (/^[\w+#.-]{1,20}$/.test(lang)) {
+        const label = document.createElement('span'); label.className = 'msg-code-lang'; label.textContent = lang; block.append(label);
+      }
+      const pre = document.createElement('pre');
+      pre.textContent = (newline >= 0 ? part.slice(newline + 1) : part).replace(/\n$/, '');
+      block.append(pre); container.append(block);
+    });
   }
 
   function appendMsg(kind, label, text, msgId='', sender='bot', msgObj=null, skipScroll=false, forceScroll=false) {
@@ -1942,6 +2004,7 @@ _HTML_BODY = r"""
     if (btnContinueCollab) {
       btnContinueCollab.style.display = isCollab ? 'inline-block' : 'none';
     }
+    renderAgentConnections(undefined, agent);
   }
 
   document.querySelectorAll('.agent-seg-btn[data-agent]').forEach(btn => {
@@ -2404,7 +2467,11 @@ _HTML_BODY = r"""
     clearProject.onclick=()=>requestChatDeletion(navigationConversations.filter(c=>(c.project_id||'squad-pilot')===mainProjectSelect.value),mainProjectSelect.value);
     const history=document.createElement('div');history.id='conversationList';history.className='conversation-list';
     const setting=document.getElementById('responseDetail').closest('.card');
-    left.append(heading,project,newChat,title,history,clearProject,setting);
+    const agentsTitle=document.createElement('div');agentsTitle.className='workspace-nav-title';agentsTitle.id='agentConnectionsTitle';agentsTitle.textContent='Ajanlar';
+    const agents=document.createElement('div');agents.id='agentConnections';agents.className='agent-connections';
+    agents.setAttribute('role','list');agents.setAttribute('aria-labelledby','agentConnectionsTitle');
+    left.append(heading,project,newChat,title,history,clearProject,agentsTitle,agents,setting);
+    renderAgentConnections();
     document.getElementById('btnPanels').textContent='Gelişmiş';
     document.getElementById('btnAgentCenter').textContent='Ajan tanılama';
     document.getElementById('signatureIntro')?.remove();
