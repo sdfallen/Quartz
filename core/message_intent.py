@@ -48,7 +48,7 @@ def message_intent(text):
         r'çal(?:ın)?|oynat(?:ın)?|durdur(?:un)?|duraklat(?:ın)?|kıs(?:ın)?|artır(?:ın)?|yükselt(?:in)?|'
         r'ara(?:yın)?|izle(?:yin)?|dinle(?:yin)?|uygula(?:yın)?|tamamla(?:yın)?|bitir(?:in)?|harekete\s+geç(?:in)?|'
         r'analiz\s+(?:et|edin|ediniz|yap|yapın)|'
-        r'test (?:et|edin|ediniz)|kontrol (?:et|edin|ediniz)|test edip|kontrol edip|debug yap|test yap|bi(?:r)? test bakalım|dene(?:yin)?|bul|tara|yaz|güncelle|değiştir|çöz(?:ün)?|kapat(?:ın)?)\b', value)
+        r'test (?:et|edin|ediniz)|kontrol (?:et|edin|ediniz)|test edip|kontrol edip|debug yap|test yap|bi(?:r)? test bakalım|dene(?:yin)?|bul|tara|yaz|güncelle|değiştir|çöz(?:ün)?|kapat(?:ın)?|öğren(?:in)?|bilgi\s+(?:al|topla))\b', value)
     polite = re.search(
         r'\b(?:inceleyebilir|inceler|düzeltebilir|düzeltir|açabilir|açar|çalıştırabilir|çalıştırır|'
         r'bakabilir|bakar|test edebilir|test eder|kontrol edebilir|kontrol eder|çözebilir|çözer|'

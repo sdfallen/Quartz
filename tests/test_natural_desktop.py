@@ -244,5 +244,41 @@ class NaturalTaskTests(unittest.TestCase):
             self.assertEqual(task.job["verification"]["status"],"NOT VERIFIED")
         finally:task.stop()
 
+    def test_cli_finishes_just_after_approval_continues_same_task(self):
+        from tests.test_chat_coordination import MODELS
+        class Runtime:
+            TERMINAL={"completed","failed","cancelled"}
+            executable="test-runtime.exe"
+            def __init__(self):self.states={};self.started=[]
+            def start(self,prompt,workspace,**opts):
+                rid="run"+str(len(self.started)+1)
+                self.started.append((prompt,workspace,opts))
+                self.states[rid]={"id":rid,"status":"running","result":"finished waiting"}
+                return self.states[rid]
+            def get(self,rid):return self.states[rid]
+            def cancel(self,rid):self.states[rid]["status"]="cancelled"
+        codex,gemini=Runtime(),Runtime()
+        squad=Mock();squad.initialized=True;squad.create_task.return_value={"id":"task"};squad.receive.return_value=[]
+        task=NaturalDesktopTask(self.desktop,lambda *a:None,factories={"codex":lambda:codex,"antigravity":lambda:gemini},
+            squad_factory=lambda p:squad,evidence_root=self.root/"consent-continuation")
+        try:
+            with patch("core.natural_desktop.subprocess.run",return_value=SimpleNamespace(returncode=0)), \
+                 patch("core.natural_desktop.ensure_antigravity_tool_grants"),patch("core.natural_desktop.write_operator_hooks"):
+                task.start("Codex test uygulamasını incele. Gemini logları kontrol et.",{"path":str(self.root)},"chat",MODELS)
+                token=task.tokens["codex"]
+                task.call(token,{"name":"desktop_request_access","arguments":{"handles":[1],"reason":"Test penceresi için izin"}})
+                task.approve(task.pending["id"],confirmed=True)
+                codex.states["run1"]["status"]="completed"
+                gemini.states["run1"]["status"]="completed"
+                time.sleep(.7)
+            self.assertEqual(len(codex.started),2)
+            self.assertEqual(len(gemini.started),2)
+            self.assertEqual(codex.started[1][2]["desktop_connection"]["token"],token)
+            self.assertIn("same task",codex.started[1][0].lower())
+            self.assertTrue(task.status()["active"])
+            self.assertTrue(self.broker.status()["active"])
+            self.assertEqual(task.job["verification"]["status"],"NOT VERIFIED")
+        finally:task.stop()
+
 
 if __name__ == "__main__":unittest.main()

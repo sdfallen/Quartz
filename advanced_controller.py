@@ -645,8 +645,12 @@ def smart_open(app_name: str) -> str:
     Intelligently open any app by name.
     Fixed: Discord path + limited search depth.
     """
+    from core.elevation import launch_normal
     log.info("smart_open: %s", app_name)
     name_lower = app_name.lower().strip()
+    if Path(app_name).is_absolute() and Path(app_name).suffix.lower()=='.exe':
+        launch_normal(app_name)
+        return f"Başlatma istendi: {app_name}"
 
     # Tool-capable models can occasionally send a website to smart_open.
     # Resolve known sites before searching Windows applications. On Windows,
@@ -693,7 +697,7 @@ def smart_open(app_name: str) -> str:
         if cmd.startswith("ms-"):
             os.startfile(cmd)
         else:
-            subprocess.Popen([cmd], shell=False)
+            launch_normal(cmd)
         return f"Opened {app_name}"
 
     # ── Common apps (fixed Discord path) ─────────────────
@@ -743,7 +747,7 @@ def smart_open(app_name: str) -> str:
     for key, path in common.items():
         if key in name_lower and path:
             if os.path.exists(path):
-                subprocess.Popen([path], shell=False)
+                launch_normal(path)
                 return (
                     f"Opened {app_name} "
                     f"from {path}")
@@ -776,7 +780,7 @@ def smart_open(app_name: str) -> str:
             directory, "*.exe",
             name_lower, max_items=100)
         if found:
-            subprocess.Popen([str(found)], shell=False)
+            launch_normal(found)
             return f"Found and opened: {found}"
 
     # ── Last resort ───────────────────────────────────────

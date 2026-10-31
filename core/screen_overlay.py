@@ -14,6 +14,9 @@ import os
 import sys
 import threading
 import time
+import json
+import subprocess
+from pathlib import Path
 from typing import Callable
 
 
@@ -27,33 +30,83 @@ class ScreenControlOverlay:
         self._stop_callback: Callable[[], None] | None = None
         self._thread: threading.Thread | None = None
         self._close_event = threading.Event()
+        self._process = None
 
     def show(self, agent_label: str = "QUARTZ", on_stop: Callable[[], None] | None = None, *, force: bool = False):
         if not force and ("unittest" in sys.modules or os.environ.get("QUARTZ_DISABLE_OVERLAY") == "1"):
             return
         with self._lock:
-            self._agent_label = str(agent_label or "QUARTZ").upper()
+            self._agent_label = str(agent_label or "QUARTZ").upper()[:80]
             if on_stop is not None:
                 self._stop_callback = on_stop
-            if self._active and self._thread and self._thread.is_alive():
+            if self._active and self._process and self._process.poll() is None:
+                self._send({'command':'label','label':self._agent_label})
                 return
             self._active = True
             self._close_event.clear()
+            command = ([sys.executable, '--quartz-overlay'] if getattr(sys,'frozen',False) else
+                       [sys.executable, str(Path(__file__).resolve().parents[1]/'quartz_entry.py'), '--quartz-overlay'])
+            try:
+                process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL, text=True, encoding='utf-8',
+                    creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+                self._process = process
+                self._send({'command':'show','label':self._agent_label})
+            except Exception:
+                self._active = False
+                self._safe_invoke_stop(self._stop_callback or (lambda:None))
+                return
             self._thread = threading.Thread(
-                target=self._run_tk_loop,
+                target=self._read_child, args=(process,),
                 name="quartz-screen-overlay",
                 daemon=True,
             )
             self._thread.start()
 
+    def _send(self, message):
+        if self._process and self._process.stdin:
+            try:
+                self._process.stdin.write(json.dumps(message,ensure_ascii=True)+'\n')
+                self._process.stdin.flush()
+            except (OSError,ValueError):
+                pass
+
+    def _read_child(self, process):
+        try:
+            for line in process.stdout:
+                if line.strip() == 'STOP':
+                    with self._lock:
+                        if self._process is not process: return
+                    self._trigger_stop()
+                    return
+        finally:
+            callback = None
+            with self._lock:
+                if self._process is process:
+                    if self._active: callback = self._stop_callback
+                    self._active = False
+                    self._process = None
+            if process.stdout: process.stdout.close()
+            if process.stdin:
+                try: process.stdin.close()
+                except OSError: pass
+            process.wait()
+            if callback: self._safe_invoke_stop(callback)
+
     def update_label(self, agent_label: str):
         with self._lock:
-            self._agent_label = str(agent_label or "QUARTZ").upper()
+            self._agent_label = str(agent_label or "QUARTZ").upper()[:80]
+            self._send({'command':'label','label':self._agent_label})
 
     def hide(self):
         with self._lock:
             self._active = False
             self._close_event.set()
+            self._send({'command':'hide'})
+            if self._process and self._process.stdin:
+                try: self._process.stdin.close()
+                except OSError: pass
+            self._process = None
 
     @property
     def active(self) -> bool:
@@ -66,6 +119,7 @@ class ScreenControlOverlay:
             self._active = False
             self._close_event.set()
             cb = self._stop_callback
+            self._send({'command':'hide'})
         if cb is not None:
             threading.Thread(target=self._safe_invoke_stop, args=(cb,), daemon=True).start()
 
@@ -253,3 +307,52 @@ class ScreenControlOverlay:
 
 
 overlay_manager = ScreenControlOverlay()
+
+
+def run_overlay_child():
+    """Own Tcl exclusively on this child process's main thread.
+
+    EOF is a lease end: a dead parent cannot leave an active HUD behind.
+    Only bounded label/hide messages are accepted, never commands or paths.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        raise RuntimeError('Overlay must own the main thread')
+    # PyInstaller's windowed bootloader sets sys.std* to None, even when
+    # CreateProcess inherited pipe handles. Reopen only those inherited pipes.
+    if os.name == 'nt' and (sys.stdin is None or sys.stdout is None):
+        import ctypes
+        import msvcrt
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.GetStdHandle.argtypes = [ctypes.c_uint32]
+        kernel.GetStdHandle.restype = ctypes.c_void_p
+        for name, handle_id, mode, flags in (
+            ('stdin', -10, 'r', os.O_RDONLY), ('stdout', -11, 'w', os.O_WRONLY)):
+            if getattr(sys,name) is not None: continue
+            handle = kernel.GetStdHandle(handle_id & 0xffffffff)
+            if not handle or handle == ctypes.c_void_p(-1).value: return
+            fd = msvcrt.open_osfhandle(handle, flags | os.O_BINARY)
+            setattr(sys, name, os.fdopen(fd, mode, encoding='utf-8', buffering=1))
+    if sys.stdin is None or sys.stdout is None: return
+    first = sys.stdin.readline(4097)
+    if len(first)>4096: return
+    try: data=json.loads(first)
+    except ValueError: return
+    if not isinstance(data,dict) or data.get('command')!='show': return
+    hud=ScreenControlOverlay()
+    hud._active=True
+    hud._agent_label=str(data.get('label','QUARTZ'))[:80]
+    hud._stop_callback=lambda: print('STOP',flush=True)
+    def listen():
+        try:
+            while True:
+                line=sys.stdin.readline(4097)
+                if not line or len(line)>4096: break
+                try: message=json.loads(line)
+                except ValueError: break
+                if not isinstance(message,dict): break
+                if message.get('command')=='hide': break
+                if message.get('command')=='label':
+                    with hud._lock: hud._agent_label=str(message.get('label','QUARTZ'))[:80]
+        finally: hud.hide()
+    threading.Thread(target=listen,daemon=True,name='overlay-input').start()
+    hud._run_tk_loop()

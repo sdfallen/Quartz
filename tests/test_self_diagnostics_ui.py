@@ -89,8 +89,10 @@ class SelfDiagnosticsJavaScriptTests(unittest.TestCase):
         return gui._HTML[start:end]
 
     def _run_node(self, script: str) -> str:
+        # stdin avoids the Windows 32 KB command-line limit as the card JS grows.
         res = subprocess.run(
-            ["node", "-e", script],
+            ["node", "-"],
+            input=script,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -408,6 +410,36 @@ assert.equal(view.checks[0].status, 'NOT_TESTED');
 assert(!view.technicalSummaryText.includes(String(job.report_path || '')));
 assert(view.technicalSummaryText.includes('"report_saved": true'));
 """
+        )
+        self._run_node(script)
+
+    def test_has_active_diagnostics_prevents_ui_idle(self):
+        diag_js = self._extract_diag_js()
+        script = (
+            "const assert = require('node:assert/strict');\n"
+            "let lowSpecHardware = false;\n"
+            "const document = { getElementById: () => null, addEventListener: () => {} };\n"
+            "let thinking = false, chatPollInterval = null, desktopView = { stop_ref: null };\n"
+            "let lastUserActivityAt = Date.now() - 30000;\n"
+            "function isUiHidden() { return false; }\n"
+            "function hasActiveDesktopTask() { return !!desktopView.stop_ref; }\n"
+            + diag_js
+            + "\n"
+            + "function isUiIdle() {\n"
+            + "  return !thinking && !chatPollInterval && !hasActiveDesktopTask() && (typeof hasActiveDiagnosticsJob === 'function' ? !hasActiveDiagnosticsJob() : true) && (Date.now() - lastUserActivityAt > 20000);\n"
+            + "}\n"
+            + "assert.equal(isUiIdle(), true);\n"
+            + "activeDiagJobId = 'job-active';\n"
+            + "assert.equal(hasActiveDiagnosticsJob(), true);\n"
+            + "assert.equal(isUiIdle(), false);\n"
+            + "diagPollFailures.set('job-active', 4);\n"
+            + "assert.equal(hasActiveDiagnosticsJob(), false);\n"
+            + "assert.equal(isUiIdle(), true);\n"
+            + "diagPollFailures.delete('job-active');\n"
+            + "assert.equal(hasActiveDiagnosticsJob(), true);\n"
+            + "activeDiagJobId = null;\n"
+            + "assert.equal(hasActiveDiagnosticsJob(), false);\n"
+            + "assert.equal(isUiIdle(), true);\n"
         )
         self._run_node(script)
 

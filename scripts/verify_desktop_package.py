@@ -28,7 +28,7 @@ def main():
     checks['quartz_entry'] = code_signature(marshal.loads(archive.extract('quartz_entry'))) == code_signature(
         compile(entry_source.read_bytes(), str(entry_source), 'exec'))
     for module in ("gui", "main", "advanced_controller", "core.agent_chat", "core.conversation_store", "core.response_style", "core.local_ipc",
-                   "core.cli_installer", "core.install_security", "core.windows_prerequisites", "core.self_diagnostics", "core.rea_adapter", "core.onboarding", "core.gemini_runtime", "core.gemini_auth", "core.low_spec_optimizer", "core.squad_adapter",
+                   "core.cli_installer", "core.install_security", "core.windows_prerequisites", "core.elevation", "core.application_knowledge", "core.self_diagnostics", "core.rea_adapter", "core.artifact_diagnostics", "core.package_repair", "core.diagnostics_intent", "core.onboarding", "core.gemini_runtime", "core.gemini_auth", "core.low_spec_optimizer", "core.squad_adapter",
                    "core.desktop_agents", "core.desktop_control", "core.desktop_native", "core.desktop_broker",
                    "core.desktop_mcp", "core.desktop_launch", "core.desktop_task_ui", "core.natural_desktop", "core.warband_workspace", "core.project_registry", "core.multi_agent_service", "core.message_intent", "core.codex_runtime", "core.antigravity_runtime", "core.chat_coordination", "core.branding",
                    "core.async_snapshot", "core.task_outcome", "core.source_verification", "core.run_evidence_store", "core.writer_journal", "core.screen_overlay"):

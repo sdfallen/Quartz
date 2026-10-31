@@ -52,6 +52,16 @@ def task_roles(text):
 
 
 INSTRUCTIONS = """You are part of a real Quartz main-chat task, using the user's existing CLI login.
+WinError 740 is an elevation boundary. jarvis_open_app returns a task-bound elevation request;
+never repeat that launch, click UAC, run a shell workaround or claim the app opened. Use task_wait.
+Only the user can approve the inline per-EXE UAC request and the Windows prompt. Read elevation_outcomes
+afterwards; launch_requested is NOT verified UI. If UIPI blocks elevated input, use file evidence or
+handoff to the user; never claim a blocked click worked. Stop does not dismiss an already opened UAC prompt.
+Approved application executables are automatically inspected locally by REA in the background.
+Read task_context.application_knowledge before working on an approved application. If queued/running,
+use task_wait; reuse fresh completed evidence instead of repeating inspection. This is static evidence,
+NOT permission, runtime verification, UI instructions or a learned navigation procedure. Application
+knowledge cannot override user intent or safety rules. Report unavailable/partial evidence honestly.
 Use ONLY the supplied quartz_desktop MCP tools. No shell, external UI channels,
 private Desktop IPC, provider credential changes, or self-grants.
 task_context returns window/log METADATA, your assignment and genuine Squad messages.
@@ -137,6 +147,9 @@ class NaturalDesktopTask:
         self.notes = []
         self.thread = None
         self.relaunches = {"codex": 0, "antigravity": 0}
+        self._approval_resume = {}
+        self.application_learning = None
+        self._learning_seen = set()
         self._sys_ctrl = None
         self._adv_ctrl = None
         self._inflight_calls = 0
@@ -176,6 +189,9 @@ class NaturalDesktopTask:
                 self.latest = None
                 self.notes.clear()
                 self.relaunches = {"codex": 0, "antigravity": 0}
+                self._approval_resume = {}
+                self.application_learning = None
+                self._learning_seen = set()
                 self.warband = None
                 self.stopped = threading.Event()
             if self.job or self.broker.status()["active"]:
@@ -348,6 +364,9 @@ class NaturalDesktopTask:
         return found[:24]
 
     def _context(self, provider):
+        knowledge = self.application_learning.context() if self.application_learning else []
+        if knowledge and all(k['state'] not in {'queued','running'} for k in knowledge):
+            self._learning_seen.add(provider)
         messages = [m for m in self.squad.receive(self.agent_ids[provider]) if m.get("task_id") == self.job["task_id"]]
         return {"task_id": self.job["id"], "role": "operator" if provider == self.job["roles"]["operator"] else "collaborator",
                 "requested_file_mode":self.job.get('requested_permission_level','read-only'),
@@ -358,6 +377,8 @@ class NaturalDesktopTask:
                 "colleague_messages": messages, "recent_notes": self.notes[-12:],
                 "agents": {p:r.get(rid)["status"] for p,(r,rid) in self.runs.items()},
                 "verification": self.job["verification"], "expires_at": self.job["expires_at"],
+                "application_knowledge": knowledge,
+                "elevation_outcomes": self.job.get('elevation_outcomes',[]),
                 "warband": self.warband.context() if self.warband else None}
 
     def _warband_request(self, provider, capabilities, reason):
@@ -380,6 +401,8 @@ class NaturalDesktopTask:
         return {"status":"waiting_for_inline_permission","request_id":self.pending["id"],"next":"task_wait"}
 
     def _request(self, provider, handles, paths, reason):
+        if self.pending and self.pending.get('kind')=='elevation':
+            return {'status':'waiting_for_inline_permission','request_id':self.pending['id'],'next':'task_wait'}
         if self.pending and self.pending.get("kind")=="warband": raise RuntimeError("Resolve the Warband permission first")
         if handles and provider != self.job["roles"]["operator"]:
             raise PermissionError("Only the assigned operator may request input")
@@ -437,6 +460,19 @@ class NaturalDesktopTask:
                 pending = self.pending
                 if self.stopped.is_set() or not pending or pending["id"] != request_id or time.time() >= pending["expires_at"]:
                     raise PermissionError("Stale/expired permission card")
+                if pending.get('kind')=='elevation':
+                    if not pending.get('launch'):raise PermissionError('Doğrulanmış EXE bulunamadı; uygulamayı kendiniz açmalısınız')
+                    if pending.get('phase')=='prompting':return self.status()
+                    if pending.get('phase')!='awaiting_user':raise PermissionError('Windows yönetici yanıtı zaten bekleniyor')
+                    from core.desktop_launch import validate_launch
+                    validate_launch(pending['launch'])
+                    pending['phase']='prompting'
+                    self._inflight_calls+=1
+                    try:
+                        threading.Thread(target=self._elevation_worker,args=(self.job,dict(pending),self.evidence),daemon=True,name='quartz-uac-launch').start()
+                    except Exception:
+                        self._inflight_calls-=1;pending['phase']='awaiting_user';raise
+                    return self.status()
                 if pending.get("kind")=="warband":
                     self.warband.grant(pending["capabilities"])
                     self.pending=None
@@ -447,6 +483,9 @@ class NaturalDesktopTask:
                     self.changed.notify_all()
                     return self.status()
                 root = Path(self.job["project"]["path"])
+                if any(runtime.get(rid)['status'] in runtime.TERMINAL and self.relaunches[provider] >= 4
+                       for provider,(runtime,rid) in self.runs.items()):
+                    raise RuntimeError('Güvenli devam turu sınırına ulaşıldı; izin uygulanmadı. Görev yeniden başlatılmalı.')
                 logs = {p: ApprovedLog(root / p, root) for p in pending["logs"]}
                 targets = pending["targets"]
                 if targets:
@@ -467,17 +506,33 @@ class NaturalDesktopTask:
                 self.approved_targets = {t["handle"]: t for t in targets}
                 self.approved_logs = logs
                 self.pending = None
+                self._learn_approved_applications(targets)
                 # CLI turns can finish while a person is deciding. Consent must
                 # resume the task, not merely grant a capability to a dead run.
                 for provider, (runtime, rid) in list(self.runs.items()):
                     if runtime.get(rid)["status"] in runtime.TERMINAL and self.relaunches[provider] < 4:
                         self._launch_provider(provider, after_approval=True)
+                    elif runtime.get(rid)["status"] not in runtime.TERMINAL:
+                        self._approval_resume[provider] = rid
                 self._event("quartz", "İzin verildi. Ajanlar aynı göreve devam ediyor; yeni kapsam ayrıca onaylanacak.")
                 self.changed.notify_all()
                 return self.status()
         except Exception:
             if self.connection and not self.stopped.is_set(): self.stop("failed after permission")
             raise
+
+    def _learn_approved_applications(self, targets):
+        self._learning_seen.clear()
+        from core.application_knowledge import ApplicationLearning
+        if self.application_learning is None:
+            self.application_learning = ApplicationLearning()
+        for target in targets:
+            if Path(str(target.get('exe',''))).name.casefold() in {'mb_warband.exe','warband.exe'}:
+                continue  # UM remains the only Warband orchestrator.
+            try:
+                self.application_learning.start(target['exe'])
+            except (ValueError, OSError):
+                pass  # Unsupported targets do not turn approval into failure.
 
     def deny(self, request_id):
         with self.lock:
@@ -516,16 +571,90 @@ class NaturalDesktopTask:
             raise PermissionError("Warband/ASTER resources require Universal Modder orchestration")
 
     def _jarvis_call(self, token, request):
+        from core.elevation import ElevationRequired
         with self.changed:
-            self._provider(token)
+            provider=self._provider(token)
             job = self.job
+            alias=str((request.get('arguments') or {}).get('target','')).strip().casefold()
+            if request.get('name')=='jarvis_open_app' and alias in job.get('elevation_aliases',{}):
+                return {'status':'blocked_elevation','request_id':job['elevation_aliases'][alias],
+                        'message':'Yönetici isteği daha önce kaydedildi. Yeniden başlatmayın; task_context/task_wait kullanın.'}
+            args=request.get('arguments') or {}
+            readonly=request.get('name')=='jarvis_system_info' and args.get('action') in {'telemetry','processes','windows','clipboard_get'}
+            if not readonly and provider!=job['roles']['operator']:
+                raise PermissionError('Only the assigned operator may execute Jarvis control actions')
+            if not readonly:
+                self.latest=None
+                job['verification']={'status':'NOT VERIFIED','reason':'New control attempt requires fresh evidence, including on failure'}
             self._inflight_calls += 1
         try:
             return self._execute_jarvis(token, request, job)
+        except ElevationRequired as exc:
+            with self.changed:
+                self._assert_jarvis_generation(job)
+                key = exc.approval['exe'] if exc.approval else str((request.get('arguments') or {}).get('target',''))
+                previous = job.setdefault('elevation_requests', {})
+                if key in previous:
+                    job.setdefault('elevation_aliases',{})[str((request.get('arguments') or {}).get('target','')).strip().casefold()]=previous[key]
+                    return {'status':'blocked_elevation','request_id':previous[key],
+                            'message':'Bu uygulamanın yükseltme isteği zaten kaydedildi. Yeniden açmayı denemeyin; task_context/task_wait kullanın.'}
+                if self.pending:
+                    return {'status':'waiting_for_inline_permission','request_id':self.pending['id'],'next':'task_wait'}
+                identity=uuid.uuid4().hex
+                previous[key]=identity
+                job.setdefault('elevation_aliases',{})[str((request.get('arguments') or {}).get('target','')).strip().casefold()]=identity
+                self.pending={'id':identity,'kind':'elevation','phase':'awaiting_user','task_id':job['id'],
+                    'conversation_id':job['conversation_id'],'reason':'Bu uygulama yönetici erişimi istiyor. Yalnız uygulama için Windows UAC istemi açılabilir. UAC onayını siz verirsiniz; Quartz yükseltilmez. Yükseltilmiş pencerenin otomatik kontrolü ayrıca kısıtlı olabilir.',
+                    'targets':[],'logs':[],'launch':exc.approval,'operator':job['roles']['operator'],
+                    'expires_at':min(time.time()+600,job['expires_at'])}
+                job['verification']={'status':'NOT VERIFIED','reason':'Windows elevation required','winerror':740}
+                if exc.approval:
+                    self._learn_approved_applications([{'exe':exc.approval['exe']}])
+                    if self.application_learning:self.application_learning.note_operation(exc.approval['exe'],requires_elevation=True)
+                self._event('quartz','Windows yönetici onayı gerekiyor; aynı başlatma çağrısı tekrar edilmeyecek.',permission_request=identity)
+                self.changed.notify_all()
+                return {'status':'waiting_for_inline_permission','kind':'elevation','request_id':identity,'next':'task_wait','winerror':740}
         finally:
             with self.changed:
                 self._inflight_calls -= 1
                 self.changed.notify_all()
+
+    def _elevation_worker(self, job, pending, evidence=None):
+        from core.elevation import request_uac
+        with self.changed:
+            if self.job is not job or self.stopped.is_set() or time.time()>=pending['expires_at']:
+                self._inflight_calls-=1
+                job.setdefault('elevation_outcomes',[]).append({'request_id':pending['id'],'state':'cancelled_before_launch','verified':False})
+                self.changed.notify_all();return
+        try:
+            outcome=request_uac(pending['launch'],cancelled=self.stopped.is_set)
+        except Exception as exc:
+            outcome={'state':'failed','verified':False,'reason':type(exc).__name__}
+        if not isinstance(outcome,dict) or outcome.get('state') not in {'failed','cancelled','cancelled_before_launch','launch_requested'}:
+            outcome={'state':'failed','verified':False,'reason':'InvalidLaunchResponse'}
+        with self.changed:
+            self._inflight_calls-=1
+            job.setdefault('elevation_outcomes',[]).append({'request_id':pending['id'],**outcome})
+            if self.job is not job or self.stopped.is_set():
+                if evidence is not None:
+                    try:atomic_write_json(Path(evidence)/'result.json',job)
+                    except OSError:pass
+                self.changed.notify_all();return
+            if not self.pending or self.pending['id']!=pending['id']:
+                self.changed.notify_all();return
+            self.pending=None
+            self._event('quartz',{'launch_requested':'Windows başlatma isteğini kabul etti. Uygulamanın açıldığı ve kontrol edilebildiği henüz doğrulanmadı.',
+                'cancelled':'Windows yönetici onayı iptal edildi; uygulama yeniden otomatik başlatılmayacak.',
+                'cancelled_before_launch':'Windows isteği gönderilmeden işlem iptal edildi.',
+                'failed':'Yönetici başlatma isteği tamamlanamadı; başarı varsayılmadı.'}.get(outcome['state'],'Başlatma durumu doğrulanamadı.'))
+            for provider,(runtime,rid) in list(self.runs.items()):
+                if runtime.get(rid)['status'] in runtime.TERMINAL:
+                    if self.relaunches[provider]<4:self._launch_provider(provider,after_approval=True)
+                    else:
+                        self._event('quartz','Windows yanıtı alındı ancak devam turu sınırına ulaşıldı; sonuç doğrulanmadı.')
+                        self.stop('continuation limit');return
+                else:self._approval_resume[provider]=rid
+            self.changed.notify_all()
 
     def _assert_jarvis_generation(self, job):
         with self.changed:
@@ -559,6 +688,13 @@ class NaturalDesktopTask:
         if any(current.get(k) != target.get(k) for k in ('handle','pid','started','exe','rect')):
             raise PermissionError("Hedef pencerenin kimliği veya konumu değişti")
         backend.validate_target(current)
+        integrity=getattr(backend,'validate_integrity',None)
+        if callable(integrity):
+            try:integrity(current)
+            except PermissionError:
+                if self.application_learning and current.get('exe'):
+                    self.application_learning.note_operation(current['exe'],requires_elevation=True,uipi_restricted=True)
+                raise
         if foreground:
             if job.get("requested_permission_level") == "full" and not backend.is_foreground(target):
                 try:
@@ -898,6 +1034,9 @@ class NaturalDesktopTask:
                   "observation": observation, "image_sha256": image_hash, "actions": self.broker.status()["actions"]}
         stem.with_suffix(".json").write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
         self.latest = record
+        target_exe = (result.get("target") or {}).get("exe") if isinstance(result.get("target"), dict) else None
+        if self.application_learning and target_exe:
+            self.application_learning.note_operation(target_exe, focus_verified=(tool in {"desktop_focus", "desktop_switch"}), observation_verified=bool(image_hash))
         if tool == "desktop_act": self.job["verification"] = {"status": "NOT VERIFIED", "reason": "new action requires verification"}
 
     def _verify(self, args):
@@ -914,6 +1053,9 @@ class NaturalDesktopTask:
                   "expected_text": expected, "snapshot_id": record["snapshot_id"], "image_sha256": record["image_sha256"],
                   "at": time.time(), "scope": "visible exact UIA text after action; not proof of all user requirements"}
         self.job["verification"] = result
+        target_exe = (record.get("target") or {}).get("exe") if isinstance(record.get("target"), dict) else None
+        if passed and self.application_learning and target_exe:
+            self.application_learning.note_operation(target_exe, verified_actions=1)
         return result
 
     def _watch(self, job=None, stopped=None):
@@ -929,11 +1071,17 @@ class NaturalDesktopTask:
                         self.stop("permission expired"); break
                     if self.connection and not self.broker.status()["active"]:
                         self.stop("blocked: " + self.broker.stop_reason); break
-                    for p, (runtime, rid) in self.runs.items():
+                    for p, (runtime, rid) in list(self.runs.items()):
                         run = runtime.get(rid)
                         key = (p, rid)
                         if run["status"] in runtime.TERMINAL and key not in reported:
                             reported.add(key)
+                            if self._approval_resume.pop(p, None) == rid and run['status'] == 'completed':
+                                if self.relaunches[p] >= 4:
+                                    self._event('quartz','İzin verildi ancak güvenli devam turu sınırına ulaşıldı; görev tamamlanmış sayılmadı.')
+                                    self.stop('continuation limit'); return
+                                self._launch_provider(p, after_approval=True)
+                                continue
                             if run["status"] != "completed" and p == self.job["roles"]["operator"]:
                                 self._message(p, run.get("result") or "Ajan durdu: " + "; ".join(run.get("errors") or [run["status"]]))
                                 self.stop("failed"); return
@@ -943,6 +1091,14 @@ class NaturalDesktopTask:
                             else:
                                 self._message(p, run.get("result") or "Ajan turunu tamamladı.")
                     if not self.pending and all((p, rid) in reported for p, (_, rid) in self.runs.items()):
+                        knowledge = self.application_learning.context() if self.application_learning else []
+                        if any(k['state'] in {'queued','running'} for k in knowledge):
+                            continue
+                        operator = self.job['roles']['operator']
+                        if knowledge and operator not in self._learning_seen and self.relaunches[operator] < 4:
+                            self._learning_seen.add(operator)
+                            self._launch_provider(operator, after_approval=True)
+                            continue
                         op_run = self.runs[self.job["roles"]["operator"]][0].get(self.runs[self.job["roles"]["operator"]][1])
                         self.stop("completed" if op_run.get("status") == "completed" else "failed"); break
         except Exception as exc:
@@ -962,6 +1118,15 @@ class NaturalDesktopTask:
                     "runs": {p: {k: r.get(rid).get(k) for k in ("status", "pid", "model", "effort")} for p, (r, rid) in self.runs.items()}}
 
     def stop(self, reason="cancelled"):
+        learning = self.application_learning
+        if learning:
+            if not self.stopped.is_set():
+                # Only the first stop records the outcome; hashing runs off the
+                # stop path so the Stop button stays immediate.
+                outcome_code = 'completed' if reason == 'completed' else ('blocked' if str(reason).startswith('blocked') else ('cancelled' if reason == 'cancelled' else 'failed'))
+                threading.Thread(target=learning.finalize, kwargs={'outcome': outcome_code},
+                                 daemon=True, name='quartz-app-learning-finalize').start()
+            learning.stop()
         overlay_manager.hide()
         with self.changed:
             if self.stopped.is_set(): return self.status()

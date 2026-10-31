@@ -99,6 +99,10 @@ def start_gui():
 
 
 if __name__ == "__main__":
+    if '--quartz-overlay' in sys.argv:
+        from core.screen_overlay import run_overlay_child
+        run_overlay_child()
+        sys.exit(0)
     log("=" * 40)
     log("Quartz Entry Point Started")
     log(f"BASE_DIR: {BASE_DIR}")

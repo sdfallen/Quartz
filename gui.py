@@ -78,6 +78,9 @@ class Api:
         self._natural = None
         self._natural_start_lock = threading.Lock()
         self._onboarding = None
+        self._artifact_diagnostics = None
+        self._repair = None
+        self._diagnostic_tools_lock = threading.RLock()
 
     def _onboarding_service(self):
         if self._onboarding is None:
@@ -101,14 +104,84 @@ class Api:
         return ipc_send("onboarding_refresh")
 
     def diagnostics_start(self, include_rea: bool = True) -> dict:
+        if self._artifact_diagnostics and self._artifact_diagnostics.status()['state'] == 'running':
+            return {'status': 'ok', 'data': self._artifact_diagnostics.status()}
         return ipc_send("diagnostics_start", {"include_rea": include_rea})
 
     def diagnostics_status(self, job_id: str | None = None) -> dict:
+        if self._artifact_diagnostics and job_id in self._artifact_diagnostics.jobs:
+            return {"status": "ok", "data": self._artifact_diagnostics.status(job_id)}
         payload = {"job_id": job_id} if job_id not in (None, "") else {}
         return ipc_send("diagnostics_status", payload)
 
     def diagnostics_cancel(self, job_id: str) -> dict:
+        if self._artifact_diagnostics and job_id in self._artifact_diagnostics.jobs:
+            return {"status": "ok", "data": self._artifact_diagnostics.cancel(job_id)}
         return ipc_send("diagnostics_cancel", {"job_id": job_id})
+
+    def diagnostics_select_application(self):
+        """GUI-local native picker is the grant; arbitrary IPC paths stay forbidden."""
+        with self._diagnostic_tools_lock:
+            try:
+                if self._artifact_diagnostics and self._artifact_diagnostics.status()['state'] == 'running':
+                    return {'status': 'ok', 'data': self._artifact_diagnostics.status()}
+                if not webview.windows:
+                    raise ValueError('Pencere hazır değil')
+                selected = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN,
+                    allow_multiple=False, file_types=('Uygulama (*.exe)',))
+                if not selected:
+                    return {'status': 'ok', 'data': None}
+                from core.artifact_diagnostics import ArtifactDiagnosticsService
+                if self._artifact_diagnostics:
+                    self._artifact_diagnostics.shutdown()
+                self._artifact_diagnostics = ArtifactDiagnosticsService(selected[0])
+                return {'status': 'ok', 'data': self._artifact_diagnostics.start()}
+            except Exception:
+                return {'status': 'error', 'data': 'Seçilen dosya güvenli inceleme için açılamadı. Normal bir EXE dosyası seçin.'}
+
+    def diagnostics_prepare_repair(self):
+        with self._diagnostic_tools_lock:
+            self._repair = None
+            try:
+                if not webview.windows:
+                    raise ValueError('Pencere hazır değil')
+                selected = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+                if not selected:
+                    return {'status': 'ok', 'data': None}
+                from core.package_repair import PackageRepair
+                from core.cli_installer import app_root
+                from pathlib import Path
+                import os
+                self._repair = PackageRepair(app_root(), Path(os.environ.get('LOCALAPPDATA') or Path.home()) / 'Quartz/repair-backups')
+                return {'status': 'ok', 'data': self._repair.prepare(selected[0])}
+            except ValueError as exc:
+                return {'status': 'error', 'data': str(exc)}
+            except Exception:
+                return {'status': 'error', 'data': 'Onarım referansı doğrulanamadı. Aynı sürümün sağlam, manifestli paketini seçin.'}
+
+    def diagnostics_apply_repair(self, plan_id):
+        with self._diagnostic_tools_lock:
+            try:
+                if not self._repair:
+                    raise ValueError('Önce bir onarım planı hazırlanmalı')
+                return {'status': 'ok', 'data': self._repair.apply(plan_id)}
+            except ValueError as exc:
+                return {'status': 'error', 'data': str(exc)}
+            except Exception:
+                return {'status': 'error', 'data': 'Onarım tamamlanamadı; yedekleri koruyarak yeniden inceleyin.'}
+
+    def diagnostics_discard_repair(self):
+        with self._diagnostic_tools_lock:
+            self._repair = None
+        return {'status': 'ok', 'data': 'Onarım planı iptal edildi.'}
+
+    def diagnostics_learned_applications(self):
+        with self._diagnostic_tools_lock:
+            try:
+                from core.application_knowledge import ApplicationKnowledge
+                return {'status': 'ok', 'data': ApplicationKnowledge().list_learned(20)}
+            except Exception:
+                return {'status': 'error', 'data': 'Öğrenilen uygulama hafızası okunamadı.'}
 
     def natural_start(self, text, conversation_id, project_id, models, permission_level='read-only'):
         """Start reasoning/tool selection, NOT a desktop grant."""
@@ -174,6 +247,26 @@ class Api:
             from core.desktop_task_ui import desktop_intent, desktop_help
             if permission_level not in {'read-only','project','full'}: raise ValueError('Geçersiz dosya yetkisi seçimi')
             message_kind = message_intent(text)
+            from core.diagnostics_intent import diagnostics_intent
+            diagnostic_command = diagnostics_intent(text)
+            if diagnostic_command == 'artifact':
+                result = self.diagnostics_select_application()
+                if result.get('status') != 'ok':
+                    return result
+                return {'status': 'ok', 'data': {'handled': True, 'diagnostics_started': True,
+                    'diagnostics': result['data'], 'user_text': text}}
+            if diagnostic_command == 'repair':
+                result = self.diagnostics_prepare_repair()
+                if result.get('status') != 'ok':
+                    return result
+                return {'status': 'ok', 'data': {'handled': True, 'diagnostics_repair': True,
+                    'repair_plan': result['data'], 'user_text': text}}
+            if diagnostic_command == 'knowledge':
+                result = self.diagnostics_learned_applications()
+                if result.get('status') != 'ok':
+                    return result
+                return {'status': 'ok', 'data': {'handled': True, 'diagnostics_knowledge': True,
+                    'learned_items': result['data'], 'user_text': text}}
             if tools_disallowed(text):
                 for service in (self._natural, self._coordination):
                     if service is not None and service.status().get("active"):
@@ -195,7 +288,7 @@ class Api:
                     if result.get('status')!='ok': raise RuntimeError('Yetki durumu sohbete yazılamadı')
                 return {'status':'ok','data':{'handled':True,'permission_status':reply}}
             if (not tools_disallowed(text) and message_kind != "conversation"
-                    and re.search(r'\b(öz\s*teşhis\w*|özteşhis\w*|self[\s-]*diagnos\w*|kendini\s+teşhis\s+et\w*|rea\s+(?:ile\s+)?teşhis\w*)\b', text, re.I)):
+                    and (diagnostic_command == 'self' or re.search(r'\b(öz\s*teşhis\w*|özteşhis\w*|self[\s-]*diagnos\w*|kendini\s+teşhis\s+et\w*|rea\s+(?:ile\s+)?teşhis\w*)\b', text, re.I))):
                 if re.search(r'\b(dur|durdur|iptal)\b', text, re.I):
                     current = self.diagnostics_status()
                     if current.get("status") != "ok":
@@ -688,6 +781,8 @@ class Api:
         process to shut down instead of leaving it
         orphaned in the background.
         """
+        if self._artifact_diagnostics is not None:
+            self._artifact_diagnostics.shutdown()
         if self._natural is not None:
             self._natural.stop()
         if self._coordination is not None:
@@ -1583,7 +1678,7 @@ _HTML = r"""
         <button class="control-btn" id="btnCancel" style="display:none">İptal</button>
       </div>
       <div class="inputbar">
-        <input type="text" id="msgInput" placeholder="Antigravity veya Codex'e mesaj yaz..." autofocus>
+        <input type="text" id="msgInput" aria-label="Ekibe yazın veya görev verin" aria-keyshortcuts="Control+L" title="Sohbete odaklan: Ctrl+L · Gönder: Enter" placeholder="Antigravity veya Codex'e mesaj yaz..." autofocus>
         <button class="icon-btn mic" id="btnMic" title="Konuş (push-to-talk)">🎤</button>
         <button class="icon-btn send" id="btnSend">➤</button>
       </div>
@@ -2756,9 +2851,22 @@ _HTML = r"""
     if (coordinated.status !== 'ok') { appendMsg('err','QUARTZ',coordinated.data); return; }
     if (coordinated.data?.handled) {
       inputEl.value = '';
+      if (coordinated.data.diagnostics_repair) {
+        appendMsg('user', 'SEN', coordinated.data.user_text, '', 'user', null, false, true);
+        renderRepairPlan(coordinated.data.repair_plan);
+        return;
+      }
+      if (coordinated.data.diagnostics_knowledge) {
+        appendMsg('user', 'SEN', coordinated.data.user_text, '', 'user', null, false, true);
+        if (typeof renderLearnedApplicationsCard === 'function') {
+          renderLearnedApplicationsCard(coordinated.data.learned_items || []);
+        }
+        return;
+      }
       if (coordinated.data.diagnostics_started || coordinated.data.diagnostics_cancelled || coordinated.data.diagnostics_status) {
         if (coordinated.data.user_text && typeof appendMsg === 'function') appendMsg('user', 'SEN', coordinated.data.user_text, '', 'user', null, false, true);
         const diagJob = coordinated.data.diagnostics || coordinated.data.diagnostics_status;
+        if (!diagJob) appendMsg('bot', 'QUARTZ', 'Dosya seçimi iptal edildi; inceleme başlatılmadı.');
         if (typeof renderSelfDiagnosticsCard === 'function' && diagJob) renderSelfDiagnosticsCard(diagJob);
         if (typeof scheduleSelfDiagnosticsPoll === 'function' && diagJob?.state === 'running' && diagJob?.id) scheduleSelfDiagnosticsPoll(diagJob.id);
         return;
@@ -2986,7 +3094,7 @@ _HTML = r"""
       if(!pending||card.dataset.naturalPermission!==pending.id||pending.conversation_id!==currentConvId)card.remove();
     }
     if(!pending||pending.conversation_id!==currentConvId||document.querySelector(`[data-natural-permission="${pending.id}"]`))return;
-    if(document.getElementById('mainPermissionLevel')?.value==='full' && pending.kind!=='warband') {
+    if(document.getElementById('mainPermissionLevel')?.value==='full' && !['warband','elevation'].includes(pending.kind)) {
       try {
         const autoReply=await window.pywebview.api.natural_approve(pending.id,true);
         if(autoReply.status==='ok'){
@@ -3014,11 +3122,29 @@ _HTML = r"""
     const approve=document.createElement('button');approve.textContent='Bu görev için izin ver';
     const deny=document.createElement('button');deny.textContent='İzin verme';
     const status=document.createElement('p');
+    if(pending.kind==='elevation') {
+      title.textContent='Windows yönetici onayı gerekiyor';
+      summary.textContent=(pending.launch?.exe || 'Doğrulanmış uygulama yolu bulunamadı')+
+        '\nUAC onayını Windows ekranında siz verirsiniz. Quartz yönetici yapılmaz. Bu onay yalnız başlatma içindir; ajana ayar değiştirme talimatı vermez.';
+      trace.textContent=JSON.stringify({launch:pending.launch,phase:pending.phase,expires_at:pending.expires_at},null,2);
+      approve.textContent='Windows UAC isteğini aç';
+      approve.disabled=pending.phase==='prompting'||!pending.launch;
+      if(pending.phase==='prompting')status.textContent='Windows yanıtı bekleniyor. Açılmış UAC istemini iptal etmek için Windows ekranında Hayır seçin.';
+    }
     const decide=async(accept)=>{
       approve.disabled=true;deny.disabled=true;
-      const reply=await window.pywebview.api[accept?'natural_approve':'natural_deny'](pending.id,...(accept?[true]:[]));
-      if(reply.status==='ok')panel.remove();else{status.textContent=reply.data;approve.disabled=false;deny.disabled=false;}
-      await refreshDesktopTaskState();
+      let resolved=false;
+      try {
+        const reply=await window.pywebview.api[accept?'natural_approve':'natural_deny'](pending.id,...(accept?[true]:[]));
+        if(!reply || reply.status!=='ok') throw new Error(reply?.data || 'İzin yanıtı alınamadı');
+        resolved=true;panel.remove();
+        await refreshDesktopTaskState();
+        await pollNaturalTask();
+      } catch(error) {
+        status.textContent='İzin işlemi doğrulanamadı: '+String(error.message||error)+'. Güncel görev durumu yeniden okunmalı.';
+      } finally {
+        if(!resolved){approve.disabled=false;deny.disabled=false;}
+      }
     };
     approve.onclick=()=>decide(true);deny.onclick=()=>decide(false);
     panel.append(title,reason,summary,details,approve,deny,status);chatEl.append(panel);scrollToBottom(true);
@@ -3041,6 +3167,36 @@ _HTML = r"""
   }
 
   // ── Self-Diagnostics (REA-Supported Compact Chat Card) ──
+  function renderRepairPlan(plan) {
+    if (!plan) { appendMsg('bot', 'QUARTZ', 'Referans seçimi iptal edildi; dosya değiştirilmedi.'); return; }
+    const card = document.createElement('div');
+    card.className = 'coordination-card diagnostics-card';
+    const title = document.createElement('strong'); title.textContent = 'Quartz kaynak onarımı';
+    const description = document.createElement('p'); description.textContent = plan.message;
+    const files = document.createElement('pre'); files.textContent = (plan.files || []).join('\n') || 'Onarılacak kaynak farkı yok.';
+    card.append(title, description, files);
+    if (plan.requires_confirmation) {
+      const confirm = document.createElement('button'); confirm.type = 'button';
+      confirm.textContent = 'Bu referansa güveniyorum — yedekle ve onar';
+      const dismiss = document.createElement('button'); dismiss.type = 'button'; dismiss.textContent = 'Vazgeç';
+      dismiss.addEventListener('click', async () => {
+        confirm.disabled = true; dismiss.disabled = true;
+        description.textContent = 'Onarım uygulanmadı; dosyalar değişmedi.';
+        await window.pywebview.api.diagnostics_discard_repair();
+      });
+      confirm.addEventListener('click', async () => {
+        confirm.disabled = true; dismiss.disabled = true;
+        description.textContent = 'Kaynaklar yedekleniyor ve doğrulanıyor…';
+        try {
+          const result = await window.pywebview.api.diagnostics_apply_repair(plan.id);
+          description.textContent = result.status === 'ok' ? result.data.message : result.data;
+          card.dataset.repairState = result.status === 'ok' ? result.data.state : 'failed';
+        } catch (_) { description.textContent = 'Onarım yanıtı alınamadı; tekrar uygulamadan önce teşhis çalıştırın.'; }
+      });
+      card.append(confirm, dismiss);
+    }
+    chatEl.append(card);
+  }
   const DIAG_PHASE_LABELS = {
     queued: 'Sıraya alındı',
     scope: 'Kapsam ve kimlik doğrulaması',
@@ -3052,6 +3208,8 @@ _HTML = r"""
   };
   const DIAG_CHECK_TITLES = {
     scope: 'İncelenen uygulama kapsamı',
+    artifact: 'Seçilen uygulama dosyası',
+    pe: 'Windows PE mimarisi ve başlığı',
     resources: 'Gerekli paket bileşenleri',
     manifest: 'Paket manifesti ve bütünlük',
     rea: 'REA statik paket incelemesi',
@@ -3227,6 +3385,7 @@ _HTML = r"""
       ? job.limitations.map(item => redactDiagText(item)).filter(Boolean)
       : [];
 
+    const knowledgeSaved = Boolean(job.knowledge_saved);
     const summaryMeta = {
       schema_version: job.schema_version ?? 1,
       job_id: job.id || null,
@@ -3235,6 +3394,7 @@ _HTML = r"""
       verdict: verdictCode,
       progress,
       rea_used: reaUsed,
+      knowledge_saved: knowledgeSaved,
       counts,
       report_saved: Boolean(job.report_path),
     };
@@ -3255,6 +3415,7 @@ _HTML = r"""
       canCancel: state === 'running',
       reaUsed,
       reaTagText,
+      knowledgeSaved,
       counts,
       checks,
       limitations,
@@ -3266,9 +3427,92 @@ _HTML = r"""
   let activeDiagJobId = null;
   let diagPollTimer = null;
   let diagPollBusy = false;
+  const diagPollFailures = new Map();
 
   function hasActiveDiagnosticsJob() {
-    return Boolean(activeDiagJobId);
+    return Boolean(activeDiagJobId && (diagPollFailures.get(activeDiagJobId) || 0) <= 3);
+  }
+
+  function renderLearnedApplicationsCard(items, targetContainer = null) {
+    const container = targetContainer || (typeof chatEl !== 'undefined' ? chatEl : null);
+    if (!container) return null;
+    const card = document.createElement('section');
+    card.className = 'coordination-card diagnostics-card';
+    card.setAttribute('aria-label', 'Quartz Öğrenilen Uygulama Hafızası');
+    const head = document.createElement('div');
+    head.className = 'diag-head';
+    const titleWrap = document.createElement('div');
+    titleWrap.className = 'diag-title-wrap';
+    const titleEl = document.createElement('strong');
+    titleEl.className = 'diag-title';
+    titleEl.textContent = 'QUARTZ UYGULAMA HAFIZASI (REA + DENEYİM)';
+    const countTag = document.createElement('span');
+    countTag.className = 'diag-rea-tag';
+    countTag.textContent = `${Array.isArray(items) ? items.length : 0} Kayıtlı Profil`;
+    titleWrap.append(titleEl, countTag);
+    head.append(titleWrap);
+    card.append(head);
+
+    const checksBox = document.createElement('div');
+    checksBox.className = 'diag-checks';
+    if (!Array.isArray(items) || !items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'diag-empty';
+      empty.textContent = 'Henüz öğrenilmiş bir uygulama kaydı bulunmuyor. "Başka bir uygulamayı incele" komutuyla veya onaylı görevlerle uygulama profilleri öğrenilir.';
+      checksBox.append(empty);
+    } else {
+      items.forEach((rec, idx) => {
+        const row = document.createElement('div');
+        row.className = 'diag-check-item';
+        const status = normalizeDiagStatus(rec.verdict === 'PARTIAL' ? 'PASS' : rec.verdict);
+        row.dataset.checkStatus = status;
+        const top = document.createElement('div');
+        top.className = 'diag-check-top';
+        const cTitle = document.createElement('span');
+        cTitle.className = 'diag-check-title';
+        const shortHash = String(rec.sha256 || '').slice(0, 12);
+        cTitle.textContent = `Uygulama #${idx + 1} · SHA-256: ${shortHash}…`;
+        const cStatus = document.createElement('span');
+        cStatus.className = 'diag-status-pill';
+        cStatus.dataset.status = status;
+        cStatus.textContent = String(rec.verdict || 'UNKNOWN');
+        top.append(cTitle, cStatus);
+
+        const facts = Array.isArray(rec.facts) ? rec.facts : [];
+        const peFact = facts.find(f => f.source === 'pe')?.values || {};
+        const reaFact = facts.find(f => f.source === 'rea')?.values || {};
+        const opFact = facts.find(f => f.source === 'operational')?.values || {};
+        const parts = [];
+        if (peFact.architecture) parts.push(`Mimari: ${peFact.architecture}${peFact.pe_format ? ` (${peFact.pe_format})` : ''}`);
+        if (peFact.subsystem) parts.push(`Alt sistem: ${peFact.subsystem}`);
+        if (reaFact.format) parts.push(`REA biçimi: ${reaFact.format} (düğüm: ${reaFact.nodes ?? 0})`);
+        if (opFact.verified_runs !== undefined) {
+          parts.push(`Doğrulanmış görev: ${opFact.verified_runs}, Doğrulanmış eylem: ${opFact.verified_actions ?? 0}`);
+        }
+        if (opFact.requires_elevation) parts.push('UAC yükseltme gerekiyor');
+        const cMsg = document.createElement('div');
+        cMsg.className = 'diag-check-msg';
+        cMsg.textContent = parts.length ? parts.join(' · ') : 'Statik dosya kimliği ve SHA-256 doğrulandı.';
+        row.append(top, cMsg);
+
+        const evDetails = document.createElement('details');
+        evDetails.className = 'technical-details diag-evidence';
+        const evSummary = document.createElement('summary');
+        evSummary.textContent = 'Öğrenilen yapısal ve operasyonel kanıtlar';
+        const evPre = document.createElement('pre');
+        evPre.className = 'diag-evidence-pre';
+        evPre.textContent = formatDiagEvidence(rec);
+        evDetails.append(evSummary, evPre);
+        row.append(evDetails);
+        checksBox.append(row);
+      });
+    }
+    card.append(checksBox);
+    container.appendChild(card);
+    if (typeof scrollToBottom === 'function' && typeof userPinnedToBottom !== 'undefined' && userPinnedToBottom) {
+      scrollToBottom(true);
+    }
+    return card;
   }
 
   function renderSelfDiagnosticsCard(job, targetContainer = null) {
@@ -3302,11 +3546,17 @@ _HTML = r"""
     titleWrap.className = 'diag-title-wrap';
     const titleEl = document.createElement('strong');
     titleEl.className = 'diag-title';
-    titleEl.textContent = 'QUARTZ ÖZ TEŞHİS';
+    titleEl.textContent = job.scope === 'artifact' ? 'SEÇİLEN UYGULAMA İNCELEMESİ' : 'QUARTZ ÖZ TEŞHİS';
     const reaTag = document.createElement('span');
     reaTag.className = 'diag-rea-tag';
     reaTag.textContent = view.reaTagText;
     titleWrap.append(titleEl, reaTag);
+    if (view.knowledgeSaved) {
+      const learnTag = document.createElement('span');
+      learnTag.className = 'diag-rea-tag';
+      learnTag.textContent = 'ÖĞRENME: Hafızaya Kaydedildi';
+      titleWrap.append(learnTag);
+    }
 
     const actions = document.createElement('div');
     actions.className = 'diag-actions';
@@ -3465,25 +3715,51 @@ _HTML = r"""
     if (diagPollBusy || !jobId) return;
     diagPollBusy = true;
     let keepPolling = false;
+    let terminal = false;
     try {
       const resp = await window.pywebview.api.diagnostics_status(jobId);
-      if (resp && resp.status === 'ok' && resp.data) {
-        renderSelfDiagnosticsCard(resp.data);
-        keepPolling = resp.data.state === 'running';
-      }
+      if (!resp || resp.status !== 'ok' || !resp.data || resp.data.id !== jobId) throw new Error('diagnostics-status-unavailable');
+      renderSelfDiagnosticsCard(resp.data);
+      diagPollFailures.delete(jobId);
+      keepPolling = resp.data.state === 'running';
+      terminal = !keepPolling;
     } catch (_) {
-      keepPolling = false;
+      const failures = (diagPollFailures.get(jobId) || 0) + 1;
+      diagPollFailures.set(jobId, failures);
+      keepPolling = failures <= 3;
+      showDiagnosticsPollError(jobId, keepPolling);
     } finally {
       diagPollBusy = false;
     }
     if (keepPolling) {
       scheduleSelfDiagnosticsPoll(jobId);
-    } else if (activeDiagJobId === jobId) {
+    } else if (terminal && activeDiagJobId === jobId) {
       activeDiagJobId = null;
       if (diagPollTimer) {
         clearTimeout(diagPollTimer);
         diagPollTimer = null;
       }
+    }
+  }
+
+  function showDiagnosticsPollError(jobId, retrying) {
+    const card = chatEl.querySelector(`[data-diagnostics-job="${String(jobId).replace(/["\\]/g, '')}"]`);
+    if (!card) return;
+    let warning = card.querySelector('.diag-connection-warning');
+    if (!warning) {
+      warning = document.createElement('div'); warning.className = 'diag-connection-warning';
+      warning.setAttribute('role', 'alert'); card.append(warning);
+    }
+    warning.replaceChildren();
+    const text = document.createElement('p');
+    text.textContent = retrying ? 'Güncel teşhis durumu alınamadı; yeniden deneniyor…' :
+      'Güncel sonuç doğrulanamadı. Yukarıdaki ilerleme son alınan bilgidir.';
+    warning.append(text);
+    if (!retrying) {
+      const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'control-btn';
+      retry.textContent = 'Durumu yeniden oku';
+      retry.onclick = () => { diagPollFailures.delete(jobId); pollSelfDiagnostics(jobId); };
+      warning.append(retry);
     }
   }
 
@@ -3496,7 +3772,8 @@ _HTML = r"""
     }
     const hidden = typeof isUiHidden === 'function' && isUiHidden();
     const lowSpec = typeof lowSpecHardware !== 'undefined' && Boolean(lowSpecHardware);
-    const delay = hidden ? 4000 : (lowSpec ? 1800 : 900);
+    const delay = Math.max(hidden ? 4000 : (lowSpec ? 1800 : 900),
+      diagPollFailures.has(jobId) ? Math.min(8000, 1000 * 2 ** diagPollFailures.get(jobId)) : 0);
     diagPollTimer = setTimeout(() => pollSelfDiagnostics(jobId), delay);
   }
 
@@ -3772,8 +4049,17 @@ _HTML = r"""
   });
   learnOperationBtn.addEventListener('click', () => sendDirect('bu işi öğren'));
   finishOperationBtn.addEventListener('click', () => sendDirect('görevi bitir'));
+  // Keyboard access remains available when pointer geometry cannot be captured.
+  document.addEventListener('keydown', (e) => {
+    if (!e.ctrlKey || e.altKey || e.shiftKey || e.metaKey || e.isComposing || String(e.key).toLowerCase() !== 'l') return;
+    if (Array.from(document.querySelectorAll('[aria-modal="true"], dialog[open]')).some(el => el.getClientRects().length > 0)) return;
+    if (inputEl.disabled || !inputEl.getClientRects().length) return;
+    e.preventDefault();
+    inputEl.focus();
+  });
   inputEl.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') sendAgentMessage();
+    if (e.isComposing || e.repeat) return;
+    if (e.key === 'Enter') { e.preventDefault(); sendAgentMessage(); }
     else if (e.key === 'ArrowUp') {
       if (!inpHistory.length) return;
       histCursor = Math.min(histCursor + 1, inpHistory.length - 1);
@@ -3918,7 +4204,7 @@ _HTML = r"""
   function isUiHidden() { return !!(document.hidden || document.visibilityState === 'hidden'); }
   function hasActiveDesktopTask() { return !!desktopView.stop_ref; }
   function isUiIdle() {
-    return !thinking && !chatPollInterval && !hasActiveDesktopTask() && (Date.now() - lastUserActivityAt > 20000);
+    return !thinking && !chatPollInterval && !hasActiveDesktopTask() && (typeof hasActiveDiagnosticsJob === 'function' ? !hasActiveDiagnosticsJob() : true) && (Date.now() - lastUserActivityAt > 20000);
   }
   ['mousedown', 'keydown', 'focus'].forEach(ev => window.addEventListener(ev, markUserActivity, { passive: true }));
   document.addEventListener('visibilitychange', () => {

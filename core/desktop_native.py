@@ -254,7 +254,14 @@ class NativeDesktopBackend:
         if any(current.get(k) != target.get(k) for k in ("handle", "pid", "started", "exe", "rect")):
             raise PermissionError("Window identity or input geometry changed")
         self.validate_target(current)
+        integrity=getattr(self,'validate_integrity',None)
+        if callable(integrity):integrity(current)
         if not self.is_foreground(target): raise PermissionError("Target lost foreground before input")
+
+    @staticmethod
+    def validate_integrity(target):
+        from core.elevation import require_input_integrity
+        require_input_integrity(target)
 
     @_uia_operation
     def observe(self, target):

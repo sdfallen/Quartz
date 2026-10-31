@@ -41,6 +41,7 @@ def safe_member(root, relative):
 
 
 class SelfDiagnosticsService:
+    SCOPE = 'self'
     MAX_FILES = 6000
     MAX_BYTES = 1536 * 1024 * 1024
     DEADLINE_SECONDS = 180
@@ -71,7 +72,7 @@ class SelfDiagnosticsService:
             identity = uuid.uuid4().hex
             self.latest = identity
             self.jobs[identity] = {
-                'schema_version': 1, 'id': identity, 'state': 'running', 'phase': 'queued',
+                'schema_version': 1, 'scope': self.SCOPE, 'id': identity, 'state': 'running', 'phase': 'queued',
                 'progress': 0, 'message': 'Quartz öz teşhisi hazırlanıyor…', 'checks': [],
                 'verdict': 'UNKNOWN', 'limitations': ['Salt okunur paket incelemesi; çalışma zamanı ve model erişimi testi değildir.',
                     'Manifest karşılaştırması kendi içinde tutarlılığı ölçer; yayıncı imzasını doğrulamaz.'],
@@ -175,36 +176,42 @@ class SelfDiagnosticsService:
                     compared=count, bytes=total, mismatch_count=len(mismatch), missing_count=len(missing),
                     mismatches=mismatch[:20], missing=missing[:20])
 
+    def _inspect(self, identity, event, deadline, include_rea):
+        self._update(identity, phase='scope', progress=5, message='Uygulama kapsamı doğrulanıyor…')
+        self._guard(event, deadline)
+        if self.base.is_symlink() or getattr(self.base, 'is_junction', lambda: False)():
+            raise ValueError('unsafe-root')
+        target = safe_member(self.base, 'Quartz.exe')
+        if not target.is_file():
+            self._check(identity, 'scope', 'NOT_TESTED', 'Çalışma biçimi',
+                        'Kaynak modunda çalışılıyor; paket denetimi için paketlenmiş Quartz kullanılmalı.')
+        else:
+            digest = self._hash(target, event, deadline)
+            self._check(identity, 'scope', 'PASS', 'İncelenen uygulama',
+                        'Yalnız bu Quartz paketinin ikilisi seçildi; ikili çalıştırılmayacak.', sha256=digest, bytes=target.stat().st_size)
+            self._update(identity, phase='resources', progress=15, message='Gerekli kaynaklar kontrol ediliyor…')
+            missing = [name for name in self.REQUIRED if not safe_member(self.base, name).is_file()]
+            self._check(identity, 'resources', 'FAIL' if missing else 'PASS', 'Gerekli bileşenler',
+                        'Gerekli paket bileşenleri eksik.' if missing else 'Yardımcı araç, Q simgesi ve arayüz kaynakları mevcut.', missing=missing)
+            self._update(identity, phase='manifest', progress=20, message='Paket manifesti inceleniyor…')
+            self._manifest(identity, event, deadline)
+            self._update(identity, phase='rea', progress=65, message='REA statik incelemesi hazırlanıyor…')
+            if include_rea:
+                from core.rea_adapter import ReaAdapter
+                result = (self.rea or ReaAdapter()).inspect(target, event=event, deadline=deadline)
+                self._guard(event, deadline)
+                self._check(identity, 'rea', result['status'], 'REA paket incelemesi', result['message'], **result.get('evidence', {}))
+                self._update(identity, rea_used=bool(result.get('used')))
+            else:
+                self._check(identity, 'rea', 'NOT_TESTED', 'REA paket incelemesi', 'Bu koşuda REA incelemesi seçilmedi.')
+
+    def _on_completed(self, identity, snapshot):
+        pass
+
     def _work(self, identity, event, include_rea):
         deadline = time.monotonic() + self.DEADLINE_SECONDS
         try:
-            self._update(identity, phase='scope', progress=5, message='Uygulama kapsamı doğrulanıyor…')
-            self._guard(event, deadline)
-            if self.base.is_symlink() or getattr(self.base, 'is_junction', lambda: False)():
-                raise ValueError('unsafe-root')
-            target = safe_member(self.base, 'Quartz.exe')
-            if not target.is_file():
-                self._check(identity, 'scope', 'NOT_TESTED', 'Çalışma biçimi',
-                            'Kaynak modunda çalışılıyor; paket denetimi için paketlenmiş Quartz kullanılmalı.')
-            else:
-                digest = self._hash(target, event, deadline)
-                self._check(identity, 'scope', 'PASS', 'İncelenen uygulama',
-                            'Yalnız bu Quartz paketinin ikilisi seçildi; ikili çalıştırılmayacak.', sha256=digest, bytes=target.stat().st_size)
-                self._update(identity, phase='resources', progress=15, message='Gerekli kaynaklar kontrol ediliyor…')
-                missing = [name for name in self.REQUIRED if not safe_member(self.base, name).is_file()]
-                self._check(identity, 'resources', 'FAIL' if missing else 'PASS', 'Gerekli bileşenler',
-                            'Gerekli paket bileşenleri eksik.' if missing else 'Yardımcı araç, Q simgesi ve arayüz kaynakları mevcut.', missing=missing)
-                self._update(identity, phase='manifest', progress=20, message='Paket manifesti inceleniyor…')
-                self._manifest(identity, event, deadline)
-                self._update(identity, phase='rea', progress=65, message='REA statik incelemesi hazırlanıyor…')
-                if include_rea:
-                    from core.rea_adapter import ReaAdapter
-                    result = (self.rea or ReaAdapter()).inspect(target, event=event, deadline=deadline)
-                    self._guard(event, deadline)
-                    self._check(identity, 'rea', result['status'], 'REA paket incelemesi', result['message'], **result.get('evidence', {}))
-                    self._update(identity, rea_used=bool(result.get('used')))
-                else:
-                    self._check(identity, 'rea', 'NOT_TESTED', 'REA paket incelemesi', 'Bu koşuda REA incelemesi seçilmedi.')
+            self._inspect(identity, event, deadline, include_rea)
             self._guard(event, deadline)
             checks = self.status(identity)['checks']
             verdict = 'FAIL' if any(c['status'] == 'FAIL' for c in checks) else 'PASS' if checks and all(c['status'] == 'PASS' for c in checks) else 'PARTIAL'
@@ -215,10 +222,14 @@ class SelfDiagnosticsService:
             snapshot = self.status(identity)
             snapshot.update(state='completed', phase='done', progress=100, finished_at=time.time(), report_path=str(report),
                             message='Teşhis tamamlandı; kapsam ve bulguları inceleyebilirsiniz.')
+            # Knowledge persistence may re-hash the target; keep it outside the
+            # status lock so UI polling never stalls on large executables.
+            self._on_completed(identity, snapshot)
             with self.lock:
                 self._guard(event, deadline)
                 atomic_write_json(report, snapshot)
-                self._update(identity, **{k: snapshot[k] for k in ('state', 'phase', 'progress', 'finished_at', 'report_path', 'message')})
+                extra_keys = ('knowledge_saved',) if 'knowledge_saved' in snapshot else ()
+                self._update(identity, **{k: snapshot[k] for k in ('state', 'phase', 'progress', 'finished_at', 'report_path', 'message', *extra_keys)})
         except InspectionCancelled:
             self._update(identity, state='cancelled', phase='done', verdict='UNKNOWN', finished_at=time.time(), message='Teşhis iptal edildi; yarım inceleme başarı sayılmadı.')
         except Exception as exc:
