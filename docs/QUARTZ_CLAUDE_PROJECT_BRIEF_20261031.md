@@ -1,10 +1,14 @@
 # Quartz — Claude için kapsamlı proje tanıtımı ve teknik devir raporu
 
-Tarih: **31 Ekim 2026**  
-Kaynak deposu: <https://github.com/sdfallen/Quartz>  
-İncelenen commit: `cba9972a37f305a88c3b0047d9af34a7ab40d0e8`  
-Platform: **Windows 10/11 x64**  
-Ana dil: Kullanıcı arayüzü ve kullanıcı mesajları ağırlıklı olarak **Türkçe**  
+Tarih: **31 Ekim 2026**
+
+Kaynak deposu: <https://github.com/sdfallen/Quartz>
+
+İncelenen commit: `cba9972a37f305a88c3b0047d9af34a7ab40d0e8`
+
+Platform: **Windows 10/11 x64**
+
+Ana dil: Kullanıcı arayüzü ve kullanıcı mesajları ağırlıklı olarak **Türkçe**
 Durum: **Aktif geliştirme önizlemesi; kararlı son kullanıcı sürümü değil**
 
 > **Güncel ürün kararı:** ASTER / Warband geliştirmesi resmî olarak rafa
