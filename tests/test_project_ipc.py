@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import main
+from core.project_registry import ProjectRegistry
 
 
 class ProjectIPCTests(unittest.TestCase):
@@ -12,7 +13,11 @@ class ProjectIPCTests(unittest.TestCase):
             root = Path(directory)
             project = root / "Sample"
             project.mkdir()
-            with patch.object(main, "BASE_DIR", root):
+            default = root / "Default"
+            default.mkdir()
+            defaults = ({"id": "squad-pilot", "name": "Squad Pilot",
+                         "path": str(default), "protected": False},)
+            with patch.object(main, "BASE_DIR", root), patch.object(ProjectRegistry, "DEFAULTS", defaults):
                 server = main.IPCServer(MagicMock())
                 added = server._dispatch_action({"action": "project_add", "data": {"path": str(project)}})
                 self.assertEqual(added["status"], "ok")

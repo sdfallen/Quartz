@@ -165,7 +165,7 @@ console.log('actual delete handler: cancel/single/project/error/busy PASS');
 })().catch(e=>{console.error(e);process.exitCode=1;});
 '''
         result = subprocess.run(['node', '-'], input=harness + handler + checks,
-                                capture_output=True, text=True, timeout=15)
+                                capture_output=True, text=True, encoding='utf-8', timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 

@@ -15,6 +15,7 @@ import uuid
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from core.branding import APP_ID
+from core.path_identity import canonical_path
 
 
 def shell_link(path=None, *, writable=False):
@@ -36,6 +37,10 @@ def read_link(path):
 def deliver_link(path,backup,exe,icon):
     import pythoncom
     from win32com.propsys import propsys,pscon
+    path = Path(path)
+    backup = canonical_path(backup, strict=True)
+    exe = canonical_path(exe, strict=True)
+    icon = canonical_path(icon, strict=True)
     if path.is_symlink(): raise PermissionError('Refuse shortcut symlink')
     before=read_link(path) if path.exists() else None
     if before and Path(before['target']).resolve()!=exe:
