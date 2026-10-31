@@ -52,9 +52,27 @@ def cli_environment(workspace_id=None):
     env["NOTION_KEYRING"] = "1"
     env["NOTION_API_BASE_URL"] = "https://api.notion.com"
     env["NOTION_API_DOCS_BASE_URL"] = "https://developers.notion.com"
+    # Windows GUI processes may have neither HOME nor XDG cache variables.
+    # ntn's login flow otherwise exits before presenting any authorization URL.
+    # Keep this CLI's config/cache separate from other Notion clients.
+    env["NOTION_HOME"] = str(profile_root() / "cli")
+    env["XDG_CACHE_HOME"] = str(profile_root() / "cache")
     if workspace_id:
         env["NOTION_WORKSPACE_ID"] = identifier(workspace_id)
     env["NO_COLOR"] = "1"
+    return env
+
+
+def prepare_cli_environment(workspace_id=None):
+    env = cli_environment(workspace_id)
+    # ntn explicitly rejects a non-existent NOTION_HOME; create only our two
+    # documented private directories immediately before launching the CLI.
+    for key in ("NOTION_HOME", "XDG_CACHE_HOME"):
+        folder = Path(env[key])
+        folder.mkdir(parents=True, exist_ok=True)
+        # Microsoft Store Python virtualizes LocalAppData writes. Pass the real
+        # filesystem path to native ntn, which does not share that redirection.
+        env[key] = str(folder.resolve(strict=True))
     return env
 
 
@@ -145,7 +163,7 @@ class NotionCli:
         try:
             result = self.run(args, input=json.dumps(body, ensure_ascii=False) if body is not None else "",
                               capture_output=True, text=True, encoding="utf-8", errors="replace",
-                              timeout=30, env=self.environment(),
+                              timeout=30, env=prepare_cli_environment(self.workspace_id),
                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except subprocess.TimeoutExpired:
             raise NotionError("Notion isteği zaman aşımına uğradı; gönderim otomatik tekrarlanmadı.",

@@ -11,7 +11,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from core.notion_cli import NotionCli, cli_environment, install_ntn, resolve_ntn
+from core.notion_cli import NotionCli, prepare_cli_environment, install_ntn, resolve_ntn
 from core.notion_runtime import NotionRuntime
 
 
@@ -34,7 +34,7 @@ def main(argv=None):
         if args.command == "install":
             print(json.dumps(install_ntn(), ensure_ascii=False))
         elif args.command == "login":
-            env = cli_environment()
+            env = prepare_cli_environment()
             # Foreground console, deliberately initiated by the user.
             return subprocess.run([resolve_ntn(), "login", "--no-browser"], env=env).returncode
         elif args.command == "agents":

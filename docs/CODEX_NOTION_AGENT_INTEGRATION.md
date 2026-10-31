@@ -79,6 +79,28 @@ başarısızlık 0. Python sözdizimi 212 dosyada başarılı; gömülü JavaScr
 exit 0. Yayın denetimi staged kaynaklar ve geçmiş üzerinde PASS, bulgu 0.
 Bu sayılar bu checkout ve koşuya aittir; bağımsız açık PR'lar dahil değildir.
 
+### İlk Windows giriş akışı düzeltmesi
+
+Yayımlanmış ajan hazırlandıktan sonraki gerçek CLI denemesinde eksik giriş
+`exit 4 / No auth token found` ile gözlendi. Bu durum artık bozuk JSON gibi
+sunulmuyor. OS keychain kullanımı ortamda açıkça zorunlu tutuluyor; mevcut bir
+CLI config'inin `keyring=false` seçimi düz metin saklamaya neden olamıyor.
+
+İlk giriş iki gerçek dizin hatası verdi: `Could not determine cache directory`
+ve `NOTION_HOME ... existing directory`. Store Python'ın LocalAppData dizinini
+özel LocalCache yoluna yönlendirdiği, Python'da `is_dir=True` iken native
+PowerShell'de nominal yolun bulunmadığı ölçüldü. CLI/config ve cache dizinleri
+Quartz profilinde oluşturulup `resolve(strict=True)` ile gerçek fiziksel yolları
+native sürece verildi. Sistem ortam değişkenleri değiştirilmedi.
+
+Düzeltmeden sonra resmî `ntn login --no-browser` exit 0 döndü, resmî Notion
+yetkilendirme URL'si ve karşılaştırma kodu üretti. Bu giriş-akışı başlangıcının
+canlı kanıtıdır; tarayıcı onayı, token redemption veya ajan yanıtı kabulü değildir.
+Geçici URL/kodlar ve oturum dosyaları bu belgeye veya Git'e eklenmez.
+
+Bu aşamada hedefli 25 test geçti; tam güvenli koşu 686 test, 12 skip, hata 0.
+Giriş onayı ve adaptör üzerinden gerçek ajan yanıtı henüz bekleniyor.
+
 ## Frontend integration request — Claude/Codex entegrasyon aşaması
 
 Bu PR `gui.py`, `ui/`, mevcut EXE, kullanıcı ayarları veya sohbet dosyalarını

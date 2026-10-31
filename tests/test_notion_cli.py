@@ -16,6 +16,13 @@ WORKSPACE = "10000000-0000-0000-0000-000000000001"
 
 
 class NotionCliTests(unittest.TestCase):
+    def setUp(self):
+        self.profile = tempfile.TemporaryDirectory()
+        self.addCleanup(self.profile.cleanup)
+        env = patch.dict(os.environ, {"QUARTZ_NOTION_HOME": self.profile.name})
+        env.start()
+        self.addCleanup(env.stop)
+
     def test_prompt_is_stdin_not_command_and_environment_does_not_leak_keys(self):
         calls = []
         def run(args, **kw):
@@ -51,6 +58,24 @@ class NotionCliTests(unittest.TestCase):
             cli.agents()
         self.assertEqual(error.exception.code, "unauthorized")
         self.assertFalse(error.exception.uncertain)
+
+    def test_windows_login_has_explicit_private_cli_and_cache_paths(self):
+        from core.notion_cli import cli_environment
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"QUARTZ_NOTION_HOME": directory}):
+            env = cli_environment(WORKSPACE)
+            self.assertEqual(env["NOTION_HOME"], str(Path(directory) / "cli"))
+            self.assertEqual(env["XDG_CACHE_HOME"], str(Path(directory) / "cache"))
+            self.assertEqual(env["NOTION_KEYRING"], "1")
+            self.assertFalse(list(Path(directory).iterdir()), "environment construction must not write data")
+
+    def test_prepare_only_creates_private_cli_directories(self):
+        from core.notion_cli import prepare_cli_environment
+        env = prepare_cli_environment(WORKSPACE)
+        self.assertTrue(Path(env["NOTION_HOME"]).is_dir())
+        self.assertTrue(Path(env["XDG_CACHE_HOME"]).is_dir())
+        self.assertEqual(env["NOTION_HOME"], str((Path(self.profile.name) / "cli").resolve(strict=True)))
+        self.assertEqual(env["XDG_CACHE_HOME"], str((Path(self.profile.name) / "cache").resolve(strict=True)))
+        self.assertEqual(sorted(p.name for p in Path(self.profile.name).iterdir()), ["cache", "cli"])
 
     def test_timeout_is_ambiguous_and_never_retried(self):
         calls = []
