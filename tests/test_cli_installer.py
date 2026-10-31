@@ -48,7 +48,8 @@ class CliInstallerTests(unittest.TestCase):
         node = self.root/'node/node.exe'; node.parent.mkdir();node.touch()
         cli = self.root/'packages/gemini/index.js';cli.parent.mkdir(parents=True);cli.touch()
         prompt = 'a & echo secret $(test)'
-        self.assertEqual(node_command(cli,['-p',prompt]),[str(node),str(cli),'-p',prompt])
+        self.assertEqual(node_command(cli,['-p',prompt]),
+                         [str(node.resolve()),str(cli.resolve()),'-p',prompt])
         unknown = self.root/'weird.cmd';unknown.touch()
         with self.assertRaises(RuntimeError):node_command(unknown,['-p',prompt])
 

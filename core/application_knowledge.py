@@ -10,6 +10,7 @@ import time
 
 from core.atomic_json import atomic_write_json
 from core.artifact_diagnostics import selected_executable, ArtifactDiagnosticsService
+from core.path_identity import canonical_key
 
 
 class ApplicationKnowledge:
@@ -33,7 +34,8 @@ class ApplicationKnowledge:
         self.lock = threading.RLock()
 
     def location(self, path):
-        return self.root / (hashlib.sha256(os.path.normcase(str(path)).encode()).hexdigest() + '.json')
+        identity = canonical_key(path)
+        return self.root / (hashlib.sha256(identity.encode()).hexdigest() + '.json')
 
     @staticmethod
     def fingerprint(path):

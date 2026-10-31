@@ -107,7 +107,8 @@ class ElevationTests(unittest.TestCase):
             result=request_uac(approval)
         self.assertFalse(result['verified'])
         self.assertEqual(result['state'],'launch_requested')
-        shell.assert_called_once_with(str(self.file),'runas',cwd=str(self.file.parent))
+        resolved = self.file.resolve()
+        shell.assert_called_once_with(str(resolved),'runas',cwd=str(resolved.parent))
 
     def test_uipi_blocks_higher_or_unknown_target_without_input(self):
         for levels in ([0x2000,0x3000],[0x2000,None]):

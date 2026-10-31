@@ -17,6 +17,7 @@ from core.workspace_checkpoint import create_checkpoint, snapshot_workspace_file
 from core.source_verification import verify_changed_python
 from core.run_evidence_store import RunEvidenceStore
 from core.writer_journal import WriterJournal
+from core.path_identity import canonical_key
 
 
 class MultiAgentService:
@@ -65,7 +66,7 @@ class MultiAgentService:
 
     def _start_writer(self, provider: str, project: dict, start, *args, **kwargs) -> dict:
         from pathlib import Path
-        key = os.path.normcase(str(Path(project["path"]).resolve()))
+        key = canonical_key(project["path"])
         exclusive = bool(kwargs.get("full_access") or kwargs.get("sandbox") == "danger-full-access")
         with self._lock:
             for other_key, writer in self._writers.items():
@@ -772,13 +773,14 @@ class MultiAgentService:
         return runs
 
     def _writer_status(self, project_path):
+        project_key = canonical_key(project_path)
         with self._lock:
-            writer = self._writers.get(os.path.normcase(str(project_path)))
+            writer = self._writers.get(project_key)
             if writer:
                 return {"locked": True, **writer}
         recovery = self.writer_recovery_status()
         for claim in recovery['claims']:
-            if self._writer_journal.conflicts(os.path.normcase(str(project_path)), False, claim):
+            if self._writer_journal.conflicts(project_key, False, claim):
                 return {'locked':True, 'owner':claim.get('run_id'), 'agent':claim.get('provider'), 'recovery_required':True}
         if recovery.get('error'):
             return {'locked':True, 'owner':None, 'agent':None, 'recovery_required':True, 'error':recovery['error']}

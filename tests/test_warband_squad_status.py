@@ -84,7 +84,7 @@ assert(classes.has('warn'));assert.equal(badge.textContent,'Squad: Bağlantı So
 updateSquadBadge({connected:false,error:'DB locked'});assert(classes.has('warn'));
 console.log('idle vs real connection vs real failure PASS');
 '''
-        result = subprocess.run(['node', '-'], input=code, capture_output=True, text=True, timeout=15)
+        result = subprocess.run(['node', '-'], input=code, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 

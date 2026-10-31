@@ -12,6 +12,8 @@ import json
 import zipfile
 from pathlib import Path
 
+from core.path_identity import canonical_path
+
 
 def create_checkpoint(workspace: str | Path, *, backup_root=None,
                       max_files=20_000, max_bytes=512 * 1024 * 1024) -> dict:
@@ -160,7 +162,7 @@ def snapshot_workspace_files(workspace: str | Path, max_files: int = 20_000) -> 
 def changed_workspace_files(workspace: str | Path, before: dict, after: dict) -> tuple[list[str], str]:
     if before["files"] is None or after["files"] is None:
         return [], before["warning"] or after["warning"]
-    root = Path(workspace).resolve(strict=False)
+    root = canonical_path(workspace)
     previous, current = before["files"], after["files"]
     changed = sorted(key for key in previous.keys() | current.keys()
                      if previous.get(key) != current.get(key))

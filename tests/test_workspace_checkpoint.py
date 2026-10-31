@@ -24,7 +24,8 @@ class WorkspaceFileEvidenceTests(unittest.TestCase):
             created.write_text("new", encoding="utf-8")
             after = snapshot_workspace_files(root)
             changed, warning = changed_workspace_files(root, before, after)
-            self.assertEqual(set(changed), {str(modified), str(deleted), str(created)})
+            self.assertEqual(set(changed),
+                             {str(modified.resolve()), str(deleted.resolve()), str(created.resolve())})
             self.assertEqual(warning, "")
 
     def test_file_limit_reports_incomplete_evidence(self):

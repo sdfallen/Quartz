@@ -74,7 +74,7 @@ def resolve_cli(provider, explicit=None, *, root=None):
 
 
 def node_command(executable, args=()):
-    path = Path(executable)
+    path = Path(executable).resolve(strict=False)
     if path.suffix.lower() in {".js", ".mjs", ".cjs"}:
         node = next((parent / "node/node.exe" for parent in path.resolve().parents if (parent / "node/node.exe").is_file()), managed_root() / "node/node.exe")
         manifest = load_json(managed_root() / "installed.json", {})
@@ -82,7 +82,7 @@ def node_command(executable, args=()):
         candidate = str(node) if node.is_file() else recorded if recorded and Path(recorded).is_file() else shutil.which("node")
         if not candidate:
             raise FileNotFoundError("Node çalışma zamanı bulunamadı")
-        return [candidate, str(path), *args]
+        return [str(Path(candidate).resolve(strict=False)), str(path), *args]
     if path.suffix.lower() == ".cmd":
         package = "codex" if path.stem == "codex" else "gemini"
         try:

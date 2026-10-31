@@ -27,6 +27,7 @@ from core.task_outcome import cleanup_step, execution_outcome, stop_summary
 from core.desktop_agents import mcp_command, write_operator_hooks, ensure_antigravity_tool_grants
 from core.squad_adapter import SquadAdapter
 from core.screen_overlay import overlay_manager
+from core.path_identity import canonical_path, canonical_relative
 
 
 def task_roles(text):
@@ -359,7 +360,7 @@ class NaturalDesktopTask:
             for path in sorted(folder.glob("*.log"))[:12]:
                 try:
                     log = ApprovedLog(path, root)
-                    found.append(str(log.path.relative_to(root)))
+                    found.append(str(canonical_relative(log.path, root)))
                 except (ValueError, OSError, PermissionError): continue
         return found[:24]
 
@@ -419,10 +420,10 @@ class NaturalDesktopTask:
             self.broker.backend.validate_target(target)
             targets[handle] = target
         logs = set(self.approved_logs) | set(self.pending["logs"] if self.pending else [])
-        root = Path(self.job["project"]["path"])
+        root = canonical_path(self.job["project"]["path"], strict=True)
         for path in paths:
             log = ApprovedLog(root / path, root)
-            logs.add(str(log.path.relative_to(root)))
+            logs.add(str(canonical_relative(log.path, root)))
         if not targets and not logs: raise ValueError("No application or log requested")
         if len(targets) > 12 or len(logs) > 4: raise ValueError("Task scope limit exceeded")
         if (self.pending and targets == {w["handle"]: w for w in self.pending["targets"]}

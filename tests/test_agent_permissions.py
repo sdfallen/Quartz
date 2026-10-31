@@ -62,7 +62,7 @@ class AgentPermissionTests(unittest.TestCase):
             self.assertEqual(target.read_text(encoding='utf-8'),'after')
             with zipfile.ZipFile(result['run']['checkpoint']['archive']) as archive:
                 self.assertEqual(archive.read('files/fixture.txt'),b'before')
-            self.assertIn(str(target),self.service.get_run('local-fake')['files_changed'])
+            self.assertIn(str(target.resolve()),self.service.get_run('local-fake')['files_changed'])
 
     def test_explicit_full_codex_uses_guarded_full_mode(self):
         with self.writer_guards():
