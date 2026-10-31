@@ -314,6 +314,10 @@ class IPCServer:
             except ValueError as exc:
                 return {'status': 'error', 'data': str(exc)}
 
+        if action == "notion_status":
+            data = req.get("data") or {}
+            return {"status": "ok", "data": self._get_agent_center().notion.connection_status(force=data.get("force") is True)}
+
         if action == "onboarding_refresh":
             from core.codex_runtime import CodexRuntime
             from core.gemini_runtime import google_runtime

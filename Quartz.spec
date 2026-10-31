@@ -20,6 +20,7 @@ hiddenimports += ['core.install_security', 'core.windows_prerequisites']
 hiddenimports += ['core.self_diagnostics', 'core.rea_adapter', 'core.artifact_diagnostics', 'core.package_repair', 'core.diagnostics_intent']
 hiddenimports += ['core.application_knowledge']
 hiddenimports += ['core.elevation']
+hiddenimports += ['core.notion_cli', 'core.notion_runtime', 'ui', 'ui.document', 'ui.styles', 'ui.theme']
 tmp_ret = collect_all('webview')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
