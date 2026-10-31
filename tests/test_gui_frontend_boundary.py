@@ -11,6 +11,7 @@ from unittest.mock import patch
 import gui
 from ui import document
 from ui.styles import BASE_CSS
+from ui.theme import MODERN_CSS
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_BLOCK = re.compile(r"<script>(.*?)</script>", re.S)
@@ -48,10 +49,11 @@ def _fake_assets(root: Path, png: bytes | None = b"\x89PNG-test") -> Path:
 
 
 class DocumentAssemblyTests(unittest.TestCase):
-    def test_document_order_is_head_base_theme_workspace_then_body(self):
+    def test_document_order_is_head_base_theme_workspace_modern_then_body(self):
         workspace = (ROOT / "assets" / "workspace.css").read_text(encoding="utf-8")
         prefix = (document.DOCUMENT_HEAD + "<style>\n" + BASE_CSS + "</style>"
-                  + "\n<style>" + workspace + "</style></head>")
+                  + "\n<style>" + workspace + "</style>"
+                  + '<style id="quartz-modern-theme">' + MODERN_CSS + "</style></head>")
         self.assertTrue(gui._HTML.startswith(prefix))
         self.assertTrue(gui._HTML.rstrip().endswith("</html>"))
         self.assertEqual(gui._HTML.count(BASE_CSS), 1)
@@ -61,7 +63,8 @@ class DocumentAssemblyTests(unittest.TestCase):
             assets = _fake_assets(Path(directory), png=None)
             built = document.build_document(gui._HTML_BODY, assets)
         self.assertTrue(built.endswith(gui._HTML_BODY.replace(
-            "</head>", "<style>.fake-workspace{color:red}</style></head>", 1)))
+            "</head>", "<style>.fake-workspace{color:red}</style>"
+            '<style id="quartz-modern-theme">' + MODERN_CSS + "</style></head>", 1)))
 
     def test_frozen_bundle_root_is_used_for_assets(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -86,7 +89,7 @@ class DocumentAssemblyTests(unittest.TestCase):
             assets = _fake_assets(Path(directory), png=None)
             built = document.build_document("\n</head>" + document.BRAND_PLACEHOLDER, assets)
         self.assertIn(document.BRAND_PLACEHOLDER, built)
-        self.assertNotIn("brand-icon", built)
+        self.assertNotIn('class="brand-icon"', built)
 
     def test_missing_workspace_css_still_fails_loudly(self):
         with tempfile.TemporaryDirectory() as directory:
