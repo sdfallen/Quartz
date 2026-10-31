@@ -114,6 +114,138 @@ class NaturalTaskTests(unittest.TestCase):
         self.assertEqual(len([event for event in self.task.job["events"] if event.get("permission_request")]),1)
         self.assertFalse(self.broker.status()["active"])
 
+    def test_duplicate_approval_does_not_revoke_existing_grant(self):
+        self.request()
+        identity = self.task.pending['id']
+        self.task.approve(identity, confirmed=True)
+        grant = dict(self.task.connection)
+        with self.assertRaises(PermissionError):
+            self.task.approve(identity, confirmed=True)
+        self.assertFalse(self.task.stopped.is_set())
+        self.assertEqual(self.task.connection, grant)
+        self.assertTrue(self.broker.status()['active'])
+        self.assertEqual(self.task.tokens['codex'], 'op')
+        self.task.squad.complete_task.assert_not_called()
+
+    def test_invalid_confirmation_does_not_cancel_an_active_scope(self):
+        self.approve()
+        (self.root / 'extra.log').write_text('fixture', encoding='utf-8')
+        self.call('task_read_log', {'path': 'extra.log'}, 'review')
+        pending = dict(self.task.pending)
+        grant = dict(self.task.connection)
+        with self.assertRaises(PermissionError):
+            self.task.approve(pending['id'], confirmed='true')
+        self.assertFalse(self.task.stopped.is_set())
+        self.assertEqual(self.task.pending, pending)
+        self.assertEqual(self.task.connection, grant)
+        self.task.approve(pending['id'], confirmed=True)
+        self.assertIn('extra.log', self.task.approved_logs)
+
+    def test_superseded_card_does_not_cancel_live_input_or_new_request(self):
+        self.approve()
+        for name in ('first.log', 'second.log'):
+            (self.root / name).write_text('fixture', encoding='utf-8')
+        self.call('task_read_log', {'path': 'first.log'}, 'review')
+        old = self.task.pending['id']
+        self.call('task_read_log', {'path': 'second.log'}, 'review')
+        latest = self.task.pending['id']
+        with self.assertRaises(PermissionError):
+            self.task.approve(old, confirmed=True)
+        self.assertFalse(self.task.stopped.is_set())
+        self.assertEqual(self.task.pending['id'], latest)
+        self.assertTrue(self.broker.status()['active'])
+        self.task.approve(latest, confirmed=True)
+        self.assertEqual(set(self.task.approved_logs), {'first.log', 'second.log'})
+
+    def test_valid_approval_failure_still_revokes_the_current_scope(self):
+        self.approve()
+        (self.root / 'extra.log').write_text('fixture', encoding='utf-8')
+        self.call('task_read_log', {'path': 'extra.log'}, 'review')
+        identity = self.task.pending['id']
+        self.backend.target['pid'] += 1
+        with self.assertRaises(PermissionError):
+            self.task.approve(identity, confirmed=True)
+        self.assertTrue(self.task.stopped.is_set())
+        self.assertIsNone(self.task.connection)
+        self.assertFalse(self.broker.status()['active'])
+        self.assertEqual(self.task.tokens, {})
+
+    def test_concurrent_duplicate_approvals_apply_the_grant_only_once(self):
+        self.request()
+        identity = self.task.pending['id']
+        barrier = threading.Barrier(2)
+        outcomes = []
+
+        def approve():
+            barrier.wait(timeout=2)
+            try:
+                self.task.approve(identity, confirmed=True)
+                outcomes.append('applied')
+            except PermissionError:
+                outcomes.append('stale')
+
+        with patch.object(self.broker, 'grant', wraps=self.broker.grant) as grant:
+            threads = [threading.Thread(target=approve) for _ in range(2)]
+            for worker in threads:
+                worker.start()
+            for worker in threads:
+                worker.join(timeout=3)
+                self.assertFalse(worker.is_alive())
+            self.assertCountEqual(outcomes, ['applied', 'stale'])
+            grant.assert_called_once()
+        self.assertFalse(self.task.stopped.is_set())
+        self.assertTrue(self.broker.status()['active'])
+        self.assertEqual(self.backend.actions, [])
+
+    def test_late_approval_failure_cannot_stop_a_new_task_generation(self):
+        self.approve()
+        (self.root / 'extra.log').write_text('fixture', encoding='utf-8')
+        self.call('task_read_log', {'path': 'extra.log'}, 'review')
+        identity = self.task.pending['id']
+        original = self.task.job
+        stop = self.task.stop
+
+        def replace_generation_then_stop(reason, **kwargs):
+            # Deterministic interleaving at the error-cleanup boundary, with no
+            # real app/process/input. The grant stands in for the new task's.
+            self.task.job = {**original, 'id': 'new-generation'}
+            self.task.tokens = {'codex': 'new-token'}
+            return stop(reason, **kwargs)
+
+        self.backend.target['pid'] += 1
+        with patch.object(self.task, 'stop', side_effect=replace_generation_then_stop), \
+                patch('core.natural_desktop.overlay_manager.hide') as hide:
+            with self.assertRaises(PermissionError):
+                self.task.approve(identity, confirmed=True)
+        self.assertFalse(self.task.stopped.is_set())
+        self.assertEqual(self.task.job['id'], 'new-generation')
+        self.assertEqual(self.task.tokens, {'codex': 'new-token'})
+        self.assertTrue(self.broker.status()['active'])
+        hide.assert_not_called()
+
+    def test_repeated_stop_does_not_repeat_resource_release(self):
+        self.approve()
+        learning = Mock()
+        self.task.application_learning = learning
+        with patch('core.natural_desktop.overlay_manager.hide') as hide:
+            self.task.stop()
+            self.task.stop()
+        hide.assert_called_once()
+        learning.stop.assert_called_once()
+        self.task.squad.complete_task.assert_called_once()
+
+    def test_learning_release_error_does_not_prevent_authority_revocation(self):
+        self.approve()
+        learning = Mock()
+        learning.stop.side_effect = RuntimeError('fixture release failure')
+        self.task.application_learning = learning
+        self.task.stop()
+        self.assertTrue(self.task.stopped.is_set())
+        self.assertEqual(self.task.tokens, {})
+        self.assertFalse(self.broker.status()['active'])
+        self.assertEqual(self.task.job['cleanup']['status'], 'failed')
+        self.task.squad.complete_task.assert_called_once()
+
     def test_stop_revokes_and_wakes_pending_wait(self):
         self.request();errors=[]
         def wait():
