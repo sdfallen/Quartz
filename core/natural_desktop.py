@@ -455,12 +455,17 @@ class NaturalDesktopTask:
         return {"status": "waiting_for_inline_permission", "request_id": self.pending["id"], "next": "task_wait"}
 
     def approve(self, request_id, *, confirmed=False):
+        approval_job = None
         try:
             with self.changed:
                 if confirmed is not True: raise PermissionError("Explicit inline approval required")
                 pending = self.pending
                 if self.stopped.is_set() or not pending or pending["id"] != request_id or time.time() >= pending["expires_at"]:
                     raise PermissionError("Stale/expired permission card")
+                # Invalid/replayed callbacks must not revoke an already active
+                # lease. Fail-closed cleanup applies only after a valid request
+                # begins applying to this specific task generation.
+                approval_job = self.job
                 if pending.get('kind')=='elevation':
                     if not pending.get('launch'):raise PermissionError('Doğrulanmış EXE bulunamadı; uygulamayı kendiniz açmalısınız')
                     if pending.get('phase')=='prompting':return self.status()
@@ -519,7 +524,8 @@ class NaturalDesktopTask:
                 self.changed.notify_all()
                 return self.status()
         except Exception:
-            if self.connection and not self.stopped.is_set(): self.stop("failed after permission")
+            if approval_job is not None and self.connection:
+                self.stop("failed after permission", expected_job=approval_job)
             raise
 
     def _learn_approved_applications(self, targets):
@@ -1118,19 +1124,12 @@ class NaturalDesktopTask:
                     "operator": {"session": self.broker.status()},
                     "runs": {p: {k: r.get(rid).get(k) for k in ("status", "pid", "model", "effort")} for p, (r, rid) in self.runs.items()}}
 
-    def stop(self, reason="cancelled"):
-        learning = self.application_learning
-        if learning:
-            if not self.stopped.is_set():
-                # Only the first stop records the outcome; hashing runs off the
-                # stop path so the Stop button stays immediate.
-                outcome_code = 'completed' if reason == 'completed' else ('blocked' if str(reason).startswith('blocked') else ('cancelled' if reason == 'cancelled' else 'failed'))
-                threading.Thread(target=learning.finalize, kwargs={'outcome': outcome_code},
-                                 daemon=True, name='quartz-app-learning-finalize').start()
-            learning.stop()
-        overlay_manager.hide()
+    def stop(self, reason="cancelled", *, expected_job=None):
         with self.changed:
+            if expected_job is not None and self.job is not expected_job:
+                return self.status()
             if self.stopped.is_set(): return self.status()
+            learning = self.application_learning
             self.stopped.set(); self.tokens.clear(); self.pending = None
             self._cleanup_done.clear()
             self.connection = None
@@ -1141,6 +1140,14 @@ class NaturalDesktopTask:
         # Authority is revoked above. External release operations must not hold
         # the task lock or prevent independent resources from being released.
         report = self.job["cleanup"] if self.job else {"status":"running", "steps":[]}
+        if learning:
+            outcome_code = 'completed' if reason == 'completed' else ('blocked' if str(reason).startswith('blocked') else ('cancelled' if reason == 'cancelled' else 'failed'))
+            def finalize_learning():
+                threading.Thread(target=learning.finalize, kwargs={'outcome': outcome_code},
+                                 daemon=True, name='quartz-app-learning-finalize').start()
+            cleanup_step(report, 'learning-finalize', finalize_learning)
+            cleanup_step(report, 'learning-stop', learning.stop)
+        cleanup_step(report, 'overlay', overlay_manager.hide)
         cleanup_step(report, "broker", lambda: self.broker.stop(reason))
         if self.warband:
             cleanup_step(report, "warband", self.warband.shutdown)
