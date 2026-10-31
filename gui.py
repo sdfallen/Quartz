@@ -2012,7 +2012,10 @@ _HTML_BODY = r"""
     });
     const isCollab = agent === 'collaboration';
     const notionPill = document.getElementById('notionAgentPill');
-    if (notionPill) notionPill.style.display = agent === 'notion' ? 'flex' : 'none';
+    if (notionPill) {
+      notionPill.classList.toggle('active-notion', agent === 'notion');
+      notionPill.style.display = agent === 'notion' ? 'flex' : 'none';
+    }
     if (agyModelPill) {
       agyModelPill.classList.toggle('active-agy', agent === 'antigravity' || isCollab);
     }

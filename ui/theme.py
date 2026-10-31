@@ -123,7 +123,9 @@ body:not(.show-panels) .rail.left,.rail.left { background:var(--q-ink-850) !impo
 /* Model pills: only the agents in play are shown */
 .model-selector-pill,.model-selector-pill.active-agy,.model-selector-pill.active-codex { background:var(--q-ink-800) !important;
   border:1px solid var(--q-line) !important; border-radius:var(--q-radius-m) !important; padding:2px 4px 2px 10px !important; gap:2px !important; }
-.model-selector-pill:not(.active-agy):not(.active-codex) { display:none !important; }
+.model-selector-pill:not(.active-agy):not(.active-codex):not(.active-notion) { display:none !important; }
+#notionAgentPill { box-shadow:inset 3px 0 0 var(--q-notion) !important; }
+#notionAgentPill .pill-agent-name { color:var(--q-notion) !important; }
 .pill-agent-name { font:600 11.5px var(--q-font) !important; letter-spacing:0 !important; text-transform:none; }
 #agyModelPill .pill-agent-name { color:var(--q-agy) !important; }
 #agyModelPill { box-shadow:inset 3px 0 0 var(--q-agy) !important; }
