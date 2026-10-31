@@ -1,12 +1,12 @@
-# Yan bilgisayarda Quartz geliştirmesine devam etme
+# Başka bir bilgisayarda Quartz geliştirmesine devam etme
 
-Kaynak aktarımı: 30 Ekim 2026. Özel repo: `https://github.com/sdfallen/Quartz`.
+Kaynak aktarımı: 31 Ekim 2026. Public kaynak deposu: `https://github.com/sdfallen/Quartz`.
 Ana dal `main` güncel geliştirme kaynağıdır. Hazır kurulum dosyaları, kişisel
 hesaplar, `.env`, sohbet geçmişleri ve test kayıtları bu kaynak aktarımına dahil değildir.
 
 ## 1. Klonlama ve geliştirici kurulumu
 
-GitHub'a bu özel repoya erişebilen kendi hesabınızla giriş yapın. Windows x64,
+Windows x64,
 Python 3.13 ve geliştirici JavaScript testleri için PATH üzerinde Node gerekir.
 REA 6.8.0 için Node engine sınırları kaynakta `ReaAdapter.node_supported` ile
 kontrol edilir; bu çalışma özel Node 26.13.0 ile doğrulanmıştır.
@@ -91,7 +91,7 @@ Bu CLI harness'i açıkça verilen kendi test paketini salt okunur inceler;
   `scripts/prepare_rea_tool.py`, test/paket güvenlik kontrolleri.
 - Antigravity tarafı: `gui.py` sohbet kartı/GUI API, `assets/workspace.css`,
   `tests/test_self_diagnostics_ui.py`.
-- Son yerel tam regresyon: 607 test PASS. Gerçek REA/IPC, manifest ve iptal kanıtları
+- Son yerel tam regresyon: 661 test PASS. Gerçek REA/IPC, manifest ve iptal kanıtları
   mevcut; teknik raporda kapsamları ayrı belirtilir.
 - Açık kabul: aktif masaüstünde paketlenmiş ana sohbetten gönderim → gerçek kart
   ilerlemesi → sonuç ve iptal/yeni iş. Önceki ortamda görüntü yakalama ve tıklama

@@ -1,0 +1,26 @@
+name: Özellik önerisi
+description: Quartz için kapsamı açık bir geliştirme önerin
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Çözülecek problem
+      description: Kullanıcının bugün yapamadığı somut iş nedir?
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Beklenen davranış
+      description: Başarıyı nasıl gözlemleyip doğrulayabiliriz?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Yetki ve veri kapsamı
+      description: Masaüstü, proje dosyası, hesap veya dış servis erişimi gerekiyor mu?
+    validations:
+      required: true

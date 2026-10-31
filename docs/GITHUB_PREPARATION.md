@@ -1,5 +1,9 @@
 # Quartz private repo hazırlığı — 24 Ekim 2026
 
+> **Tarihsel rapor:** Bu belge ilk private yayın hazırlığını kaydeder. Repo daha
+> sonra public yapılmıştır; güncel yayın ve lisans durumu için kök README,
+> SECURITY ve LICENSE dosyalarını esas alın.
+
 Hedef: GitHub üzerinde `Quartz`, **private**.
 
 ## Koruma

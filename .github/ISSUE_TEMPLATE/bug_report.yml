@@ -1,0 +1,54 @@
+name: Hata bildirimi
+description: Tekrar üretilebilir bir Quartz hatasını bildirin
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Güvenlik açıklarını, anahtarları veya kullanıcı verilerini buraya koymayın. SECURITY.md içindeki özel bildirim yolunu kullanın.
+  - type: input
+    id: commit
+    attributes:
+      label: Commit veya sürüm
+      description: Örneğin Git commit SHA'sı.
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows sürümü
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Gözlenen davranış
+      description: Ne oldu ve ne olmasını bekliyordunuz?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Tekrar üretme adımları
+      description: Kişisel veri içermeyen en küçük adımları yazın.
+    validations:
+      required: true
+  - type: dropdown
+    id: evidence
+    attributes:
+      label: Doğrulama düzeyi
+      options:
+        - Kaynak veya test
+        - Paketli uygulama
+        - Canlı masaüstü görevi
+        - Warband / Universal Modder
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Gizlilik kontrolü
+      options:
+        - label: Anahtar, token, sohbet geçmişi veya kullanıcı dosyası eklemedim.
+          required: true

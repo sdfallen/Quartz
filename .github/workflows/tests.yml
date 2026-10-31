@@ -1,23 +1,45 @@
 name: Quartz source checks
-on: [push, pull_request, workflow_dispatch]
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
 permissions:
   contents: read
+
+concurrency:
+  group: quartz-source-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   safe-tests:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
           cache: pip
+          cache-dependency-path: requirements*.txt
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: python -m pip install -r requirements-dev.txt
-      - run: python -B scripts/audit_publish.py --history
-      - run: python -B scripts/check_gui_javascript.py
-      - run: python -B scripts/run_safe_tests.py
+      - name: Install development dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+          python -m pip check
+      - name: Audit public source and history
+        run: python -B scripts/audit_publish.py --history
+      - name: Compile Python sources
+        run: python -B scripts/check_python_syntax.py
+      - name: Parse embedded JavaScript
+        run: python -B scripts/check_gui_javascript.py
+      - name: Run offline regression suite
+        run: python -B scripts/run_safe_tests.py
