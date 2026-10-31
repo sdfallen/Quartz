@@ -70,11 +70,11 @@ yanıtı veya paketlenmiş GUI kabulü değildir.
 
 Resmî CLI `0.23.25` bu bilgisayarda kuruldu, `--version`, `api --help`,
 `login --help` ve `api v1/sessions --spec -X POST` çalıştı. Son işlem güncel
-endpoint şemasını okudu; oturum/mesaj oluşturmadı. CLI ile ajan listesi okuma
-denemesi bağlantı hatası döndürdü. Gerçek hesap girişi ve ajan yanıtı henüz
-doğrulanmadı. Bağlı Codex Notion MCP erişimi, bu CLI'nin girişi yerine geçmez.
+endpoint şemasını okudu; oturum/mesaj oluşturmadı. İlk CLI ajan listesi denemesi
+eksik giriş nedeniyle başarısızdı. Daha sonraki ayrı CLI yetkilendirmesi ve gerçek
+ajan testleri aşağıda kayıtlıdır. Codex Notion MCP erişimi, CLI girişi yerine geçmez.
 
-Son kaynak doğrulaması: 22 yeni test; tam güvenli koşu 683 test, 12 skip,
+İlk kaynak doğrulaması: 22 yeni test; tam güvenli koşu 683 test, 12 skip,
 başarısızlık 0. Python sözdizimi 212 dosyada başarılı; gömülü JavaScript kontrolü
 exit 0. Yayın denetimi staged kaynaklar ve geçmiş üzerinde PASS, bulgu 0.
 Bu sayılar bu checkout ve koşuya aittir; bağımsız açık PR'lar dahil değildir.
@@ -98,8 +98,32 @@ yetkilendirme URL'si ve karşılaştırma kodu üretti. Bu giriş-akışı başl
 canlı kanıtıdır; tarayıcı onayı, token redemption veya ajan yanıtı kabulü değildir.
 Geçici URL/kodlar ve oturum dosyaları bu belgeye veya Git'e eklenmez.
 
-Bu aşamada hedefli 25 test geçti; tam güvenli koşu 686 test, 12 skip, hata 0.
-Giriş onayı ve adaptör üzerinden gerçek ajan yanıtı henüz bekleniyor.
+Windows düzeltmesinde hedefli 25 test geçti; tam güvenli koşu 686 test, 12 skip,
+hata 0. Bu kaynak kontrolleri canlı model testlerinin yerine kullanılmadı.
+
+### Kullanıcı onayı sonrası gerçek bağlantı kabulü
+
+Kullanıcı resmî tarayıcı girişini onayladı. Aynı özel CLI ortamıyla `ntn login
+poll` exit 0 döndü; ajan listesi okundu ve yalnız erişilebilir ajan seçildi.
+Kimlik bilgileri OS keychain'de tutuldu. Kişisel workspace/agent/session ID'leri,
+giriş URL/kodları ve tokenlar bu kaynak belgesine eklenmedi.
+
+| Gerçek test | Sonuç | Kabul kapsamı |
+|---|---|---|
+| CLI adaptörü, ilk mesaj | completed; tam QUARTZ_NOTION_OK | Gerçek Agent API create/events |
+| CLI adaptörü, devam mesajı | completed; aynı session ID; tam yanıt | Önceki yanıtın yeniden gösterilmesi değil; yeni mesaj |
+| Gerçek MultiAgentService + AgentChatService, izole sohbet | completed; sender=notion; tam yanıt | Gerçek kaynak sohbet backend'i; sağlayıcı mock değil |
+| Aynı izole sohbetin dosyadan yeniden yüklenmesi ve devamı | completed; aynı conversation ve session ID; tam yanıt | Kalıcı oturum bağlantısı ve yeni cevap |
+
+Son iki testte geçici proje/sohbet deposu kullanıldı, özgün sohbetlere yazılmadı.
+Yerel Codex ve Google runtime run sayıları 0 idi; kaynak test servisi kendi
+shutdown akışıyla kapandı. Bu dört canlı mesaj kaynak `094ae27` üzerinde alındı.
+Notion MCP yalnız ajanı bulmak ve araştırma notunu güncellemek için kullanıldı;
+Quartz yanıtı üretmek için substitute edilmedi.
+
+Bu sonuçlar paketli Quartz.exe GUI kabulü değildir. Frontend, üçlü Squad
+koordinasyonu, gerçek geliştirme görevi ve belirli bir Kimi modelinin çalışması
+henüz doğrulanmadı. Test ajanının sabit yanıtı yetenek testi olarak sunulmaz.
 
 ## Frontend integration request — Claude/Codex entegrasyon aşaması
 
