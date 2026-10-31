@@ -76,6 +76,7 @@ class ChatTaskEntryTests(unittest.TestCase):
         code=r'''
 const assert=require('assert');let routed=0,read=0;global.coordinationRouting=false;
 global.inputEl={value:'Ekrana bak'};global.currentConvId='c';global.mainProjectSelect={value:'p'};
+global.mainAgentSelect={value:'codex'};
 global.codexModelSelect=global.agyModelSelect={value:'model'};
 global.codexEffortSelect=global.agyEffortSelect={value:'low'};
 global.document={getElementById:()=>({value:'project'})};

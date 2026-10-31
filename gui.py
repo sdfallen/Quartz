@@ -91,7 +91,13 @@ class Api:
 
     def onboarding_status(self, force=False):
         try:
-            return {"status": "ok", "data": self._onboarding_service().status(force=force)}
+            data = self._onboarding_service().status(force=force)
+            notion = ipc_send("notion_status", {"force": force is True})
+            # Do not mutate the onboarding service's cached provider dictionary.
+            providers = {**data.get("providers", {}), "notion": notion.get("data") if notion.get("status") == "ok"
+                         else {"ready": False, "checking": True}}
+            return {"status": "ok", "data": {**data, "providers": providers,
+                    "needs_setup": not any(p.get("ready") for p in providers.values())}}
         except Exception:
             return {"status": "error", "data": "Bağlantı durumu okunamadı; yeniden deneyin"}
 
@@ -241,12 +247,16 @@ class Api:
                 self._coordination = ChatCoordination(self._desktop_service(), emit)
         return self._coordination
 
-    def coordination_route(self, text, conversation_id, project_id, models, permission_level='read-only'):
+    def coordination_route(self, text, conversation_id, project_id, models, permission_level='read-only', agent=None):
         try:
             import re
             from core.message_intent import message_intent, tools_disallowed
             from core.desktop_task_ui import desktop_intent, desktop_help
             if permission_level not in {'read-only','project','full'}: raise ValueError('Geçersiz dosya yetkisi seçimi')
+            if agent == 'notion' or re.match(r'^\s*@notion\b', text, re.I):
+                # A cloud-agent message cannot start REA, desktop control or
+                # become an instruction to a running local operator.
+                return {'status':'ok','data':{'handled':False,'intent':'conversation'}}
             message_kind = message_intent(text)
             from core.diagnostics_intent import diagnostics_intent
             diagnostic_command = diagnostics_intent(text)
@@ -971,7 +981,7 @@ _HTML_BODY = r"""
           <button type="button" class="agent-seg-btn active" data-agent="antigravity">◈ Antigravity</button>
           <button type="button" class="agent-seg-btn" data-agent="codex">◈ Codex</button>
           <button type="button" class="agent-seg-btn" data-agent="collaboration">◈ Birlikte</button>
-          <button type="button" class="agent-seg-btn agent-seg-unavailable" id="agentSegNotion" data-agent-unavailable="notion" disabled aria-disabled="true" title="Notion bağlantısı bu sürümde yok. Bağlantı eklendiğinde burada seçilebilir olacak.">◈ Notion</button>
+          <button type="button" class="agent-seg-btn" id="agentSegNotion" data-agent="notion" disabled aria-disabled="true" title="Notion bağlantısı kontrol ediliyor">◈ Notion</button>
         </div>
         <div class="chat-controls-group">
           <select class="project-picker" id="mainPermissionLevel" title="Tam Yetki (Tek Yetki Sistemi)" aria-label="İşlem Yetkisi" style="display:none">
@@ -985,6 +995,7 @@ _HTML_BODY = r"""
               <option value="antigravity">Antigravity</option>
               <option value="codex">Codex</option>
               <option value="collaboration">Birlikte (Squad)</option>
+              <option value="notion">Notion</option>
             </select>
           </div>
           <button class="chat-tool-btn" id="btnContinueCollab" style="display:none" title="Birlikte modunda ajanlar arası tartışmayı 1 tur daha sürdür">⇄ +1 Tur</button>
@@ -992,6 +1003,9 @@ _HTML_BODY = r"""
           <button class="chat-tool-btn" id="btnNewChat" title="Yeni Sohbet Başlat">＋ Yeni</button>
         </div>
         <div class="chat-models-bar" id="chatModelsBar">
+          <div class="model-selector-pill" id="notionAgentPill" style="display:none" title="Ajanın modeli ve bulut araçları Notion'da yönetilir. Yerel masaüstü kontrolü aktarılmaz.">
+            <span class="pill-agent-name">NOTION</span><span id="notionAgentName">Notion bulut ajanı</span>
+          </div>
           <div class="model-selector-pill active-agy" id="agyModelPill" title="Antigravity Model ve Düşünme Seviyesi Seçimi">
             <span class="pill-agent-name">ANTIGRAVITY</span>
             <select id="agyModelSelect" aria-label="Antigravity Modeli">
@@ -1309,16 +1323,17 @@ _HTML_BODY = r"""
     document.getElementById('cliContinue').disabled = !Object.values(providers).some(p=>p.ready);
     document.querySelectorAll('.agent-seg-btn[data-agent]').forEach(button => {
       const agent = button.dataset.agent;
-      const ready = agent === 'collaboration' ? providers.codex?.ready && providers.gemini?.ready : providers[agent === 'antigravity' ? 'gemini' : 'codex']?.ready;
+      const ready = agent === 'collaboration' ? providers.codex?.ready && providers.gemini?.ready : providers[agent === 'antigravity' ? 'gemini' : agent]?.ready;
       button.disabled = !ready;
+      button.setAttribute('aria-disabled', ready ? 'false' : 'true');
       button.title = ready ? '' : 'Hesaplar ve CLI kurulumu bölümünden bu ajanı bağlayabilirsiniz';
     });
     renderAgentConnections(providers);
     clearTimeout(cliPollTimer);
-    if ((busy || Object.values(providers).some(p=>p.login_pending)) && document.getElementById('cliSetup').classList.contains('show')) cliPollTimer = setTimeout(()=>refreshCliStatus(false), 1500);
+    if (providers.notion?.checking || ((busy || Object.values(providers).some(p=>p.login_pending)) && document.getElementById('cliSetup').classList.contains('show'))) cliPollTimer = setTimeout(()=>refreshCliStatus(false), 1500);
+    document.getElementById('notionAgentName').textContent = providers.notion?.agent_name || 'Notion bulut ajanı';
   }
-  // Sidebar connection list. Shows only states the backend reported; Notion has
-  // no connection in this build, so it is listed as unavailable and never selectable.
+  // Sidebar connection list. Readiness comes from authenticated backend checks.
   let agentConnectionView = {providers: null, active: ''};
   function renderAgentConnections(providers, activeAgent) {
     if (providers !== undefined) agentConnectionView.providers = providers;
@@ -1329,6 +1344,7 @@ _HTML_BODY = r"""
     const describe = state => {
       if (!known) return ['unknown', 'Kontrol ediliyor'];
       if (!state) return ['missing', 'Bağlı değil'];
+      if (state.checking && !state.ready) return ['unknown', 'Kontrol ediliyor'];
       if (state.ready) return ['ready', 'Bağlı'];
       if (state.login_pending) return ['pending', 'Giriş bekleniyor'];
       if (!state.installed) return ['missing', 'CLI kurulmamış'];
@@ -1338,7 +1354,7 @@ _HTML_BODY = r"""
     const rows = [
       ['codex', 'Codex', describe(known?.codex), active === 'codex' || active === 'collaboration'],
       ['antigravity', 'Antigravity', describe(known?.gemini), active === 'antigravity' || active === 'collaboration'],
-      ['notion', 'Notion', ['missing', 'Bu sürümde bağlantı yok'], false],
+      ['notion', 'Notion', describe(known?.notion), active === 'notion'],
     ];
     box.replaceChildren();
     for (const [id, name, [state, text], current] of rows) {
@@ -1995,6 +2011,8 @@ _HTML_BODY = r"""
       btn.classList.toggle('active', btn.dataset.agent === agent);
     });
     const isCollab = agent === 'collaboration';
+    const notionPill = document.getElementById('notionAgentPill');
+    if (notionPill) notionPill.style.display = agent === 'notion' ? 'flex' : 'none';
     if (agyModelPill) {
       agyModelPill.classList.toggle('active-agy', agent === 'antigravity' || isCollab);
     }
@@ -2276,9 +2294,10 @@ _HTML_BODY = r"""
       setThinking(true);
       if (typeof thinkingText !== 'undefined' && thinkingText) thinkingText.textContent = 'Görev hazırlanıyor...';
     }
+    const submittedAgent = /^@notion\b/i.test(text) ? 'notion' : (mainAgentSelect?.value || 'antigravity');
     let coordinated;
     try { coordinated = await window.pywebview.api.coordination_route(text, currentConvId, mainProjectSelect.value,
-      {codex:{model:codexModelSelect.value,effort:codexEffortSelect.value},antigravity:{model:agyModelSelect.value,effort:agyEffortSelect.value}},selectedPermissionLevel); }
+      {codex:{model:codexModelSelect.value,effort:codexEffortSelect.value},antigravity:{model:agyModelSelect.value,effort:agyEffortSelect.value}},selectedPermissionLevel, submittedAgent); }
     catch(e) { appendMsg('err','QUARTZ',String(e)); return; }
     finally {
       coordinationRouting = false;
@@ -2320,7 +2339,7 @@ _HTML_BODY = r"""
     const permissionLevel = conversationOnly ? 'read-only' : selectedPermissionLevel;
     const isWrite = permissionLevel === 'full' || permissionLevel === 'project';
     const confirmWrite = isWrite;
-    const agent = mainAgentSelect ? mainAgentSelect.value : 'antigravity';
+    const agent = submittedAgent;
     if (isWrite && !window.__writeConfirmed) {
       const ok = window.confirm(permissionLevel === 'full'
         ? 'Bu görev için TAM sistem erişimi verilsin mi? Ajan proje dışındaki dosyalara da erişebilir. Yazma öncesi proje checkpoint’i alınır; bu tüm bilgisayarın yedeği değildir.'

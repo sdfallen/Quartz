@@ -27,6 +27,10 @@ class NotionRuntime:
         self._lock = threading.RLock()
         self._runs, self._threads, self._stops = {}, {}, {}
         self._busy_sessions = set()
+        self._connection_cache = None
+        self._connection_scope = None
+        self._connection_worker = None
+        self._connection_checked = 0
 
     def configuration(self):
         config = load_json(self.home / "connection.json", {})
@@ -56,10 +60,53 @@ class NotionRuntime:
             installed = False
         configured = bool(config["workspace_id"] and config["agent_id"])
         return {"provider": "notion", "installed": installed, "configured": configured,
-                "ready": installed and configured, "authentication": "not_checked",
+                "ready": False, "authentication": "not_checked",
                 "agent_name": config["agent_name"],
                 "error": "" if installed and configured else
                 "Notion bağlantısı hazır değil. scripts/notion_agent.py ile kurulum, giriş ve ajan seçimi yapın."}
+
+    def connection_status(self, force=False):
+        """Read-only verification in one background worker; never block UI polling.
+
+        Installed/configured is not authenticated. A scope change immediately
+        invalidates the old ready state; an obsolete worker cannot publish it.
+        """
+        seed = self.probe()
+        config = self.configuration()
+        scope = (config.get("workspace_id"), config.get("agent_id"))
+        with self._lock:
+            if scope != self._connection_scope:
+                self._connection_cache = None
+                self._connection_scope = scope
+                self._connection_checked = 0
+            if not seed["installed"] or not seed["configured"]:
+                return seed
+            alive = self._connection_worker and self._connection_worker.is_alive()
+            if not alive and (force or self._connection_cache is None or time.monotonic() - self._connection_checked > 60):
+                self._connection_worker = threading.Thread(target=self._verify_connection, args=(scope, seed),
+                                                          name="notion-connection-check", daemon=True)
+                self._connection_worker.start()
+                alive = True
+            return {**(self._connection_cache or seed), "checking": bool(alive)}
+
+    def _verify_connection(self, scope, seed):
+        result = {**seed, "ready": False, "auth_verified": False}
+        try:
+            workspace, agent_id = map(identifier, scope)
+            agents = self.transport_factory(workspace).agents()
+            agent = next((a for a in agents if identifier(a.get("id")) == agent_id), None)
+            if not agent:
+                raise NotionError("Seçili Notion ajanına bu hesapla erişilemiyor.")
+            result.update(ready=True, auth_verified=True, authentication="verified", error="",
+                          agent_name=str(agent.get("name") or "Notion ajanı")[:200])
+        except Exception as exc:
+            result.update(authentication="unverified", error=str(exc) if isinstance(exc, NotionError)
+                          else "Notion bağlantısı doğrulanamadı; giriş ve ajan seçimini kontrol edin.")
+        with self._lock:
+            current = self.configuration()
+            if scope == self._connection_scope == (current.get("workspace_id"), current.get("agent_id")):
+                self._connection_cache = result
+                self._connection_checked = time.monotonic()
 
     def _owned(self, session_id, config):
         session_id = identifier(session_id)
