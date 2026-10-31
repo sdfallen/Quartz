@@ -41,6 +41,8 @@ class MultiAgentService:
         self.codex = CodexRuntime(codex_executable)
         self.antigravity = None
         self._antigravity_error = ""
+        # Optional provider: construct lazily; never probe/login on app startup.
+        self._notion = None
         try:
             from core.gemini_runtime import google_runtime
             self.antigravity = google_runtime(antigravity_executable, legacy_factory=AntigravityRuntime)
@@ -246,9 +248,27 @@ class MultiAgentService:
             return self.dispatch_codex(prompt, **kwargs)
         if provider in {"antigravity", "agy"}:
             return self.dispatch_antigravity(prompt, **kwargs)
+        if provider == "notion":
+            return self.dispatch_notion(prompt, session_id=kwargs.get("session_id"))
         if provider in {"collaboration", "both", "codex-antigravity"}:
             return self.dispatch_collaboration(prompt, **kwargs)
         raise ValueError(f"Unknown agent provider: {provider}")
+
+    @property
+    def notion(self):
+        with self._lock:
+            if self._notion is None:
+                from core.notion_runtime import NotionRuntime
+                self._notion = NotionRuntime()
+            return self._notion
+
+    def dispatch_notion(self, prompt, *, session_id=None):
+        # Cloud-only: no project paths, file contents, desktop tools or writer
+        # claims are implicitly forwarded to the remote Custom Agent.
+        run = self.notion.start(str(prompt), session_id=session_id)
+        with self._lock:
+            self._links[run["id"]] = {"provider": "notion"}
+        return {"run": run}
 
     def check_squad_connection(self, project_id=None, *, force: bool = False) -> dict:
         try:
@@ -626,6 +646,8 @@ class MultiAgentService:
         with self._lock:
             provider = self._links.get(run_id, {}).get("provider")
             evidence = dict(self._file_changes.get(run_id, {}))
+        if provider == "notion":
+            return self.notion.get(run_id)
         if provider == "antigravity" and self.antigravity:
             run = self.antigravity.get(run_id)
             return self._with_file_evidence(run, evidence)
@@ -688,14 +710,14 @@ class MultiAgentService:
                 self._links[run_id]["coordination_status"] = "cancelling"
         with self._lock:
             provider = self._links.get(run_id, {}).get("provider", "codex")
-        runtime = self.antigravity if provider == "antigravity" else self.codex
+        runtime = self.notion if provider == "notion" else self.antigravity if provider == "antigravity" else self.codex
         if runtime is None:
             raise RuntimeError("Runtime is unavailable")
         return runtime.cancel(run_id)
 
     def shutdown(self):
         errors = []
-        for runtime in (self.codex, self.antigravity):
+        for runtime in (self.codex, self.antigravity, getattr(self, '_notion', None)):
             if runtime is not None:
                 try: runtime.shutdown()
                 except Exception as exc: errors.append(str(exc))
@@ -760,6 +782,8 @@ class MultiAgentService:
             runs.append(run)
         if self.antigravity is not None:
             runs.extend(self.antigravity.list())
+        if self._notion is not None:
+            runs.extend(self._notion.list())
         runs.sort(key=lambda item: item.get("started_at", 0), reverse=True)
         with self._lock:
             links = {key: dict(value) for key, value in self._links.items()}

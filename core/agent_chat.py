@@ -211,7 +211,7 @@ class AgentChatService:
 
     def set_agent(self, conversation_id: str, agent: str) -> None:
         agent = agent.strip().lower()
-        if agent not in {"antigravity", "codex", "collaboration"}:
+        if agent not in {"antigravity", "codex", "collaboration", "notion"}:
             raise ValueError(f"Geçersiz ajan türü: {agent}")
         with self._lock:
             self.store.update_agent(conversation_id, agent)
@@ -376,6 +376,11 @@ class AgentChatService:
 
             cid = conv["id"]
             selected_agent = (agent or conv.get("agent") or "antigravity").lower().strip()
+            # Explicit opt-in per message; never route all tasks to a cloud agent.
+            if re.match(r"^@notion\b", text, re.I):
+                selected_agent = "notion"
+            if selected_agent not in {"codex", "antigravity", "collaboration", "both", "notion"}:
+                raise ValueError("Geçersiz ajan türü.")
             project_id = conv.get("project_id")
 
             user_seq = self._next_sequence(conv)
@@ -579,6 +584,10 @@ class AgentChatService:
                         continue
                     existing = (msg.get("content") or "").strip()
                     cancel_text = existing + "\n\n⏹️ *İşlem kullanıcı tarafından iptal edildi.*" if existing else "⏹️ *İşlem kullanıcı tarafından iptal edildi.*"
+                    if turn.get("agent") == "notion":
+                        cancel_text = (existing + "\n\nYerel yanıt durduruldu. Notion'a durdurma isteği iletildi; "
+                                       "uzaktaki işlemin durduğu henüz doğrulanmadı.").strip()
+                        meta["remote_stop_confirmed"] = False
                     meta["status"] = "cancelled"
                     self.store.update_message_content(cid, mid, cancel_text, metadata=meta)
             except Exception:
@@ -703,6 +712,11 @@ class AgentChatService:
     def _run_chat_turn(self, cid: str, msg_id: str, agent: str, prompt: str,
                        project_id: str | None, write: bool, confirm_write: bool, full_access: bool = False):
         try:
+            if agent == "notion":
+                # Do not append the local full-access/system instruction to
+                # Notion. Its cloud privileges are defined separately in Notion.
+                self._run_notion_turn(cid, msg_id, re.sub(r"^@notion\b\s*", "", prompt, flags=re.I))
+                return
             with self._lock:
                 if self._is_turn_cancelled(msg_id): return
                 turn = self._active_turn or {}
@@ -737,6 +751,39 @@ class AgentChatService:
         finally:
             if agent in {"collaboration", "both"}:
                 self._finish_group_task(cid, msg_id, project_id)
+
+    def _run_notion_turn(self, cid, msg_id, prompt):
+        with self._lock:
+            if self._is_turn_cancelled(msg_id):
+                return
+            conv = self.store.get(cid)
+            # Bind persisted session to the configured account AND Custom Agent.
+            config = self.agent_service.notion.configuration()
+            key = f"notion:{config.get('workspace_id')}:{config.get('agent_id')}"
+            session = conv.get("sessions", {}).get(key)
+            dispatched = self.agent_service.dispatch_notion(prompt, session_id=session)
+            run_id = dispatched["run"]["id"]
+            self._set_turn_progress("Notion ajanı yanıtlıyor…", msg_id, run_id, agent="notion")
+        while True:
+            if self._is_turn_cancelled(msg_id):
+                self.agent_service.cancel(run_id)
+                return
+            run = self.agent_service.notion.get(run_id)
+            state = run.get("status")
+            content = run.get("result", "")
+            if state in {"failed", "blocked", "cancelled"}:
+                content = (content + "\n\n" + (run.get("error") or "Notion görevi tamamlanmadı.")).strip()
+            meta = {"agent": "notion", "sender": "notion", "status": state,
+                    "run_id": run_id, "remote_status": run.get("remote_status"),
+                    "remote_uncertain": run.get("remote_uncertain", False), "local_tools": False}
+            if not self._publish_run_update(cid, msg_id, content, meta,
+                                            provider=key, session=run.get("session_id")):
+                self.agent_service.cancel(run_id)
+                return
+            if state in self.agent_service.notion.TERMINAL:
+                self._finish_turn(msg_id, "completed" if state == "completed" else "failed")
+                return
+            time.sleep(0.1)
 
     def _finish_group_task(self, cid: str, first_msg_id: str, project_id: str | None) -> None:
         try:

@@ -16,6 +16,13 @@ ve sağlayıcıdaki model erişimini doğrulamaz.
 
 ## Codex sahipliği
 
+1 Kasım entegrasyon kapsamı: yeni `core/notion_*.py`,
+`scripts/notion_agent.py`, `tests/test_notion_*.py` ve
+`docs/CODEX_NOTION_*.md` Codex'e aittir. Mevcut Codex sahipliğindeki
+sohbet/servis dosyalarına isteğe bağlı Notion adaptörü eklenebilir.
+`gui.py` ve kurulum ekranı değişiklikleri bu kapsamda değildir;
+frontend sahibine integration request ile devredilir.
+
 - `core/agent_chat.py`, `core/multi_agent_service.py`, `core/natural_desktop.py`
 - `core/run_evidence_store.py`, `core/writer_journal.py`, `core/workspace_checkpoint.py`
 - `tests/test_agent_chat.py`, `tests/test_multi_agent_service.py`, `tests/test_natural_desktop.py`
