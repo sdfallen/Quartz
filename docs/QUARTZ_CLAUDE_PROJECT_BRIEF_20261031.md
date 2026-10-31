@@ -672,7 +672,10 @@ Claude bu projede çalışırken aşağıdaki sözleşmeyi izlemelidir:
 3. **ASTER/Warband rafa kaldırıldı.** Bu alanda görev başlatma veya değişiklik
    yapma; legacy kodu yalnız açık yeniden etkinleştirme kararıyla ele al.
 4. **Yazmadan önce checkpoint.** Checkpoint başarısızsa fail-closed.
-5. **Tek yazıcı kuralını koru.** Paralel inceleme mümkündür; paralel yazma değil.
+5. **Aynı görev/çalışma alanında tek yazıcı kuralını koru.** Quartz'ın runtime
+   yazıcı kilidini gevşetme. Bu repoyu geliştiren dış ajanlar ise ayrı
+   clone/worktree ve ayrık dosya sahipliğiyle paralel yazabilir;
+   `docs/PARALLEL_OWNERSHIP.md` esas alınır.
 6. **İzin ile gözlemi karıştırma.** Kullanıcı onayı eylemin başarılı olduğunu
    kanıtlamaz.
 7. **Model iddiasını kanıt sayma.** Test/log/UIA/dosya farkı gerekir.
