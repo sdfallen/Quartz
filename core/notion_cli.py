@@ -47,6 +47,9 @@ def cli_environment(workspace_id=None):
         if key.upper().startswith("NOTION_") or re.search(r"(?:API_KEY|TOKEN|SECRET|PASSWORD)$", key, re.I):
             env.pop(key, None)
     env["NOTION_ENV"] = "prod"
+    # An existing CLI config may contain keyring=false. The environment setting
+    # must override that too, rather than merely removing NOTION_KEYRING=0.
+    env["NOTION_KEYRING"] = "1"
     env["NOTION_API_BASE_URL"] = "https://api.notion.com"
     env["NOTION_API_DOCS_BASE_URL"] = "https://developers.notion.com"
     if workspace_id:
@@ -149,6 +152,8 @@ class NotionCli:
                               code="timeout", uncertain=path == "v1/sessions") from None
         except OSError:
             raise NotionError("Notion CLI başlatılamadı. Kurulumu kontrol edin.") from None
+        if result.returncode == 4 and "No auth token found" in (result.stderr or ""):
+            raise NotionError("Notion oturumu açık değil. Resmî CLI ile giriş yapın.", code="unauthorized")
         try:
             data = json.loads(result.stdout)
         except (ValueError, TypeError):

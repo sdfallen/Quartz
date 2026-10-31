@@ -31,7 +31,7 @@ class NotionCliTests(unittest.TestCase):
         self.assertEqual(json.loads(kw["input"])["message"], prompt)
         self.assertEqual(kw["env"]["NOTION_WORKSPACE_ID"], WORKSPACE)
         self.assertNotIn("NOTION_API_TOKEN", kw["env"])
-        self.assertNotIn("NOTION_KEYRING", kw["env"])
+        self.assertEqual(kw["env"]["NOTION_KEYRING"], "1")
         self.assertNotIn("OPENAI_API_KEY", kw["env"])
         self.assertEqual(kw["env"]["NOTION_API_BASE_URL"], "https://api.notion.com")
         self.assertEqual(kw["env"]["NOTION_ENV"], "prod")
@@ -43,6 +43,14 @@ class NotionCliTests(unittest.TestCase):
         for path in ("https://attacker.invalid/", "v1/pages", "v1/sessions/../../delete"):
             with self.assertRaises(ValueError):
                 cli.request(path, {})
+
+    def test_real_cli_no_login_exit_is_not_misreported_as_bad_json(self):
+        cli = NotionCli(WORKSPACE, executable="ntn.exe", run=lambda *a, **kw:
+                        subprocess.CompletedProcess(a, 4, "", "error: No auth token found for the current workspace.\n"))
+        with self.assertRaises(NotionError) as error:
+            cli.agents()
+        self.assertEqual(error.exception.code, "unauthorized")
+        self.assertFalse(error.exception.uncertain)
 
     def test_timeout_is_ambiguous_and_never_retried(self):
         calls = []
