@@ -78,6 +78,34 @@ def _query_windows_memory() -> tuple[float, float, float]:
         return (8.0, 4.0, 50.0)
 
 
+def get_adaptive_poll_intervals(state: str = "idle", low_spec: bool | None = None) -> dict[str, int]:
+    """Return tailored polling intervals for the given application state ('idle', 'chat', 'active_desktop')."""
+    if low_spec is None:
+        prof = detect_hardware_profile()
+        low_spec = bool(prof.get("low_spec_mode", False))
+    profiles = {
+        "idle": {
+            "poll_ms": 3000 if low_spec else 2000,
+            "stats_poll_ms": 7000 if low_spec else 4000,
+            "tasks_poll_ms": 10000 if low_spec else 7000,
+            "ping_poll_ms": 9000 if low_spec else 6000,
+        },
+        "chat": {
+            "poll_ms": 2000 if low_spec else 1200,
+            "stats_poll_ms": 5000 if low_spec else 3000,
+            "tasks_poll_ms": 8000 if low_spec else 5000,
+            "ping_poll_ms": 7000 if low_spec else 4500,
+        },
+        "active_desktop": {
+            "poll_ms": 1000 if low_spec else 800,
+            "stats_poll_ms": 3000 if low_spec else 2000,
+            "tasks_poll_ms": 4000 if low_spec else 2500,
+            "ping_poll_ms": 5000 if low_spec else 3500,
+        },
+    }
+    return dict(profiles.get(state, profiles["idle"]))
+
+
 def detect_hardware_profile(force_refresh: bool = False) -> dict[str, Any]:
     """Return hardware capabilities and adaptive resource limits for Quartz."""
     global _PROFILE_CACHE, _PROFILE_CACHE_AT
@@ -110,6 +138,11 @@ def detect_hardware_profile(force_refresh: bool = False) -> dict[str, Any]:
         "stats_poll_ms": 6000 if low_spec else 3500,
         "tasks_poll_ms": 9000 if low_spec else 6000,
         "ping_poll_ms": 8000 if low_spec else 5000,
+        "profiles": {
+            "idle": get_adaptive_poll_intervals("idle", low_spec=low_spec),
+            "chat": get_adaptive_poll_intervals("chat", low_spec=low_spec),
+            "active_desktop": get_adaptive_poll_intervals("active_desktop", low_spec=low_spec),
+        },
     }
     _PROFILE_CACHE = profile
     _PROFILE_CACHE_AT = now
@@ -149,14 +182,32 @@ def trim_working_set(
     if sys.platform == "win32":
         try:
             kernel32 = ctypes.windll.kernel32
+            # Set explicit argument types and restypes for 64-bit handle safety
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            kernel32.SetProcessWorkingSetSize.argtypes = [wintypes.HANDLE, ctypes.c_size_t, ctypes.c_size_t]
+            kernel32.SetProcessWorkingSetSize.restype = wintypes.BOOL
+            kernel32.SetProcessWorkingSetSizeEx.argtypes = [wintypes.HANDLE, ctypes.c_size_t, ctypes.c_size_t, wintypes.DWORD]
+            kernel32.SetProcessWorkingSetSizeEx.restype = wintypes.BOOL
+            kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            kernel32.CloseHandle.restype = wintypes.BOOL
+
             handle = kernel32.GetCurrentProcess()
-            res = kernel32.SetProcessWorkingSetSizeEx(
+            res = kernel32.SetProcessWorkingSetSize(
                 handle,
                 ctypes.c_size_t(-1),
                 ctypes.c_size_t(-1),
-                0,
             )
+            if not res:
+                res = kernel32.SetProcessWorkingSetSizeEx(
+                    handle,
+                    ctypes.c_size_t(-1),
+                    ctypes.c_size_t(-1),
+                    0,
+                )
             os_trimmed = bool(res)
+
             if include_children:
                 try:
                     import psutil
@@ -165,7 +216,7 @@ def trim_working_set(
                     current = psutil.Process()
                     for child in current.children(recursive=True):
                         cname = (child.name() or "").lower()
-                        if "webview2" not in cname and "quartz" not in cname:
+                        if "webview2" not in cname and "quartz" not in cname and "agy" not in cname:
                             continue
                         h_child = kernel32.OpenProcess(
                             PROCESS_SET_QUOTA | PROCESS_QUERY_LIMITED_INFORMATION,
@@ -174,12 +225,19 @@ def trim_working_set(
                         )
                         if h_child:
                             try:
-                                if kernel32.SetProcessWorkingSetSizeEx(
+                                c_res = kernel32.SetProcessWorkingSetSize(
                                     h_child,
                                     ctypes.c_size_t(-1),
                                     ctypes.c_size_t(-1),
-                                    0,
-                                ):
+                                )
+                                if not c_res:
+                                    c_res = kernel32.SetProcessWorkingSetSizeEx(
+                                        h_child,
+                                        ctypes.c_size_t(-1),
+                                        ctypes.c_size_t(-1),
+                                        0,
+                                    )
+                                if c_res:
                                     children_trimmed += 1
                             finally:
                                 kernel32.CloseHandle(h_child)
@@ -200,7 +258,7 @@ def measure_process_tree_resources(
     root_pid: int | None = None,
     cpu_interval: float = 0.0,
 ) -> dict[str, Any]:
-    """Measure total RAM (RSS & private USS) and CPU across Quartz + WebView2 + CLI children."""
+    """Measure total RAM (RSS & private USS), CPU, and thread counts across Quartz + WebView2 + CLI children."""
     try:
         import psutil
         root = psutil.Process(root_pid) if root_pid else psutil.Process()
@@ -216,13 +274,17 @@ def measure_process_tree_resources(
         total_rss = 0
         total_uss = 0
         total_cpu = 0.0
-        breakdown = {
+        total_threads = 0
+        breakdown: dict[str, Any] = {
             "quartz_rss_mb": 0.0,
             "webview2_rss_mb": 0.0,
             "cli_rss_mb": 0.0,
             "quartz_cpu_pct": 0.0,
             "webview2_cpu_pct": 0.0,
             "cli_cpu_pct": 0.0,
+            "quartz_threads": 0,
+            "webview2_threads": 0,
+            "cli_threads": 0,
         }
         alive_count = 0
         for p in tree:
@@ -232,19 +294,24 @@ def measure_process_tree_resources(
                 rss = int(mi.rss)
                 uss = int(getattr(mi, "uss", rss))
                 cpu = (p.cpu_percent(None) / cores) if cpu_interval > 0 else 0.0
+                threads = p.num_threads() if hasattr(p, "num_threads") else 1
                 total_rss += rss
                 total_uss += uss
                 total_cpu += cpu
+                total_threads += threads
                 alive_count += 1
                 if "webview2" in name:
                     breakdown["webview2_rss_mb"] += rss / 1048576
                     breakdown["webview2_cpu_pct"] += cpu
+                    breakdown["webview2_threads"] += threads
                 elif p.pid == root.pid or name in {"quartz.exe", "python.exe", "pythonw.exe"}:
                     breakdown["quartz_rss_mb"] += rss / 1048576
                     breakdown["quartz_cpu_pct"] += cpu
+                    breakdown["quartz_threads"] += threads
                 else:
                     breakdown["cli_rss_mb"] += rss / 1048576
                     breakdown["cli_cpu_pct"] += cpu
+                    breakdown["cli_threads"] += threads
             except Exception:
                 continue
         return {
@@ -253,7 +320,11 @@ def measure_process_tree_resources(
             "total_rss_mb": round(total_rss / 1048576, 2),
             "total_private_uss_mb": round(total_uss / 1048576, 2),
             "total_cpu_pct": round(total_cpu, 2),
-            "breakdown": {k: round(v, 2) for k, v in breakdown.items()},
+            "total_threads": total_threads,
+            "breakdown": {
+                k: (round(v, 2) if isinstance(v, float) else v)
+                for k, v in breakdown.items()
+            },
         }
     except Exception as exc:
         return {
@@ -262,6 +333,7 @@ def measure_process_tree_resources(
             "total_rss_mb": 0.0,
             "total_private_uss_mb": 0.0,
             "total_cpu_pct": 0.0,
+            "total_threads": 1,
             "error": str(exc),
         }
 
@@ -272,25 +344,45 @@ def cleanup_stale_cli_artifacts(
     max_age_hours: float = 48.0,
     keep_recent_logs: int = 40,
     keep_recent_backups: int = 5,
+    max_total_size_mb: float = 100.0,
     force: bool = False,
 ) -> dict[str, Any]:
     """Controlled housekeeping of stale CLI logs, orphaned lock files, and old settings backups.
 
     Safety invariants:
     - Never deletes the most recent ``keep_recent_logs`` diagnostic log files.
-    - Never deletes any file younger than ``max_age_hours``.
+    - Never deletes any file younger than ``max_age_hours`` unless total directory size exceeds ``max_total_size_mb``.
+    - Enforces path containment to prevent directory traversal or symlink escapes.
     - Never deletes ``presence/*.lock`` if any ``agy`` / ``antigravity`` CLI process is active.
     - Never touches conversations, credentials, or active configuration files.
     """
     global _LAST_HOUSEKEEPING_AT
     now_mono = time.monotonic()
+    base = Path(gemini_home) if gemini_home else (Path.home() / ".gemini" / "antigravity-cli")
+    try:
+        base_resolved = base.resolve()
+    except Exception:
+        base_resolved = base
+
+    boundary_info = {
+        "max_age_hours": float(max_age_hours),
+        "keep_recent_logs": int(keep_recent_logs),
+        "keep_recent_backups": int(keep_recent_backups),
+        "max_total_size_mb": float(max_total_size_mb),
+        "path_boundary": str(base_resolved),
+    }
+
     with _HOUSEKEEPING_LOCK:
         if not force and _LAST_HOUSEKEEPING_AT > 0 and (now_mono - _LAST_HOUSEKEEPING_AT) < 600.0:
-            return {"cleaned": False, "reason": "throttled"}
+            return {
+                "cleaned": False,
+                "reason": "throttled",
+                "boundaries": boundary_info,
+            }
         _LAST_HOUSEKEEPING_AT = now_mono
 
-    base = Path(gemini_home) if gemini_home else (Path.home() / ".gemini" / "antigravity-cli")
     cutoff = time.time() - max(1.0, float(max_age_hours)) * 3600.0
+    max_log_bytes = max(1.0, float(max_total_size_mb)) * 1048576.0
     logs_removed = 0
     locks_removed = 0
     backups_removed = 0
@@ -312,19 +404,30 @@ def cleanup_stale_cli_artifacts(
         try:
             log_files = []
             for item in log_dir.iterdir():
-                if item.is_file() and item.suffix.lower() == ".log":
+                if item.is_file() and item.suffix.lower() == ".log" and not item.name.startswith("."):
                     try:
+                        # Path boundary: must strictly reside inside base_resolved
+                        if not item.resolve().is_relative_to(base_resolved):
+                            continue
                         st = item.stat()
                         log_files.append((st.st_mtime, st.st_size, item))
-                    except OSError:
+                    except (OSError, ValueError):
                         continue
             log_files.sort(key=lambda t: t[0], reverse=True)
-            for mtime, size, item in log_files[max(0, int(keep_recent_logs)):]:
-                if mtime < cutoff:
+
+            # Preserve the most recent keep_recent_logs files unconditionally
+            min_keep = max(0, int(keep_recent_logs))
+            candidates = log_files[min_keep:]
+            total_bytes = sum(size for _, size, _ in log_files)
+
+            for mtime, size, item in candidates:
+                should_remove = (mtime < cutoff) or (total_bytes > max_log_bytes)
+                if should_remove:
                     try:
                         item.unlink()
                         logs_removed += 1
                         bytes_reclaimed += size
+                        total_bytes -= size
                     except OSError:
                         continue
         except OSError:
@@ -336,12 +439,14 @@ def cleanup_stale_cli_artifacts(
             for item in presence_dir.iterdir():
                 if item.is_file() and item.suffix.lower() == ".lock":
                     try:
+                        if not item.resolve().is_relative_to(base_resolved):
+                            continue
                         st = item.stat()
                         if st.st_mtime < cutoff:
                             item.unlink()
                             locks_removed += 1
                             bytes_reclaimed += st.st_size
-                    except OSError:
+                    except (OSError, ValueError):
                         continue
         except OSError:
             pass
@@ -352,9 +457,11 @@ def cleanup_stale_cli_artifacts(
             for item in base.glob("settings.before-quartz-desktop-*.json"):
                 if item.is_file():
                     try:
+                        if not item.resolve().is_relative_to(base_resolved):
+                            continue
                         st = item.stat()
                         backups.append((st.st_mtime, st.st_size, item))
-                    except OSError:
+                    except (OSError, ValueError):
                         continue
             backups.sort(key=lambda t: t[0], reverse=True)
             for mtime, size, item in backups[max(0, int(keep_recent_backups)):]:
@@ -376,6 +483,7 @@ def cleanup_stale_cli_artifacts(
         "backups_removed": backups_removed,
         "bytes_reclaimed": bytes_reclaimed,
         "reclaimed_mb": round(bytes_reclaimed / 1048576, 2),
+        "boundaries": boundary_info,
     }
 
 
