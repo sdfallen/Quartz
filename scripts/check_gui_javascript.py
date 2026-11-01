@@ -1,4 +1,4 @@
-"""Parse the embedded GUI JavaScript without importing app state."""
+"""Check the shipped application JavaScript without importing GUI/app state."""
 from pathlib import Path
 import re
 import subprocess
@@ -13,11 +13,20 @@ def application_script(source):
     return scripts[0]
 
 
+def shipped_application_script():
+    from ui.app_js import APPLICATION_JS, SCRIPT_DOCUMENT, SCRIPT_PARTS
+    if not SCRIPT_PARTS or any(not isinstance(part, str) or not part.strip() for part in SCRIPT_PARTS):
+        raise ValueError("Application JavaScript fragment missing or empty")
+    script = application_script(SCRIPT_DOCUMENT)
+    if script != APPLICATION_JS or APPLICATION_JS != "".join(SCRIPT_PARTS):
+        raise ValueError("Application JavaScript composition differs from shipped script")
+    return script
+
+
 def main():
-    source = (Path(__file__).resolve().parents[1] / "gui.py").read_text(encoding="utf-8")
     try:
-        script = application_script(source)
-    except ValueError as exc:
+        script = shipped_application_script()
+    except (ImportError, OSError, ValueError) as exc:
         print(str(exc))
         return 2
     result = subprocess.run(["node", "--check", "-"], input=script.encode("utf-8"), capture_output=True)

@@ -224,10 +224,10 @@ class DocumentAndRegressionTests(unittest.TestCase):
         self.assertNotIn(tag, DOCUMENT_HEAD)
         self.assertTrue(html.startswith(DOCUMENT_HEAD))
         self.assertNotIn("QuartzNotionTools", html)
-        # check_gui_javascript.py and frontend tests still see exactly gui.py's block(s).
-        source = (Path(gui.__file__).resolve()).read_text(encoding="utf-8")
+        # The checker reads the same static composition shipped by the GUI.
+        from ui.app_js import SCRIPT_DOCUMENT
         block = re.compile(r"<script>(.*?)</script>", re.S)
-        self.assertEqual(block.findall(source), block.findall(html))
+        self.assertEqual(block.findall(SCRIPT_DOCUMENT), block.findall(html))
         self.assertNotIn("<script", NOTION_TOOLS_SCRIPT.lower())
 
     def test_all_shipped_scripts_parse_together(self):

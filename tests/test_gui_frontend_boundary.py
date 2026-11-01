@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import gui
 from ui import document
+from ui.app_js import APPLICATION_JS, SCRIPT_DOCUMENT, SCRIPT_PARTS
 from ui.shell import SHELL_MARKUP
 from ui.styles import BASE_CSS
 from ui.theme import MODERN_CSS
@@ -115,7 +116,11 @@ class PackagingContractTests(unittest.TestCase):
             tree = ast.parse(path.read_text(encoding="utf-8"))
             return {node.module for node in tree.body if isinstance(node, ast.ImportFrom)}
         self.assertIn("ui.document", imported(ROOT / "gui.py"))
+        self.assertIn("ui.app_js", imported(ROOT / "gui.py"))
         self.assertIn("ui.styles", imported(ROOT / "ui" / "document.py"))
+        self.assertEqual({"ui.js_setup", "ui.js_messages", "ui.js_chat", "ui.js_desktop",
+                          "ui.js_diagnostics", "ui.js_advanced", "ui.js_lifecycle"},
+                         imported(ROOT / "ui" / "app_js.py"))
 
     def test_document_loads_no_remote_resources(self):
         html = gui._HTML
@@ -127,13 +132,28 @@ class PackagingContractTests(unittest.TestCase):
 
 
 class ScriptAndApiContractTests(unittest.TestCase):
-    def test_application_javascript_still_lives_in_gui_source(self):
-        # scripts/check_gui_javascript.py parses gui.py's source text, so every
-        # shipped script block must still be found there.
+    def test_javascript_checker_reads_shipped_composition_and_rejects_empty_fragments(self):
+        from scripts.check_gui_javascript import shipped_application_script
+        self.assertEqual(shipped_application_script(), APPLICATION_JS)
+        with patch("ui.app_js.SCRIPT_PARTS", (SCRIPT_PARTS[0], "")):
+            with self.assertRaisesRegex(ValueError, "fragment missing or empty"):
+                shipped_application_script()
+        with patch("ui.app_js.SCRIPT_DOCUMENT", "<script></script>"):
+            with self.assertRaises(ValueError):
+                shipped_application_script()
+        with patch("ui.app_js.APPLICATION_JS", APPLICATION_JS + "\n"):
+            with self.assertRaisesRegex(ValueError, "composition differs"):
+                shipped_application_script()
+
+    def test_application_javascript_is_composed_in_one_shared_script_scope(self):
         source = (ROOT / "gui.py").read_text(encoding="utf-8")
         shipped = SCRIPT_BLOCK.findall(gui._HTML)
-        self.assertTrue(shipped)
-        self.assertEqual(SCRIPT_BLOCK.findall(source), shipped)
+        self.assertEqual(shipped, [APPLICATION_JS])
+        self.assertEqual(SCRIPT_BLOCK.findall(SCRIPT_DOCUMENT), shipped)
+        self.assertEqual(SCRIPT_BLOCK.findall(source), [])
+        self.assertEqual(len(SCRIPT_PARTS), 7)
+        self.assertTrue(all(part.strip() for part in SCRIPT_PARTS))
+        self.assertEqual(APPLICATION_JS, "".join(SCRIPT_PARTS))
 
     def test_base_theme_is_not_duplicated_in_gui_source(self):
         source = (ROOT / "gui.py").read_text(encoding="utf-8")
@@ -147,19 +167,19 @@ class ScriptAndApiContractTests(unittest.TestCase):
 
 
 class ShellMarkupBoundaryTests(unittest.TestCase):
-    """Pyramid P2 slice 1: body markup lives in ui/shell.py, JS stays in gui.py."""
+    """Shell markup and ordered JS fragments are assembled outside the bridge."""
 
-    def test_body_is_shell_markup_followed_by_the_gui_source_script(self):
+    def test_body_is_shell_markup_followed_by_the_composed_application_script(self):
         self.assertTrue(gui._HTML_BODY.startswith(SHELL_MARKUP))
         rest = gui._HTML_BODY[len(SHELL_MARKUP):]
         self.assertTrue(rest.startswith("<script>"))
-        source = (ROOT / "gui.py").read_text(encoding="utf-8")
-        scripts = SCRIPT_BLOCK.findall(source)
+        scripts = SCRIPT_BLOCK.findall(SCRIPT_DOCUMENT)
         # Exactly one application script, and the syntax check sees all of it;
         # an empty match list must never be mistaken for a passing check.
         self.assertEqual(len(scripts), 1)
         self.assertGreater(len(scripts[0].strip()), 1000)
         self.assertEqual(SCRIPT_BLOCK.findall(rest), scripts)
+        self.assertEqual(rest, SCRIPT_DOCUMENT)
         self.assertTrue(rest.rstrip().endswith("</html>"))
 
     def test_shell_markup_is_presentation_only(self):
@@ -192,6 +212,7 @@ class ShellMarkupBoundaryTests(unittest.TestCase):
         tree = ast.parse((ROOT / "gui.py").read_text(encoding="utf-8"))
         modules = {node.module for node in tree.body if isinstance(node, ast.ImportFrom)}
         self.assertIn("ui.shell", modules)
+        self.assertIn("ui.app_js", modules)
 
 
 if __name__ == "__main__":
