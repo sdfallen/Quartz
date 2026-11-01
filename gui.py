@@ -18,6 +18,8 @@ from datetime import datetime
 from pathlib import Path
 
 import webview
+from core.application_services import (
+    CONFIRMED, FAILED, PENDING, ApplicationServices, ServicesClosed, overall_status)
 from core.local_ipc import request_token
 from ui.document import BRAND_MARK, asset_root, build_document
 from ui.shell import SHELL_MARKUP
@@ -70,26 +72,41 @@ _QUICK_ACTIONS = {
 
 # ── JS <-> Python bridge ────────────────────────────────────────────────────
 class Api:
-    def __init__(self):
-        self._voice_instance = None
-        self._voice_lock = threading.Lock()
+    """pywebview bridge and native picker/consent adapter.
+
+    Component construction, reuse and shutdown belong to
+    ``core.application_services.ApplicationServices``; this class only
+    forwards bridge calls, owns native dialogs and talks to the backend over
+    the authenticated IPC client.
+    """
+
+    def __init__(self, services: ApplicationServices | None = None):
+        self._services = services or ApplicationServices()
         self._compact = False
-        self._desktop_agents = None
-        self._desktop_lock = threading.Lock()
-        self._coordination = None
-        self._coordination_lock = threading.Lock()
-        self._natural = None
         self._natural_start_lock = threading.Lock()
-        self._onboarding = None
-        self._artifact_diagnostics = None
-        self._repair = None
-        self._diagnostic_tools_lock = threading.RLock()
+        self._shutdown_receipt = None
+
+    # Read/inject compatibility for the former attributes. Reading never
+    # constructs; assigning after shutdown is refused by the composition.
+    def _slot(name):
+        return property(lambda self: self._services.peek(name),
+                        lambda self, value: self._services.adopt(name, value))
+
+    _natural = _slot("natural")
+    _coordination = _slot("coordination")
+    _desktop_agents = _slot("desktop")
+    _artifact_diagnostics = _slot("artifact_diagnostics")
+    _repair = _slot("repair")
+    _onboarding = _slot("onboarding")
+    _voice_instance = _slot("voice")
+    del _slot
+
+    @property
+    def _diagnostic_tools_lock(self):
+        return self._services.diagnostics_lock
 
     def _onboarding_service(self):
-        if self._onboarding is None:
-            from core.onboarding import OnboardingService
-            self._onboarding = OnboardingService()
-        return self._onboarding
+        return self._services.onboarding()
 
     def onboarding_status(self, force=False):
         try:
@@ -130,36 +147,32 @@ class Api:
             try:
                 if self._artifact_diagnostics and self._artifact_diagnostics.status()['state'] == 'running':
                     return {'status': 'ok', 'data': self._artifact_diagnostics.status()}
+                self._services.ensure_open()  # no picker once shutdown began
                 if not webview.windows:
                     raise ValueError('Pencere hazır değil')
                 selected = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN,
                     allow_multiple=False, file_types=('Uygulama (*.exe)',))
                 if not selected:
                     return {'status': 'ok', 'data': None}
-                from core.artifact_diagnostics import ArtifactDiagnosticsService
-                if self._artifact_diagnostics:
-                    self._artifact_diagnostics.shutdown()
-                self._artifact_diagnostics = ArtifactDiagnosticsService(selected[0])
-                return {'status': 'ok', 'data': self._artifact_diagnostics.start()}
+                service = self._services.replace_artifact_diagnostics(selected[0])
+                return {'status': 'ok', 'data': service.start()}
+            except ServicesClosed as exc:
+                return {'status': 'error', 'data': str(exc)}
             except Exception:
                 return {'status': 'error', 'data': 'Seçilen dosya güvenli inceleme için açılamadı. Normal bir EXE dosyası seçin.'}
 
     def diagnostics_prepare_repair(self):
         with self._diagnostic_tools_lock:
-            self._repair = None
+            self._services.discard_repair()
             try:
+                self._services.ensure_open()
                 if not webview.windows:
                     raise ValueError('Pencere hazır değil')
                 selected = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
                 if not selected:
                     return {'status': 'ok', 'data': None}
-                from core.package_repair import PackageRepair
-                from core.cli_installer import app_root
-                from pathlib import Path
-                import os
-                self._repair = PackageRepair(app_root(), Path(os.environ.get('LOCALAPPDATA') or Path.home()) / 'Quartz/repair-backups')
-                return {'status': 'ok', 'data': self._repair.prepare(selected[0])}
-            except ValueError as exc:
+                return {'status': 'ok', 'data': self._services.new_repair().prepare(selected[0])}
+            except (ValueError, ServicesClosed) as exc:
                 return {'status': 'error', 'data': str(exc)}
             except Exception:
                 return {'status': 'error', 'data': 'Onarım referansı doğrulanamadı. Aynı sürümün sağlam, manifestli paketini seçin.'}
@@ -177,7 +190,7 @@ class Api:
 
     def diagnostics_discard_repair(self):
         with self._diagnostic_tools_lock:
-            self._repair = None
+            self._services.discard_repair()
         return {'status': 'ok', 'data': 'Onarım planı iptal edildi.'}
 
     def diagnostics_learned_applications(self):
@@ -192,6 +205,7 @@ class Api:
         """Start reasoning/tool selection, NOT a desktop grant."""
         try:
             with self._natural_start_lock:
+                self._services.ensure_open()
                 state = ipc_send("chat_status")
                 if state.get("status") != "ok": raise RuntimeError("Sohbet bağlantısı hazır değil")
                 data = state["data"]
@@ -203,19 +217,16 @@ class Api:
                 if project is None: raise ValueError("Görev için mevcut bir proje seçilmeli")
                 if self._natural and self._natural.status()["active"]: raise RuntimeError("Başka bir görev sürüyor")
                 if self._coordination and self._coordination.status()["active"]: raise RuntimeError("Başka bir operatör sürüyor")
-                from core.natural_desktop import NaturalDesktopTask
-                def emit(cid, sender, content, metadata):
-                    result = ipc_send("chat_coordination_message", {"conversation_id":cid,"sender":sender,"content":content,"metadata":metadata})
-                    if result.get("status") != "ok": raise RuntimeError("Görev sohbet günlüğüne yazılamadı")
+                emit = self._chat_log_emitter("Görev sohbet günlüğüne yazılamadı")
                 emit(conversation_id, "user", text, {})
-                self._natural = NaturalDesktopTask(self._desktop_service(), emit)
+                natural = self._services.start_natural(self._desktop_service(), emit)
                 context = '\n\n'.join(str(m.get('sender') or m.get('role')) + ': ' + str(m.get('content') or '')[:1200]
                     for m in (data.get('active_conversation',{}).get('messages') or [])[-8:])[-10000:]
                 task_text = text
                 selected_agent = (data.get('active_conversation') or {}).get('agent')
                 if selected_agent in {'codex', 'antigravity'} and not re.search(r'\b(codex|gemini|antigravity)\b', text, re.I):
                     task_text = ('Codex, ' if selected_agent == 'codex' else 'Gemini, ') + text
-                result = self._natural.start(task_text, project, conversation_id, models,
+                result = natural.start(task_text, project, conversation_id, models,
                     requested_permission_level=permission_level, conversation_context=context)
                 return {"status":"ok", "data":{"handled":True, "natural_started":True, "task":result}}
         except Exception as exc: return {"status":"error", "data":str(exc)}
@@ -235,15 +246,17 @@ class Api:
             return {"status":"ok", "data":self._natural.deny(request_id)}
         except Exception as exc: return {"status":"error", "data":str(exc)}
 
+    @staticmethod
+    def _chat_log_emitter(failure_message):
+        """Chat-log writer handed to GUI-owned tasks; IPC errors are raised."""
+        def emit(cid, sender, content, metadata):
+            result = ipc_send("chat_coordination_message", {"conversation_id":cid,"sender":sender,"content":content,"metadata":metadata})
+            if result.get("status") != "ok": raise RuntimeError(failure_message)
+        return emit
+
     def _coordination_service(self):
-        with self._coordination_lock:
-            if self._coordination is None:
-                from core.chat_coordination import ChatCoordination
-                def emit(cid, sender, content, metadata):
-                    result = ipc_send("chat_coordination_message", {"conversation_id":cid,"sender":sender,"content":content,"metadata":metadata})
-                    if result.get("status") != "ok": raise RuntimeError("Sohbet günlüğü yazılamadı")
-                self._coordination = ChatCoordination(self._desktop_service(), emit)
-        return self._coordination
+        return self._services.coordination(self._desktop_service,
+                                           self._chat_log_emitter("Sohbet günlüğü yazılamadı"))
 
     def coordination_route(self, text, conversation_id, project_id, models, permission_level='read-only', agent=None):
         try:
@@ -466,6 +479,7 @@ class Api:
 
     def coordination_pick_app(self, plan_id):
         try:
+            self._services.ensure_open()  # no picker once shutdown began
             if not webview.windows: raise RuntimeError("Pencere hazır değil")
             paths = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN, allow_multiple=False, file_types=('Uygulama (*.exe)',))
             return {"status":"ok","data":self._coordination_service().add_launch(plan_id,paths[0]) if paths else None}
@@ -488,12 +502,7 @@ class Api:
             return {"status":"ok","data":service.stop()}
 
     def _desktop_service(self):
-        with self._desktop_lock:
-            if self._desktop_agents is None:
-                from core.desktop_agents import DesktopAgentService
-                self._desktop_agents = DesktopAgentService()
-                self._desktop_agents.broker.admission_guard = self._writer_recovery_input_guard
-            return self._desktop_agents
+        return self._services.desktop(self._writer_recovery_input_guard)
 
     def _writer_recovery_input_guard(self):
         result = ipc_send('writer_recovery_status')
@@ -526,12 +535,7 @@ class Api:
     @property
     def _voice(self):
         """Load microphone/TTS only after the window is already visible."""
-        if self._voice_instance is None:
-            with self._voice_lock:
-                if self._voice_instance is None:
-                    from voice_system import VoiceSystem
-                    self._voice_instance = VoiceSystem()
-        return self._voice_instance
+        return self._services.voice()
 
     def send_chat(self, message: str) -> dict:
         resp = ipc_send("chat", message)
@@ -752,7 +756,10 @@ class Api:
                 trim_working_set,
             )
             prof = detect_hardware_profile()
-            if not getattr(self, "_startup_housekeeping_done", False):
+            services = getattr(self, "_services", None)
+            if services is not None and services.closing:
+                pass  # no new background housekeeping once shutdown began
+            elif not getattr(self, "_startup_housekeeping_done", False):
                 self._startup_housekeeping_done = True
                 threading.Thread(
                     target=lambda: (
@@ -792,32 +799,49 @@ class Api:
 
     def cleanup_before_exit(self, *args):
         """
-        Hooked onto the pywebview 'closing' event so it
-        fires no matter HOW the window is closed (our
-        custom close button, Alt+F4, taskbar, etc.) —
-        not just the one JS path. Tells the backend
-        process to shut down instead of leaving it
-        orphaned in the background.
+        Hooked onto the pywebview 'closing' event so it fires no matter HOW
+        the window is closed (custom button, Alt+F4, taskbar, etc.).
+
+        GUI-owned components are fenced and closed independently by the
+        composition; then the backend is asked to shut down over the
+        authenticated IPC client. The combined receipt is kept on
+        ``_shutdown_receipt``. A failed or unverified step is reported as
+        failed/pending, never as confirmed. The window is always allowed to
+        close, as before.
         """
-        if self._artifact_diagnostics is not None:
-            self._artifact_diagnostics.shutdown()
-        if self._natural is not None:
-            self._natural.stop()
-        if self._coordination is not None:
-            self._coordination.stop()
-        if self._desktop_agents is not None:
-            self._desktop_agents.close()
-        if self._voice_instance is not None:
-            try:
-                self._voice_instance.stop_wake_loop()
-                self._voice_instance.stop_speaking()
-            except Exception:
-                pass
         try:
-            ipc_send("shutdown")
-        except Exception:
-            pass
+            receipt = self._services.shutdown()
+        except Exception as exc:  # the composition itself must not block exit
+            receipt = {"status": FAILED, "components": {"gui": FAILED},
+                       "errors": [{"component": "gui", "code": "shutdown_failed",
+                                   "type": type(exc).__name__}]}
+        previous = (self._shutdown_receipt or {}).get("components", {}).get("backend")
+        if previous in (CONFIRMED, PENDING):
+            backend, backend_errors = previous, []  # already acknowledged; do not resend
+        else:
+            backend, backend_errors = self._request_backend_shutdown()
+        components = dict(receipt["components"], backend=backend)
+        self._shutdown_receipt = {"status": overall_status(components),
+                                  "components": components,
+                                  "errors": list(receipt["errors"]) + backend_errors}
         return True  # allow the window to actually close
+
+    @staticmethod
+    def _request_backend_shutdown():
+        """Ask the backend to stop. Acknowledged without a receipt = pending."""
+        try:
+            result = ipc_send("shutdown")
+        except Exception as exc:
+            return FAILED, [{"component": "backend", "code": "ipc_failed", "type": type(exc).__name__}]
+        if not isinstance(result, dict) or result.get("status") != "ok":
+            return FAILED, [{"component": "backend", "code": "shutdown_rejected", "type": "IPCError"}]
+        data = result.get("data")
+        reported = data.get("status") if isinstance(data, dict) else None
+        if reported in (CONFIRMED, PENDING, FAILED):
+            errors = [] if reported != FAILED else [
+                {"component": "backend", "code": "backend_reported_failure", "type": "ShutdownReceipt"}]
+            return reported, errors
+        return PENDING, []
 
     # ── Voice: status ───────────────────────────────────────
 
