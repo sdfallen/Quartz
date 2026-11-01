@@ -48,7 +48,7 @@ NOTION_TOOLS_SCRIPT = r"""
   var AVAILABILITY = {
     unavailable: ['Yerel araçlar bağlı değil', 'Notion bu sohbette metin ve kod analizi yapabilir; bilgisayarınızda işlem yapamaz.'],
     checking: ['Araç bağlantısı kontrol ediliyor', 'Kontrol bitene kadar yerel işlem başlatılmaz.'],
-    ready: ['Yerel araçlar hazır', 'Her işlem için kapsam izin kartında sorulur.'],
+    ready: ['Yerel araçlar hazır', 'İşlemler mevcut görev kapsamı ve yetki ayarıyla yürütülür.'],
     blocked: ['Araç bağlantısı engellendi', 'Yerel işlem başlatılmaz.']
   };
   var STATES = {
@@ -102,7 +102,7 @@ NOTION_TOOLS_SCRIPT = r"""
   }
   function stopAvailable() {
     var stop = document.getElementById('btnDesktopTaskStop');
-    return !!(stop && !stop.hidden && !stop.disabled);
+    return !!(stop && !stop.hidden && !stop.disabled && stop.getClientRects().length);
   }
 
   // Decide whether an incoming task replaces, updates or must be ignored.
@@ -112,7 +112,7 @@ NOTION_TOOLS_SCRIPT = r"""
     if (view.retired[id]) return 'stale';
     var current = view.task;
     if (current && current.id === id) {
-      if (current.terminal) return 'stale';
+      if (current.terminal && current.state !== task.state) return 'stale';
       var rev = Number(task.revision);
       if (isFinite(rev) && isFinite(current.revision) && rev <= current.revision) return 'stale';
       return 'update';
@@ -134,6 +134,7 @@ NOTION_TOOLS_SCRIPT = r"""
       var state = String(task.state || '');
       view.task = {
         id: String(task.task_id),
+        state: state,
         revision: isFinite(Number(task.revision)) ? Number(task.revision) : NaN,
         terminal: !!TERMINAL[state]
       };
@@ -196,7 +197,7 @@ NOTION_TOOLS_SCRIPT = r"""
     if (ACTIVE[state]) {
       copy.append(make('span', 'notion-tools-stop', stopAvailable()
         ? 'Durdurmak için görev şeridindeki Görevi durdur düğmesini kullanın.'
-        : 'Bu görev için Quartz durdurma yolu görünmüyor; yeni işlem başlatılmaz.'));
+        : 'Bu görev için Quartz durdurma yolu görünmüyor; görevi doğrulayın.'));
     }
     head.append(copy);
     el.append(head);

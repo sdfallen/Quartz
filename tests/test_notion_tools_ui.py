@@ -31,6 +31,7 @@ function node(tag) {
       i < 0 ? this.children.push(x) : this.children.splice(i, 0, x); },
     get nextSibling() { const s = this.parentNode && this.parentNode.children; return s ? s[s.indexOf(this) + 1] || null : null; },
     click() { clicks++; },
+    getClientRects() { return this.geometryHidden ? [] : [1]; },
   };
   return n;
 }
@@ -56,6 +57,22 @@ def run_node(checks: str):
 
 
 class NotionToolsRendererTests(unittest.TestCase):
+    def test_hidden_stop_geometry_is_not_treated_as_a_visible_control(self):
+        self.check(r"""
+stop.hidden = false; stop.disabled = false; stop.geometryHidden = true;
+Q.update(task({state: 'executing'}), ctx);
+assert.match(panel().textContent, /durdurma yolu görünmüyor/);
+assert.doesNotMatch(panel().textContent, /görev şeridindeki Görevi durdur/);
+""")
+
+    def test_terminal_verification_can_update_without_resurrecting_task(self):
+        self.check(r"""
+Q.update(task({state: 'completed', verification: 'none', revision: 1}), ctx);
+Q.update(task({state: 'completed', verification: 'verified', revision: 2}), ctx);
+assert.equal(title(), 'Tamamlandı ve doğrulandı');
+assert.equal(Q.update(task({state: 'executing', revision: 3}), ctx), 'stale');
+""")
+
     def check(self, checks):
         result = run_node(checks)
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
@@ -116,7 +133,7 @@ assert.equal(title(), 'İptal edildi');
     def test_stop_uses_existing_strip_only_and_is_never_clicked_or_duplicated(self):
         self.check(r"""
 Q.update(task({state: 'executing'}), ctx);
-assert.match(panel().textContent, /durdurma yolu görünmüyor; yeni işlem başlatılmaz/);
+assert.match(panel().textContent, /durdurma yolu görünmüyor; görevi doğrulayın/);
 stop.hidden = false; stop.disabled = false;
 Q.update(task({state: 'executing', revision: 2}), ctx);
 assert.match(panel().textContent, /görev şeridindeki Görevi durdur/);

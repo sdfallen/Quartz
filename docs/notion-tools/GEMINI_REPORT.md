@@ -1,5 +1,15 @@
 # Notion Araç Entegrasyonu — Bağlantı Protokolü ve Taşıma Raporu
 
+> **Codex inceleme düzeltmesi, 2026-11-01:** Aşağıdaki ilk teslim raporu tarihsel
+> iddiaları içerir; Yol C ve sıfır maliyet/gerçek bağlantı iddiaları doğrulanmadı.
+> İnceleme bulguları ve güncel hüküm `INTEGRATION_REVIEW.md` içindedir. Notion'ın
+> olay API'si tool-call giriş/çıkışlarını sağlamaz. Bir sonraki kullanıcı mesajını
+> göndermek, yerel araç çağrısı için kimliği doğrulanmış RPC kanalı oluşturmaz.
+> `requires_action` yerel Desktop Broker'ı çalıştırma izni değildir. Metinden veya
+> kod bloğundan komut çıkarma uygulanmayacak. Probe yalnız yerel simülasyondur;
+> gerçek Notion -> yerel araç -> sonuç kabulü yoktur. Cloud sandbox ile kullanıcının
+> Windows masaüstü ayrı kapsamlardır; görüntü desteği de ayrıca doğrulanmalıdır.
+
 **Tarih:** 2026-11-01<br>
 **Sorumlu Model / Rol:** Gemini 3.8 Flash / Antigravity (Taşıma Adaptörü ve Bağlantı Protokolü)<br>
 **Koordinatör:** Codex<br>

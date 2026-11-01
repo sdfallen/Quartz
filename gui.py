@@ -2123,10 +2123,13 @@ _HTML_BODY = r"""
       }
       if (!conv) return false;
       conversationLoaded = true;
+      if (currentConvId !== conv.id) window.QuartzNotionTools?.reset();
       currentConvId = conv.id;
       renderConversationNavigation(data.conversations || []);
       chatConvTitle.textContent = conv.title || 'Yeni Sohbet';
       if (conv.agent) syncAgentUI(conv.agent);
+      window.QuartzNotionTools?.update(data.notion_tools,
+        {conversationId: currentConvId, agent: mainAgentSelect?.value || conv.agent});
       syncModelCatalogAndSelection(data.models, conv.models);
       const activeProjectId = conv.project_id || 'squad-pilot';
       mainProjectSelect.value = activeProjectId;
@@ -3787,10 +3790,13 @@ _HTML_BODY = r"""
             const conv = st.data.active_conversation;
             if (conv) {
               const switched = currentConvId !== conv.id;
+              if (switched) window.QuartzNotionTools?.reset();
               currentConvId = conv.id;
               renderConversationNavigation(st.data.conversations || []);
               chatConvTitle.textContent = conv.title || 'Yeni Sohbet';
               if (conv.agent) syncAgentUI(conv.agent);
+              window.QuartzNotionTools?.update(st.data.notion_tools,
+                {conversationId: currentConvId, agent: mainAgentSelect?.value || conv.agent});
               syncModelCatalogAndSelection(st.data.models, conv.models);
               if (switched) {
                 const permSelect = document.getElementById('mainPermissionLevel');

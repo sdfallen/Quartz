@@ -13,6 +13,7 @@ from pathlib import Path
 import sys
 import time
 import uuid
+from typing import Any
 
 # Ensure repository root is on sys.path
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -147,18 +148,22 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", default=False,
                         help="Output report in machine-readable JSON format.")
     args = parser.parse_args()
+    if args.allow_active_task:
+        print(json.dumps({"status": "BLOCKED", "reason": "No authenticated remote tool ingress is implemented; active-task mode is unavailable."}))
+        return 2
 
     env_info = probe_local_environment()
     contract_info = probe_transport_contract()
 
     report = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "mode": "active" if args.allow_active_task else "read-only",
+        "mode": "local-simulation-only",
         "feasibility": {
             "direct_cloud_to_stdio_mcp": "BLOCKED (Cloud Custom Agent cannot reach local stdio without hosted relay)",
-            "supported_path": "Client-Orchestrated Continuation (Quartz local execution + session turn continuation)",
-            "zero_cloud_cost": True,
-            "offline_safe": True,
+            "supported_path": "Remote MCP/Worker candidate; no authenticated remote tool ingress implemented",
+            "live_remote_tool_verified": False,
+            "cloud_cost": "unknown; no live cloud run made by this probe",
+            "simulation_only": True,
         },
         "environment": env_info,
         "contract_probe": contract_info,

@@ -79,6 +79,9 @@ class AgentChatService:
                                  'efforts':models_catalog[provider]['efforts']}])
 
             return {
+                "notion_tools": {"schema_version": 1, "availability": "unavailable",
+                    "capabilities": [], "task": None,
+                    "message": "Notion sohbeti kullanılabilir. Yerel araç bağlantısı henüz doğrulanmadı."},
                 "active_conversation": conv,
                 "preferences": self.store.preferences(),
                 "conversations": self.store.list(),

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+import threading
 import unittest
 import uuid
 from unittest.mock import MagicMock
@@ -66,27 +67,27 @@ class NotionToolTransportTests(unittest.TestCase):
         # 2. Unsupported schema_version
         res2 = transport.dispatch(_make_valid_payload(schema_version=99))
         self.assertEqual(res2.status, "rejected")
-        self.assertIn("schema_version", res2.error)
+        self.assertIn("Validation failed", res2.error)
 
         # 3. Invalid UUIDs
         res3 = transport.dispatch(_make_valid_payload(session_id="not-a-uuid"))
         self.assertEqual(res3.status, "rejected")
-        self.assertIn("session_id", res3.error)
+        self.assertNotIn("not-a-uuid", res3.error)
 
         # 4. Empty tool_name
         res4 = transport.dispatch(_make_valid_payload(tool_name="  "))
         self.assertEqual(res4.status, "rejected")
-        self.assertIn("tool_name", res4.error)
+        self.assertIn("Validation failed", res4.error)
 
         # 5. Non-dict arguments
         res5 = transport.dispatch(_make_valid_payload(arguments="not a dict"))
         self.assertEqual(res5.status, "rejected")
-        self.assertIn("arguments", res5.error)
+        self.assertIn("Validation failed", res5.error)
 
         # 6. Invalid deadline
         res6 = transport.dispatch(_make_valid_payload(deadline=-1.0))
         self.assertEqual(res6.status, "rejected")
-        self.assertIn("deadline", res6.error)
+        self.assertIn("Validation failed", res6.error)
 
     def test_session_mismatch_fails_closed_on_replayed_request_id(self):
         payload1 = _make_valid_payload(request_id="shared-req-id")
@@ -132,18 +133,25 @@ class NotionToolTransportTests(unittest.TestCase):
 
     def test_in_flight_concurrent_replay_raises_replay_error(self):
         payload = _make_valid_payload()
-        started = False
+        entered, release = threading.Event(), threading.Event()
+        results = []
 
         def slow_router(req: NotionToolRequest) -> dict:
-            nonlocal started
-            started = True
-            # Attempt to dispatch the same request recursively while in-progress
-            transport.dispatch(payload)
+            entered.set()
+            release.wait(2)
             return {"status": "completed"}
 
         transport = NotionToolTransport(slow_router)
-        with self.assertRaises(ReplayError):
-            transport.dispatch(payload)
+        worker = threading.Thread(target=lambda: results.append(transport.dispatch(payload)))
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            with self.assertRaises(ReplayError): transport.dispatch(payload)
+        finally:
+            release.set()
+            worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(results[0].status, 'completed')
 
     def test_deadline_expired_before_execution_yields_timeout(self):
         mock_router = MagicMock()
@@ -198,7 +206,8 @@ class NotionToolTransportTests(unittest.TestCase):
 
         res = transport.dispatch(payload)
         self.assertEqual(res.status, "failed")
-        self.assertIn("Underlying broker connection dropped", res.error)
+        self.assertNotIn("Underlying broker connection dropped", res.error)
+        self.assertTrue(res.uncertain)
 
     def test_payload_size_limit_enforced_on_large_output(self):
         # Set max payload to 1 KB for test
