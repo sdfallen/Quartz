@@ -17,7 +17,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from core.atomic_json import atomic_write_json, load_json
-from core.notion_cli import NotionCli, profile_root
+from core.notion_cli import NotionCli, NotionError, profile_root
 from core.notion_runtime import NotionRuntime
 from core.notion_worker_bridge import NotionQueueApi, ReadOnlyWorkerBridge, load_bridge_key, rich, sign
 
@@ -160,8 +160,9 @@ def main():
             _,m=current();(Path(m['root'])/'.stopped').touch();result={'status':'stopped'}
         print(json.dumps(result,ensure_ascii=True))
         return 0 if result['status'] in {'prepared','observed','stopped'} else 2
-    except Exception:
-        print(json.dumps({'status':'blocked','reason':'Acceptance failed safely; no automatic request replay or secret output.'}))
+    except Exception as exc:
+        print(json.dumps({'status':'blocked','reason':str(exc) if isinstance(exc,NotionError) else 'Acceptance failed safely; no automatic request replay or secret output.',
+            'error_type':type(exc).__name__, 'code':getattr(exc,'code',None) if isinstance(exc,NotionError) else None}))
         return 2
 
 

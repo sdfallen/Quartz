@@ -23,6 +23,12 @@ function rich(text: string) {
   for (let i = 0; i < text.length; i += 1800) pieces.push({type: 'text' as const, text: {content: text.slice(i, i + 1800)}});
   return {rich_text: pieces};
 }
+function diagnostic(error: unknown, stage: string): Record<string, Json> {
+  const candidate = error as {status?: unknown; code?: unknown};
+  const safeCodes = ['object_not_found','restricted_resource','unauthorized','validation_error','rate_limited'];
+  return {stage, api_status: typeof candidate?.status === 'number' ? candidate.status : null,
+    api_code: typeof candidate?.code === 'string' && safeCodes.includes(candidate.code) ? candidate.code : null};
+}
 
 worker.tool('quartzReadTestFile', {
   title: 'Quartz test dosyasını oku',
@@ -33,15 +39,22 @@ worker.tool('quartzReadTestFile', {
   // No readOnlyHint: enqueue writes queue state and must not bypass Notion
   // confirmation or local owner approval.
   execute: async (input, {notion}): Promise<Record<string, Json>> => {
+    let stage = 'configuration';
     try {
       const {queue, key} = settings();
+      stage = 'grant_read';
       const grantPage: any = await notion.pages.retrieve({page_id: input.grant_page_id});
+      stage = 'grant_parent';
       ownedPage(grantPage, queue);
+      stage = 'grant_signature';
       const grant = verify(textProperty(grantPage, 'Signed Result'), 'grant', key);
+      stage = 'grant_scope';
       const request = requestFromGrant(grant, input.request_id, input.relative_path, Date.now()/1000);
+      stage = 'queue_query';
       const existing = await notion.dataSources.query({data_source_id: queue,
         filter: {property: 'Name', title: {equals: input.request_id}}, page_size: 2});
       if (existing.results.length) {
+        stage = 'existing_request';
         if (existing.results.length !== 1) throw new Error('Duplicate queue records');
         const row: any = existing.results[0];
         ownedPage(row, queue);
@@ -50,6 +63,7 @@ worker.tool('quartzReadTestFile', {
         return {status: 'queued', request_page_id: row.id, request_id: input.request_id, verification: 'none'};
       }
       const envelope = JSON.stringify(sign('request', request, key));
+      stage = 'queue_create';
       const row = await notion.pages.create({parent: {type:'data_source_id', data_source_id: queue}, properties: {
         Name: {title: [{text: {content: input.request_id}}]},
         'Task ID': rich(String(request.task_id)), 'Session ID': rich(String(request.session_id)),
@@ -58,8 +72,8 @@ worker.tool('quartzReadTestFile', {
         'Signed Request': rich(envelope)
       }});
       return {status: 'queued', request_page_id: row.id, request_id: input.request_id, verification: 'none'};
-    } catch {
-      return {status: 'blocked', message: 'İzin, kuyruk erişimi veya istek doğrulanamadı. Yerel işlem yapılmış sayılmaz.', verification: 'none'};
+    } catch (error) {
+      return {status: 'blocked', message: 'İzin, kuyruk erişimi veya istek doğrulanamadı. Yerel işlem yapılmış sayılmaz.', verification: 'none', diagnostic:diagnostic(error, stage)};
     }
   }
 });
@@ -70,18 +84,22 @@ worker.tool('quartzReadResult', {
   schema: j.object({request_page_id: j.string().describe('Quartz test isteğinin sayfa ID.')}),
   hints: {readOnlyHint: true},
   execute: async ({request_page_id}, {notion}): Promise<Record<string, Json>> => {
+    let stage = 'configuration';
     try {
       const {queue, key} = settings();
+      stage = 'result_read';
       const page: any = await notion.pages.retrieve({page_id: request_page_id});
+      stage = 'result_parent';
       ownedPage(page, queue);
       const raw = textProperty(page, 'Signed Result');
       if (!raw) return {status: 'pending', verification: 'none'};
+      stage = 'result_signature';
       const request = verify(textProperty(page, 'Signed Request'), 'request', key);
       const result = verify(raw, 'result', key);
       if (['request_id','session_id','task_id','project_id'].some(k => result[k] !== request[k])) throw new Error('Result binding mismatch');
       return result;
-    } catch {
-      return {status: 'blocked', message: 'Sonuç imzası veya kuyruk erişimi doğrulanamadı.', verification: 'none'};
+    } catch (error) {
+      return {status: 'blocked', message: 'Sonuç imzası veya kuyruk erişimi doğrulanamadı.', verification: 'none', diagnostic:diagnostic(error, stage)};
     }
   }
 });
