@@ -157,7 +157,12 @@ class NotionCli:
         if not (path in {"v1/agents/query", "v1/users/me", "v1/sessions"} or
                 re.fullmatch(r"v1/sessions/[a-f0-9-]{36}(?:/events/query|/cancel)?", path)):
             raise ValueError("Notion API yolu izinli değil.")
-        method = "POST" if body is not None else "GET"
+        return self._send(path, body)
+
+    def _send(self, path, body=None, *, method=None):
+        """Internal transport; public request keeps its existing route allowlist."""
+        mutation = path in {"v1/sessions", "v1/pages"} or method == "PATCH"
+        method = method or ("POST" if body is not None else "GET")
         args = [self.executable or resolve_ntn(), "api", path, "-X", method,
                 "--notion-version", API_VERSION, "Accept:application/json"]
         try:
@@ -167,7 +172,7 @@ class NotionCli:
                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except subprocess.TimeoutExpired:
             raise NotionError("Notion isteği zaman aşımına uğradı; gönderim otomatik tekrarlanmadı.",
-                              code="timeout", uncertain=path == "v1/sessions") from None
+                              code="timeout", uncertain=mutation) from None
         except OSError:
             raise NotionError("Notion CLI başlatılamadı. Kurulumu kontrol edin.") from None
         if result.returncode == 4 and "No auth token found" in (result.stderr or ""):
@@ -177,7 +182,7 @@ class NotionCli:
         except (ValueError, TypeError):
             # CLI stderr may contain auth URLs, headers or user data: do not expose it.
             raise NotionError("Notion yanıtı okunamadı. CLI girişini ve bağlantıyı kontrol edin.",
-                              uncertain=path == "v1/sessions") from None
+                              uncertain=mutation) from None
         if not isinstance(data, dict):
             raise NotionError("Notion yanıt biçimi beklenmiyor.")
         if result.returncode or data.get("object") == "error":
@@ -190,7 +195,7 @@ class NotionCli:
             }
             safe_code = code if code in messages else "api_error"
             raise NotionError(messages.get(code, "Notion isteği başarısız oldu. İstek otomatik tekrarlanmadı."),
-                              code=safe_code, uncertain=path == "v1/sessions" and safe_code == "api_error")
+                              code=safe_code, uncertain=mutation and safe_code == "api_error")
         return data
 
     def agents(self):
