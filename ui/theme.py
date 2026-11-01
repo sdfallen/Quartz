@@ -162,6 +162,43 @@ body:not(.show-panels) .rail.left,.rail.left { background:var(--q-ink-850) !impo
 .desktop-task-bar[data-state="pending"]::before { background:var(--q-warn); }
 .desktop-task-bar[data-state="released"]::before { background:var(--q-ok); }
 
+/* Notion local-tool status (rendered by ui/document.py from backend data only) */
+.notion-tools { margin:8px 28px 0; padding:10px 14px 10px 16px; border:1px solid var(--q-line); border-radius:var(--q-radius-m);
+  background:var(--q-ink-850); position:relative; overflow:hidden; font:12.5px/1.5 var(--q-font); color:var(--q-muted);
+  transition:background var(--q-med), border-color var(--q-med); }
+.notion-tools[hidden] { display:none !important; }
+.notion-tools::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--q-notion); opacity:.55; }
+.notion-tools-head { display:flex; gap:10px; align-items:flex-start; }
+.notion-tools-dot { flex:none; width:8px; height:8px; margin-top:5px; border-radius:50%; background:var(--q-faint); transition:background var(--q-med); }
+.notion-tools-copy { display:flex; flex-direction:column; gap:1px; min-width:0; }
+.notion-tools-title { font:600 13px var(--q-font); color:var(--q-text-2); }
+.notion-tools-operator { font-weight:500; color:var(--q-notion); }
+.notion-tools-operator:not([data-operator="notion"]) { color:var(--q-text-2); }
+.notion-tools-operator[data-operator="codex"] { color:var(--q-codex); }
+.notion-tools-operator[data-operator="antigravity"] { color:var(--q-agy); }
+.notion-tools-detail,.notion-tools-caps,.notion-tools-stop { color:var(--q-muted); overflow-wrap:anywhere; }
+.notion-tools-stop { color:var(--q-faint); }
+.notion-tools-details { margin:6px 0 0 18px; }
+.notion-tools-details summary { cursor:pointer; color:var(--q-faint); font:12px var(--q-font); }
+.notion-tools-details pre { margin:6px 0 0; font:12px/1.5 var(--q-mono); color:var(--q-muted); white-space:pre-wrap; overflow-wrap:anywhere; }
+.notion-tools[data-availability="unavailable"]:not([data-state]) .notion-tools-dot { background:transparent; border:1.5px solid var(--q-faint); box-sizing:border-box; }
+.notion-tools[data-availability="checking"]:not([data-state]) .notion-tools-dot { background:var(--q-warn); }
+.notion-tools[data-availability="ready"]:not([data-state]) .notion-tools-dot { background:var(--q-ok); }
+.notion-tools[data-availability="blocked"]:not([data-state]) { border-color:rgba(255,107,125,.35); }
+.notion-tools[data-availability="blocked"]:not([data-state]) .notion-tools-dot { background:var(--q-danger); }
+.notion-tools[data-state="observing"] .notion-tools-dot,.notion-tools[data-state="executing"] .notion-tools-dot,
+.notion-tools[data-state="verifying"] .notion-tools-dot { background:var(--q-crystal); }
+.notion-tools[data-state="executing"],.notion-tools[data-state="verifying"] { border-color:rgba(89,201,244,.35); }
+.notion-tools[data-state="executing"]::before,.notion-tools[data-state="verifying"]::before { background:var(--q-facet); opacity:1; }
+.notion-tools[data-state="awaiting_approval"] { border-color:rgba(242,196,107,.45); background:rgba(242,196,107,.06); }
+.notion-tools[data-state="awaiting_approval"] .notion-tools-dot,.notion-tools[data-state="blocked"] .notion-tools-dot { background:var(--q-warn); }
+.notion-tools[data-verification="verified"] .notion-tools-dot { background:var(--q-ok); }
+.notion-tools[data-verification="verified"] .notion-tools-title { color:var(--q-text); }
+.notion-tools[data-verification="observed"] .notion-tools-dot,.notion-tools[data-verification="unverified"] .notion-tools-dot { background:transparent; border:1.5px solid var(--q-warn); box-sizing:border-box; }
+.notion-tools[data-state="failed"] { border-color:rgba(255,107,125,.4); }
+.notion-tools[data-state="failed"] .notion-tools-dot { background:var(--q-danger); }
+.notion-tools[data-state="cancelled"] .notion-tools-title,.notion-tools[data-state="unknown"] .notion-tools-title { color:var(--q-muted); }
+
 /* Stop controls: immediate, never animated, always the strongest button. */
 #btnDesktopTaskStop,#btnHudStopTask,#btnDesktopStop,#btnCancel { transition:none !important; animation:none !important; }
 #btnDesktopTaskStop { background:var(--q-danger-strong) !important; border:1px solid var(--q-danger-strong) !important; color:#fff !important;
@@ -279,6 +316,7 @@ body.show-panels .rail.right { background:var(--q-ink-850) !important; border-le
   body:not(.low-spec):not(.ui-idle) .thinking-row.show .d:nth-child(2) { animation-delay:.15s !important; }
   body:not(.low-spec):not(.ui-idle) .thinking-row.show .d:nth-child(3) { animation-delay:.3s !important; }
   body:not(.low-spec) .jump-bottom-btn.show { animation:q-fade-in var(--q-fast) ease-out both !important; }
+  body:not(.low-spec) .notion-tools:not([hidden]) { animation:q-fade-in var(--q-fast) ease-out both !important; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -290,6 +328,7 @@ body.low-spec *,body.low-spec *::before,body.low-spec *::after { animation:none 
 @media (max-width:900px) {
   .chat-header { padding:12px 18px 10px !important; }
   .desktop-task-bar { margin:8px 18px 0 !important; }
+  .notion-tools { margin:8px 18px 0; }
   .chat { padding:18px 18px 10px !important; }
   .inputbar { width:calc(100% - 36px) !important; }
   .msg .bubble { max-width:100%; }
