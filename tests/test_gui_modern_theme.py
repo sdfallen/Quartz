@@ -69,12 +69,9 @@ class MotionContractTests(unittest.TestCase):
 
 
 class AgentSurfaceTests(unittest.TestCase):
-    def test_notion_is_disabled_until_backend_verifies_connection(self):
-        button = re.search(r'<button[^>]*id="agentSegNotion"[^>]*>', gui._HTML).group(0)
-        self.assertIn(" disabled", button)
-        self.assertIn('aria-disabled="true"', button)
-        self.assertIn('data-agent="notion"', button)
-        self.assertIn('value="notion"', gui._HTML)
+    def test_notion_agent_controls_are_removed(self):
+        for marker in ('agentSegNotion', 'value="notion"', 'notionAgentPill'):
+            self.assertNotIn(marker, gui._HTML)
 
     def test_agent_handlers_only_bind_real_agents(self):
         for match in re.finditer(r"querySelectorAll\('\.agent-seg-btn([^']*)'\)", gui._HTML):
@@ -92,18 +89,17 @@ const document={getElementById:id=>id==='agentConnections'?box:null,createElemen
         checks = r'''
 const view=()=>box.children.map(r=>[r.dataset.agentId,r.dataset.state,r.children[2].textContent,r.attrs['aria-current']]);
 renderAgentConnections();
-assert.deepEqual(view().map(r=>r[1]),['unknown','unknown','unknown']);
+assert.deepEqual(view().map(r=>r[1]),['unknown','unknown']);
 renderAgentConnections({codex:{installed:true,ready:true},gemini:{installed:true,login_pending:true}},'collaboration');
-assert.deepEqual(view(),[['codex','ready','Bağlı','true'],['antigravity','pending','Giriş bekleniyor','true'],
-  ['notion','missing','Bağlı değil','false']]);
+assert.deepEqual(view(),[['codex','ready','Bağlı','true'],['antigravity','pending','Giriş bekleniyor','true']]);
 renderAgentConnections(undefined,'codex');
-assert.deepEqual(view().map(r=>r[3]),['true','false','false']);
+assert.deepEqual(view().map(r=>r[3]),['true','false']);
 renderAgentConnections({gemini:{installed:false}});
-assert.deepEqual(view().map(r=>r[2]),['Bağlı değil','CLI kurulmamış','Bağlı değil']);
+assert.deepEqual(view().map(r=>r[2]),['Bağlı değil','CLI kurulmamış']);
 renderAgentConnections({notion:{installed:true,configured:true,checking:true}},'notion');
-assert.deepEqual(view()[2],['notion','unknown','Kontrol ediliyor','true']);
+assert.equal(view().length,2);
 renderAgentConnections({notion:{installed:true,configured:true,ready:true}},'notion');
-assert.deepEqual(view()[2],['notion','ready','Bağlı','true']);
+assert.equal(view().length,2);
 '''
         result = _node(harness + source + checks)
         self.assertEqual(result.returncode, 0, result.stderr)

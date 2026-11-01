@@ -220,10 +220,10 @@ class DocumentAndRegressionTests(unittest.TestCase):
     def test_renderer_ships_in_head_without_breaking_application_script_contract(self):
         html = gui._HTML
         tag = '<script id="%s">' % NOTION_TOOLS_SCRIPT_ID
-        self.assertEqual(html.count(tag), 1)
-        self.assertIn(tag + NOTION_TOOLS_SCRIPT + "</script>\n", DOCUMENT_HEAD)
+        self.assertEqual(html.count(tag), 0)
+        self.assertNotIn(tag, DOCUMENT_HEAD)
         self.assertTrue(html.startswith(DOCUMENT_HEAD))
-        self.assertLess(html.index(tag), html.index("</head>"), "defined before gui.py's script uses it")
+        self.assertNotIn("QuartzNotionTools", html)
         # check_gui_javascript.py and frontend tests still see exactly gui.py's block(s).
         source = (Path(gui.__file__).resolve()).read_text(encoding="utf-8")
         block = re.compile(r"<script>(.*?)</script>", re.S)
@@ -232,7 +232,7 @@ class DocumentAndRegressionTests(unittest.TestCase):
 
     def test_all_shipped_scripts_parse_together(self):
         scripts = re.findall(r"<script(?: id=\"[\w-]+\")?>(.*?)</script>", gui._HTML, re.S)
-        self.assertEqual(len(scripts), 2)
+        self.assertEqual(len(scripts), 1)
         with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as handle:
             handle.write("\n;\n".join(scripts))
         result = subprocess.run(["node", "--check", handle.name], capture_output=True, text=True, timeout=20)

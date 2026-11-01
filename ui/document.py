@@ -245,7 +245,6 @@ DOCUMENT_HEAD = (
     "<head>\n"
     '<meta charset="UTF-8">\n'
     "<title>Quartz</title>\n"
-    '<script id="' + NOTION_TOOLS_SCRIPT_ID + '">' + NOTION_TOOLS_SCRIPT + "</script>\n"
 )
 
 
@@ -256,8 +255,7 @@ def build_document(body: str, assets: Path | None = None) -> str:
     in gui.py. The modern theme (``ui/theme.py``) is appended after
     ``workspace.css`` so it wins the cascade. ``workspace.css`` is required (as before, a missing file raises);
     the brand mark is optional and only replaces the text placeholder when the
-    PNG exists. The Notion tool-status renderer ships in ``DOCUMENT_HEAD``;
-    it only defines ``window.QuartzNotionTools`` and mounts lazily on update.
+    PNG exists. The archived Notion renderer is not shipped in the document.
     """
     assets = asset_root() if assets is None else Path(assets)
     html = DOCUMENT_HEAD + "<style>\n" + BASE_CSS + "</style>" + body

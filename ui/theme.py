@@ -81,7 +81,6 @@ body:not(.show-panels) .rail.left,.rail.left { background:var(--q-ink-850) !impo
 .agent-conn .conn-dot { width:8px; height:8px; border-radius:50%; background:var(--q-faint); transition:background var(--q-med), box-shadow var(--q-med); }
 .agent-conn[data-agent-id="codex"] .conn-name { color:var(--q-codex); }
 .agent-conn[data-agent-id="antigravity"] .conn-name { color:var(--q-agy); }
-.agent-conn[data-agent-id="notion"] .conn-name { color:var(--q-notion); }
 .agent-conn .conn-state { grid-column:2; font-size:12px; color:var(--q-faint); line-height:1.35; }
 .agent-conn[data-state="ready"] .conn-dot { background:var(--q-ok); box-shadow:0 0 0 3px rgba(79,209,161,.16); }
 .agent-conn[data-state="pending"] .conn-dot { background:var(--q-warn); }
@@ -123,9 +122,7 @@ body:not(.show-panels) .rail.left,.rail.left { background:var(--q-ink-850) !impo
 /* Model pills: only the agents in play are shown */
 .model-selector-pill,.model-selector-pill.active-agy,.model-selector-pill.active-codex { background:var(--q-ink-800) !important;
   border:1px solid var(--q-line) !important; border-radius:var(--q-radius-m) !important; padding:2px 4px 2px 10px !important; gap:2px !important; }
-.model-selector-pill:not(.active-agy):not(.active-codex):not(.active-notion) { display:none !important; }
-#notionAgentPill { box-shadow:inset 3px 0 0 var(--q-notion) !important; }
-#notionAgentPill .pill-agent-name { color:var(--q-notion) !important; }
+.model-selector-pill:not(.active-agy):not(.active-codex) { display:none !important; }
 .pill-agent-name { font:600 11.5px var(--q-font) !important; letter-spacing:0 !important; text-transform:none; }
 #agyModelPill .pill-agent-name { color:var(--q-agy) !important; }
 #agyModelPill { box-shadow:inset 3px 0 0 var(--q-agy) !important; }
@@ -248,9 +245,9 @@ body:not(.show-panels) .rail.left,.rail.left { background:var(--q-ink-850) !impo
 .coordination-card details summary { font:12.5px var(--q-font); color:var(--q-muted); cursor:pointer; }
 .coordination-card details pre { font:12px/1.5 var(--q-mono); color:var(--q-muted); white-space:pre-wrap; }
 .coordination-card > p:last-child:empty { display:none; }
-[data-natural-permission],[data-notion-permission] { border-color:rgba(242,196,107,.45) !important; box-shadow:inset 3px 0 0 var(--q-warn); }
-[data-natural-permission] > button:first-of-type,[data-notion-permission] > button:first-of-type { background:var(--q-text) !important; color:var(--q-ink-900) !important; border-color:var(--q-text) !important; font-weight:600 !important; }
-[data-natural-permission] > button:first-of-type:hover:not(:disabled),[data-notion-permission] > button:first-of-type:hover:not(:disabled) { background:#fff !important; color:var(--q-ink-950) !important; }
+[data-natural-permission] { border-color:rgba(242,196,107,.45) !important; box-shadow:inset 3px 0 0 var(--q-warn); }
+[data-natural-permission] > button:first-of-type { background:var(--q-text) !important; color:var(--q-ink-900) !important; border-color:var(--q-text) !important; font-weight:600 !important; }
+[data-natural-permission] > button:first-of-type:hover:not(:disabled) { background:#fff !important; color:var(--q-ink-950) !important; }
 .diagnostics-card { border-radius:var(--q-radius-l) !important; }
 
 /* Thinking + jump */

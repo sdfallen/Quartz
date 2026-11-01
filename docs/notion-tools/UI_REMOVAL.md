@@ -1,0 +1,33 @@
+# Notion ajan yüzeyi kaldırma — 2026-11-01
+
+Kullanıcı Notion'ı Quartz arayüzünden de kaldırmayı istedi. Hafıza/MCP
+bağlantısı, kayıtlı sohbetler ve arşivlenen prototip kaynakları korunur.
+
+## Kaynak
+
+- Ajan sekmesi, gizli ajan dropdown seçeneği, sidebar bağlantı satırı ve
+  Notion model alanı gerçek DOM'dan çıkarıldı; yalnız CSS ile saklanmıyor.
+- Tool-status renderer belgeye yüklenmiyor; Notion izin kartı/render çağrıları
+  kaldırıldı. Arşivlenmiş renderer testleri prototip için korunuyor.
+- Onboarding Notion bağlantısı sorgulamıyor; Codex/Gemini sonuçları değişmiyor.
+- Eski Notion sohbetleri silinmez veya yeniden yazılmaz. UI eski ajan
+  seçimini Codex olarak gösterir; sonraki gönderim açık UI seçimini kullanır.
+- @notion veya eski UI'dan Notion gönderimi açık hata ile durur; sessizce
+  başka sağlayıcıya aktarılmaz. Tarihsel Notion mesajları kimliğiyle korunur.
+- Codex/Antigravity model seçimleri, Birlikte modu, izin ve Stop korunur.
+
+## Doğrulama
+
+- İlk hedefli 69 test OK; yeni gönderim ret testi ve connection testleri de
+  doğrulandı. Kaynak koruma/arayüz testleri yeni kullanıcı kararına uyarlandı.
+- İlk tam test koşusu, eski üç ajan beklentisi yüzünden tek testte başarısız
+  oldu; beklenti gerçek iki ajan DOM'u için düzeltildi. Gizlenmiyor.
+- Son build öncesi tam suite: 841 test OK, 12 helper önkoşul skip.
+- Helper derlendikten sonra gerçek yerel koordinasyon modülü: 22 test OK,
+  skip yok. İlk suite'deki skip'ler ayrı koşuyla giderildi, skip0 suite denmez.
+- JS syntax OK; Python syntax 234 dosya OK.
+- Kurulu eski Quartz iki pencereyle açık. Dış IPC istemcisi same-process
+  auth nedeniyle canlı görev durumunu alamadı; güvenlik aşılmadı. Açık
+  kullanıcı uygulaması zorla kapatılmadı.
+
+Derleme/paket/deployment ve canlı UI kabul sonucu tamamlandığında eklenir.

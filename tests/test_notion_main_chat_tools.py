@@ -504,11 +504,10 @@ class ChatWiringTests(unittest.TestCase):
         self.assertIn('action == "notion_tool_decide"', (root / "main.py").read_text(encoding="utf-8"))
         import gui
         self.assertTrue(callable(getattr(gui.Api, "notion_tool_decide", None)))
-        sync = gui._HTML[gui._HTML.index("  function syncNotionTools(payload, conversationId)"):]
-        sync = sync[:sync.index("  async function loadActiveConversation()")]
-        self.assertNotIn("natural_approve", sync)
-        self.assertNotIn("innerHTML", sync)
-        self.assertEqual(sync.count("notion_tool_decide("), 1)   # only from the user's click
+        # Prototype backend remains testable, but no approval surface ships.
+        self.assertNotIn('syncNotionTools(', gui._HTML)
+        self.assertNotIn('api.notion_tool_decide(', gui._HTML)
+
 
 
 class OptInCommandTests(unittest.TestCase):

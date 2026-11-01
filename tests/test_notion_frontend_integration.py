@@ -51,6 +51,13 @@ class NotionConnectionTests(unittest.TestCase):
 
 
 class NotionGuiRoutingTests(unittest.TestCase):
+    def test_removed_agent_cannot_dispatch_from_ui_or_old_mention(self):
+        api = gui.Api()
+        with patch('gui.ipc_send') as ipc:
+            for text, agent in (('hello', 'notion'), ('@notion hello', 'codex')):
+                self.assertEqual(api.chat_send(text, agent)['status'], 'error')
+            ipc.assert_not_called()
+
     def test_notion_task_cannot_start_or_instruct_local_desktop(self):
         api = gui.Api()
         api._natural = MagicMock()
@@ -69,9 +76,9 @@ class NotionGuiRoutingTests(unittest.TestCase):
         api._onboarding.status.return_value = original
         with patch('gui.ipc_send', return_value={'status':'ok','data':{'ready':True,'agent_name':'Test'}}) as ipc:
             result = api.onboarding_status()
-        ipc.assert_called_once_with('notion_status', {'force':False})
-        self.assertTrue(result['data']['providers']['notion']['ready'])
-        self.assertFalse(result['data']['needs_setup'])
+        ipc.assert_not_called()
+        self.assertNotIn('notion', result['data']['providers'])
+        self.assertTrue(result['data']['needs_setup'])
         self.assertNotIn('notion', original['providers'])
 
     def test_notion_checking_is_polled_even_with_setup_modal_closed(self):
@@ -88,10 +95,10 @@ function clearTimeout(){}function setTimeout(fn,ms){timers.push(ms);return timer
 '''
         checks=r'''
 renderCliStatus({providers:{notion:{installed:true,configured:true,checking:true,ready:false}}});
-assert.equal(notion.disabled,true);assert.deepEqual(timers,[1500]);
+assert.equal(notion.disabled,true);assert.deepEqual(timers,[]);
 renderCliStatus({providers:{notion:{ready:true,agent_name:'Test Agent'}}});
-assert.equal(notion.disabled,false);assert.equal(notion.attrs['aria-disabled'],'false');
-assert.equal(el('notionAgentName').textContent,'Test Agent');
+assert.equal(notion.disabled,true);
+assert.equal(el('agentConnections').children.length,2);
 '''
         result=subprocess.run(['node','-e',harness+function+checks],capture_output=True,text=True,timeout=10)
         self.assertEqual(result.returncode,0,result.stderr)

@@ -92,12 +92,8 @@ class Api:
     def onboarding_status(self, force=False):
         try:
             data = self._onboarding_service().status(force=force)
-            notion = ipc_send("notion_status", {"force": force is True})
-            # Do not mutate the onboarding service's cached provider dictionary.
-            providers = {**data.get("providers", {}), "notion": notion.get("data") if notion.get("status") == "ok"
-                         else {"ready": False, "checking": True}}
-            return {"status": "ok", "data": {**data, "providers": providers,
-                    "needs_setup": not any(p.get("ready") for p in providers.values())}}
+            # Notion remains shared memory, not an onboarding/model provider.
+            return {"status": "ok", "data": data}
         except Exception:
             return {"status": "error", "data": "Bağlantı durumu okunamadı; yeniden deneyin"}
 
@@ -714,6 +710,9 @@ class Api:
     def chat_send(self, message: str, agent: str = "", conversation_id: str = "",
                   write: bool = False, confirm_write: bool = False,
                   permission_level: str = "read-only", requested_permission_level: str | None = None) -> dict:
+        import re
+        if agent == "notion" or re.match(r"^\s*@notion\b", message, re.I):
+            return {"status": "error", "data": "Notion ajanı kaldırıldı. Codex veya Antigravity seçin; eski sohbetler korunur."}
         return ipc_send("chat_send", {
             "message": message, "agent": agent or None,
             "conversation_id": conversation_id or None,
@@ -987,7 +986,6 @@ _HTML_BODY = r"""
           <button type="button" class="agent-seg-btn active" data-agent="antigravity">◈ Antigravity</button>
           <button type="button" class="agent-seg-btn" data-agent="codex">◈ Codex</button>
           <button type="button" class="agent-seg-btn" data-agent="collaboration">◈ Birlikte</button>
-          <button type="button" class="agent-seg-btn" id="agentSegNotion" data-agent="notion" disabled aria-disabled="true" title="Notion bağlantısı kontrol ediliyor">◈ Notion</button>
         </div>
         <div class="chat-controls-group">
           <select class="project-picker" id="mainPermissionLevel" title="Tam Yetki (Tek Yetki Sistemi)" aria-label="İşlem Yetkisi" style="display:none">
@@ -1001,7 +999,6 @@ _HTML_BODY = r"""
               <option value="antigravity">Antigravity</option>
               <option value="codex">Codex</option>
               <option value="collaboration">Birlikte (Squad)</option>
-              <option value="notion">Notion</option>
             </select>
           </div>
           <button class="chat-tool-btn" id="btnContinueCollab" style="display:none" title="Birlikte modunda ajanlar arası tartışmayı 1 tur daha sürdür">⇄ +1 Tur</button>
@@ -1009,9 +1006,6 @@ _HTML_BODY = r"""
           <button class="chat-tool-btn" id="btnNewChat" title="Yeni Sohbet Başlat">＋ Yeni</button>
         </div>
         <div class="chat-models-bar" id="chatModelsBar">
-          <div class="model-selector-pill" id="notionAgentPill" style="display:none" title="Ajanın modeli ve bulut araçları Notion'da yönetilir. Yerel masaüstü kontrolü aktarılmaz.">
-            <span class="pill-agent-name">NOTION</span><span id="notionAgentName">Notion bulut ajanı</span>
-          </div>
           <div class="model-selector-pill active-agy" id="agyModelPill" title="Antigravity Model ve Düşünme Seviyesi Seçimi">
             <span class="pill-agent-name">ANTIGRAVITY</span>
             <select id="agyModelSelect" aria-label="Antigravity Modeli">
@@ -1329,15 +1323,14 @@ _HTML_BODY = r"""
     document.getElementById('cliContinue').disabled = !Object.values(providers).some(p=>p.ready);
     document.querySelectorAll('.agent-seg-btn[data-agent]').forEach(button => {
       const agent = button.dataset.agent;
-      const ready = agent === 'collaboration' ? providers.codex?.ready && providers.gemini?.ready : providers[agent === 'antigravity' ? 'gemini' : agent]?.ready;
+      const ready = ['codex','antigravity','collaboration'].includes(agent) && (agent === 'collaboration' ? providers.codex?.ready && providers.gemini?.ready : providers[agent === 'antigravity' ? 'gemini' : agent]?.ready);
       button.disabled = !ready;
       button.setAttribute('aria-disabled', ready ? 'false' : 'true');
       button.title = ready ? '' : 'Hesaplar ve CLI kurulumu bölümünden bu ajanı bağlayabilirsiniz';
     });
     renderAgentConnections(providers);
     clearTimeout(cliPollTimer);
-    if (providers.notion?.checking || ((busy || Object.values(providers).some(p=>p.login_pending)) && document.getElementById('cliSetup').classList.contains('show'))) cliPollTimer = setTimeout(()=>refreshCliStatus(false), 1500);
-    document.getElementById('notionAgentName').textContent = providers.notion?.agent_name || 'Notion bulut ajanı';
+    if ((busy || Object.values(providers).some(p=>p.login_pending)) && document.getElementById('cliSetup').classList.contains('show')) cliPollTimer = setTimeout(()=>refreshCliStatus(false), 1500);
   }
   // Sidebar connection list. Readiness comes from authenticated backend checks.
   let agentConnectionView = {providers: null, active: ''};
@@ -1360,7 +1353,6 @@ _HTML_BODY = r"""
     const rows = [
       ['codex', 'Codex', describe(known?.codex), active === 'codex' || active === 'collaboration'],
       ['antigravity', 'Antigravity', describe(known?.gemini), active === 'antigravity' || active === 'collaboration'],
-      ['notion', 'Notion', describe(known?.notion), active === 'notion'],
     ];
     box.replaceChildren();
     for (const [id, name, [state, text], current] of rows) {
@@ -2012,16 +2004,13 @@ _HTML_BODY = r"""
 
   function syncAgentUI(agent) {
     if (!agent) return;
+    // Old Notion conversations stay readable; the next turn uses a supported agent.
+    if (!['codex', 'antigravity', 'collaboration'].includes(agent)) agent = 'codex';
     if (mainAgentSelect) mainAgentSelect.value = agent;
     document.querySelectorAll('.agent-seg-btn[data-agent]').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.agent === agent);
     });
     const isCollab = agent === 'collaboration';
-    const notionPill = document.getElementById('notionAgentPill');
-    if (notionPill) {
-      notionPill.classList.toggle('active-notion', agent === 'notion');
-      notionPill.style.display = agent === 'notion' ? 'flex' : 'none';
-    }
     if (agyModelPill) {
       agyModelPill.classList.toggle('active-agy', agent === 'antigravity' || isCollab);
     }
@@ -2107,52 +2096,6 @@ _HTML_BODY = r"""
       .map(([key,value])=>`${names[key]}: ${states[value.status] || 'hazırlanıyor'}${value.status==='running' && value.step ? ' — '+value.step : ''}`).join(' | ');
   }
 
-  // Notion read-only test-file permission. Rendered from backend state only;
-  // never auto-approved (Tam Yetki does not apply to a cloud agent's tool use).
-  function syncNotionTools(payload, conversationId) {
-    window.QuartzNotionTools?.update(payload,
-      {conversationId: conversationId, agent: mainAgentSelect?.value || ''});
-    const task = payload && payload.schema_version === 1 ? payload.task : null;
-    const pending = task && task.state === 'awaiting_approval' && task.conversation_id === conversationId ? task.pending : null;
-    for (const card of document.querySelectorAll('[data-notion-permission]')) {
-      if (!pending || card.dataset.notionPermission !== String(pending.id)) card.remove();
-    }
-    if (!pending || !pending.id || document.querySelector(`[data-notion-permission="${CSS.escape(String(pending.id))}"]`)) return;
-    const panel = document.createElement('section');
-    panel.className = 'coordination-card notion-permission-card';
-    panel.dataset.notionPermission = String(pending.id);
-    panel.setAttribute('aria-label', 'Notion yerel dosya izni');
-    const title = document.createElement('strong'); title.textContent = 'Notion yerel test dosyasını okumak istiyor';
-    const scope = document.createElement('p');
-    scope.textContent = 'Kapsam: ' + String(task.request?.scope_summary || 'Quartz test projesi · salt okunur') +
-      '. Okumayı Quartz yerel okuyucusu yapar; Notion yalnız imzalı sonucu görür. Dosya yazma, terminal veya masaüstü erişimi yoktur.';
-    const note = document.createElement('p');
-    note.textContent = 'İzin yalnız bu sohbet turu için geçerlidir ve kısa sürede sona erer. İptal ile istediğiniz an durdurabilirsiniz.';
-    const details = document.createElement('details'); const label = document.createElement('summary');
-    label.textContent = 'İzin kapsamı ve teknik ayrıntılar';
-    const trace = document.createElement('pre');
-    trace.textContent = JSON.stringify({task_id: task.task_id, tool: task.request?.tool_name, pending_id: pending.id,
-      expires_at: pending.expires_at}, null, 2);
-    details.append(label, trace);
-    const approve = document.createElement('button'); approve.type = 'button'; approve.textContent = 'Bu görev için izin ver';
-    const deny = document.createElement('button'); deny.type = 'button'; deny.textContent = 'İzin verme';
-    const status = document.createElement('p'); status.setAttribute('role', 'status');
-    const decide = async (accept) => {
-      approve.disabled = true; deny.disabled = true;
-      try {
-        const reply = await window.pywebview.api.notion_tool_decide(pending.id, conversationId, accept, accept);
-        if (!reply || reply.status !== 'ok') throw new Error(reply?.data || 'İzin yanıtı alınamadı');
-        status.textContent = accept ? 'İzin verildi; görev devam ediyor.' : 'İzin verilmedi.';
-      } catch (error) {
-        // Single-use on the backend: a rejected decision is never retried here.
-        status.textContent = 'İzin işlenemedi: ' + String(error.message || error);
-      }
-    };
-    approve.onclick = () => decide(true); deny.onclick = () => decide(false);
-    panel.append(title, scope, note, details, approve, deny, status);
-    chatEl.append(panel); scrollToBottom(true);
-  }
-
   async function loadActiveConversation() {
     try {
       const resp = await window.pywebview.api.chat_status();
@@ -2175,12 +2118,10 @@ _HTML_BODY = r"""
       }
       if (!conv) return false;
       conversationLoaded = true;
-      if (currentConvId !== conv.id) window.QuartzNotionTools?.reset();
       currentConvId = conv.id;
       renderConversationNavigation(data.conversations || []);
       chatConvTitle.textContent = conv.title || 'Yeni Sohbet';
       if (conv.agent) syncAgentUI(conv.agent);
-      syncNotionTools(data.notion_tools, currentConvId);
       syncModelCatalogAndSelection(data.models, conv.models);
       const activeProjectId = conv.project_id || 'squad-pilot';
       mainProjectSelect.value = activeProjectId;
@@ -2226,7 +2167,6 @@ _HTML_BODY = r"""
       writerBadge.style.display = writer.locked ? 'inline-block' : 'none';
       writerBadge.textContent = writer.locked ? `Yazıcı: ${writer.agent || 'ajan'}` : '';
 
-      if (data.notion_tools && data.conversation_id === currentConvId) syncNotionTools(data.notion_tools, currentConvId);
       if (Array.isArray(data.messages) && data.messages.length > 0) {
         syncConversationMessages(data.messages, false);
       } else if (activeBotBubble && data.content) {
@@ -2352,7 +2292,7 @@ _HTML_BODY = r"""
       setThinking(true);
       if (typeof thinkingText !== 'undefined' && thinkingText) thinkingText.textContent = 'Görev hazırlanıyor...';
     }
-    const submittedAgent = /^@notion\b/i.test(text) ? 'notion' : (mainAgentSelect?.value || 'antigravity');
+    const submittedAgent = mainAgentSelect?.value || 'antigravity';
     let coordinated;
     try { coordinated = await window.pywebview.api.coordination_route(text, currentConvId, mainProjectSelect.value,
       {codex:{model:codexModelSelect.value,effort:codexEffortSelect.value},antigravity:{model:agyModelSelect.value,effort:agyEffortSelect.value}},selectedPermissionLevel, submittedAgent); }
@@ -3842,12 +3782,10 @@ _HTML_BODY = r"""
             const conv = st.data.active_conversation;
             if (conv) {
               const switched = currentConvId !== conv.id;
-              if (switched) window.QuartzNotionTools?.reset();
               currentConvId = conv.id;
               renderConversationNavigation(st.data.conversations || []);
               chatConvTitle.textContent = conv.title || 'Yeni Sohbet';
               if (conv.agent) syncAgentUI(conv.agent);
-              syncNotionTools(st.data.notion_tools, currentConvId);
               syncModelCatalogAndSelection(st.data.models, conv.models);
               if (switched) {
                 const permSelect = document.getElementById('mainPermissionLevel');

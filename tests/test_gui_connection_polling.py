@@ -29,8 +29,8 @@ renderCliStatus({job:{state:'done'},providers:{gemini:{installed:true,ready:true
 assert.equal(timers.length,1);assert.equal(el('cliContinue').disabled,false);
 assert.match(el('cliProviderState').textContent,/Antigravity CLI/);
 const rows=el('agentConnections').children;
-assert.deepEqual(rows.map(r=>[r.dataset.agentId,r.dataset.state]),[['codex','missing'],['antigravity','ready'],['notion','missing']]);
-assert.equal(rows[2].children[2].textContent,'Bağlı değil');
+assert.deepEqual(rows.map(r=>[r.dataset.agentId,r.dataset.state]),[['codex','missing'],['antigravity','ready']]);
+assert.equal(rows.length,2);
 '''
         result=subprocess.run(['node','-e',harness+function+checks],capture_output=True,text=True,encoding='utf-8',timeout=10)
         self.assertEqual(result.returncode,0,result.stderr)
