@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import gui
 from ui import document
+from ui.shell import SHELL_MARKUP
 from ui.styles import BASE_CSS
 from ui.theme import MODERN_CSS
 
@@ -143,6 +144,54 @@ class ScriptAndApiContractTests(unittest.TestCase):
         current = {name for name in dir(gui.Api)
                    if not name.startswith("_") and callable(getattr(gui.Api, name))}
         self.assertEqual(sorted(BASELINE_API - current), [])
+
+
+class ShellMarkupBoundaryTests(unittest.TestCase):
+    """Pyramid P2 slice 1: body markup lives in ui/shell.py, JS stays in gui.py."""
+
+    def test_body_is_shell_markup_followed_by_the_gui_source_script(self):
+        self.assertTrue(gui._HTML_BODY.startswith(SHELL_MARKUP))
+        rest = gui._HTML_BODY[len(SHELL_MARKUP):]
+        self.assertTrue(rest.startswith("<script>"))
+        source = (ROOT / "gui.py").read_text(encoding="utf-8")
+        scripts = SCRIPT_BLOCK.findall(source)
+        # Exactly one application script, and the syntax check sees all of it;
+        # an empty match list must never be mistaken for a passing check.
+        self.assertEqual(len(scripts), 1)
+        self.assertGreater(len(scripts[0].strip()), 1000)
+        self.assertEqual(SCRIPT_BLOCK.findall(rest), scripts)
+        self.assertTrue(rest.rstrip().endswith("</html>"))
+
+    def test_shell_markup_is_presentation_only(self):
+        self.assertTrue(SHELL_MARKUP.startswith("\n</head>\n<body>\n"))
+        self.assertNotRegex(SHELL_MARKUP, r"<script\b")
+        self.assertNotIn("pywebview.api", SHELL_MARKUP)
+        self.assertNotRegex(SHELL_MARKUP, r"\son[a-z]+\s*=")  # no inline handlers
+        self.assertNotIn("notion", SHELL_MARKUP.lower())  # suspended Notion controls stay out
+        tree = ast.parse((ROOT / "ui" / "shell.py").read_text(encoding="utf-8"))
+        self.assertEqual([n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))], [])
+
+    def test_shell_keeps_stop_permission_model_and_chat_controls(self):
+        ids = set(re.findall(r'\bid="([^"]+)"', SHELL_MARKUP))
+        for required in ("chat", "msgInput", "btnSend", "btnCancel", "btnHudStopTask",
+                         "btnDesktopTaskStop", "btnDesktopStop", "screenControlHud",
+                         "mainPermissionLevel", "codexModelSelect", "agyModelSelect"):
+            self.assertIn(required, ids)
+        self.assertEqual(len(re.findall(r'\bid="', SHELL_MARKUP)), len(ids), "duplicate ids")
+        self.assertIn(document.BRAND_PLACEHOLDER, SHELL_MARKUP)
+
+    def test_every_id_the_script_looks_up_by_literal_exists_in_the_shell(self):
+        script = gui._HTML_BODY[len(SHELL_MARKUP):]
+        wanted = set(re.findall(r"getElementById\('([A-Za-z0-9_-]+)'\)", script))
+        self.assertTrue(wanted)
+        built_ids = set(re.findall(r'\bid="([^"]+)"', gui._HTML))
+        created = set(re.findall(r"\.id\s*=\s*'([A-Za-z0-9_-]+)'", script))
+        self.assertEqual(sorted(wanted - built_ids - created), [])
+
+    def test_gui_imports_shell_statically_for_pyinstaller(self):
+        tree = ast.parse((ROOT / "gui.py").read_text(encoding="utf-8"))
+        modules = {node.module for node in tree.body if isinstance(node, ast.ImportFrom)}
+        self.assertIn("ui.shell", modules)
 
 
 if __name__ == "__main__":
