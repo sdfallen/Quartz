@@ -72,3 +72,39 @@ Son hüküm: Worker DEPLOYED, kaynak/derleme/test PASS. Gerçek Notion Worker to
 Normal Quartz sohbetinde yerel araçlar henüz açılmadı, canlı EXE değiştirilmedi.
 Terminal, dosya yazma, gerçek masaüstü kontrolü, REA ve Squad bu sınırlı prototipin
 canlı kabulü olarak gösterilemez; ayrı sonraki kapılardır.
+
+## İlk gerçek çağrılar ve erişim ayrımı
+
+Kullanıcının Save işlemi ardından ajan v4 yayımlandı. Notion Agent API'sindeki
+`connections` listesinde Worker görünmese de gerçek çağrı başarıyla Worker'a
+ulaştı: server run kaydı `tool:quartzReadTestFile`, aktör Quartz ajanı, exit0.
+Bu liste Worker bağlantısı için eksiksiz inventory kabul edilmemeli.
+
+İlk gerçek sonuç blocked idi. Güvenli aşama/http-code teşhisi eklendi, Node
+derleme ve 5 test geçti; aynı Worker'a scoped update deploy yapıldı. İkinci
+çağrının sonucu `grant_read / 404 / object_not_found`: izin sayfası ajan için
+erişilemiyordu. Kod veya imza toleransı gevşetilmedi, token aktarılmadı.
+
+Kullanıcı kuyruk erişimini ekleyip kaydetti. v6 yayını, yalnız kuyrukta reader ve
+web_search disallow olarak doğrulandı. Yeni owned session ve yeni fixture ile
+gerçek çağrı yapıldı: izin sayfası okunabildi, ardından `queue_create / 403 /
+restricted_resource` döndü. Yerel fixture okuması gerçekleşmiş sayılmıyor.
+
+Kullanıcı yalnız kuyruk için editor seçti. Son API readback'i hâlâ v6,
+has_unpublished_changes=true ve draft'ta editor gösteriyordu. Yayımlama onayının
+tamamlanması bekleniyor; gerçek yeni published sürüm görülmeden test yeniden
+başlatılmayacak. Eski fixture yerel kalıcı stop ile iptal edildi; yeni test için
+yayın sonrası yeni oturum/nonce/grant kullanılacak. Web access kapalı kalmalı.
+
+Sürücü iki koşuda read-only API timeout aldı ve otomatik gönderim tekrarı yapmadan
+kapandı; bu, Worker 404/403 sonuçlarından ayrı bir transport gözlemidir. Kalıcı
+network kök nedeni/fix iddiası yok. Tamamlanmış fakat signed request üretmemiş
+Worker turunda gereksiz 100 saniyelik polling azaltıldı: iki doğrulayıcı queue
+okumasından sonra NOT VERIFIED döner. Bu yol yeni bir regresyonla test edildi;
+gate/driver hedefli 14 test OK. Tam 808-test koşusu bu son küçük değişiklikten
+önceydi; yeni değişikliklere eski tam-suite LIVE kabulü aktarılmıyor.
+
+Yerel kanıtlar: first-live-blocked.json, diagnostic-live.json,
+reader-scope-live.json ve worker-call-receipts.json; normal user dosyaları ve
+çalışan Quartz EXE'si değiştirilmedi. Worker çağrısı LIVE OBSERVED; dosya okuma
+ve roundtrip kuyruk yazma yetkisinin yayımlanması yüzünden BLOCKED.

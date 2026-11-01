@@ -50,6 +50,15 @@ class DriverTests(unittest.TestCase):
             self.assertEqual(driver.run_acceptance()['status'],'observed')
         self.assertEqual(posts(),2)
 
+    def test_completed_blocked_worker_does_not_keep_polling_or_resubmit(self):
+        self.api.query.return_value=[]
+        with patch.object(driver.time,'sleep'):
+            result=driver.run_acceptance()
+        self.assertEqual(result['status'],'not_verified')
+        self.assertEqual(self.api.query.call_count,2)
+        self.api.complete.assert_not_called()
+        self.assertEqual(sum(c.args[0]=='v1/sessions' for c in self.client.request.call_args_list),1)
+
     def test_requires_action_is_not_autoapproved_or_resent_on_resume(self):
         self.client.request.return_value={'status':'requires_action'}
         result=driver.run_acceptance()

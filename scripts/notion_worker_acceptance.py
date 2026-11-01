@@ -102,6 +102,7 @@ def run_acceptance():
         client.request('v1/sessions', {'session_id':sid,'message':message})
     end = min(time.time()+100,manifest['expires_at'])
     local_result = None
+    finished_without_request = 0
     while time.time()<end:
         if stop.exists(): local.stop(); return {'status':'stopped'}
         remote = client.request('v1/sessions/'+sid)
@@ -114,6 +115,10 @@ def run_acceptance():
                 manifest['local_result']=local_result
                 save(manifest_path,manifest)
         if local_result and remote.get('status')=='completed': break
+        if remote.get('status')=='completed' and not local_result:
+            finished_without_request += 1
+            if finished_without_request >= 2:
+                return {'status':'not_verified','reason':'Remote tool turn completed without a signed queue request','session_id':sid}
         if remote.get('status') in {'failed','canceled','terminated'}:
             return {'status':'blocked','reason':'Remote session ended before tool acceptance','remote_status':remote['status']}
         time.sleep(2)
