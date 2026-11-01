@@ -69,8 +69,7 @@ class GeminiRuntime(AntigravityRuntime):
                   "ready": version["returncode"] == 0 and auth_verified, "backend": "gemini",
                   "error": "" if auth_verified else (oauth.get("auth_message") or ("Gemini bağlantısı henüz doğrulanmadı" if configured else "Gemini hesabını veya API anahtarını bağlayın"))}
         self._probe_cache, self._probe_cache_at = result, now
-        if result.get("ready"):
-            self._SHARED_PROBE_CACHE[cache_key] = (now, dict(result))
+        self._SHARED_PROBE_CACHE[cache_key] = (now, dict(result))
         return dict(result)
 
     def _command(self, args):

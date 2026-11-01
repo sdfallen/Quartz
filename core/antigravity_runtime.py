@@ -27,7 +27,12 @@ class AntigravityRuntime:
     _SHARED_MODELS_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
 
     def __init__(self, executable=None):
-        self.executable = self._find_executable(executable)
+        self.executable = None
+        self._init_error = ""
+        try:
+            self.executable = self._find_executable(executable)
+        except Exception as exc:
+            self._init_error = str(exc)
         self._lock = threading.RLock()
         self._runs = {}
         self._processes = {}
@@ -59,6 +64,16 @@ class AntigravityRuntime:
 
     def list_models(self, force: bool = False) -> dict:
         """Discover supported models and efforts directly from `agy models`."""
+        if not self.executable:
+            return {
+                "provider": "antigravity",
+                "default_model": self.DEFAULT_MODEL,
+                "default_effort": self.DEFAULT_EFFORT,
+                "efforts": list(self.SUPPORTED_EFFORTS),
+                "models": [],
+                "source": "cli_unavailable",
+                "error": self._init_error or "Antigravity CLI was not found",
+            }
         now = time.monotonic()
         cache_key = self._cache_key()
         with self._lock:
@@ -77,7 +92,8 @@ class AntigravityRuntime:
                 if not clean:
                     continue
                 parts = [p.strip() for p in clean.split("\t") if p.strip()]
-                if len(parts) < 2: continue  # CLI progress text is not a model
+                if len(parts) < 2:
+                    continue  # CLI progress text is not a model
                 model_id = parts[0] if parts else clean
                 label = parts[1] if len(parts) > 1 else model_id
                 inferred_effort = self.DEFAULT_EFFORT
@@ -109,11 +125,20 @@ class AntigravityRuntime:
         with self._lock:
             self._models_cache = result
             self._models_cache_at = time.monotonic()
-            if models:
-                self._SHARED_MODELS_CACHE[cache_key] = (self._models_cache_at, dict(result))
+            self._SHARED_MODELS_CACHE[cache_key] = (self._models_cache_at, dict(result))
         return dict(result)
 
     def probe(self, force: bool = False) -> dict:
+        if not self.executable:
+            res = {
+                "installed": False, "version": "", "executable": None,
+                "authenticated": False, "authentication": "required", "ready": False,
+                "error": self._init_error or "Antigravity CLI was not found",
+            }
+            with self._lock:
+                self._probe_cache = res
+                self._probe_cache_at = time.monotonic()
+            return dict(res)
         now = time.monotonic()
         cache_key = self._cache_key()
         with self._lock:
@@ -134,6 +159,7 @@ class AntigravityRuntime:
             with self._lock:
                 self._probe_cache = res
                 self._probe_cache_at = time.monotonic()
+                self._SHARED_PROBE_CACHE[cache_key] = (self._probe_cache_at, dict(res))
             return dict(res)
         # /model is handled locally by the CLI. In headless mode missing cached
         # credentials fail instead of opening an OAuth browser or hanging.
@@ -150,14 +176,15 @@ class AntigravityRuntime:
         with self._lock:
             self._probe_cache = res
             self._probe_cache_at = time.monotonic()
-            if authenticated:
-                self._SHARED_PROBE_CACHE[cache_key] = (self._probe_cache_at, dict(res))
+            self._SHARED_PROBE_CACHE[cache_key] = (self._probe_cache_at, dict(res))
         return dict(res)
 
     def start(self, prompt, project_path, *, write=False, full_access=False,
               squad_task_id=None, squad_agent_id=None, conversation_id=None,
               timeout="10m", model: str | None = None, effort: str | None = None,
               desktop_connection=None, tool_guard=False) -> dict:
+        if not self.executable:
+            raise RuntimeError(self._init_error or "Antigravity CLI was not found")
         text = str(prompt or "").strip()
         if not text:
             raise ValueError("Antigravity prompt cannot be empty")
@@ -335,6 +362,8 @@ class AntigravityRuntime:
         return event
 
     def _probe(self, args, timeout=15) -> dict:
+        if not self.executable:
+            return {"returncode": -1, "stdout": "", "stderr": self._init_error or "Antigravity CLI was not found"}
         try:
             completed = subprocess.run(
                 [self.executable, *args], stdin=subprocess.DEVNULL,
@@ -350,82 +379,93 @@ class AntigravityRuntime:
     def _read_stdout(self, run_id, process):
         if process.stdout is None:
             return
-        for raw in process.stdout:
-            line = raw.strip()
-            if not line:
-                continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                event = {"event": "raw", "text": line}
-            event = self._normalize_event(event)
-            with self._lock:
-                record = self._runs[run_id]
-                if record.get("first_event_at") is None:
-                    record["first_event_at"] = time.time()
-                record["events"].append(event)
-                event_type = event.get("event")
-                if event_type == "init":
-                    record["conversation_id"] = event.get("conversation_id") or record["conversation_id"]
-                elif event_type == "step_update":
-                    step = event.get("step_update") or {}
-                    delta = step.get("text_delta")
-                    if delta:
-                        if record.get("first_text_at") is None:
-                            record["first_text_at"] = time.time()
-                        record["result"] = (record["result"] or "") + delta
-                    tool_name = step.get("tool_name")
-                    if tool_name:
-                        tool_state = step.get("state", "RUNNING")
-                        record.setdefault("progress_log", []).append(f"Tool {tool_name}: {tool_state}")
-                        tool_info = step.get("tool_info") or {}
-                        params = tool_info.get("parameters") or {}
-                        if tool_state in {"DONE", "ERROR"} and tool_name in {"run_command", "run_shell_command"}:
-                            record["commands"].append({
-                                "command": str(params.get("CommandLine") or params.get("command") or "")[:1000],
-                                "exit_code": tool_info.get("exit_code"),
-                                "output": str(tool_info.get("output") or tool_info.get("error") or "")[:4000],
-                            })
-                        if tool_state == "DONE" and tool_name in {
-                            "create_file", "edit_file", "delete_file", "write_to_file", "write_file",
-                            "replace", "replace_file_content", "multi_replace_file_content", "notebook_edit",
-                        }:
-                            path = str(params.get("Path") or params.get("TargetFile") or
-                                       params.get("file_path") or params.get("path") or "")
-                            if path and path not in record["files_changed"]:
-                                record["files_changed"].append(path)
-                elif event_type == "result":
-                    result = event.get("result") or {}
-                    record["conversation_id"] = result.get("conversation_id") or record["conversation_id"]
-                    final_resp = str(result.get("response") or "")
-                    if final_resp:
-                        if record.get("first_text_at") is None:
-                            record["first_text_at"] = time.time()
-                        record["result"] = final_resp
-                    record["usage"] = result.get("usage")
-                    record["remote_status"] = str(result.get("status") or "")
-                    if result.get("error"):
-                        record["errors"].append(str(result["error"]))
-                    if result.get("denied_actions"):
-                        record["denied_actions"] = list(result["denied_actions"])
-                        denied = ", ".join(
-                            str(item.get("action") or item.get("display_name") or "unknown")
-                            for item in result["denied_actions"]
-                        )
-                        record["errors"].append(
-                            f"Antigravity permission policy denied: {denied}"
-                        )
-                    if result.get("status") == "SUCCESS" and not record["result"]:
-                        record["errors"].append("Antigravity returned SUCCESS without a response")
+        try:
+            for raw in process.stdout:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    event = {"event": "raw", "text": line}
+                event = self._normalize_event(event)
+                with self._lock:
+                    record = self._runs.get(run_id)
+                    if not record:
+                        continue
+                    is_terminal = record.get("status") in self.TERMINAL
+                    if not is_terminal and record.get("first_event_at") is None:
+                        record["first_event_at"] = time.time()
+                    record["events"].append(event)
+                    event_type = event.get("event")
+                    if event_type == "init":
+                        record["conversation_id"] = event.get("conversation_id") or record["conversation_id"]
+                    elif event_type == "step_update":
+                        step = event.get("step_update") or {}
+                        delta = step.get("text_delta")
+                        if delta and not is_terminal:
+                            if record.get("first_text_at") is None:
+                                record["first_text_at"] = time.time()
+                            record["result"] = (record["result"] or "") + delta
+                        tool_name = step.get("tool_name")
+                        if tool_name:
+                            tool_state = step.get("state", "RUNNING")
+                            record.setdefault("progress_log", []).append(f"Tool {tool_name}: {tool_state}")
+                            tool_info = step.get("tool_info") or {}
+                            params = tool_info.get("parameters") or {}
+                            if tool_state in {"DONE", "ERROR"} and tool_name in {"run_command", "run_shell_command"}:
+                                record["commands"].append({
+                                    "command": str(params.get("CommandLine") or params.get("command") or "")[:1000],
+                                    "exit_code": tool_info.get("exit_code"),
+                                    "output": str(tool_info.get("output") or tool_info.get("error") or "")[:4000],
+                                })
+                            if tool_state == "DONE" and tool_name in {
+                                "create_file", "edit_file", "delete_file", "write_to_file", "write_file",
+                                "replace", "replace_file_content", "multi_replace_file_content", "notebook_edit",
+                            }:
+                                path = str(params.get("Path") or params.get("TargetFile") or
+                                           params.get("file_path") or params.get("path") or "")
+                                if path and path not in record["files_changed"]:
+                                    record["files_changed"].append(path)
+                    elif event_type == "result":
+                        result = event.get("result") or {}
+                        record["conversation_id"] = result.get("conversation_id") or record["conversation_id"]
+                        final_resp = str(result.get("response") or "")
+                        if final_resp and not is_terminal:
+                            if record.get("first_text_at") is None:
+                                record["first_text_at"] = time.time()
+                            record["result"] = final_resp
+                        record["usage"] = result.get("usage")
+                        record["remote_status"] = str(result.get("status") or "")
+                        if result.get("error"):
+                            record["errors"].append(str(result["error"]))
+                        if result.get("denied_actions"):
+                            record["denied_actions"] = list(result["denied_actions"])
+                            denied = ", ".join(
+                                str(item.get("action") or item.get("display_name") or "unknown")
+                                for item in result["denied_actions"]
+                            )
+                            record["errors"].append(
+                                f"Antigravity permission policy denied: {denied}"
+                            )
+                        if result.get("status") == "SUCCESS" and not record["result"]:
+                            record["errors"].append("Antigravity returned SUCCESS without a response")
+        except (OSError, ValueError):
+            pass
 
     def _read_stderr(self, run_id, process):
         if process.stderr is None:
             return
-        for raw in process.stderr:
-            line = raw.strip()
-            if line:
-                with self._lock:
-                    self._runs[run_id]["errors"].append(line)
+        try:
+            for raw in process.stderr:
+                line = raw.strip()
+                if line:
+                    with self._lock:
+                        record = self._runs.get(run_id)
+                        if record:
+                            record["errors"].append(line)
+        except (OSError, ValueError):
+            pass
 
     @staticmethod
     def _parse_timeout_seconds(timeout) -> float:
@@ -449,30 +489,44 @@ class AntigravityRuntime:
         with self._lock:
             timeout_sec = self._runs.get(run_id, {}).get("timeout_seconds") or 600.0
         timed_out = False
+        code = -1
         try:
-            code = process.wait(timeout=timeout_sec)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            stop_process_tree(process, timeout=5)
             try:
-                code = process.wait(timeout=5)
-            except Exception:
-                code = -1
-        stdout_thread.join(timeout=5)
-        stderr_thread.join(timeout=5)
-        with self._lock:
-            record = self._runs[run_id]
-            record["exit_code"] = code
-            record["finished_at"] = time.time()
-            if timed_out:
-                record["errors"].append(f"Task timed out after {timeout_sec:g}s")
-            if record["cancel_requested"]:
-                record["status"] = "cancelled"
-            elif (not timed_out and code == 0 and record.get("remote_status") in self.SUCCESS
-                  and record["result"] and not record["denied_actions"]):
-                record["status"] = "completed"
-            else:
-                record["status"] = "failed"
-            self._processes.pop(run_id, None)
-            if self._writers.get(project_key) == run_id:
-                self._writers.pop(project_key, None)
+                code = process.wait(timeout=timeout_sec)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                stop_process_tree(process, timeout=5)
+                try:
+                    code = process.wait(timeout=5)
+                except Exception:
+                    code = -1
+            stdout_thread.join(timeout=5)
+            stderr_thread.join(timeout=5)
+            with self._lock:
+                record = self._runs.get(run_id)
+                if record:
+                    record["exit_code"] = code
+                    record["finished_at"] = time.time()
+                    if timed_out:
+                        record["errors"].append(f"Task timed out after {timeout_sec:g}s")
+                    if record.get("cancel_requested"):
+                        record["status"] = "cancelled"
+                    elif (not timed_out and code == 0 and record.get("remote_status") in self.SUCCESS
+                          and record["result"] and not record["denied_actions"]):
+                        record["status"] = "completed"
+                    else:
+                        record["status"] = "failed"
+                        if code != 0 and not record["errors"]:
+                            record["errors"].append(f"Process exited with code {code}")
+        except Exception as exc:
+            with self._lock:
+                record = self._runs.get(run_id)
+                if record:
+                    record["status"] = "failed"
+                    record["finished_at"] = time.time()
+                    record["errors"].append(f"Runtime error in process watcher: {exc}")
+        finally:
+            with self._lock:
+                self._processes.pop(run_id, None)
+                if self._writers.get(project_key) == run_id:
+                    self._writers.pop(project_key, None)
