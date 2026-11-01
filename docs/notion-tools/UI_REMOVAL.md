@@ -30,4 +30,19 @@ bağlantısı, kayıtlı sohbetler ve arşivlenen prototip kaynakları korunur.
   auth nedeniyle canlı görev durumunu alamadı; güvenlik aşılmadı. Açık
   kullanıcı uygulaması zorla kapatılmadı.
 
-Derleme/paket/deployment ve canlı UI kabul sonucu tamamlandığında eklenir.
+## Paket sonucu ve kalan son adım
+
+- Yeni paket oluşturuldu ve kaynak/kod/helper/marka kontrolleri geçti:
+  `C:\Users\LENAVO\.codex\backups\quartz-workspace-package-20261101-182958`.
+- Paket içindeki gui bytecode sabitleri ayrıca okundu: agentSegNotion,
+  notion seçeneği, notionAgentPill ve syncNotionTools yok; Codex,
+  Antigravity ve Birlikte düğmeleri mevcut. Bu BUILT doğrulamasıdır,
+  gerçek pencere/piksel kabulü değildir.
+- Kanıt ui-removal-packaged-code.json; derleme logu ui-removal-build.log,
+  koordinasyon tekrarının logu ui-removal-coordination.log.
+- Kurulu Quartz.exe iki süreç/pencereyle açık kaldı. Yeni paket henüz
+  kullanıcı dist klasörüne alınmadı, eski paket/user data değiştirilmedi.
+- Kullanıcıdan iki Quartz penceresini normal kapatması istendi. Kapanış
+  doğrulandıktan sonra eski dist yedeklenip mevcut kullanıcı dosyaları
+  korunarak yeni paket alınmalı; hash readback ve mümkünse yeni pencere
+  UIA/görsel kabul yapılmalı. Notion masaüstü uygulamasını kapatma.
