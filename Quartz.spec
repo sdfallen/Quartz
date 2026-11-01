@@ -21,6 +21,8 @@ hiddenimports += ['core.self_diagnostics', 'core.rea_adapter', 'core.artifact_di
 hiddenimports += ['core.application_knowledge']
 hiddenimports += ['core.elevation']
 hiddenimports += ['core.notion_cli', 'core.notion_runtime', 'ui', 'ui.document', 'ui.styles', 'ui.theme']
+# Main-chat read-only Notion Worker fixture (lazy imports; pywin32 Credential Manager).
+hiddenimports += ['core.notion_worker_task', 'core.notion_worker_bridge', 'win32cred']
 tmp_ret = collect_all('webview')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 

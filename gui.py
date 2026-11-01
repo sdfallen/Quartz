@@ -728,6 +728,12 @@ class Api:
     def chat_cancel(self) -> dict:
         return ipc_send("chat_cancel")
 
+    def notion_tool_decide(self, pending_id, conversation_id, accept, confirmed=False) -> dict:
+        """In-chat Notion test-file permission. The backend binds it to the live turn."""
+        return ipc_send("notion_tool_decide", {"pending_id": str(pending_id or ""),
+                                               "conversation_id": str(conversation_id or ""),
+                                               "accept": accept is True, "confirmed": confirmed is True})
+
     def get_stats(self) -> dict:
         try:
             import psutil
@@ -2101,6 +2107,52 @@ _HTML_BODY = r"""
       .map(([key,value])=>`${names[key]}: ${states[value.status] || 'hazırlanıyor'}${value.status==='running' && value.step ? ' — '+value.step : ''}`).join(' | ');
   }
 
+  // Notion read-only test-file permission. Rendered from backend state only;
+  // never auto-approved (Tam Yetki does not apply to a cloud agent's tool use).
+  function syncNotionTools(payload, conversationId) {
+    window.QuartzNotionTools?.update(payload,
+      {conversationId: conversationId, agent: mainAgentSelect?.value || ''});
+    const task = payload && payload.schema_version === 1 ? payload.task : null;
+    const pending = task && task.state === 'awaiting_approval' && task.conversation_id === conversationId ? task.pending : null;
+    for (const card of document.querySelectorAll('[data-notion-permission]')) {
+      if (!pending || card.dataset.notionPermission !== String(pending.id)) card.remove();
+    }
+    if (!pending || !pending.id || document.querySelector(`[data-notion-permission="${CSS.escape(String(pending.id))}"]`)) return;
+    const panel = document.createElement('section');
+    panel.className = 'coordination-card notion-permission-card';
+    panel.dataset.notionPermission = String(pending.id);
+    panel.setAttribute('aria-label', 'Notion yerel dosya izni');
+    const title = document.createElement('strong'); title.textContent = 'Notion yerel test dosyasını okumak istiyor';
+    const scope = document.createElement('p');
+    scope.textContent = 'Kapsam: ' + String(task.request?.scope_summary || 'Quartz test projesi · salt okunur') +
+      '. Okumayı Quartz yerel okuyucusu yapar; Notion yalnız imzalı sonucu görür. Dosya yazma, terminal veya masaüstü erişimi yoktur.';
+    const note = document.createElement('p');
+    note.textContent = 'İzin yalnız bu sohbet turu için geçerlidir ve kısa sürede sona erer. İptal ile istediğiniz an durdurabilirsiniz.';
+    const details = document.createElement('details'); const label = document.createElement('summary');
+    label.textContent = 'İzin kapsamı ve teknik ayrıntılar';
+    const trace = document.createElement('pre');
+    trace.textContent = JSON.stringify({task_id: task.task_id, tool: task.request?.tool_name, pending_id: pending.id,
+      expires_at: pending.expires_at}, null, 2);
+    details.append(label, trace);
+    const approve = document.createElement('button'); approve.type = 'button'; approve.textContent = 'Bu görev için izin ver';
+    const deny = document.createElement('button'); deny.type = 'button'; deny.textContent = 'İzin verme';
+    const status = document.createElement('p'); status.setAttribute('role', 'status');
+    const decide = async (accept) => {
+      approve.disabled = true; deny.disabled = true;
+      try {
+        const reply = await window.pywebview.api.notion_tool_decide(pending.id, conversationId, accept, accept);
+        if (!reply || reply.status !== 'ok') throw new Error(reply?.data || 'İzin yanıtı alınamadı');
+        status.textContent = accept ? 'İzin verildi; görev devam ediyor.' : 'İzin verilmedi.';
+      } catch (error) {
+        // Single-use on the backend: a rejected decision is never retried here.
+        status.textContent = 'İzin işlenemedi: ' + String(error.message || error);
+      }
+    };
+    approve.onclick = () => decide(true); deny.onclick = () => decide(false);
+    panel.append(title, scope, note, details, approve, deny, status);
+    chatEl.append(panel); scrollToBottom(true);
+  }
+
   async function loadActiveConversation() {
     try {
       const resp = await window.pywebview.api.chat_status();
@@ -2128,8 +2180,7 @@ _HTML_BODY = r"""
       renderConversationNavigation(data.conversations || []);
       chatConvTitle.textContent = conv.title || 'Yeni Sohbet';
       if (conv.agent) syncAgentUI(conv.agent);
-      window.QuartzNotionTools?.update(data.notion_tools,
-        {conversationId: currentConvId, agent: mainAgentSelect?.value || conv.agent});
+      syncNotionTools(data.notion_tools, currentConvId);
       syncModelCatalogAndSelection(data.models, conv.models);
       const activeProjectId = conv.project_id || 'squad-pilot';
       mainProjectSelect.value = activeProjectId;
@@ -2175,6 +2226,7 @@ _HTML_BODY = r"""
       writerBadge.style.display = writer.locked ? 'inline-block' : 'none';
       writerBadge.textContent = writer.locked ? `Yazıcı: ${writer.agent || 'ajan'}` : '';
 
+      if (data.notion_tools && data.conversation_id === currentConvId) syncNotionTools(data.notion_tools, currentConvId);
       if (Array.isArray(data.messages) && data.messages.length > 0) {
         syncConversationMessages(data.messages, false);
       } else if (activeBotBubble && data.content) {
@@ -3795,8 +3847,7 @@ _HTML_BODY = r"""
               renderConversationNavigation(st.data.conversations || []);
               chatConvTitle.textContent = conv.title || 'Yeni Sohbet';
               if (conv.agent) syncAgentUI(conv.agent);
-              window.QuartzNotionTools?.update(st.data.notion_tools,
-                {conversationId: currentConvId, agent: mainAgentSelect?.value || conv.agent});
+              syncNotionTools(st.data.notion_tools, currentConvId);
               syncModelCatalogAndSelection(st.data.models, conv.models);
               if (switched) {
                 const permSelect = document.getElementById('mainPermissionLevel');

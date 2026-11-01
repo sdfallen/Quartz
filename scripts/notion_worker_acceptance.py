@@ -151,20 +151,38 @@ def run_acceptance():
     return {k:v for k,v in evidence.items() if k not in {'local_result','agent_messages'}}
 
 
+def set_main_chat(enabled):
+    """Explicit, per-profile opt-in for the main chat. Never flips an existing
+    ``enabled: false`` decision and never copies config between profiles."""
+    path = profile_root()/'worker-bridge.json'
+    bridge = load_json(path, {})
+    if enabled:
+        owned_context()   # same checks as the CLI pilot: profile, workspace, Credential Manager key
+        if bridge.get('enabled') is False:
+            return {'status':'blocked','reason':'worker-bridge.json enabled=false; ana sohbet açılmadı. Bu kararı ayrıca değiştirin.'}
+    bridge['main_chat'] = enabled is True
+    save(path, bridge)
+    return {'status':'enabled' if enabled else 'disabled', 'profile':str(profile_root())}
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     group=parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--prepare',action='store_true')
     group.add_argument('--run',action='store_true')
     group.add_argument('--stop',action='store_true')
+    group.add_argument('--enable-main-chat',action='store_true')
+    group.add_argument('--disable-main-chat',action='store_true')
     args=parser.parse_args()
     try:
-        if args.prepare: result=prepare()
+        if args.enable_main_chat: result=set_main_chat(True)
+        elif args.disable_main_chat: result=set_main_chat(False)
+        elif args.prepare: result=prepare()
         elif args.run: result=run_acceptance()
         else:
             _,m=current();(Path(m['root'])/'.stopped').touch();result={'status':'stopped'}
         print(json.dumps(result,ensure_ascii=True))
-        return 0 if result['status'] in {'prepared','observed','stopped'} else 2
+        return 0 if result['status'] in {'prepared','observed','stopped','enabled','disabled'} else 2
     except Exception as exc:
         print(json.dumps({'status':'blocked','reason':str(exc) if isinstance(exc,NotionError) else 'Acceptance failed safely; no automatic request replay or secret output.',
             'error_type':type(exc).__name__, 'code':getattr(exc,'code',None) if isinstance(exc,NotionError) else None}))

@@ -79,9 +79,7 @@ class AgentChatService:
                                  'efforts':models_catalog[provider]['efforts']}])
 
             return {
-                "notion_tools": {"schema_version": 1, "availability": "unavailable",
-                    "capabilities": [], "task": None,
-                    "message": "Notion sohbeti kullanılabilir. Yerel araç bağlantısı henüz doğrulanmadı."},
+                "notion_tools": self._notion_tools_payload(conv.get("id") if conv else None),
                 "active_conversation": conv,
                 "preferences": self.store.preferences(),
                 "conversations": self.store.list(),
@@ -546,6 +544,12 @@ class AgentChatService:
             for entry in self._active_turn.get('agent_progress', {}).values():
                 if entry.get('status') not in {'completed','failed','cancelled'}: entry['status'] = 'cancelling'
 
+        if turn.get("agent") == "notion" and getattr(self.agent_service, "_notion_tools", None) is not None:
+            try:
+                self.agent_service.notion_tools.stop_all()
+            except Exception as exc:
+                log.warning("Notion tool stop failed: %s", exc)
+
         collab_id = turn.get("collaboration_id")
         if collab_id:
             try:
@@ -631,6 +635,7 @@ class AgentChatService:
                 "agent_progress": turn.get('agent_progress', {}),
                 "messages": messages,
                 "single_writer": writer_status,
+                "notion_tools": self._notion_tools_payload(cid),
             }
         except Exception as exc:
             return {"active": False, "error": str(exc)}
@@ -755,6 +760,42 @@ class AgentChatService:
             if agent in {"collaboration", "both"}:
                 self._finish_group_task(cid, msg_id, project_id)
 
+    def _notion_tools_payload(self, conversation_id):
+        unavailable = {"schema_version": 1, "availability": "unavailable", "capabilities": [], "task": None,
+                       "message": "Notion sohbeti kullanılabilir. Yerel araç bağlantısı henüz doğrulanmadı."}
+        try:
+            payload = self.agent_service.notion_tools.payload(conversation_id)
+            return payload if isinstance(payload, dict) and payload.get("schema_version") == 1 else unavailable
+        except Exception:
+            return unavailable
+
+    def decide_notion_tool(self, pending_id, conversation_id, accept, confirmed=False):
+        return self.agent_service.notion_tools.decide(str(pending_id or ""), str(conversation_id or ""),
+                                                      accept is True, confirmed=confirmed is True)
+
+    def _run_notion_tool_turn(self, cid, msg_id, prompt, key, session):
+        tools = self.agent_service.notion_tools
+
+        def publish(text, view):
+            meta = {"agent": "notion", "sender": "notion", "status": "running", "local_tools": True,
+                    "notion_tool_state": (view or {}).get("state")}
+            self._publish_run_update(cid, msg_id, text, meta)
+
+        status, text, session_id = tools.run_turn(
+            conversation_id=cid, message_id=msg_id, prompt=prompt, session_id=session,
+            cancelled=lambda: self._is_turn_cancelled(msg_id), publish=publish)
+        if self._is_turn_cancelled(msg_id):
+            return   # cancel_active already wrote the cancelled message
+        view = tools.payload(cid).get("task") or {}
+        meta = {"agent": "notion", "sender": "notion", "status": status if status in {"completed", "failed", "cancelled"} else "failed",
+                "local_tools": True, "notion_tool_state": view.get("state"),
+                "verification": view.get("verification", "none")}
+        with self._lock:
+            if session_id:
+                self.store.set_agent_session(cid, key, session_id)
+            if self._finish_turn(msg_id, "completed" if status == "completed" else "failed"):
+                self.store.update_message_content(cid, msg_id, text, metadata=meta)
+
     def _run_notion_turn(self, cid, msg_id, prompt):
         with self._lock:
             if self._is_turn_cancelled(msg_id):
@@ -764,6 +805,18 @@ class AgentChatService:
             config = self.agent_service.notion.configuration()
             key = f"notion:{config.get('workspace_id')}:{config.get('agent_id')}"
             session = conv.get("sessions", {}).get(key)
+        from core.notion_worker_task import wants_local_read
+        if wants_local_read(prompt):
+            try:
+                ready = self.agent_service.notion_tools.availability()[0] == "ready"
+            except Exception:
+                ready = False   # tool bridge unusable: plain cloud chat, no local access
+            if ready:
+                self._run_notion_tool_turn(cid, msg_id, prompt, key, session)
+                return
+        with self._lock:
+            if self._is_turn_cancelled(msg_id):
+                return
             dispatched = self.agent_service.dispatch_notion(prompt, session_id=session)
             run_id = dispatched["run"]["id"]
             self._set_turn_progress("Notion ajanı yanıtlıyor…", msg_id, run_id, agent="notion")

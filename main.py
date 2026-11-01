@@ -472,6 +472,15 @@ class IPCServer:
         if action == "chat_cancel":
             return {"status": "ok", "data": self._get_agent_chat().cancel_active()}
 
+        if action == "notion_tool_decide":
+            data = req.get("data") or {}
+            try:
+                return {"status": "ok", "data": self._get_agent_chat().decide_notion_tool(
+                    data.get("pending_id"), data.get("conversation_id"), data.get("accept") is True,
+                    confirmed=data.get("confirmed") is True)}
+            except PermissionError as exc:
+                return {"status": "error", "data": str(exc)}
+
         if action == "ping":
             return {"status": "ok", "data": "pong"}
 

@@ -43,6 +43,7 @@ class MultiAgentService:
         self._antigravity_error = ""
         # Optional provider: construct lazily; never probe/login on app startup.
         self._notion = None
+        self._notion_tools = None
         try:
             from core.gemini_runtime import google_runtime
             self.antigravity = google_runtime(antigravity_executable, legacy_factory=AntigravityRuntime)
@@ -261,6 +262,15 @@ class MultiAgentService:
                 from core.notion_runtime import NotionRuntime
                 self._notion = NotionRuntime()
             return self._notion
+
+    @property
+    def notion_tools(self):
+        # Main-chat driver for the verified read-only Worker fixture only.
+        with self._lock:
+            if self._notion_tools is None:
+                from core.notion_worker_task import NotionWorkerTasks
+                self._notion_tools = NotionWorkerTasks(self.notion)
+            return self._notion_tools
 
     def dispatch_notion(self, prompt, *, session_id=None):
         # Cloud-only: no project paths, file contents, desktop tools or writer
@@ -717,6 +727,10 @@ class MultiAgentService:
 
     def shutdown(self):
         errors = []
+        tools = getattr(self, '_notion_tools', None)
+        if tools is not None:
+            try: tools.stop_all()   # local revocation before cloud runtimes stop
+            except Exception as exc: errors.append(str(exc))
         for runtime in (self.codex, self.antigravity, getattr(self, '_notion', None)):
             if runtime is not None:
                 try: runtime.shutdown()

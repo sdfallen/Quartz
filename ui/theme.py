@@ -248,9 +248,9 @@ body:not(.show-panels) .rail.left,.rail.left { background:var(--q-ink-850) !impo
 .coordination-card details summary { font:12.5px var(--q-font); color:var(--q-muted); cursor:pointer; }
 .coordination-card details pre { font:12px/1.5 var(--q-mono); color:var(--q-muted); white-space:pre-wrap; }
 .coordination-card > p:last-child:empty { display:none; }
-[data-natural-permission] { border-color:rgba(242,196,107,.45) !important; box-shadow:inset 3px 0 0 var(--q-warn); }
-[data-natural-permission] > button:first-of-type { background:var(--q-text) !important; color:var(--q-ink-900) !important; border-color:var(--q-text) !important; font-weight:600 !important; }
-[data-natural-permission] > button:first-of-type:hover:not(:disabled) { background:#fff !important; color:var(--q-ink-950) !important; }
+[data-natural-permission],[data-notion-permission] { border-color:rgba(242,196,107,.45) !important; box-shadow:inset 3px 0 0 var(--q-warn); }
+[data-natural-permission] > button:first-of-type,[data-notion-permission] > button:first-of-type { background:var(--q-text) !important; color:var(--q-ink-900) !important; border-color:var(--q-text) !important; font-weight:600 !important; }
+[data-natural-permission] > button:first-of-type:hover:not(:disabled),[data-notion-permission] > button:first-of-type:hover:not(:disabled) { background:#fff !important; color:var(--q-ink-950) !important; }
 .diagnostics-card { border-radius:var(--q-radius-l) !important; }
 
 /* Thinking + jump */

@@ -100,9 +100,17 @@ NOTION_TOOLS_SCRIPT = r"""
     if (el && !el.hidden) { el.hidden = true; el.replaceChildren(); }
     view.key = '';
   }
+  function usable(id) {
+    var button = document.getElementById(id);
+    return !!(button && !button.hidden && !button.disabled && button.getClientRects().length &&
+              (button.style || {}).display !== 'none');
+  }
+  // Which EXISTING Stop control covers this task: the chat turn's İptal
+  // (Notion tool turns) or the desktop task strip. Never a new control.
   function stopAvailable() {
-    var stop = document.getElementById('btnDesktopTaskStop');
-    return !!(stop && !stop.hidden && !stop.disabled && stop.getClientRects().length);
+    if (usable('btnCancel')) return 'chat';
+    if (usable('btnDesktopTaskStop')) return 'desktop';
+    return '';
   }
 
   // Decide whether an incoming task replaces, updates or must be ignored.
@@ -183,6 +191,7 @@ NOTION_TOOLS_SCRIPT = r"""
     var who = make('span', 'notion-tools-operator');
     who.dataset.operator = OPERATORS[operatorId] ? operatorId : 'unknown';
     who.textContent = operatorId === 'notion' ? 'Yürüten: Notion'
+      : operatorId === 'quartz' ? 'Yürüten: Quartz yerel okuyucu · isteyen Notion'
       : OPERATORS[operatorId] ? 'Yürüten: ' + operator + ' · Notion bu işi devretti'
       : 'Yürüten: belirtilmedi';
     copy.append(who);
@@ -195,8 +204,10 @@ NOTION_TOOLS_SCRIPT = r"""
         : 'Onay veya ret izin kartından verilir.'));
     }
     if (ACTIVE[state]) {
-      copy.append(make('span', 'notion-tools-stop', stopAvailable()
-        ? 'Durdurmak için görev şeridindeki Görevi durdur düğmesini kullanın.'
+      var stopWith = stopAvailable();
+      copy.append(make('span', 'notion-tools-stop', stopWith === 'chat'
+        ? 'Durdurmak için sohbetteki İptal düğmesini kullanın.'
+        : stopWith === 'desktop' ? 'Durdurmak için görev şeridindeki Görevi durdur düğmesini kullanın.'
         : 'Bu görev için Quartz durdurma yolu görünmüyor; görevi doğrulayın.'));
     }
     head.append(copy);
