@@ -73,3 +73,31 @@ kompozisyonu sonraki dar dilimlerdir. ASTER ve Notion ajanı açılmadı.
 
 Bu rapor paket/live sonucu gelene kadar SOURCE/TESTED kabulüdür. Eski
 Notion'sız kurulum veya kullanıcı verisi bu kaynak incelemesinde değiştirilmedi.
+
+## Son paket ve yerel devreye alma
+
+- Son build koşusu: 868 test case OK, 12 helper önkoşul skip. Eklenen son
+  orphan retry testi ayrıca 7 testlik review modülünde geçti; tam suite
+  sayısı buna göre geriye dönük artırılmadı. Helper derlendikten sonra
+  gerçek yerel koordinasyon modülü ayrıca 22 test / skip0 geçti.
+- Paket 20261101-203956 derlendi; kaynak bytecode (runtime/process-tree/UI),
+  helper, kaynaklar ve Q ikon kontrolleri geçti.
+- Gerçek hesaplarla iki CLI protokol smoke'u (geçici klasör, araç guard'ı):
+  Codex ve Google ajanı istenen metni döndürdü, exit0 ve
+  process_exit_confirmed=true. Codex errors listesinde 4, Google tarafında
+  1 tanı kaydı vardı; bunlar sınıflandırılmadı, tamamen uyarısız koşu
+  iddiası yok. GUI/proje yazma/masaüstü kontrolü kabulü değildir.
+- Quartz'ın kapalı olduğu doğrulandı. Önceki Notion'sız paket korundu:
+  Codex backups/quartz-before-pyramid-integration-20261101T174713Z.
+  Yeni EXE hash: 2462ad3d4728bdc43f0bf963019ee754a59b54bcb9e04a58bc8070b8d7044fce.
+- 43 kullanıcı dosyası kopyalama sonrası hash eşitliğini korudu. Açılıştan
+  sonra .env, memory, conversations, projects, mobile_access 5/5 aynı.
+- Gerçek paket açıldı; UIA'da Q, online, Codex/Antigravity/Birlikte,
+  mesaj alanı ve Gönder var; Notion ajanı yok. Pixel QA bu koşuda yapılmadı.
+- Yeni kullanıcı görevi/mesajı paketli sohbete gönderilmedi. Tam ana sohbet
+  → gerçek yazma/desktop → ek talimat → Stop → restart kabulü hâlâ açık.
+
+Kanıtlar: build.log, coordination-after-helper.log, live-cli-smoke.json,
+provider-probes.json, deployment.json, live-ui-accessibility.json,
+postlaunch-protection.json. Yeni uygulama açık bırakıldı. Bu ilk birleşik
+dilimlerdir; sistem piramidinin bütünü tamamlandı ilan edilmiyor.

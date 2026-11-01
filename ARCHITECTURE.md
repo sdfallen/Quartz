@@ -9,9 +9,12 @@ Güncel sistem piramidi ve geçiş sözleşmesi:
 - [Claude görev promptu](docs/architecture/CLAUDE_PROMPT.md).
 - [Antigravity görev promptu](docs/architecture/ANTIGRAVITY_PROMPT.md).
 - [Codex P1 kimlik sınırı ve kaynak testleri](docs/architecture/CODEX_P1.md).
+- [Üçlü teslim incelemesi ve birleşik paket](docs/architecture/DELIVERY_REVIEW.md).
 
-Durum: P0 mimari/inceleme tamamlandı; P1'de ilk sohbet kimlik sınırı
-düzeltmesi kaynak testleriyle doğrulandı. P1'in geri kalanı ve P2–P4 açık.
+Durum: P0 tamamlandı. P1 kimlik sınırı, P2 HTML shell ayrımı ve P3 runtime
+ilk düzeltmeleri birleşik pakete alındı. Kaynak/Windows testleri, CLI smoke
+ve paketli başlangıç UIA kontrolü yapıldı. P1 ortak görev/Stop sözleşmesi,
+servis sahipliği, kapanış kompozisyonu ve tam P4 uçtan uca kabul açık.
 Kaynak planını çalışan paket kabulü olarak kullanmayın. Notion araç ajanı
 durduruldu, ortak hafıza bağlantısı korunur. ASTER geliştirmesi kapsam dışıdır.
 
