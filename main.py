@@ -110,7 +110,7 @@ class IPCServer:
 
     _diagnostics_creation_lock = threading.Lock()
 
-    def __init__(self, assistant=None):
+    def __init__(self, assistant=None, coordinator=None):
         self._assistant_lock = threading.Lock()
         self._assistant_instance = assistant
         self._server    = None
@@ -121,10 +121,16 @@ class IPCServer:
         self._agent_chat = None
         self._agent_chat_lock = threading.Lock()
         self._diagnostics = None
+        from core.shutdown import get_shutdown_coordinator
+        self._coordinator = coordinator or get_shutdown_coordinator()
 
     def _get_diagnostics(self):
+        if self._coordinator.is_admission_closed() and getattr(self, '_diagnostics', None) is None:
+            return None
         with self._diagnostics_creation_lock:
             if getattr(self, '_diagnostics', None) is None:
+                if self._coordinator.is_admission_closed():
+                    return None
                 from core.self_diagnostics import SelfDiagnosticsService
                 self._diagnostics = SelfDiagnosticsService()
             return self._diagnostics
@@ -133,12 +139,16 @@ class IPCServer:
     def _assistant(self):
         inst = getattr(self, "_assistant_instance", None)
         if inst is None:
+            if self._coordinator.is_admission_closed():
+                return None
             lock = getattr(self, "_assistant_lock", None)
             if lock is None:
                 self._assistant_lock = lock = threading.Lock()
             with lock:
                 inst = getattr(self, "_assistant_instance", None)
                 if inst is None:
+                    if self._coordinator.is_admission_closed():
+                        return None
                     inst = GitHubAssistant()
                     self._assistant_instance = inst
         return inst
@@ -183,16 +193,26 @@ class IPCServer:
 
     def _get_agent_center(self) -> MultiAgentService:
         if self._agent_center is None:
+            if self._coordinator.is_admission_closed():
+                return None
             with self._agent_center_lock:
                 if self._agent_center is None:
+                    if self._coordinator.is_admission_closed():
+                        return None
                     self._agent_center = MultiAgentService(project_store=Path(BASE_DIR) / 'quartz_projects.json')
         return self._agent_center
 
     def _get_agent_chat(self) -> AgentChatService:
         if self._agent_chat is None:
+            if self._coordinator.is_admission_closed():
+                return None
             with self._agent_chat_lock:
                 if self._agent_chat is None:
+                    if self._coordinator.is_admission_closed():
+                        return None
                     center = self._get_agent_center()
+                    if center is None:
+                        return None
                     store_path = Path(BASE_DIR) / 'quartz_conversations.json'
                     self._agent_chat = AgentChatService(center, store_path)
         return self._agent_chat
@@ -222,20 +242,77 @@ class IPCServer:
             except OSError:
                 break
 
-    def stop(self):
+    def stop(self) -> dict:
         self._running = False
-        if getattr(self, '_diagnostics', None) is not None:
-            self._diagnostics.shutdown()
-        if self._agent_chat is not None:
-            self._agent_chat.close()
-        if self._agent_center is not None:
-            self._agent_center.shutdown()
-        if self._server:
-            try:
-                self._server.close()
-            except Exception:
-                pass
-        log.info("IPC server stopped")
+        self._coordinator.close_admission()
+
+        def clean_ipc_socket():
+            if self._server:
+                try:
+                    self._server.close()
+                finally:
+                    self._server = None
+
+        def clean_diagnostics():
+            diag = getattr(self, '_diagnostics', None)
+            if diag is not None:
+                try:
+                    diag.shutdown()
+                finally:
+                    self._diagnostics = None
+            return diag is not None
+
+        def clean_agent_chat():
+            chat = getattr(self, '_agent_chat', None)
+            if chat is not None:
+                try:
+                    chat.close()
+                finally:
+                    self._agent_chat = None
+            return chat is not None
+
+        def clean_agent_center():
+            center = getattr(self, '_agent_center', None)
+            if center is not None:
+                try:
+                    center.shutdown()
+                finally:
+                    self._agent_center = None
+            return center is not None
+
+        def clean_assistant():
+            ast = getattr(self, '_assistant_instance', None)
+            if ast is not None:
+                try:
+                    if hasattr(ast, 'shutdown'):
+                        ast.shutdown()
+                finally:
+                    self._assistant_instance = None
+            return ast is not None
+
+        def clean_mobile_gateway():
+            global _mobile_gateway
+            mg = _mobile_gateway
+            if mg is not None:
+                try:
+                    if hasattr(mg, 'stop'):
+                        mg.stop()
+                finally:
+                    _mobile_gateway = None
+            return mg is not None
+
+        components = {
+            "ipc_socket": clean_ipc_socket,
+            "diagnostics": clean_diagnostics,
+            "agent_chat": clean_agent_chat,
+            "agent_center": clean_agent_center,
+            "assistant": clean_assistant,
+            "mobile_gateway": clean_mobile_gateway,
+        }
+
+        receipt = self._coordinator.execute_shutdown(components)
+        log.info("IPC server stopped with receipt: %s", receipt)
+        return receipt
 
     def _handle(self, conn, addr):
         try:
@@ -277,9 +354,16 @@ class IPCServer:
     def _dispatch(self, req: dict) -> dict:
         if not isinstance(req, dict) or not authorized(req.get("auth")):
             return {"status": "error", "data": "Unauthorized local IPC request"}
+        action = req.get("action", "")
+        if self._coordinator.is_admission_closed() and action != "shutdown":
+            return {
+                "status": "error",
+                "data": "Server is shutting down",
+                "error_code": "SHUTDOWN_IN_PROGRESS",
+            }
         request_id = str(req.get("request_id") or uuid.uuid4().hex[:12])
         with request_context(request_id):
-            log.info("IPC action=%s", req.get("action", ""))
+            log.info("IPC action=%s", action)
             response = self._dispatch_action(req)
         response["request_id"] = request_id
         return response
@@ -624,29 +708,44 @@ class IPCServer:
             }
 
         if action == "shutdown":
-            threading.Thread(
-                target=self._shutdown, daemon=True).start()
-            return {"status": "ok", "data": "Shutting down"}
+            self._coordinator.close_admission()
+            receipt = self.stop()
+            return {
+                "status": "ok",
+                "data": "Shutting down",
+                "receipt": receipt,
+            }
 
         return {
             "status": "error",
             "data": f"Unknown action: {action!r}",
         }
 
-    @staticmethod
-    def _shutdown():
-        time.sleep(0.5)
-        os.kill(os.getpid(), signal.SIGTERM)
-
 
 _ipc_server = None
 _mobile_gateway = None
 
 
+def get_ipc_server():
+    return _ipc_server
+
+
+def stop_backend() -> dict:
+    global _ipc_server
+    if _ipc_server is not None:
+        return _ipc_server.stop()
+    from core.shutdown import get_shutdown_coordinator
+    return get_shutdown_coordinator().get_receipt() or {
+        "status": "confirmed",
+        "components": {},
+        "errors": [],
+        "timestamp": time.time(),
+    }
+
+
 def _handle_signal(signum, _frame):
     log.info("Signal %d — shutting down", signum)
-    if _ipc_server:
-        _ipc_server.stop()
+    stop_backend()
     sys.exit(0)
 
 
@@ -683,7 +782,7 @@ def main(register_signals=True):
     except KeyboardInterrupt:
         pass
     finally:
-        _ipc_server.stop()
+        stop_backend()
         log.info("%s stopped", ASSISTANT_NAME)
 
 
