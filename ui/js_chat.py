@@ -270,6 +270,29 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     }
   }
 
+  let chatStopReceipt = null;
+  let chatSubmissionBusy = false;
+  let chatControlEpoch = 0;
+  function chatCleanupUnconfirmed(receipt = chatStopReceipt) {
+    return !!receipt && (receipt.status === 'pending' || receipt.status === 'failed');
+  }
+  function ensureChatPolling() {
+    if (!chatPollInterval) chatPollInterval = setInterval(pollAgentTurn, 120);
+  }
+  function renderChatStopReceipt(receipt) {
+    if (!receipt) return false;
+    chatStopReceipt = receipt;
+    if (!chatCleanupUnconfirmed()) return false;
+    if (!thinking) setThinking(true);
+    clearInterval(requestTimer);
+    thinkingText.textContent = receipt.status === 'failed'
+      ? 'Durdurma kaydı tamamlanamadı. Yeniden Durdur’a basın; yeni görev başlatılmadı.'
+      : 'Durdurma istendi; süreçlerin kapanışı doğrulanıyor...';
+    cancelBtn.disabled = false;
+    cancelBtn.title = 'Durdurmayı yeniden dene';
+    ensureChatPolling();
+    return true;
+  }
   let chatPollBusy = false;
   async function pollAgentTurn() {
     if (chatPollBusy) return;
@@ -302,7 +325,13 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
         }
       }
 
-      // İşlem aktif değilse (tamamlandı / iptal / hata) en son metin işlendikten sonra polling'i kapat
+      // Local cancellation is not proof that provider processes or writers exited.
+      if (renderChatStopReceipt(data.stop_receipt) || chatCleanupUnconfirmed()) return;
+      if (data.active) {
+        if (!thinking) setThinking(true);
+        ensureChatPolling();
+        if (data.queued_instructions) thinkingText.textContent = `${data.queued_instructions} ek talimat sırada; mevcut adım sürüyor...`;
+      }
       if (!data.active) {
         if (chatPollInterval) {
           clearInterval(chatPollInterval);
@@ -330,6 +359,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
   });
 
   btnNewChat.addEventListener('click', async () => {
+    if (thinking || chatCleanupUnconfirmed()) return;
     try {
       if (chatPollInterval) {
         clearInterval(chatPollInterval);
@@ -373,13 +403,22 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
   });
 
   cancelBtn.addEventListener('click', async () => {
+    chatControlEpoch++;
     cancelBtn.disabled = true;
-    thinkingText.textContent = 'iptal ediliyor...';
+    renderChatStopReceipt({status:'pending'});
     try {
-      await window.pywebview.api.chat_cancel();
-      await window.pywebview.api.cancel_request();
-    } catch (_) {}
-    setTimeout(() => { cancelBtn.disabled = false; setThinking(false); }, 1000);
+      const [chatResult] = await Promise.allSettled([
+        Promise.resolve().then(() => window.pywebview.api.chat_cancel()),
+        Promise.resolve().then(() => window.pywebview.api.cancel_request())
+      ]);
+      if (chatResult.status === 'fulfilled' && chatResult.value?.status === 'ok') {
+        renderChatStopReceipt(chatResult.value.data?.stop_receipt);
+      }
+      await pollAgentTurn();
+    } finally {
+      cancelBtn.disabled = false;
+      if (thinking || chatCleanupUnconfirmed()) ensureChatPolling();
+    }
   });
 
   function updatePermissionSelectionHint() {
@@ -398,7 +437,8 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
   window.__writeConfirmed = true;
   async function sendAgentMessage() {
     const text = inputEl.value.trim();
-    if (!text || coordinationRouting) return;
+    if (!text || coordinationRouting || chatSubmissionBusy) return;
+    const submitEpoch = chatControlEpoch;
     // Freeze the selected mode for THIS submitted message, not a later poll
     // or a dropdown edit while routing is awaiting the backend.
     const selectedPermissionLevel=document.getElementById('mainPermissionLevel')?.value || 'read-only';
@@ -415,11 +455,12 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     catch(e) { appendMsg('err','QUARTZ',String(e)); return; }
     finally {
       coordinationRouting = false;
-      if (!wasThinking && typeof setThinking === 'function') setThinking(false);
+      if (!wasThinking && submitEpoch === chatControlEpoch && !chatCleanupUnconfirmed() && typeof setThinking === 'function') setThinking(false);
     }
+    if (submitEpoch !== chatControlEpoch) return;
     if (coordinated.status !== 'ok') { appendMsg('err','QUARTZ',coordinated.data); return; }
     if (coordinated.data?.handled) {
-      inputEl.value = '';
+      if (inputEl.value.trim() === text) inputEl.value = '';
       if (coordinated.data.diagnostics_repair) {
         appendMsg('user', 'SEN', coordinated.data.user_text, '', 'user', null, false, true);
         renderRepairPlan(coordinated.data.repair_plan);
@@ -441,12 +482,15 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
         return;
       }
       if(coordinated.data.permission_status || coordinated.data.desktop_help || coordinated.data.continuation_status) await loadActiveConversation();
-      else if(!coordinated.data.natural_started) appendMsg('bot','QUARTZ',coordinated.data.stopped ? 'Görev durduruldu.' : 'Talimat iletildi; yetki kapsamı değişmedi.');
+      else if(!coordinated.data.natural_started) appendMsg('bot','QUARTZ',coordinated.data.stopped ? 'Durdurma isteği iletildi.' : 'Talimat iletildi; yetki kapsamı değişmedi.');
       await refreshDesktopTaskState();
       await pollNaturalTask();
       return;
     }
-    if (thinking) return;
+    if (chatCleanupUnconfirmed()) {
+      appendMsg('err', 'QUARTZ', 'Önceki görevin durdurulması henüz doğrulanmadı. Durdurmayı yeniden deneyin.');
+      return;
+    }
 
     const writeSelect = document.getElementById('mainPermissionLevel');
     const conversationOnly = coordinated.data?.intent === 'conversation';
@@ -462,53 +506,44 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       window.__writeConfirmed = true;
     }
 
-    inputEl.value = '';
-    inpHistory.push(text);
-    histCursor = -1;
-    msgCount++;
-    document.getElementById('sessMsgs').textContent = msgCount;
-
-    chatEl.querySelectorAll('[data-welcome="1"]').forEach(el => el.remove());
-    const userWrap = appendMsg('user', 'SEN', text, '', 'user', null, false, true);
-    setThinking(true);
-
-    logLine(`Ajan (${agent.toUpperCase()}) göreve başladı...`);
-
-    const initialSender = agent === 'collaboration' ? 'codex' : agent;
-    const initialLabel = agent === 'collaboration' ? 'CODEX · GRUP' : agent.toUpperCase();
-    const botWrap = appendMsg('bot', initialLabel, '...', '', initialSender, null, false, true);
-    activeBotBubble = botWrap.querySelector('.bubble');
-
+    chatSubmissionBusy = true;
+    if (!wasThinking) setThinking(true);
     try {
       const resp = await window.pywebview.api.chat_send(text, agent, currentConvId, isWrite, confirmWrite, permissionLevel, selectedPermissionLevel);
+      if (submitEpoch !== chatControlEpoch) return;
       if (resp.status !== 'ok') {
-        setThinking(false);
-        activeBotBubble.textContent = 'Hata: ' + (resp.data || 'Bilinmeyen hata');
-        setOrb('error');
-        setTimeout(() => setOrb('idle'), 2500);
+        appendMsg('err', 'QUARTZ', 'Talimat kabul edilmedi: ' + (resp.data || 'Bilinmeyen hata'));
+        if (!wasThinking) setThinking(false);
         return;
       }
-      if (resp.data) {
-        if (resp.data.conversation_id) currentConvId = resp.data.conversation_id;
-        if (resp.data.user_message && resp.data.user_message.id) {
-          userWrap.dataset.msgId = resp.data.user_message.id;
-        }
-        if (resp.data.assistant_message && resp.data.assistant_message.id) {
-          botWrap.dataset.msgId = resp.data.assistant_message.id;
-          const firstMsg = resp.data.assistant_message;
-          const tagEl = botWrap.querySelector('.msg-sender-tag');
-          if (tagEl && firstMsg.sender) {
-            tagEl.className = `msg-sender-tag tag-${firstMsg.sender}`;
-            tagEl.textContent = formatMessageLabel(firstMsg);
-          }
-        }
+      const data = resp.data || {};
+      if (inputEl.value.trim() === text) inputEl.value = '';
+      inpHistory.push(text);
+      histCursor = -1;
+      msgCount++;
+      document.getElementById('sessMsgs').textContent = msgCount;
+      chatEl.querySelectorAll('[data-welcome="1"]').forEach(el => el.remove());
+      const userWrap = appendMsg('user', 'SEN', text, data.user_message?.id || '', 'user', null, false, true);
+      if (data.conversation_id) currentConvId = data.conversation_id;
+      const firstMsg = data.assistant_message;
+      const initialSender = firstMsg?.sender || (agent === 'collaboration' ? 'codex' : agent);
+      const initialLabel = firstMsg ? formatMessageLabel(firstMsg) : agent.toUpperCase();
+      const botWrap = appendMsg('bot', initialLabel, data.queued ? 'Ek talimat sırada; mevcut adımın ardından uygulanacak.' : '...', firstMsg?.id || '', initialSender, firstMsg, false, true);
+      if (data.queued) {
+        thinkingText.textContent = `Ek talimat sıraya alındı (${data.queue_position || 1}); mevcut görev sürüyor...`;
+        logLine('Ek talimat aynı göreve iletildi; yetki kapsamı değişmedi.');
+      } else {
+        chatStopReceipt = null;
+        activeBotBubble = botWrap.querySelector('.bubble');
+        logLine(`Ajan (${agent.toUpperCase()}) göreve başladı...`);
       }
+      ensureChatPolling();
       await pollAgentTurn();
-      if (chatPollInterval) clearInterval(chatPollInterval);
-      chatPollInterval = setInterval(pollAgentTurn, 120);
     } catch (e) {
-      setThinking(false);
-      activeBotBubble.textContent = 'Hata: ' + String(e);
+      appendMsg('err', 'QUARTZ', 'Talimat gönderilemedi: ' + String(e));
+      if (!wasThinking && submitEpoch === chatControlEpoch && !chatCleanupUnconfirmed()) setThinking(false);
+    } finally {
+      chatSubmissionBusy = false;
     }
   }
 

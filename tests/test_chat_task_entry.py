@@ -73,6 +73,10 @@ class ChatTaskEntryTests(unittest.TestCase):
 
     def test_main_composer_dispatches_once_and_does_not_confirm_a_fake_start_mode(self):
         function=re.search(r'async function sendAgentMessage\(\)[\s\S]*?\n  }\n',gui._HTML).group(0)
+        # The composer shares queue admission and Stop state with the shipped
+        # application. Include those real dependencies in this isolated run.
+        lifecycle_state=gui._HTML[gui._HTML.index('  let chatStopReceipt ='):
+                                 gui._HTML.index('  function ensureChatPolling()')]
         code=r'''
 const assert=require('assert');let routed=0,read=0;global.coordinationRouting=false;
 global.inputEl={value:'Ekrana bak'};global.currentConvId='c';global.mainProjectSelect={value:'p'};
@@ -85,7 +89,7 @@ global.window={confirm:()=>{throw Error('Separate start confirmation')},pywebvie
  chat_send:()=>{throw Error('Duplicate toolless dispatch')}}}};
 global.refreshDesktopTaskState=async()=>{read++};global.pollNaturalTask=async()=>{read++};
 global.appendMsg=()=>{throw Error('Unexpected extra start form')};
-''' + function + r'''
+''' + lifecycle_state + function + r'''
 sendAgentMessage().then(()=>{assert.equal(routed,1);assert.equal(read,2);assert.equal(inputEl.value,'');assert.equal(coordinationRouting,false)})
 .catch(e=>{console.error(e);process.exitCode=1});
 '''

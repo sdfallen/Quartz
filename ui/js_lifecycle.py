@@ -147,10 +147,12 @@ JAVASCRIPT = r"""  let lastUserActivityAt = Date.now();
                 await loadActiveConversation();
               }
             }
-            if (st.data.active_turn && st.data.active_turn.status === 'running') {
-              setThinking(true);
+            if (st.data.active_turn && (st.data.active_turn.status === 'running' ||
+                (typeof chatCleanupUnconfirmed === 'function' && chatCleanupUnconfirmed(st.data.active_turn.stop_receipt)))) {
+              if (!thinking) setThinking(true);
               await pollAgentTurn();
-            } else if (thinking) {
+            } else if (thinking && !(typeof chatSubmissionBusy !== 'undefined' && chatSubmissionBusy) &&
+                       !(typeof chatCleanupUnconfirmed === 'function' && chatCleanupUnconfirmed())) {
               setThinking(false);
             }
           }

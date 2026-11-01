@@ -376,7 +376,8 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     thinking = v;
     document.body.classList.toggle('thinking-active', !!v);
     thinkingRow.classList.toggle('show', v);
-    sendBtn.classList.toggle('disabled', v);
+    // Sending while a managed turn runs submits a same-task instruction.
+    sendBtn.classList.remove('disabled');
     const btnCont = document.getElementById('btnContinueCollab');
     if (btnCont) btnCont.disabled = v;
     setOrb(v ? 'thinking' : 'idle');

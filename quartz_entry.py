@@ -59,7 +59,7 @@ def start_backend_thread():
             log(f"Backend error: {exc}")
 
     thread = threading.Thread(
-        target=run_backend, name="quartz-backend", daemon=True)
+        target=run_backend, name="quartz-backend", daemon=False)
     thread.start()
     return thread
 
@@ -77,6 +77,7 @@ def start_gui():
         app = QuartzUI()
         log("GUI created successfully")
         app.run()
+        return app
     except Exception as e:
         log(f"GUI error: {e}")
         import traceback
@@ -98,6 +99,39 @@ def start_gui():
             pass
 
 
+def finish_backend(backend_thread, app=None):
+    """Keep ownership until GUI services and backend have actually settled.
+
+    Bounded waits refresh receipts; they never convert pending into success.
+    There is no PID-based kill or unconditional process exit here.
+    """
+    from main import stop_backend
+    from core.application_services import overall_status
+    import json
+    first = True
+    while True:
+        try:
+            gui_receipt = app._api._services.shutdown() if app is not None else {'status':'confirmed'}
+        except Exception as exc:
+            gui_receipt = {'status':'failed', 'error_type':type(exc).__name__}
+        try:
+            backend_receipt = stop_backend()
+        except Exception as exc:
+            backend_receipt = {'status':'failed', 'error_type':type(exc).__name__}
+        backend_thread.join(timeout=.2)
+        parts = {'gui':gui_receipt['status'], 'backend':backend_receipt['status'],
+                 'backend_thread':'pending' if backend_thread.is_alive() else 'confirmed'}
+        receipt = {'status':overall_status(parts), 'components':parts,
+                   'backend':backend_receipt, 'gui':gui_receipt}
+        if receipt['status'] == 'confirmed':
+            log('Shutdown receipt: '+json.dumps(receipt, ensure_ascii=False))
+            return receipt
+        if first:
+            log('Shutdown remains pending; owned workers retained. '+json.dumps(receipt, ensure_ascii=False))
+            first = False
+        time.sleep(.2)
+
+
 if __name__ == "__main__":
     if '--quartz-overlay' in sys.argv:
         from core.screen_overlay import run_overlay_child
@@ -114,29 +148,6 @@ if __name__ == "__main__":
 
     # Start the window immediately while the backend imports in parallel.
     backend_thread = start_backend_thread()
-    start_gui()
-
-    log("GUI closed. Joining backend thread cooperatively...")
-
-    # If GUI closing hook did not stop the backend, ensure cooperative stop is called
-    try:
-        from main import get_ipc_server
-        srv = get_ipc_server()
-        if srv and srv._running:
-            srv.stop()
-    except Exception as exc:
-        log(f"Notice: entry stop check: {exc}")
-
-    # Observably join backend thread with bounded timeout
-    backend_thread.join(timeout=8.0)
-
-    from core.shutdown import get_shutdown_coordinator
-    coordinator = get_shutdown_coordinator()
-    receipt = coordinator.get_receipt()
-
-    if backend_thread.is_alive():
-        log(f"WARNING: Backend thread did not terminate within 8.0s timeout. Status: pending. Receipt: {receipt}")
-    else:
-        log(f"Backend thread joined successfully. Receipt: {receipt}")
-
+    app = start_gui()
+    finish_backend(backend_thread, app)
     log("Quartz Exit")

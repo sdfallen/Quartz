@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 import webview
-from core.application_services import (
+from core.application_services import (ServicesClosed,
     CONFIRMED, FAILED, PENDING, ApplicationServices, ServicesClosed, overall_status)
 from core.local_ipc import request_token
 from ui.document import BRAND_MARK, asset_root, build_document
@@ -71,6 +71,20 @@ _QUICK_ACTIONS = {
 
 
 # ── JS <-> Python bridge ────────────────────────────────────────────────────
+def _application_action(method):
+    # Admission lease spans an already-running bridge action. Shutdown can
+    # revoke input immediately without losing a service started just before it.
+    from functools import wraps
+    @wraps(method)
+    def invoke(self, *args, **kwargs):
+        try:
+            with self._services.activity():
+                return method(self, *args, **kwargs)
+        except ServicesClosed as exc:
+            return {"status":"error", "data":str(exc)}
+    return invoke
+
+
 class Api:
     """pywebview bridge and native picker/consent adapter.
 
@@ -116,6 +130,7 @@ class Api:
         except Exception:
             return {"status": "error", "data": "Bağlantı durumu okunamadı; yeniden deneyin"}
 
+    @_application_action
     def onboarding_begin(self, operation, provider, key=""):
         try:
             return {"status": "ok", "data": self._onboarding_service().begin(operation, provider, key)}
@@ -125,6 +140,7 @@ class Api:
     def onboarding_refresh(self):
         return ipc_send("onboarding_refresh")
 
+    @_application_action
     def diagnostics_start(self, include_rea: bool = True) -> dict:
         if self._artifact_diagnostics and self._artifact_diagnostics.status()['state'] == 'running':
             return {'status': 'ok', 'data': self._artifact_diagnostics.status()}
@@ -141,6 +157,7 @@ class Api:
             return {"status": "ok", "data": self._artifact_diagnostics.cancel(job_id)}
         return ipc_send("diagnostics_cancel", {"job_id": job_id})
 
+    @_application_action
     def diagnostics_select_application(self):
         """GUI-local native picker is the grant; arbitrary IPC paths stay forbidden."""
         with self._diagnostic_tools_lock:
@@ -161,6 +178,7 @@ class Api:
             except Exception:
                 return {'status': 'error', 'data': 'Seçilen dosya güvenli inceleme için açılamadı. Normal bir EXE dosyası seçin.'}
 
+    @_application_action
     def diagnostics_prepare_repair(self):
         with self._diagnostic_tools_lock:
             self._services.discard_repair()
@@ -177,6 +195,7 @@ class Api:
             except Exception:
                 return {'status': 'error', 'data': 'Onarım referansı doğrulanamadı. Aynı sürümün sağlam, manifestli paketini seçin.'}
 
+    @_application_action
     def diagnostics_apply_repair(self, plan_id):
         with self._diagnostic_tools_lock:
             try:
@@ -201,6 +220,7 @@ class Api:
             except Exception:
                 return {'status': 'error', 'data': 'Öğrenilen uygulama hafızası okunamadı.'}
 
+    @_application_action
     def natural_start(self, text, conversation_id, project_id, models, permission_level='read-only'):
         """Start reasoning/tool selection, NOT a desktop grant."""
         try:
@@ -234,6 +254,7 @@ class Api:
     def natural_status(self):
         return {"status":"ok", "data":self._natural.status() if self._natural else {"active":False}}
 
+    @_application_action
     def natural_approve(self, request_id, confirmed=False):
         try:
             if self._natural is None: raise PermissionError("Bekleyen görev yok")
@@ -258,6 +279,7 @@ class Api:
         return self._services.coordination(self._desktop_service,
                                            self._chat_log_emitter("Sohbet günlüğü yazılamadı"))
 
+    @_application_action
     def coordination_route(self, text, conversation_id, project_id, models, permission_level='read-only', agent=None):
         try:
             import re
@@ -395,6 +417,7 @@ class Api:
         except Exception as exc:
             return {"status":"error","data":str(exc)}
 
+    @_application_action
     def coordination_prepare(self, text, conversation_id, project_id, models):
         """A GUI task request only prepares consent; never starts an operator."""
         try:
@@ -472,11 +495,13 @@ class Api:
             return {"status":"ok","data":True}
         except Exception as exc: return {"status":"error","data":str(exc)}
 
+    @_application_action
     def coordination_pick_log(self):
         if not webview.windows: return {"status":"error","data":"Pencere hazır değil"}
         paths = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN, allow_multiple=False, file_types=('Günlük (*.log;*.txt;*.jsonl)',))
         return {"status":"ok","data":paths[0] if paths else None}
 
+    @_application_action
     def coordination_pick_app(self, plan_id):
         try:
             self._services.ensure_open()  # no picker once shutdown began
@@ -485,6 +510,7 @@ class Api:
             return {"status":"ok","data":self._coordination_service().add_launch(plan_id,paths[0]) if paths else None}
         except Exception as exc: return {"status":"error","data":str(exc)}
 
+    @_application_action
     def coordination_approve(self, plan_id, handle, log_path, seconds, confirmed=False, agy_ack=False, launch_ids=None):
         try:
             handles = [int(h) for h in handle] if isinstance(handle,list) else int(handle)
@@ -517,6 +543,7 @@ class Api:
         except Exception as exc:
             return {"status": "error", "data": str(exc)}
 
+    @_application_action
     def desktop_operator_start(self, provider, handle, prompt, model, effort, confirmed=False):
         try:
             if self._natural and self._natural.status()["active"]:
@@ -835,7 +862,7 @@ class Api:
             return FAILED, [{"component": "backend", "code": "ipc_failed", "type": type(exc).__name__}]
         if not isinstance(result, dict) or result.get("status") != "ok":
             return FAILED, [{"component": "backend", "code": "shutdown_rejected", "type": "IPCError"}]
-        data = result.get("data")
+        data = result.get("receipt") or result.get("data")
         reported = data.get("status") if isinstance(data, dict) else None
         if reported in (CONFIRMED, PENDING, FAILED):
             errors = [] if reported != FAILED else [
@@ -854,6 +881,7 @@ class Api:
 
     # ── Voice: push-to-talk ─────────────────────────────────
 
+    @_application_action
     def push_to_talk(self) -> dict:
         if not self._voice.mic_available:
             return {
@@ -888,6 +916,7 @@ class Api:
 
     # ── Voice: wake word toggle ──────────────────────────────
 
+    @_application_action
     def toggle_wake_word(self, enable: bool) -> dict:
         if enable:
             self._start_wake_loop()

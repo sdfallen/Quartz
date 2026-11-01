@@ -1,175 +1,159 @@
-"""
-core/shutdown.py
-Cooperative shutdown coordinator and structured shutdown receipt for Quartz.
-Enforces admission closing, component-isolated cleanups, and verifiable receipts.
-"""
-
+"""Owned, single-flight backend cleanup and truthful retryable receipts."""
+from copy import deepcopy
 from dataclasses import dataclass, field
-import logging
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional
-
-log = logging.getLogger("quartz.shutdown")
 
 
 @dataclass
 class ShutdownReceipt:
-    status: str  # "confirmed" | "pending" | "failed"
-    components: Dict[str, Dict[str, Any]] = field(default_factory=dict)
-    errors: List[str] = field(default_factory=list)
+    status: str
+    components: dict = field(default_factory=dict)
+    errors: list = field(default_factory=list)
     timestamp: float = field(default_factory=time.time)
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "status": self.status,
-            "components": dict(self.components),
-            "errors": list(self.errors),
-            "timestamp": self.timestamp,
-        }
+    def to_dict(self):
+        return deepcopy(vars(self))
 
 
 class ShutdownCoordinator:
-    """
-    Coordinates orderly cooperative shutdown across Quartz backend components.
-    Guarantees:
-      1. Dispatch admission closing before component teardown.
-      2. No new singletons or services instantiated during/after shutdown.
-      3. Component cleanup isolation (one failure does not abort others).
-      4. Idempotent execution and cached receipt.
-      5. Bounded timeouts to prevent indefinite UI or entry freeze.
-    """
-
     def __init__(self):
         self._lock = threading.RLock()
+        self._pass_lock = threading.Lock()
         self._admission_closed = False
-        self._shutdown_started = False
-        self._shutdown_completed = False
-        self._receipt: Optional[ShutdownReceipt] = None
+        self._operations = {}
+        self._receipt = None
+        self._started = False
+        self._requests = 0
 
-    def is_admission_closed(self) -> bool:
+    def enter_request(self):
+        with self._lock:
+            if self._admission_closed: return False
+            self._requests += 1
+            return True
+
+    def leave_request(self):
+        with self._lock:
+            self._requests -= 1
+
+    def requests_pending(self):
+        with self._lock:
+            return self._requests > 0
+
+    def is_admission_closed(self):
         with self._lock:
             return self._admission_closed
 
-    def close_admission(self) -> None:
+    def close_admission(self):
         with self._lock:
-            if not self._admission_closed:
-                log.info("Shutdown admission closed: rejecting new dispatches and instantiations")
-                self._admission_closed = True
-
-    def get_receipt(self) -> Optional[Dict[str, Any]]:
-        with self._lock:
-            return self._receipt.to_dict() if self._receipt else None
-
-    def execute_shutdown(
-        self,
-        components: Dict[str, Callable[[], Any]],
-        timeout_per_component: float = 3.0,
-    ) -> Dict[str, Any]:
-        with self._lock:
-            if self._shutdown_completed and self._receipt:
-                return self._receipt.to_dict()
-            if self._shutdown_started:
-                if self._receipt:
-                    return self._receipt.to_dict()
-
-            self._shutdown_started = True
             self._admission_closed = True
 
-        component_results: Dict[str, Dict[str, Any]] = {}
-        errors: List[str] = []
-        has_pending = False
-        has_failed = False
-
-        for name, cleanup_func in components.items():
-            if cleanup_func is None:
-                component_results[name] = {"status": "skipped", "detail": "not_registered"}
-                continue
-
-            result_holder = {}
-            error_holder = []
-
-            def _worker():
-                try:
-                    res = cleanup_func()
-                    result_holder["result"] = res
-                except Exception as exc:
-                    error_holder.append(exc)
-
-            worker_thread = threading.Thread(
-                target=_worker,
-                name=f"quartz-stop-{name}",
-                daemon=True,
-            )
-            worker_thread.start()
-            worker_thread.join(timeout=timeout_per_component)
-
-            if worker_thread.is_alive():
-                has_pending = True
-                msg = f"TimeoutExpired: {name} cleanup exceeded {timeout_per_component}s"
-                component_results[name] = {"status": "pending", "error": msg}
-                errors.append(msg)
-                log.warning("Shutdown pending for component %s: exceeded timeout", name)
-            elif error_holder:
-                has_failed = True
-                exc = error_holder[0]
-                msg = f"{exc.__class__.__name__}: {str(exc).splitlines()[0] if str(exc) else ''}".strip()
-                component_results[name] = {"status": "failed", "error": msg}
-                errors.append(msg)
-                log.error("Shutdown failure in component %s: %s", name, msg)
+    def _snapshot(self):
+        # Called under _lock. An operation's actual thread is retained even
+        # after a bounded join expires. Late results cannot cross owners.
+        components, errors = {}, []
+        for name, op in self._operations.items():
+            worker = op.get('thread')
+            if worker is None or worker.is_alive():
+                value = {'status':'pending'}
+                if op.get('timed_out'): value['error'] = 'TimeoutExpired'
             else:
-                res = result_holder.get("result")
-                if res is False:
-                    component_results[name] = {"status": "skipped", "detail": "not_instantiated"}
-                else:
-                    component_results[name] = {"status": "confirmed"}
-                log.debug("Shutdown confirmed for component %s", name)
+                value = deepcopy(op['result'])
+            components[name] = value
+            if value.get('error'): errors.append(value['error'])
+        states = [value['status'] for value in components.values()]
+        status = 'pending' if 'pending' in states else 'failed' if 'failed' in states else 'confirmed'
+        if self._receipt is None or (self._receipt.status, self._receipt.components, self._receipt.errors) != (status, components, errors):
+            self._receipt = ShutdownReceipt(status, components, errors)
+        return self._receipt.to_dict()
 
-        if has_pending:
-            overall_status = "pending"
-        elif has_failed:
-            overall_status = "failed"
-        else:
-            overall_status = "confirmed"
-
-        receipt = ShutdownReceipt(
-            status=overall_status,
-            components=component_results,
-            errors=errors,
-            timestamp=time.time(),
-        )
-
+    def get_receipt(self):
         with self._lock:
-            self._receipt = receipt
-            self._shutdown_completed = True
+            return self._snapshot() if self._started else None
 
-        return receipt.to_dict()
+    @staticmethod
+    def _interpret(value):
+        if value is False:
+            return {'status':'skipped', 'detail':'not_instantiated'}
+        if value is None or value is True:
+            return {'status':'confirmed'}  # synchronous verified-owner callback
+        if isinstance(value, dict) and value.get('status') in {'confirmed','pending','failed'}:
+            result = {'status':value['status']}
+            for key in ('process_exit_confirmed','worker_pending','writer_pending','unresolved_dispatch'):
+                if key in value: result[key] = deepcopy(value[key])
+            return result
+        return {'status':'pending', 'error':'UnverifiedReceipt'}
 
-    def reset(self) -> None:
-        """Reset coordinator state. Intended for unit testing."""
+    def _perform(self, callback, operation):
+        try:
+            result = self._interpret(callback())
+        except BaseException as exc:
+            result = {'status':'failed', 'error':type(exc).__name__}
         with self._lock:
+            operation['result'] = result
+            operation['timed_out'] = False
+
+    def execute_shutdown(self, components, timeout_per_component=3.0):
+        if not isinstance(timeout_per_component, (int,float)) or timeout_per_component <= 0:
+            raise ValueError('Positive cleanup join timeout required')
+        self.close_admission()
+        # Register all owners before anyone can read or race this pass.
+        with self._lock:
+            self._started = True
+            for name in components:
+                self._operations.setdefault(name, {'thread':None, 'result':{'status':'pending'}})
+        if not self._pass_lock.acquire(blocking=False):
+            return self.get_receipt()
+        try:
+            for name, callback in components.items():
+                with self._lock:
+                    operation = self._operations[name]
+                    worker = operation['thread']
+                    if worker is not None and not worker.is_alive() and operation['result']['status'] in {'confirmed','skipped'}:
+                        continue
+                    if worker is None or not worker.is_alive():
+                        if callback is None:
+                            operation['result'] = {'status':'skipped', 'detail':'not_registered'}
+                            callback = lambda: False
+                        operation['result'] = {'status':'pending'}
+                        worker = threading.Thread(target=self._perform, args=(callback, operation),
+                            name='quartz-stop-'+name, daemon=False)
+                        operation['thread'] = worker
+                        try: worker.start()
+                        except Exception as exc:
+                            operation['result'] = {'status':'failed', 'error':type(exc).__name__}
+                            continue
+                worker.join(timeout=timeout_per_component)
+                with self._lock:
+                    operation['timed_out'] = worker.is_alive()
+            return self.get_receipt()
+        finally:
+            self._pass_lock.release()
+
+    def reset(self):
+        with self._lock:
+            if any(op.get('thread') and op['thread'].is_alive() for op in self._operations.values()):
+                raise RuntimeError('Cannot abandon an owned cleanup worker')
             self._admission_closed = False
-            self._shutdown_started = False
-            self._shutdown_completed = False
+            self._operations.clear()
             self._receipt = None
+            self._started = False
+            self._requests = 0
 
 
-_global_coordinator: Optional[ShutdownCoordinator] = None
+_global_coordinator = None
 _coordinator_lock = threading.Lock()
 
 
-def get_shutdown_coordinator() -> ShutdownCoordinator:
-    global _global_coordinator
-    if _global_coordinator is None:
-        with _coordinator_lock:
-            if _global_coordinator is None:
-                _global_coordinator = ShutdownCoordinator()
-    return _global_coordinator
-
-
-def reset_shutdown_coordinator() -> None:
+def get_shutdown_coordinator():
     global _global_coordinator
     with _coordinator_lock:
-        if _global_coordinator is not None:
-            _global_coordinator.reset()
+        if _global_coordinator is None: _global_coordinator = ShutdownCoordinator()
+        return _global_coordinator
+
+
+def reset_shutdown_coordinator():
+    global _global_coordinator
+    with _coordinator_lock:
+        if _global_coordinator is not None: _global_coordinator.reset()
         _global_coordinator = None

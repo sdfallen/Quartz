@@ -111,6 +111,7 @@ class IPCServer:
     _diagnostics_creation_lock = threading.Lock()
 
     def __init__(self, assistant=None, coordinator=None):
+        self._listener_lock = threading.Lock()
         self._assistant_lock = threading.Lock()
         self._assistant_instance = assistant
         self._server    = None
@@ -125,33 +126,25 @@ class IPCServer:
         self._coordinator = coordinator or get_shutdown_coordinator()
 
     def _get_diagnostics(self):
-        if self._coordinator.is_admission_closed() and getattr(self, '_diagnostics', None) is None:
-            return None
         with self._diagnostics_creation_lock:
-            if getattr(self, '_diagnostics', None) is None:
-                if self._coordinator.is_admission_closed():
-                    return None
+            if self._coordinator.is_admission_closed(): return None
+            if self._diagnostics is None:
                 from core.self_diagnostics import SelfDiagnosticsService
                 self._diagnostics = SelfDiagnosticsService()
-            return self._diagnostics
+            return None if self._coordinator.is_admission_closed() else self._diagnostics
 
     @property
     def _assistant(self):
-        inst = getattr(self, "_assistant_instance", None)
-        if inst is None:
-            if self._coordinator.is_admission_closed():
-                return None
-            lock = getattr(self, "_assistant_lock", None)
-            if lock is None:
-                self._assistant_lock = lock = threading.Lock()
-            with lock:
-                inst = getattr(self, "_assistant_instance", None)
-                if inst is None:
-                    if self._coordinator.is_admission_closed():
-                        return None
-                    inst = GitHubAssistant()
-                    self._assistant_instance = inst
-        return inst
+        lock = getattr(self, '_assistant_lock', None)
+        if lock is None:
+            self._assistant_lock = lock = threading.Lock()
+        with lock:
+            coordinator = getattr(self, '_coordinator', None)
+            if coordinator and coordinator.is_admission_closed(): return None
+            if getattr(self, '_assistant_instance', None) is None:
+                self._assistant_instance = GitHubAssistant()
+            return None if coordinator and coordinator.is_admission_closed() else self._assistant_instance
+
 
     @_assistant.setter
     def _assistant(self, value):
@@ -191,127 +184,101 @@ class IPCServer:
             "tool_sources": {},
         }
 
-    def _get_agent_center(self) -> MultiAgentService:
-        if self._agent_center is None:
-            if self._coordinator.is_admission_closed():
-                return None
-            with self._agent_center_lock:
-                if self._agent_center is None:
-                    if self._coordinator.is_admission_closed():
-                        return None
-                    self._agent_center = MultiAgentService(project_store=Path(BASE_DIR) / 'quartz_projects.json')
-        return self._agent_center
+    def _get_agent_center(self):
+        with self._agent_center_lock:
+            if self._coordinator.is_admission_closed(): return None
+            if self._agent_center is None:
+                self._agent_center = MultiAgentService(project_store=Path(BASE_DIR) / 'quartz_projects.json')
+            return None if self._coordinator.is_admission_closed() else self._agent_center
 
-    def _get_agent_chat(self) -> AgentChatService:
-        if self._agent_chat is None:
-            if self._coordinator.is_admission_closed():
-                return None
-            with self._agent_chat_lock:
-                if self._agent_chat is None:
-                    if self._coordinator.is_admission_closed():
-                        return None
-                    center = self._get_agent_center()
-                    if center is None:
-                        return None
-                    store_path = Path(BASE_DIR) / 'quartz_conversations.json'
-                    self._agent_chat = AgentChatService(center, store_path)
-        return self._agent_chat
+    def _get_agent_chat(self):
+        with self._agent_chat_lock:
+            if self._coordinator.is_admission_closed(): return None
+            if self._agent_chat is None:
+                center = self._get_agent_center()
+                if center is None: return None
+                self._agent_chat = AgentChatService(center, Path(BASE_DIR) / 'quartz_conversations.json')
+            return None if self._coordinator.is_admission_closed() else self._agent_chat
 
     def start(self):
-        self._server = socket.socket(
-            socket.AF_INET, socket.SOCK_STREAM)
-        self._server.setsockopt(
-            socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._server.bind((IPC_HOST, IPC_PORT))
-        self._server.listen(5)
-        self._running = True
-        log.info("IPC server listening on %s:%d",
-                 IPC_HOST, IPC_PORT)
-
+        with self._listener_lock:
+            if self._coordinator.is_admission_closed(): return
+            server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._server = server
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server.bind((IPC_HOST, IPC_PORT))
+            server.listen(5)
+            server.settimeout(.2)
+            self._running = True
+        log.info("IPC server listening on %s:%d", IPC_HOST, IPC_PORT)
         while self._running:
             try:
-                self._server.settimeout(1.0)
-                conn, addr = self._server.accept()
-                threading.Thread(
-                    target=self._handle,
-                    args=(conn, addr),
-                    daemon=True,
-                ).start()
-            except socket.timeout:
-                continue
-            except OSError:
-                break
+                conn, addr = server.accept()
+                threading.Thread(target=self._handle, args=(conn, addr), daemon=True).start()
+            except socket.timeout: continue
+            except OSError: break
 
-    def stop(self) -> dict:
+    def stop(self):
         self._running = False
         self._coordinator.close_admission()
 
         def clean_ipc_socket():
-            if self._server:
-                try:
-                    self._server.close()
-                finally:
+            with self._listener_lock:
+                server = self._server
+                if server is not None:
+                    try: server.shutdown(socket.SHUT_RDWR)
+                    except OSError: pass
+                    server.close()
                     self._server = None
+            return True
 
-        def clean_diagnostics():
-            diag = getattr(self, '_diagnostics', None)
-            if diag is not None:
-                try:
-                    diag.shutdown()
-                finally:
-                    self._diagnostics = None
-            return diag is not None
+        def close_slot(name, lock, method):
+            if not lock.acquire(timeout=.1): return {"status":"pending"}
+            try:
+                instance = getattr(self, name, None)
+                if instance is None: return False
+                # A request admitted before the fence may still dispatch. Keep
+                # its service alive until it returns, then stop the owned runs.
+                if self._coordinator.requests_pending(): return {"status":"pending"}
+                result = method(instance)
+                if isinstance(result, dict) and result.get('status') in {'confirmed','pending','failed'}:
+                    receipt = result
+                else: receipt = {"status":"confirmed"}
+                for collection in ('threads', '_writer_threads'):
+                    workers = getattr(instance, collection, {})
+                    if isinstance(workers, dict) and any(t.is_alive() for t in workers.values()):
+                        receipt = {'status':'pending'}
+                if receipt['status'] == 'confirmed': setattr(self, name, None)
+                return receipt
+            finally:
+                lock.release()
 
-        def clean_agent_chat():
-            chat = getattr(self, '_agent_chat', None)
-            if chat is not None:
-                try:
-                    chat.close()
-                finally:
-                    self._agent_chat = None
-            return chat is not None
-
-        def clean_agent_center():
-            center = getattr(self, '_agent_center', None)
-            if center is not None:
-                try:
-                    center.shutdown()
-                finally:
-                    self._agent_center = None
-            return center is not None
-
-        def clean_assistant():
-            ast = getattr(self, '_assistant_instance', None)
-            if ast is not None:
-                try:
-                    if hasattr(ast, 'shutdown'):
-                        ast.shutdown()
-                finally:
-                    self._assistant_instance = None
-            return ast is not None
-
-        def clean_mobile_gateway():
+        def clean_mobile():
             global _mobile_gateway
-            mg = _mobile_gateway
-            if mg is not None:
-                try:
-                    if hasattr(mg, 'stop'):
-                        mg.stop()
-                finally:
-                    _mobile_gateway = None
-            return mg is not None
+            if not _startup_lock.acquire(timeout=.1): return {'status':'pending'}
+            try:
+                gateway = _mobile_gateway
+                if gateway is None: return False
+                gateway.stop()
+                thread = _mobile_gateway_thread
+                if thread is not None and thread.is_alive():
+                    thread.join(.1)
+                    if thread.is_alive(): return {"status":"pending"}
+                _mobile_gateway = None
+                return True
+            finally:
+                _startup_lock.release()
 
         components = {
-            "ipc_socket": clean_ipc_socket,
-            "diagnostics": clean_diagnostics,
-            "agent_chat": clean_agent_chat,
-            "agent_center": clean_agent_center,
-            "assistant": clean_assistant,
-            "mobile_gateway": clean_mobile_gateway,
+            'ipc_socket':clean_ipc_socket,
+            'diagnostics':lambda: close_slot('_diagnostics', self._diagnostics_creation_lock, lambda obj: obj.shutdown()),
+            'agent_chat':lambda: close_slot('_agent_chat', self._agent_chat_lock, lambda obj: obj.close()),
+            'agent_center':lambda: close_slot('_agent_center', self._agent_center_lock, lambda obj: obj.shutdown()),
+            'assistant':lambda: close_slot('_assistant_instance', self._assistant_lock, lambda obj: obj.shutdown()),
+            'mobile_gateway':clean_mobile,
+            'inflight_requests':lambda: {'status':'pending' if self._coordinator.requests_pending() else 'confirmed'},
         }
-
         receipt = self._coordinator.execute_shutdown(components)
-        log.info("IPC server stopped with receipt: %s", receipt)
         return receipt
 
     def _handle(self, conn, addr):
@@ -355,18 +322,18 @@ class IPCServer:
         if not isinstance(req, dict) or not authorized(req.get("auth")):
             return {"status": "error", "data": "Unauthorized local IPC request"}
         action = req.get("action", "")
-        if self._coordinator.is_admission_closed() and action != "shutdown":
-            return {
-                "status": "error",
-                "data": "Server is shutting down",
-                "error_code": "SHUTDOWN_IN_PROGRESS",
-            }
-        request_id = str(req.get("request_id") or uuid.uuid4().hex[:12])
-        with request_context(request_id):
-            log.info("IPC action=%s", action)
-            response = self._dispatch_action(req)
-        response["request_id"] = request_id
-        return response
+        admitted = action != 'shutdown'
+        if admitted and not self._coordinator.enter_request():
+            return {"status":"error", "data":"Server is shutting down", "error_code":"SHUTDOWN_IN_PROGRESS"}
+        try:
+            request_id = str(req.get("request_id") or uuid.uuid4().hex[:12])
+            with request_context(request_id):
+                log.info("IPC action=%s", action)
+                response = self._dispatch_action(req)
+            response["request_id"] = request_id
+            return response
+        finally:
+            if admitted: self._coordinator.leave_request()
 
     def _dispatch_action(self, req: dict) -> dict:
         action = req.get("action", "")
@@ -724,6 +691,8 @@ class IPCServer:
 
 _ipc_server = None
 _mobile_gateway = None
+_mobile_gateway_thread = None
+_startup_lock = threading.Lock()
 
 
 def get_ipc_server():
@@ -735,12 +704,7 @@ def stop_backend() -> dict:
     if _ipc_server is not None:
         return _ipc_server.stop()
     from core.shutdown import get_shutdown_coordinator
-    return get_shutdown_coordinator().get_receipt() or {
-        "status": "confirmed",
-        "components": {},
-        "errors": [],
-        "timestamp": time.time(),
-    }
+    return get_shutdown_coordinator().execute_shutdown({})
 
 
 def _handle_signal(signum, _frame):
@@ -750,7 +714,7 @@ def _handle_signal(signum, _frame):
 
 
 def main(register_signals=True):
-    global _ipc_server, _mobile_gateway
+    global _ipc_server, _mobile_gateway, _mobile_gateway_thread
 
     log.info("=" * 60)
     log.info("  %s  starting", ASSISTANT_NAME)
@@ -767,15 +731,18 @@ def main(register_signals=True):
         signal.signal(signal.SIGINT,  _handle_signal)
 
     from core.low_spec_optimizer import LazyClientProxy
-    _ipc_server = IPCServer(None)
-    lazy_assistant = LazyClientProxy(lambda: _ipc_server._assistant)
-    try:
-        from mobile_server import MobileGateway
-        _mobile_gateway = MobileGateway(lazy_assistant)
-        threading.Thread(target=_mobile_gateway.start,
-                         name="quartz-mobile", daemon=True).start()
-    except Exception as exc:
-        log.warning("Mobile gateway unavailable: %s", exc)
+    with _startup_lock:
+        from core.shutdown import get_shutdown_coordinator
+        if get_shutdown_coordinator().is_admission_closed(): return
+        _ipc_server = IPCServer(None)
+        lazy_assistant = LazyClientProxy(lambda: _ipc_server._assistant)
+        try:
+            from mobile_server import MobileGateway
+            _mobile_gateway = MobileGateway(lazy_assistant)
+            _mobile_gateway_thread = threading.Thread(target=_mobile_gateway.start, name='quartz-mobile-gateway', daemon=False)
+            _mobile_gateway_thread.start()
+        except Exception as exc:
+            log.warning("Mobile gateway unavailable: %s", exc)
 
     try:
         _ipc_server.start()

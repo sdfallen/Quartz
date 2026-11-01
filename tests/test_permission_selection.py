@@ -105,6 +105,11 @@ select.value='project';changed();assert(hint.textContent.includes('Proje Yetkisi
         import re
         matched=re.search(r'async function sendAgentMessage\(\)[\s\S]*?\n  }\n',gui._HTML)
         self.assertIsNotNone(matched)
+        # This function shares task admission/Stop state with the application.
+        # Execute its real lifecycle state and receipt predicate as well; a
+        # detached function alone no longer represents the shipped script.
+        lifecycle_state=gui._HTML[gui._HTML.index('  let chatStopReceipt ='):
+                                 gui._HTML.index('  function ensureChatPolling()')]
         self.node(r'''
 const assert=require('assert');const selected={value:'full'};let sent,confirmCalls=0,expectedLevel='full',routeIntent='task';
 global.coordinationRouting=false;global.inputEl={value:'Kodu düzelt'};
@@ -118,7 +123,7 @@ global.setThinking=()=>{};global.logLine=()=>{};global.setOrb=()=>{};global.setT
 global.window={__writeConfirmed:false,confirm:()=>{confirmCalls++;return true},pywebview:{api:{
  coordination_route:async(...args)=>{assert.equal(args[4],expectedLevel);selected.value='read-only';return {status:'ok',data:{handled:false,intent:routeIntent}}},
  chat_send:async(...args)=>{sent=args;return {status:'error',data:'fixture stop after dispatch capture'}}}}};
-'''+matched.group(0)+r'''
+'''+lifecycle_state+matched.group(0)+r'''
 (async()=>{await sendAgentMessage();assert.equal(sent[5],'full');assert.equal(sent[6],'full');assert.equal(sent[3],true);assert.equal(confirmCalls,1);
 expectedLevel='project';selected.value='project';inputEl.value='Kodu düzelt';window.__writeConfirmed=false;
 await sendAgentMessage();assert.equal(sent[5],'project');assert.equal(sent[6],'project');assert.equal(sent[3],true);assert.equal(confirmCalls,2);

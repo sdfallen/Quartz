@@ -122,7 +122,7 @@ class TestCooperativeShutdown(unittest.TestCase):
         mock_socket.close.assert_called_once()
 
         # Cleaned references reset to None
-        self.assertIsNone(server._diagnostics)
+        self.assertIs(server._diagnostics, mock_diag)  # retain failed owner for retry
         self.assertIsNone(server._agent_center)
         self.assertIsNone(server._assistant_instance)
         self.assertIsNone(server._server)
@@ -252,7 +252,7 @@ class TestCooperativeShutdown(unittest.TestCase):
         receipt = server.stop()
         self.assertEqual(receipt["status"], "failed")
         self.assertEqual(receipt["components"]["agent_center"]["status"], "failed")
-        self.assertIn("Owned runtime cleanup is not confirmed", receipt["errors"][0])
+        self.assertEqual(receipt["errors"][0], "RuntimeError")  # no raw provider/path text
 
 
 if __name__ == "__main__":

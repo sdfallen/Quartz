@@ -30,6 +30,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+from contextlib import contextmanager
 
 CONFIRMED = "confirmed"
 PENDING = "pending"
@@ -109,20 +110,39 @@ def _close_natural(task, _owner):
     state = task.status()
     if state.get("active"):
         return PENDING
+    thread = getattr(task, 'thread', None)
+    if thread is not None and thread.is_alive(): return PENDING
+    for runtime, rid in getattr(task, 'runs', {}).values():
+        record = runtime.get(rid)
+        if record.get('process_exit_confirmed') is not True:
+            runtime.cancel(rid)
+            return PENDING
     cleanup = (state.get("job") or {}).get("cleanup") or {}
     if cleanup.get("status") == "failed":
         return FAILED
-    return PENDING if cleanup.get("status") == "running" else CONFIRMED
+    if state.get('job') and cleanup.get('status') != 'completed': return PENDING
+    return CONFIRMED
 
 
 def _close_coordination(service, _owner):
     service.stop()
-    return PENDING if service.status().get("active") else CONFIRMED
+    state = service.status()
+    thread = getattr(service, 'thread', None)
+    if state.get('active') or (thread is not None and thread.is_alive()): return PENDING
+    runtime, rid = getattr(service, 'observer_runtime', None), getattr(service, 'observer_run', None)
+    if runtime is not None and rid and runtime.get(rid).get('process_exit_confirmed') is not True:
+        runtime.cancel(rid)
+        return PENDING
+    if (state.get('job') or {}).get('cleanup', {}).get('status') == 'failed': return FAILED
+    return CONFIRMED
 
 
 def _close_desktop(service, _owner):
     service.close()
     session = (service.status() or {}).get("session") or {}
+    runtime, rid = getattr(service, '_runtime', None), getattr(service, '_run_id', None)
+    if runtime is not None and rid and runtime.get(rid).get('process_exit_confirmed') is not True:
+        return PENDING
     return PENDING if session.get("active") else CONFIRMED
 
 
@@ -187,6 +207,17 @@ class ApplicationServices:
         self._instances = dict.fromkeys(CLOSE_ORDER)
         self._closing = False
         self._components: dict[str, str] = {}
+        self._activities = 0
+
+    @contextmanager
+    def activity(self):
+        with self._lock:
+            self.ensure_open()
+            self._activities += 1
+        try:
+            yield
+        finally:
+            with self._lock: self._activities -= 1
 
     # ── state ──
     @property
@@ -244,6 +275,17 @@ class ApplicationServices:
     def start_natural(self, desktop, emit):
         with self._lock:
             self.ensure_open()
+            previous = self._instances['natural']
+            if previous is not None:
+                state = previous.status()
+                thread = getattr(previous, 'thread', None)
+                cleanup = (state.get('job') or {}).get('cleanup', {})
+                if state.get('active') or (thread is not None and thread.is_alive()) or (
+                        state.get('job') and cleanup.get('status') != 'completed'):
+                    raise RuntimeError('Önceki görevin kapanışı henüz tamamlanmadı.')
+                for runtime, rid in getattr(previous, 'runs', {}).values():
+                    if runtime.get(rid).get('process_exit_confirmed') is not True:
+                        raise RuntimeError('Önceki ajan sürecinin çıkışı henüz doğrulanmadı.')
             task = self.factories.natural(desktop, emit)
             self._instances["natural"] = task
             return task
@@ -255,6 +297,8 @@ class ApplicationServices:
             previous = self._instances["artifact_diagnostics"]
             if previous is not None:
                 previous.shutdown()
+                if any(t.is_alive() for t in getattr(previous, 'threads', {}).values()):
+                    raise RuntimeError('Önceki incelemenin kapanışı henüz tamamlanmadı.')
             service = self.factories.artifact_diagnostics(selected_path)
             self._instances["artifact_diagnostics"] = service
             return service
@@ -280,6 +324,13 @@ class ApplicationServices:
             with self._lock:
                 self._closing = True
                 targets = [(name, self._instances[name]) for name in CLOSE_ORDER]
+                activities = self._activities
+            desktop = self.peek('desktop')
+            if activities:
+                # No new grants or inputs survive a pending startup action.
+                if desktop is not None and callable(getattr(desktop.broker, 'stop', None)):
+                    desktop.broker.stop()
+                return {'status':PENDING, 'components':{'inflight_gui':PENDING}, 'errors':[]}
             errors = []
             for name, instance in targets:
                 if self._components.get(name) == CONFIRMED:
