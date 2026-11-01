@@ -113,16 +113,30 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # Start the window immediately while the backend imports in parallel.
-    start_backend_thread()
+    backend_thread = start_backend_thread()
     start_gui()
 
-    log("Quartz Exit")
+    log("GUI closed. Joining backend thread cooperatively...")
 
-    # Belt-and-suspenders: guarantee this process
-    # actually dies. Some background threads (e.g. the
-    # speech-recognition listener, or pywebview on some
-    # backends) aren't always daemon threads, which can
-    # leave a python.exe hanging around in Task Manager
-    # even after the window is gone. This forces an
-    # immediate, unconditional exit.
-    os._exit(0)
+    # If GUI closing hook did not stop the backend, ensure cooperative stop is called
+    try:
+        from main import get_ipc_server
+        srv = get_ipc_server()
+        if srv and srv._running:
+            srv.stop()
+    except Exception as exc:
+        log(f"Notice: entry stop check: {exc}")
+
+    # Observably join backend thread with bounded timeout
+    backend_thread.join(timeout=8.0)
+
+    from core.shutdown import get_shutdown_coordinator
+    coordinator = get_shutdown_coordinator()
+    receipt = coordinator.get_receipt()
+
+    if backend_thread.is_alive():
+        log(f"WARNING: Backend thread did not terminate within 8.0s timeout. Status: pending. Receipt: {receipt}")
+    else:
+        log(f"Backend thread joined successfully. Receipt: {receipt}")
+
+    log("Quartz Exit")
