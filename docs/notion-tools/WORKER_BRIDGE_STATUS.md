@@ -37,7 +37,7 @@ veya paketli GUI başarısı değildir.
 - Kanıtlar yerel Codex backups/quartz-modern-notion-20261101/worker-bridge
   altında; ham deploy çıktısı ve test kayıtları public Git'e eklenmedi.
 
-## Canlı zincirde kalan blok
+## Tarihsel blok — aşağıdaki v7 testiyle giderildi
 
 Notion ajanı sunucu metadata'sında hâlâ v3 ve yalnız eski Notion connection
 gösteriyor; yeni Worker bağlantısı yok. Kurulum sohbetinin yönetici düzenleme
@@ -108,3 +108,48 @@ Yerel kanıtlar: first-live-blocked.json, diagnostic-live.json,
 reader-scope-live.json ve worker-call-receipts.json; normal user dosyaları ve
 çalışan Quartz EXE'si değiştirilmedi. Worker çağrısı LIVE OBSERVED; dosya okuma
 ve roundtrip kuyruk yazma yetkisinin yayımlanması yüzünden BLOCKED.
+
+## v7 — gerçek salt okunur uçtan uca kabul GEÇTİ
+
+2026-11-01, 12:47 UTC yayını: agent v7, has_unpublished_changes=false,
+yalnız özel kuyrukta editor; web_search disallow. Kullanıcının yayımlama
+onayından sonra taze owned session, nonce ve 15 dakikalık fixture grant'i açıldı.
+
+- Gerçek bulut ajanının quartzReadTestFile çağrısı 12:48:27–30 UTC arasında
+  Worker run kaydıyla doğrulandı. Signed Request gerçek kuyrukta oluştu.
+- Yerel scope/path/file-identity/hash kontrolleriyle fixture.txt gerçekten
+  okundu: 108 byte. Sonuç imzalandı, durable SQLite receipt ve kuyruk kaydına yazıldı.
+- Aynı ajan quartzReadResult aracını 12:49:09–11 UTC arasında gerçekten çağırdı.
+  Aynı Notion oturumundaki tamamlanmış yanıtta dosyadaki rastgele 64-hex kanıt ve
+  SHA-256 birebir bulundu. Kanıt veya dosya içeriği modele önceden gönderilmedi.
+- Sonuç `AUTONOMOUS LIVE VERIFIED — read-only CLI pilot`. Bu, modelin yalnız
+  “başardım” demesine veya Worker exit0 değerine dayanmıyor: gerçek tool receipt,
+  signed queue result, yerel okuma ledger'ı ve cloud yanıtı birlikte doğrulandı.
+- Aynı gerçek request page'i ve kalıcı SQLite kaydı yeniden işlendi. Yeniden
+  dosya okuma girişiminde hata veren gözlem kancası hiç çağrılmadı; reread=0,
+  aynı signed sonuç yayımlandı. Yeni model mesajı veya ikinci işlem oluşturulmadı.
+- Ardından fixture kalıcı `.stopped` ile iptal edildi; açık poller/servis yok.
+- Korunan 9 kullanıcı/ayar dosyası tekrar hash karşılaştırmasında diff0.
+- Son polling düzeltmesini de içeren tam güvenli suite yeniden çalıştırıldı:
+  809 test, OK, skip yok; 87.259 saniye. Bu otomatik suite canlı kabul yerine
+  kullanılmadı; yukarıdaki gerçek bulut/yerel kabul ayrı kanıttır.
+
+Yerel kanıtlar: editor-v7-live.json, editor-v7-worker-receipts.json,
+editor-v7-replay.json ve protected-v7-after.json; aynı worker-bridge yedek
+klasöründe. Gerçek oturum/request/run kimlikleri ve test kanıtı bu yerel
+dosyalardadır; public kaynak raporuna taşınmadı.
+
+Önceki 404 ve 403 başarısızlıkları tarihsel kayıt olarak korunur. Artık bu
+sınırlı okuma kapısı BLOCKED değildir. Kaynak checkpoint fd34834 üzerinde test
+edildi; bu bölüm yalnız sonuç dokümantasyonudur, gameplay/GUI değişikliği yok.
+
+### Kalan entegrasyon sınırı
+
+Normal Quartz ana sohbeti bu pilotu henüz başlatmaz; CLI sürücüsü test içindir.
+Ana EXE değiştirilmedi; paketli GUI kabulü yapılmadı. NotionRuntime.local_tools
+ve normal sohbet araç durumu hâlâ kapalı/unavailable. Sonraki kapı, mevcut
+görev izni ve Stop yaşam döngüsüne bu doğrulanmış taşımanın sınırlı biçimde
+bağlanması ve ana sohbetten gerçek kabulüdür. Genel proje okuması, dosya yazma,
+terminal, ekran görüntüsü/masaüstü kontrolü, REA ve Squad erişimi bu testle
+açılmış veya doğrulanmış değildir; ilk izin yalnız disposable salt okunur
+test projesiydi. Web access kapalı kalır.
