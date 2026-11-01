@@ -1,0 +1,13 @@
+# Claude — servis ve arayüz sınırı
+
+Quartz mimari kapanışında Codex ve Antigravity ile eş zamanlı çalışacaksın. Önce `docs/architecture/FINALIZATION_TEAM_20261102.md`, `PYRAMID.md`, `FRONTEND_FINALIZATION.md` ve mevcut kaynakları oku. Yalnız `C:\Users\LENAVO\.codex\worktrees\quartz-final-claude` / `codex/final-claude-services-20261102` alanında çalış. Worktree HEAD ortak başlangıçtır. Codex'in agent_chat WIP checkpoint'ini alma; o henüz çalışır kabul edilmiyor.
+
+Görevin: `gui.py` içindeki Api ile uygulama servislerinin sahipliğini ayır. Mevcut JS artık ui/js_* dosyalarında; aynı ayrıştırmayı tekrar yapma. `Api` webview bridge ve native kullanıcı onayı/picker adaptörü kalsın; doğal masaüstü görevleri, koordinasyon, diagnostics ve onboarding gibi bileşenlerin oluşturulma/sahiplik mantığını küçük, dependency-injected `core/application_services.py` kompozisyonuna taşı. Çalışan özel güvenlik kontrollerini generic factory uğruna silme. Yeni devasa God object veya task motoru kurma. Mevcut public bridge adları/payload'ları, model tercihleri, Q teması, reduced motion, geçmiş ve tek full seçimi korunacak.
+
+Özellikle `Api.cleanup_before_exit` bugün ardışık; bir bileşen exception atarsa diğerleri temizlenmeyebiliyor. GUI-owned tüm bileşenlerde bağımsız cleanup, idempotency ve kapanışta yeni servis oluşturulmaması için dar çözüm uygula. Backend singleton/IPC lifecycle Antigravity'nin işidir; `main.py`, `quartz_entry.py`, runtime veya agent_chat dosyalarına yazma. Mevcut authenticated IPC çağrısını kullan; hata başarı gibi dönmesin. Gerekli backend receipt değişikliğini integration request olarak yaz.
+
+Testler: fake component/factory ile lazy construction, aynı instance'ın tekrar kullanılması, shutdown sırasında yeni instance yasağı, tek cleanup failure'da diğerlerinin de kapanması, tekrar cleanup; GUI API uyumluluğu. Testleri `tests/test_application_composition.py`, `tests/test_gui_service_lifecycle.py` ve kendi frontend kapsamınla sınırla. Kod taşımak tek başına kabul değildir; gerçek sahipliği kanıtla. `scripts/run_safe_tests.py` ile ilgili testleri çalıştır, JS kontrolünü koru; Linux sonucu Windows canlı kabulü değildir.
+
+Yazabileceğin dosyalar ve ortak receipt sözleşmesi TEAM belgesindedir. Proje kökünü/kurulu EXE'yi/kullanıcı verisini değiştirme, hesabı/secret'ı taşıma, ASTER/Notion ajanını açma, bağımsız deploy yapma. Başka alanda sorun bulursan dosya/çağrı/test önerisiyle raporla.
+
+Teslim: kendi branch'inde commit; ortak SHA..HEAD patch veya bundle, `docs/architecture/CLAUDE_FINALIZATION_REPORT.md`, test logları/komutları, gerçek kalan açıklar ve rollback. Secret/kişisel kayıt delivery'ye girmeyecek. Son entegrasyon ve paket kabulü Codex'te.
