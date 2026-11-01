@@ -831,7 +831,8 @@ class AgentChatService:
                 content = (content + "\n\n" + (run.get("error") or "Notion görevi tamamlanmadı.")).strip()
             meta = {"agent": "notion", "sender": "notion", "status": state,
                     "run_id": run_id, "remote_status": run.get("remote_status"),
-                    "remote_uncertain": run.get("remote_uncertain", False), "local_tools": False}
+                    "remote_uncertain": run.get("remote_uncertain", False), "local_tools": False,
+                    "timings": deepcopy(run.get("timings", {}))}
             if not self._publish_run_update(cid, msg_id, content, meta,
                                             provider=key, session=run.get("session_id")):
                 self.agent_service.cancel(run_id)

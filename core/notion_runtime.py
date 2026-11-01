@@ -18,6 +18,20 @@ class NotionRuntime:
     TERMINAL = {"completed", "failed", "cancelled", "blocked"}
     REMOTE_TERMINAL = {"completed", "failed", "canceled", "terminated"}
 
+    @staticmethod
+    def model_capability(agent=None):
+        """Published agent metadata, not a locally invented model selection."""
+        model = (agent or {}).get("model") or {}
+        mode = model.get("mode")
+        model_id = model.get("id") if mode == "pinned" else None
+        return {"mode": mode if mode in {"auto", "pinned"} else "unknown",
+                "id": model_id if isinstance(model_id, str) else None,
+                "selection_supported": False, "managed_by": "notion",
+                "label": "Otomatik (Notion)" if mode == "auto" else
+                         model_id if isinstance(model_id, str) and model_id else
+                         "Notion tarafından yönetiliyor",
+                "reason": "Resmî oturum API'si model değiştirme alanı sunmuyor. Model Notion ajan ayarlarından seçilir."}
+
     def __init__(self, *, home=None, transport_factory=None, timeout=180, poll_interval=1):
         self.home = home or profile_root()
         from pathlib import Path
@@ -62,6 +76,7 @@ class NotionRuntime:
         return {"provider": "notion", "installed": installed, "configured": configured,
                 "ready": False, "authentication": "not_checked",
                 "agent_name": config["agent_name"],
+                "model": self.model_capability(),
                 "error": "" if installed and configured else
                 "Notion bağlantısı hazır değil. scripts/notion_agent.py ile kurulum, giriş ve ajan seçimi yapın."}
 
@@ -98,7 +113,8 @@ class NotionRuntime:
             if not agent:
                 raise NotionError("Seçili Notion ajanına bu hesapla erişilemiyor.")
             result.update(ready=True, auth_verified=True, authentication="verified", error="",
-                          agent_name=str(agent.get("name") or "Notion ajanı")[:200])
+                          agent_name=str(agent.get("name") or "Notion ajanı")[:200],
+                          model=self.model_capability(agent))
         except Exception as exc:
             result.update(authentication="unverified", error=str(exc) if isinstance(exc, NotionError)
                           else "Notion bağlantısı doğrulanamadı; giriş ve ajan seçimini kontrol edin.")
@@ -125,10 +141,12 @@ class NotionRuntime:
             atomic_write_json(path, {k: config[k] for k in ("workspace_id", "agent_id")})
 
     @staticmethod
-    def _events(client, session_id):
+    def _events(client, session_id, *, after_sequence=None):
         events, cursor, seen = [], None, set()
         for _ in range(20):
             body = {"page_size": 100}
+            if after_sequence is not None:
+                body["filter"] = {"property": "sequence", "number": {"greater_than": after_sequence}}
             if cursor:
                 body["start_cursor"] = cursor
             data = client.request(f"v1/sessions/{session_id}/events/query", body)
@@ -193,8 +211,20 @@ class NotionRuntime:
         stop = self._stops[rid]
         original_session = session_id
         submitted = False
+        started = time.monotonic()
+        metrics = {"request_count": 0, "request_ms": 0.0, "first_text_ms": None}
         try:
-            client = self.transport_factory(config["workspace_id"])
+            transport = self.transport_factory(config["workspace_id"])
+            # Per-run observation only: no prompt, content, credential or URL logs.
+            class MeasuredClient:
+                def request(inner, path, body=None):
+                    tick = time.monotonic()
+                    try:
+                        return transport.request(path, body) if body is not None else transport.request(path)
+                    finally:
+                        metrics["request_count"] += 1
+                        metrics["request_ms"] += (time.monotonic() - tick) * 1000
+            client = MeasuredClient()
             baseline = 0
             if session_id:
                 existing = client.request(f"v1/sessions/{session_id}")
@@ -208,6 +238,7 @@ class NotionRuntime:
             body = {"message": prompt}
             body["session_id" if session_id else "agent_id"] = session_id or config["agent_id"]
             session = client.request("v1/sessions", body)
+            metrics["submit_response_ms"] = round((time.monotonic() - started) * 1000, 2)
             submitted = True
             returned_id = identifier(session.get("id"))
             if (session_id and returned_id != session_id) or identifier(session.get("agent_id")) != config["agent_id"]:
@@ -226,7 +257,7 @@ class NotionRuntime:
                 state = session.get("status")
                 if state not in self.REMOTE_TERMINAL | {"queued", "in_progress", "requires_action"}:
                     raise NotionError("Notion oturum durumu tanınmıyor.", uncertain=True)
-                events = self._events(client, session_id)
+                events = self._events(client, session_id, after_sequence=baseline)
                 messages = {}
                 for event in events:
                     seq = event.get("sequence", 0)
@@ -235,7 +266,9 @@ class NotionRuntime:
                         messages[(seq, event["id"])] = "".join(
                             p.get("text", "") for p in parts if p.get("type") == "text" and isinstance(p.get("text"), str))
                 text = "\n\n".join(value for _, value in sorted(messages.items()) if value)
-                self._update(rid, result=text, remote_status=state)
+                if text and metrics["first_text_ms"] is None:
+                    metrics["first_text_ms"] = round((time.monotonic() - started) * 1000, 2)
+                self._update(rid, result=text, remote_status=state, timings=deepcopy(metrics))
                 if state == "requires_action":
                     self._update(rid, status="blocked", error="Notion ajanı onay bekliyor. Notion'da bu oturumu kontrol edin.",
                                  required_actions=True)
@@ -257,7 +290,9 @@ class NotionRuntime:
                          remote_uncertain=bool(getattr(exc, "uncertain", False) or
                                                (submitted and self.get(rid).get("remote_status") not in self.REMOTE_TERMINAL)))
         finally:
-            self._update(rid, finished_at=time.time())
+            metrics["total_ms"] = round((time.monotonic() - started) * 1000, 2)
+            metrics["request_ms"] = round(metrics["request_ms"], 2)
+            self._update(rid, finished_at=time.time(), timings=deepcopy(metrics))
             with self._lock:
                 self._busy_sessions.discard(original_session)
 

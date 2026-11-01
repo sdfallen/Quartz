@@ -366,7 +366,10 @@ class NotionWorkerTasks:
                     local.stop()
                     self._finish_stopped(manifest_path, manifest, stop_path, run_id, "Görev durduruldu.")
                 run = self.runtime.get(run_id)
-                for page in api.query(task_id, session_id):
+                # Once the signed result is published, only wait for the cloud
+                # turn to finish. Re-querying/re-publishing the same receipt adds
+                # network roundtrips without adding evidence or local work.
+                for page in ([] if local_result else api.query(task_id, session_id)):
                     if page.get("properties", {}).get("Signed Request", {}).get("rich_text"):
                         local_result = local.process(page)
                         if local_result is None:   # stopped during processing: never published
