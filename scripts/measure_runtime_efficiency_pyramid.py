@@ -38,7 +38,7 @@ def run_benchmark():
     # 1. Idle Baseline
     idle_metrics = measure_process_tree_resources(cpu_interval=0.2)
     results["idle"] = {
-        "status": "LIVE_MEASURED",
+        "status": "SYNTHETIC_PROCESS_MEASURED",
         "description": "Baseline Python process tree before runtime instantiation",
         "process_count": idle_metrics.get("process_count", 1),
         "total_rss_mb": idle_metrics.get("total_rss_mb", 0.0),
@@ -58,8 +58,8 @@ def run_benchmark():
 
         startup_metrics = measure_process_tree_resources(cpu_interval=0.2)
         results["startup"] = {
-            "status": "LIVE_MEASURED",
-            "description": "CodexRuntime instantiated and probed with probe caching",
+            "status": "SYNTHETIC_PROCESS_MEASURED",
+            "description": "Offline empty-executable fixture; not real CLI startup performance",
             "startup_latency_ms": t_startup,
             "process_count": startup_metrics.get("process_count", 1),
             "total_rss_mb": startup_metrics.get("total_rss_mb", 0.0),
@@ -85,7 +85,7 @@ def run_benchmark():
 
         active_metrics = measure_process_tree_resources(cpu_interval=0.2)
         results["active_running"] = {
-            "status": "LIVE_MEASURED",
+            "status": "SYNTHETIC_PROCESS_MEASURED",
             "description": "Active execution with parent + descendant child process tree",
             "process_count": active_metrics.get("process_count", 1),
             "total_rss_mb": active_metrics.get("total_rss_mb", 0.0),
@@ -102,7 +102,7 @@ def run_benchmark():
 
         stop_metrics = measure_process_tree_resources(cpu_interval=0.2)
         results["stop_cancellation"] = {
-            "status": "LIVE_MEASURED",
+            "status": "SYNTHETIC_PROCESS_MEASURED",
             "description": "Process tree stopped via stop_process_tree",
             "stop_latency_ms": t_stop_ms,
             "stop_verified": stop_success,
@@ -117,7 +117,7 @@ def run_benchmark():
         trim_res = trim_working_set()
         shutdown_metrics = measure_process_tree_resources(cpu_interval=0.2)
         results["shutdown_trimmed"] = {
-            "status": "LIVE_MEASURED",
+            "status": "SYNTHETIC_PROCESS_MEASURED",
             "description": "Post-shutdown memory trim and complete cleanup",
             "process_count": shutdown_metrics.get("process_count", 1),
             "total_rss_mb": shutdown_metrics.get("total_rss_mb", 0.0),

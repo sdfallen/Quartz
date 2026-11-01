@@ -11,7 +11,7 @@ import time
 import uuid
 from pathlib import Path
 
-from core.process_tree import stop_process_tree
+from core.process_tree import stop_process_tree, wait_for_owned_cleanup
 
 
 class AntigravityRuntime:
@@ -339,18 +339,23 @@ class AntigravityRuntime:
                 return self.get(run_id)
             record["cancel_requested"] = True
             record["status"] = "cancelling"
-        if process is not None and process.poll() is None:
+        pending = getattr(process, "_quartz_pending_children", [])
+        if process is not None and (process.poll() is None or (isinstance(pending, list) and pending)):
             stop_process_tree(process, timeout=max(1, timeout))
         return self.get(run_id)
 
     def shutdown(self):
         with self._lock:
-            active = [key for key, proc in self._processes.items() if proc.poll() is None]
-        for run_id in active:
-            try:
+            owned = list(self._processes.items())
+        for run_id, process in owned:
+            pending = getattr(process, "_quartz_pending_children", [])
+            if process.poll() is None or (isinstance(pending, list) and pending):
                 self.cancel(run_id)
-            except Exception:
-                pass
+        # Sending Stop is not proof that an owned process actually exited.
+        for _, process in owned:
+            pending = getattr(process, "_quartz_pending_children", [])
+            if process.poll() is None or (isinstance(pending, list) and pending):
+                raise RuntimeError("Owned runtime cleanup is not confirmed")
 
     def _command(self, args):
         return [self.executable, *args]
@@ -394,6 +399,8 @@ class AntigravityRuntime:
                     if not record:
                         continue
                     is_terminal = record.get("status") in self.TERMINAL
+                    if is_terminal:
+                        continue  # A terminal receipt/session identity is immutable.
                     if not is_terminal and record.get("first_event_at") is None:
                         record["first_event_at"] = time.time()
                     record["events"].append(event)
@@ -490,21 +497,34 @@ class AntigravityRuntime:
             timeout_sec = self._runs.get(run_id, {}).get("timeout_seconds") or 600.0
         timed_out = False
         code = -1
+        exit_known = False
+        def pending_cleanup():
+            with self._lock:
+                record = self._runs.get(run_id)
+                if record:
+                    record.update(status="cancelling", cleanup_pending=True, process_exit_confirmed=False)
         try:
             try:
                 code = process.wait(timeout=timeout_sec)
+                exit_known = True
             except subprocess.TimeoutExpired:
                 timed_out = True
                 stop_process_tree(process, timeout=5)
                 try:
                     code = process.wait(timeout=5)
+                    exit_known = True
                 except Exception:
                     code = -1
+            known_children = getattr(process, "_quartz_pending_children", [])
+            if not exit_known or (isinstance(known_children, list) and known_children):
+                code = wait_for_owned_cleanup(process, pending_cleanup)
+                exit_known = True
             stdout_thread.join(timeout=5)
             stderr_thread.join(timeout=5)
             with self._lock:
                 record = self._runs.get(run_id)
                 if record:
+                    record.update(cleanup_pending=False, process_exit_confirmed=True)
                     record["exit_code"] = code
                     record["finished_at"] = time.time()
                     if timed_out:
@@ -522,11 +542,15 @@ class AntigravityRuntime:
             with self._lock:
                 record = self._runs.get(run_id)
                 if record:
-                    record["status"] = "failed"
-                    record["finished_at"] = time.time()
-                    record["errors"].append(f"Runtime error in process watcher: {exc}")
+                    record["status"] = "failed" if exit_known else "cancelling"
+                    record["cleanup_pending"] = not exit_known
+                    record["process_exit_confirmed"] = exit_known
+                    if exit_known:
+                        record["finished_at"] = time.time()
+                    record["errors"].append("Process watcher failed; inspect cleanup status")
         finally:
             with self._lock:
-                self._processes.pop(run_id, None)
-                if self._writers.get(project_key) == run_id:
-                    self._writers.pop(project_key, None)
+                if exit_known:
+                    self._processes.pop(run_id, None)
+                    if self._writers.get(project_key) == run_id:
+                        self._writers.pop(project_key, None)

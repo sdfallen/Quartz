@@ -11,7 +11,7 @@ import time
 import uuid
 from pathlib import Path
 
-from core.process_tree import stop_process_tree
+from core.process_tree import stop_process_tree, wait_for_owned_cleanup
 
 
 class CodexRuntime:
@@ -176,26 +176,27 @@ class CodexRuntime:
         return result
 
     @staticmethod
-    def _parse_timeout_seconds(timeout) -> float:
-        if isinstance(timeout, (int, float)):
-            return max(1.0, float(timeout))
-        raw = str(timeout or "10m").strip().lower()
-        try:
-            if raw.endswith("ms"):
-                return max(1.0, float(raw[:-2]) / 1000.0)
-            if raw.endswith("s"):
-                return max(1.0, float(raw[:-1]))
-            if raw.endswith("m"):
-                return max(1.0, float(raw[:-1]) * 60.0)
-            if raw.endswith("h"):
-                return max(1.0, float(raw[:-1]) * 3600.0)
-            return max(1.0, float(raw))
-        except ValueError:
-            return 600.0
+    def _parse_timeout_seconds(timeout):
+        if timeout is None:
+            return None  # Existing callers had no implicit Codex deadline.
+        import math
+        if isinstance(timeout, bool):
+            raise ValueError("Invalid task timeout")
+        raw = str(timeout).strip().lower()
+        units = (("ms", .001), ("s", 1), ("m", 60), ("h", 3600))
+        multiplier = 1
+        for suffix, factor in units:
+            if raw.endswith(suffix):
+                raw, multiplier = raw[:-len(suffix)], factor
+                break
+        value = float(raw) * multiplier
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError("Invalid task timeout")
+        return max(1.0, value)
 
     def start(self, prompt, project_path, *, sandbox="read-only", approval="never",
               squad_task_id=None, squad_agent_id=None, resume_thread_id=None,
-              timeout="10m", model: str | None = None, effort: str | None = None,
+              timeout=None, model: str | None = None, effort: str | None = None,
               desktop_connection=None, tool_guard=False) -> dict:
         if not self.executable:
             raise RuntimeError(self._init_error or "Codex CLI was not found")
@@ -389,18 +390,23 @@ class CodexRuntime:
                 return self.get(run_id)
             record["cancel_requested"] = True
             record["status"] = "cancelling"
-        if process is not None and process.poll() is None:
+        pending = getattr(process, "_quartz_pending_children", [])
+        if process is not None and (process.poll() is None or (isinstance(pending, list) and pending)):
             stop_process_tree(process, timeout=max(1, timeout))
         return self.get(run_id)
 
     def shutdown(self):
         with self._lock:
-            active = [run_id for run_id, proc in self._processes.items() if proc.poll() is None]
-        for run_id in active:
-            try:
+            owned = list(self._processes.items())
+        for run_id, process in owned:
+            pending = getattr(process, "_quartz_pending_children", [])
+            if process.poll() is None or (isinstance(pending, list) and pending):
                 self.cancel(run_id)
-            except Exception:
-                pass
+        # Sending Stop is not proof that an owned process actually exited.
+        for _, process in owned:
+            pending = getattr(process, "_quartz_pending_children", [])
+            if process.poll() is None or (isinstance(pending, list) and pending):
+                raise RuntimeError("Owned runtime cleanup is not confirmed")
 
     def _command(self, args):
         suffix = Path(self.executable).suffix.lower()
@@ -449,6 +455,8 @@ class CodexRuntime:
                     if not record:
                         continue
                     is_terminal = record.get("status") in self.TERMINAL
+                    if is_terminal:
+                        continue  # A terminal receipt/session identity is immutable.
                     if not is_terminal and record.get("first_event_at") is None:
                         record["first_event_at"] = time.time()
                     record["events"].append(event)
@@ -502,24 +510,37 @@ class CodexRuntime:
 
     def _wait(self, run_id, process, project_key, stdout_thread, stderr_thread):
         with self._lock:
-            timeout_sec = self._runs.get(run_id, {}).get("timeout_seconds") or 600.0
+            timeout_sec = self._runs.get(run_id, {}).get("timeout_seconds")
         timed_out = False
         code = -1
+        exit_known = False
+        def pending_cleanup():
+            with self._lock:
+                record = self._runs.get(run_id)
+                if record:
+                    record.update(status="cancelling", cleanup_pending=True, process_exit_confirmed=False)
         try:
             try:
                 code = process.wait(timeout=timeout_sec)
+                exit_known = True
             except subprocess.TimeoutExpired:
                 timed_out = True
                 stop_process_tree(process, timeout=5)
                 try:
                     code = process.wait(timeout=5)
+                    exit_known = True
                 except Exception:
                     code = -1
+            known_children = getattr(process, "_quartz_pending_children", [])
+            if not exit_known or (isinstance(known_children, list) and known_children):
+                code = wait_for_owned_cleanup(process, pending_cleanup)
+                exit_known = True
             stdout_thread.join(timeout=5)
             stderr_thread.join(timeout=5)
             with self._lock:
                 record = self._runs.get(run_id)
                 if record:
+                    record.update(cleanup_pending=False, process_exit_confirmed=True)
                     record["exit_code"] = code
                     record["finished_at"] = time.time()
                     if timed_out:
@@ -538,11 +559,15 @@ class CodexRuntime:
             with self._lock:
                 record = self._runs.get(run_id)
                 if record:
-                    record["status"] = "failed"
-                    record["finished_at"] = time.time()
-                    record["errors"].append(f"Runtime error in process watcher: {exc}")
+                    record["status"] = "failed" if exit_known else "cancelling"
+                    record["cleanup_pending"] = not exit_known
+                    record["process_exit_confirmed"] = exit_known
+                    if exit_known:
+                        record["finished_at"] = time.time()
+                    record["errors"].append("Process watcher failed; inspect cleanup status")
         finally:
             with self._lock:
-                self._processes.pop(run_id, None)
-                if self._writers.get(project_key) == run_id:
-                    self._writers.pop(project_key, None)
+                if exit_known:
+                    self._processes.pop(run_id, None)
+                    if self._writers.get(project_key) == run_id:
+                        self._writers.pop(project_key, None)
