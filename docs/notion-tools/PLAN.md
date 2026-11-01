@@ -25,7 +25,7 @@ sağlayıcı model erişimini doğrulamaz.
 | Sahip | Branch | Yazma alanı |
 |---|---|---|
 | Gemini 3.8 Flash / Antigravity | `antigravity/notion-tool-transport` | Yeni `core/notion_tool_transport.py`, `tests/test_notion_tool_transport.py`, `scripts/probe_notion_tool_transport.py`, `docs/notion-tools/GEMINI_REPORT.md` |
-| Claude 5.5 Opus | `claude/notion-tools-ui` | `ui/document.py`, `ui/styles.py`, `ui/theme.py`, yeni `tests/test_notion_tools_ui.py`, `docs/notion-tools/CLAUDE_REPORT.md` |
+| Claude 5.5 Opus | `claude/notion-tools-ui` | `ui/document.py`, `ui/styles.py`, `ui/theme.py`, yeni `ui/notion_tools.py`, yeni `tests/test_notion_tools_ui.py`, `docs/notion-tools/CLAUDE_REPORT.md` |
 | Codex | `codex/modern-ui-notion` ve gerekli izole entegrasyon dalı | Mevcut `core/notion_runtime.py`, `core/notion_cli.py`, `core/agent_chat.py`, `core/multi_agent_service.py`, `gui.py`; mevcut broker/REA/Squad'a dar adaptasyon, yerel araç yönlendirici, entegrasyon testleri ve paketleme |
 
 Başka dosya gerekiyorsa integration request ver; sahibiyle anlaşılmadan yazma.
@@ -65,10 +65,17 @@ blocked / failed / cancelled. `verification`: none / observed / verified.
 Yalnız mevcut izin kartları ve Stop yolu kullanılır; yeni yetki veya Stop API'si
 icat edilmez. Alan yoksa mevcut sohbet davranışı korunur.
 
+Mevcut kaynakta body ve uygulama JS'i hâlâ gui.py içindedir; ui/document.py belgeyi
+birleştirir. Claude yeni durumu dar bir ui/notion_tools.py bileşeninde sağlayıp
+belge birleştirmesine ekleyebilir. gui.py içindeki mevcut polling/render çağrı
+noktası için Codex'e integration request verir; GUI dosyasının tamamını taşımaz.
+
 Yerel araç isteği tasarımında bulunması gereken bağlam: schema_version, task_id,
 session_id, request_id, tool_name, arguments, project_id, scope_ref, deadline.
 Bunlar yerel tasarım alanlarıdır; uzak API'nin desteklediği varsayılmaz. Yetki ve
 kapsam yerelde doğrulanır; modelin gönderdiği scope_ref tek başına yetki vermez.
+`deadline` taşıma adaptöründe yerel monotonic saate çevrilir; bulut timestamp'i
+doğrudan karşılaştırılmaz ve yerel görev süresini uzatamaz.
 
 ## Kabul ve koruma
 

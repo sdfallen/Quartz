@@ -12,6 +12,7 @@ Yalnız şuralara yaz:
 - ui/document.py
 - ui/styles.py
 - ui/theme.py
+- ui/notion_tools.py (yeni, dar durum bileşeni)
 - tests/test_notion_tools_ui.py (yeni)
 - docs/notion-tools/CLAUDE_REPORT.md (yeni)
 
@@ -20,6 +21,11 @@ henüz yok. Hazır olmayan özelliği bağlı veya başarılı gösterme. Mevcut
 mavisi tema, Q logosu, Codex buz mavisi/Antigravity ametist/Notion gri kimliği,
 modern düzen, kod blokları, sohbet geçmişi ve azaltılmış hareket davranışı korunsun.
 Yeni genel tasarım veya ikinci görev ekranı yapma.
+
+Body ve uygulama JavaScript'i hâlâ gui.py içindedir. Yeni durum bileşenini
+ui/notion_tools.py içinde hazırlayıp ui/document.py ile belgeye ekleyebilirsin.
+Mevcut polling/render çağrı noktasına gereken hook'u Codex'e integration request
+olarak teslim et; gui.py'yi taşıma veya bu dosyaya yazma.
 
 PLAN.md'deki yerel notion_tools alanını render et. Alan bulunmuyorsa bugünkü
 sohbet çalışsın. Checking/ready/blocked ile observing/awaiting_approval/executing/

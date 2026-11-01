@@ -35,7 +35,7 @@ class DesktopBroker:
     def grant(self, handle, provider, *, confirmed=False, seconds=600, launches=None, expected_targets=None, persistent_control=False):
         if confirmed is not True:
             raise PermissionError("Explicit desktop-control confirmation required")
-        if provider not in {"codex", "antigravity"}:
+        if provider not in {"codex", "antigravity", "notion"}:
             raise ValueError("Select one input operator")
         if self.admission_guard is not None:
             self.admission_guard()  # May veto, never grants or restores authority.
