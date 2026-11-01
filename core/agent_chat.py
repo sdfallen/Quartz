@@ -11,7 +11,7 @@ from pathlib import Path
 from copy import deepcopy
 
 from core.conversation_store import ConversationStore
-from core.multi_agent_service import MultiAgentService
+from core.multi_agent_service import MultiAgentService, WriterDispatchError
 from core.response_style import communication_instruction, DETAIL_MARKER
 from core.async_snapshot import AsyncSnapshot
 
@@ -146,6 +146,9 @@ class AgentChatService:
 
     def switch_project(self, project_id: str) -> dict:
         with self._lock:
+            self._refresh_stop_receipt()
+            if self._active_turn and self._active_turn.get("stop_receipt", {}).get("status") in {"pending", "failed"}:
+                raise RuntimeError("Önceki süreçlerin durduğu henüz doğrulanmadı.")
             if self._active_turn and self._active_turn.get("status") in {"running", "cancelling"}:
                 raise RuntimeError("Aktif görev bitmeden proje değiştirilemez; önce görevi durdurun.")
             project = self.agent_service.select_project(project_id)
@@ -160,13 +163,111 @@ class AgentChatService:
     def close(self):
         with self._lock:
             self._closed = True
-        result = self.cancel_active()
-        self._diagnostics.close()
-        return result
+        try:
+            result = self.cancel_active()
+        finally:
+            self._diagnostics.close()
+        return {"status": result["stop_receipt"]["status"],
+                "components": {"chat": result["stop_receipt"]}}
+
+    def _queue_instruction(self, text, agent, conversation_id, write, full_access):
+        """Called with the ownership lock. Queue text, never a second executor."""
+        turn = self._active_turn
+        cid = conversation_id or self.store.get_active()["id"]
+        selected = agent or turn["agent"]
+        normalize = lambda value: "collaboration" if value == "both" else value
+        if cid != turn["conversation_id"] or normalize(selected) != normalize(turn["agent"]):
+            raise RuntimeError("Ek talimat aynı sohbet ve ajan seçimiyle gönderilmelidir.")
+        flags = turn.get("execution_flags", {})
+        if (full_access and not flags.get("full_access")) or (write and not flags.get("write")):
+            raise PermissionError("Aktif görevin yetkisi ek talimatla genişletilemez.")
+        from core.message_intent import message_intent
+        if turn.get("conversation_only") and message_intent(text) == "task":
+            raise RuntimeError("Sohbet yanıtı bitince yeni geliştirme görevini gönderin.")
+        if not turn.get("managed_worker"):
+            raise RuntimeError("Bu tur ek talimat almıyor; bitmesini bekleyin veya durdurun.")
+        queue = turn.setdefault("instructions", [])
+        if len(queue) >= 16:
+            raise RuntimeError("Bekleyen ek talimat sınırına ulaşıldı.")
+        conv = self.store.get(cid)
+        common = {"task_id":turn["turn_id"], "conversation_id":cid,
+                  "instruction_state":"queued", "permission_level":turn.get("permission_level")}
+        user = self.store.append_message(cid, "user", text, sender="user",
+                metadata={**common, "sequence":self._next_sequence(conv)})
+        sender = "codex" if normalize(selected) == "collaboration" else selected
+        assistant = self.store.append_message(cid, "assistant", "", sender=sender,
+                metadata={**common, "status":"queued", "agent":sender,
+                          "progress_step":"Mevcut adımın ardından uygulanacak."})
+        queue.append({"text":text, "user_message_id":user["id"], "message_id":assistant["id"]})
+        return {"conversation_id":cid, "user_message":user, "assistant_message":assistant,
+                "agent":turn["agent"], "task_id":turn["turn_id"], "queued":True,
+                "queue_position":len(queue)}
+
+    def _discard_instructions(self, reason):
+        turn = self._active_turn
+        for item in turn.get("instructions", []):
+            for key in ("user_message_id", "message_id"):
+                self.store.update_message_content(turn["conversation_id"], item[key],
+                    item["text"] if key == "user_message_id" else reason,
+                    metadata={"instruction_state":"cancelled", "status":"cancelled"})
+        turn["instructions"] = []
+
+    def _refresh_stop_receipt(self):
+        """Local run readback only; status=cancelled alone is not exit proof."""
+        turn = self._active_turn
+        if not turn or "stop_receipt" not in turn:
+            return
+        receipt = turn["stop_receipt"]
+        states = receipt.setdefault("runs", {})
+        for rid in turn.get("run_ids", []):
+            if states.get(rid, {}).get("process_exit_confirmed") is True:
+                continue
+            try:
+                record = self.agent_service.get_run(rid)
+                if isinstance(record, dict):
+                    states[rid] = {"process_exit_confirmed":record.get("process_exit_confirmed") is True,
+                                   "status":record.get("status", "unknown")}
+            except Exception as exc:
+                states[rid] = {"process_exit_confirmed":False, "error_type":type(exc).__name__}
+        receipt["worker_pending"] = bool(turn.get("worker_pending"))
+        receipt["unresolved_dispatch"] = list(turn.get("unresolved_dispatch", []))
+        receipt["writer_pending"] = []
+        if turn.get("run_ids"):
+            try:
+                pending = self.agent_service.pending_writer_runs(turn["run_ids"])
+                if not isinstance(pending, list):
+                    raise TypeError("Invalid writer readback")
+                receipt["writer_pending"] = pending
+            except Exception as exc:
+                receipt["writer_pending"] = list(turn["run_ids"])
+                receipt["writer_error_type"] = type(exc).__name__
+        stopped = (not receipt["worker_pending"] and not receipt["writer_pending"] and not receipt["unresolved_dispatch"] and
+            all(states.get(rid, {}).get("process_exit_confirmed") is True
+                for rid in turn.get("run_ids", [])))
+        receipt["process_exit_confirmed"] = stopped
+        receipt["status"] = "failed" if stopped and receipt.get("history_error_type") else "confirmed" if stopped else "pending"
+
+    def _cancel_owned_run(self, run_id, task_id):
+        try:
+            result = self.agent_service.cancel(run_id)
+            state = {"process_exit_confirmed":isinstance(result, dict) and
+                     result.get("process_exit_confirmed") is True,
+                     "status":result.get("status", "unknown") if isinstance(result, dict) else "unknown"}
+        except Exception as exc:
+            state = {"process_exit_confirmed":False, "error_type":type(exc).__name__}
+            log.warning("Run cancellation unconfirmed (%s)", type(exc).__name__)
+        with self._lock:
+            turn = self._active_turn
+            if turn and turn.get("turn_id") == task_id and "stop_receipt" in turn:
+                turn["stop_receipt"].setdefault("runs", {})[run_id] = state
+        return state
 
     def prepare_resume(self, conversation_id, message_id):
         """Return an editable draft only. No dispatch, permission or session reuse."""
         with self._lock:
+            self._refresh_stop_receipt()
+            if self._closed or (self._active_turn or {}).get("stop_receipt", {}).get("status") in {"pending", "failed"}:
+                raise RuntimeError("Görev sürdürülmeden önce kapanışın tamamlanması gerekiyor.")
             if self._active_turn and self._active_turn.get('status') in {'running','cancelling'}:
                 raise RuntimeError('Önce aktif görevi bitirin veya durdurun.')
             conv = self.store.get(conversation_id)
@@ -189,6 +290,9 @@ class AgentChatService:
     def _allow_delete(self, confirmed):
         if confirmed is not True:
             raise PermissionError("Sohbet silmek için açık onay gerekli.")
+        self._refresh_stop_receipt()
+        if (self._active_turn or {}).get("stop_receipt", {}).get("status") in {"pending", "failed"}:
+            raise RuntimeError("Önceki süreçlerin durduğu henüz doğrulanmadı.")
         if self._active_turn and self._active_turn.get("status") in {"running", "cancelling"}:
             raise RuntimeError("Önce çalışan ajan görevini bitirin veya durdurun.")
 
@@ -300,7 +404,7 @@ class AgentChatService:
         relevant = [
             m for m in messages
             if m.get("id") not in exclude_ids and (m.get("content") or "").strip()
-            and (m.get("metadata") or {}).get("instruction_state") not in {"queued","cancelled"}
+            and (m.get("metadata") or {}).get("instruction_state") not in {"queued","cancelled","interrupted"}
         ][-limit:]
         if not relevant:
             return ""
@@ -376,10 +480,12 @@ class AgentChatService:
             if self._closed:
                 raise RuntimeError("Quartz kapanıyor; yeni görev başlatılamaz.")
             self._refresh_stop_receipt()
+            if self._active_turn and self._active_turn.get("worker_pending") and self._active_turn.get("status") != "running":
+                raise RuntimeError("Önceki görevin çalışanı kapanıyor; yeni görev henüz başlatılamaz.")
             if self._active_turn and self._active_turn.get("status") == "running":
                 return self._queue_instruction(text, agent, conversation_id, write, full_access)
             if self._active_turn and (self._active_turn.get("status") == "cancelling" or
-                    self._active_turn.get("stop_receipt", {}).get("status") == "pending"):
+                    self._active_turn.get("stop_receipt", {}).get("status") in {"pending", "failed"}):
                 raise RuntimeError("Önceki ajan süreçlerinin durduğu henüz doğrulanmadı.")
 
             if conversation_id:
@@ -446,7 +552,7 @@ class AgentChatService:
                 "permission_level":'full' if full_access else 'project' if write else 'read-only',
                 "turn_id": task_id, "project_id":project_id,
                 "execution_flags": {"write":write,"confirm_write":confirm_write,"full_access":full_access},
-                "instructions": [],
+                "instructions": [], "managed_worker":True, "worker_pending":True,
                 "conversation_id": cid,
                 "message_id": bot_msg["id"],
                 "message_ids": [bot_msg["id"]],
@@ -459,15 +565,12 @@ class AgentChatService:
                 "progress_step": "Yanıt hazırlanıyor...",
                 "started_at": time.time(),
             }
+            turn_state["all_message_ids"] = [bot_msg["id"]]
             self._active_turn = turn_state
 
-        worker = threading.Thread(
-            target=self._run_chat_turn,
-            args=(cid, bot_msg["id"], selected_agent, text, project_id, write, confirm_write, full_access),
-            name=f"agent-chat-{cid[:8]}", daemon=True)
-        with self._lock:
-            self._worker_threads[task_id] = worker
-        worker.start()
+        self._launch_worker(self._run_chat_turn,
+            (cid, bot_msg["id"], selected_agent, text, project_id, write, confirm_write, full_access),
+            task_id, f"agent-chat-{cid[:8]}")
 
         return {
             "conversation_id": cid,
@@ -482,7 +585,9 @@ class AgentChatService:
             if self._closed:
                 raise RuntimeError("Quartz kapanıyor; yeni görev başlatılamaz.")
             self._refresh_stop_receipt()
-            if self._active_turn and self._active_turn.get('stop_receipt', {}).get('status') == 'pending':
+            if self._active_turn and self._active_turn.get("worker_pending") and self._active_turn.get("status") != "running":
+                raise RuntimeError("Önceki görevin çalışanı kapanıyor; yeni tur henüz başlatılamaz.")
+            if self._active_turn and self._active_turn.get('stop_receipt', {}).get('status') in {'pending', 'failed'}:
                 raise RuntimeError("Önceki ajan süreçlerinin durduğu henüz doğrulanmadı.")
             if self._active_turn and self._active_turn.get("status") in {"running", "cancelling"}:
                 raise RuntimeError("Zaten devam eden bir yanıt üretimi var. Lütfen bekleyin veya iptal edin.")
@@ -525,7 +630,7 @@ class AgentChatService:
 
             turn_state = {
                 "turn_id": "turn-" + uuid.uuid4().hex,
-                "conversation_id": cid,
+                "conversation_id": cid, "worker_pending":True,
                 "message_id": codex_msg["id"],
                 "conversation_only": all((m.get("metadata") or {}).get("conversation_only", True)
                                          for m in assistant_msgs[-2:]),
@@ -541,12 +646,9 @@ class AgentChatService:
             }
             self._active_turn = turn_state
 
-        threading.Thread(
-            target=self._run_continue_discussion_turn,
-            args=(cid, codex_msg["id"], next_round, last_task_id, project_id),
-            name=f"agent-cont-{cid[:8]}",
-            daemon=True,
-        ).start()
+        self._launch_worker(self._run_continuation_worker,
+            (turn_state["turn_id"], cid, codex_msg["id"], next_round, last_task_id, project_id),
+            turn_state["turn_id"], f"agent-cont-{cid[:8]}")
 
         return {
             "conversation_id": cid,
@@ -557,74 +659,64 @@ class AgentChatService:
 
     def cancel_active(self) -> dict:
         with self._lock:
-            if not self._active_turn or self._active_turn.get("status") != "running":
-                return {"cancelled": False, "message": "Aktif bir işlem yok"}
-            turn = dict(self._active_turn)
-            self._active_turn["status"] = "cancelling"
-            self._active_turn["cancel_requested"] = True
-            for entry in self._active_turn.get('agent_progress', {}).values():
-                if entry.get('status') not in {'completed','failed','cancelled'}: entry['status'] = 'cancelling'
-
-        if turn.get("agent") == "notion" and getattr(self.agent_service, "_notion_tools", None) is not None:
+            turn = self._active_turn
+            if not turn:
+                return {"cancelled":False, "stop_receipt":{"status":"confirmed", "runs":{}, "worker_pending":False}}
+            if turn.get("stop_inflight"):
+                return {"cancelled":False, "stop_receipt":deepcopy(turn["stop_receipt"])}
+            if (turn.get("status") not in {"running", "cancelling"}
+                    and (not turn.get("worker_pending") or turn.get("cancel_requested"))
+                    and not turn.get("stop_receipt", {}).get("history_error_type")):
+                self._refresh_stop_receipt()
+                return {"cancelled":False, "stop_receipt":deepcopy(turn.get("stop_receipt") or
+                        {"status":"confirmed", "runs":{}, "worker_pending":False})}
+            turn["status"] = "cancelling"
+            turn["cancel_requested"] = True
+            turn["stop_inflight"] = True
+            turn["stop_receipt"] = {"status":"pending", "runs":{}, "worker_pending":bool(turn.get("worker_pending"))}
+            task_id = turn.get("turn_id")
+            run_ids = list(dict.fromkeys([*turn.get("run_ids", []), *([turn["run_id"]] if turn.get("run_id") else [])]))
+            turn["run_ids"] = run_ids
             try:
-                self.agent_service.notion_tools.stop_all()
-            except Exception as exc:
-                log.warning("Notion tool stop failed: %s", exc)
-
-        collab_id = turn.get("collaboration_id")
-        if collab_id:
-            try:
-                self.agent_service.cancel_collaboration(collab_id)
-            except Exception as exc:
-                log.warning("Cancel collaboration failed: %s", exc)
-
-        run_ids_to_cancel: list[str] = []
-        for rid in turn.get("run_ids", []):
-            if isinstance(rid, str) and rid and rid not in run_ids_to_cancel:
-                run_ids_to_cancel.append(rid)
-        single_rid = turn.get("run_id")
-        if isinstance(single_rid, str) and single_rid and single_rid not in run_ids_to_cancel:
-            run_ids_to_cancel.append(single_rid)
-
-        for rid in run_ids_to_cancel:
-            try:
-                self.agent_service.cancel(rid)
-            except Exception as exc:
-                log.warning("Cancel run %s failed: %s", rid, exc)
-
-        with self._lock:
-            if self._active_turn and self._active_turn.get("turn_id") == turn.get("turn_id"):
-                self._active_turn["status"] = "cancelled"
-                for entry in self._active_turn.get('agent_progress', {}).values():
-                    if entry.get('status') not in {'completed','failed'}: entry['status'] = 'cancelled'
-            cid = turn["conversation_id"]
-            all_mids = list(turn.get("message_ids") or [])
-            if turn.get("message_id") and turn["message_id"] not in all_mids:
-                all_mids.append(turn["message_id"])
-            try:
-                conv = self.store.get(cid)
-                for mid in all_mids:
+                self._discard_instructions("Görev durduruldu; ek talimat çalıştırılmadı.")
+                # Persistence and publication revocation share the same ownership lock.
+                cid = turn.get("conversation_id")
+                mids = turn.get("all_message_ids") or turn.get("message_ids") or []
+                for mid in mids:
+                    conv = self.store.get(cid)
                     msg = next((m for m in conv.get("messages", []) if m["id"] == mid), None)
-                    if not msg:
-                        continue
-                    meta = dict(msg.get("metadata") or {})
-                    if meta.get("status") in {"completed", "failed"}:
+                    if not msg or (msg.get("metadata") or {}).get("status") in {"completed", "failed", "cancelled"}:
                         continue
                     existing = (msg.get("content") or "").strip()
-                    cancel_text = existing + "\n\n⏹️ *İşlem kullanıcı tarafından iptal edildi.*" if existing else "⏹️ *İşlem kullanıcı tarafından iptal edildi.*"
-                    if turn.get("agent") == "notion":
-                        cancel_text = (existing + "\n\nYerel yanıt durduruldu. Notion'a durdurma isteği iletildi; "
-                                       "uzaktaki işlemin durduğu henüz doğrulanmadı.").strip()
-                        meta["remote_stop_confirmed"] = False
-                    meta["status"] = "cancelled"
-                    self.store.update_message_content(cid, mid, cancel_text, metadata=meta)
-            except Exception:
-                pass
-        return {"cancelled": True}
+                    text = (existing + "\n\n⏹️ *İşlem kullanıcı tarafından iptal edildi.*").strip()
+                    self.store.update_message_content(cid, mid, text, metadata={"status":"cancelled"})
+            except Exception as exc:
+                turn["stop_receipt"]["history_error_type"] = type(exc).__name__
+                log.warning("Stop history persistence failed (%s)", type(exc).__name__)
+            for entry in turn.get("agent_progress", {}).values():
+                if entry.get("status") not in {"completed", "failed"}: entry["status"] = "cancelled"
+            snapshot = dict(turn)
+        # Provider cancellation is outside the chat lock so Stop/readback cannot deadlock.
+        if snapshot.get("agent") == "notion" and getattr(self.agent_service, "_notion_tools", None) is not None:
+            try: self.agent_service.notion_tools.stop_all()
+            except Exception as exc: log.warning("Local tool revocation failed (%s)", type(exc).__name__)
+        if snapshot.get("collaboration_id"):
+            try: self.agent_service.cancel_collaboration(snapshot["collaboration_id"])
+            except Exception as exc: log.warning("Collaboration cancellation unconfirmed (%s)", type(exc).__name__)
+        for rid in run_ids:
+            self._cancel_owned_run(rid, task_id)
+        with self._lock:
+            turn["stop_inflight"] = False
+            if self._active_turn is turn:
+                turn["status"] = "cancelled"
+                self._refresh_stop_receipt()
+            receipt = deepcopy(turn["stop_receipt"])
+        return {"cancelled":True, "task_id":task_id, "stop_receipt":receipt}
 
     def poll_active(self) -> dict:
         """Poll the state, current message, and full conversation message list of the active chat turn."""
         with self._lock:
+            self._refresh_stop_receipt()
             if not self._active_turn:
                 return {"active": False}
             turn = deepcopy(self._active_turn)
@@ -648,6 +740,9 @@ class AgentChatService:
             return {
                 "active": turn.get("status") == "running",
                 "status": turn.get("status"),
+                "task_id": turn.get("turn_id"),
+                "queued_instructions": len(turn.get("instructions", [])),
+                "stop_receipt": turn.get("stop_receipt"),
                 "agent": turn.get("agent"),
                 "conversation_id": cid,
                 "message_id": mid,
@@ -659,7 +754,9 @@ class AgentChatService:
                 "notion_tools": self._notion_tools_payload(cid),
             }
         except Exception as exc:
-            return {"active": False, "error": str(exc)}
+            return {"active":turn.get("status") == "running", "status":turn.get("status"),
+                    "task_id":turn.get("turn_id"), "stop_receipt":turn.get("stop_receipt"),
+                    "error":"Sohbet durumu okunamadı.", "error_type":type(exc).__name__}
 
     def _enrich_messages(self, messages):
         # Detached read model only. Polling neither rewrites history nor runs
@@ -685,28 +782,36 @@ class AgentChatService:
 
     def _set_turn_progress(self, step_text: str, current_msg_id: str | None = None, run_id: str | None = None,
                            *, owner_msg_id: str | None = None, agent: str | None = None):
+        cancel_run = False
+        task_id = None
         with self._lock:
-            if not self._active_turn or self._active_turn.get("status") != "running":
-                return False
+            turn = self._active_turn
             owner = owner_msg_id or current_msg_id
-            if not owner or self._is_turn_cancelled(owner):
-                return False
-            self._active_turn["progress_step"] = step_text
-            if agent in {'codex','antigravity'}:
-                self._active_turn.setdefault('agent_progress', {})[agent] = {
-                    'message_id':current_msg_id, 'run_id':run_id, 'step':step_text,
-                    'status':'running', 'updated_at':time.time()}
-            if current_msg_id:
-                self._active_turn["message_id"] = current_msg_id
-                mids = self._active_turn.setdefault("message_ids", [])
-                if current_msg_id not in mids:
-                    mids.append(current_msg_id)
+            owned = bool(turn and owner and owner in turn.get("message_ids", [turn.get("message_id")]))
             if isinstance(run_id, str) and run_id:
-                self._active_turn["run_id"] = run_id
-                rids = self._active_turn.setdefault("run_ids", [])
-                if run_id not in rids:
-                    rids.append(run_id)
-            return True
+                if owned:
+                    task_id = turn.get("turn_id")
+                    rids = turn.setdefault("run_ids", [])
+                    if run_id not in rids: rids.append(run_id)
+                cancel_run = not owned or self._is_turn_cancelled(owner)
+            if not cancel_run:
+                if not owned or turn.get("status") != "running" or self._is_turn_cancelled(owner):
+                    return False
+                turn["progress_step"] = step_text
+                if agent in {"codex", "antigravity"}:
+                    turn.setdefault("agent_progress", {})[agent] = {
+                        "message_id":current_msg_id, "run_id":run_id, "step":step_text,
+                        "status":"running", "updated_at":time.time()}
+                if current_msg_id:
+                    turn["message_id"] = current_msg_id
+                    for key in ("message_ids", "all_message_ids"):
+                        if current_msg_id not in turn.setdefault(key, []): turn[key].append(current_msg_id)
+                if isinstance(run_id, str) and run_id: turn["run_id"] = run_id
+                return True
+        # A dispatch can return after Stop. Keep its real ID and cancel it too.
+        if cancel_run:
+            self._cancel_owned_run(run_id, task_id)
+        return False
 
     def _finish_turn(self, owner_msg_id, status):
         """Only this generation's live owner can make its terminal transition."""
@@ -715,11 +820,17 @@ class AgentChatService:
         with self._lock:
             if not self._active_turn or self._active_turn.get("status") != "running" or self._is_turn_cancelled(owner_msg_id):
                 return False
-            if status == "completed" and self._active_turn.get("instructions"):
-                self._active_turn["progress_step"] = "Sıradaki ek talimat hazırlanıyor..."
-                return False
+            self._active_turn["step_status"] = status
+            cid = self._active_turn.get("conversation_id")
+            user_mid = self._active_turn.get("user_message_id")
+            if cid and user_mid:
+                user = next((m for m in self.store.get(cid).get("messages", []) if m["id"] == user_mid), None)
+                if user and (user.get("metadata") or {}).get("instruction_state") == "running":
+                    self.store.update_message_content(cid, user_mid, user["content"], metadata={"instruction_state":status})
             if status == "failed":
                 self._discard_instructions("Görev başarısız oldu; ek talimat çalıştırılmadı.")
+            if self._active_turn.get("managed_worker"):
+                return True
             self._active_turn["status"] = status
             self._active_turn["run_id"] = None
             for entry in self._active_turn.get('agent_progress', {}).values():
@@ -747,6 +858,120 @@ class AgentChatService:
                     progress[agent] = {**entry, 'message_id':msg_id, 'status':metadata.get('status','running'),
                                        'run_id':metadata.get('run_id'), 'updated_at':time.time()}
             return True
+
+    def _launch_worker(self, target, args, task_id, name):
+        worker = threading.Thread(target=target, args=args, name=name, daemon=True)
+        with self._lock:
+            self._worker_threads[task_id] = worker
+        try:
+            worker.start()
+        except Exception:
+            with self._lock:
+                self._worker_threads.pop(task_id, None)
+                turn = self._active_turn
+                if turn and turn.get("turn_id") == task_id:
+                    turn["worker_pending"] = False
+                    if not turn.get("cancel_requested"):
+                        turn["status"] = "failed"
+                        self.store.update_message_content(turn["conversation_id"], turn["message_id"],
+                            "Ajan çalışanı başlatılamadı. Görev uygulanmadı.", metadata={"status":"failed"})
+                    self._discard_instructions("Çalışan başlatılamadı; ek talimat uygulanmadı.")
+                    self._refresh_stop_receipt()
+            raise
+
+    def _worker_finished(self, task_id):
+        # A provider read failure can leave its process alive. Fence admission
+        # until the ordinary cancellation/readback mechanism confirms exit.
+        with self._lock:
+            turn = self._active_turn
+            if not turn or turn.get("turn_id") != task_id:
+                self._worker_threads.pop(task_id, None)
+                return
+            runs = []
+            if turn.get("run_ids"):
+                turn.setdefault("stop_receipt", {"status":"pending", "runs":{}})
+                for rid in turn["run_ids"]:
+                    try:
+                        record = self.agent_service.get_run(rid)
+                        confirmed = isinstance(record, dict) and record.get("process_exit_confirmed") is True
+                    except Exception:
+                        confirmed = False
+                    if not confirmed: runs.append(rid)
+            elif turn.get("unresolved_dispatch"):
+                turn.setdefault("stop_receipt", {"status":"pending", "runs":{}})
+        for rid in runs:
+            self._cancel_owned_run(rid, task_id)
+        with self._lock:
+            if self._active_turn is turn:
+                turn["worker_pending"] = False
+                self._refresh_stop_receipt()
+            self._worker_threads.pop(task_id, None)
+
+    def _run_continuation_worker(self, task_id, *args):
+        try:
+            self._run_continue_discussion_turn(*args)
+        finally:
+            self._worker_finished(task_id)
+
+    def _run_chat_turn(self, cid, msg_id, agent, prompt, project_id, write, confirm_write, full_access=False):
+        with self._lock:
+            turn = self._active_turn or {}
+            task_id = turn.get("turn_id") if msg_id in turn.get("message_ids", []) else None
+        if task_id is None:
+            return
+        try:
+            while True:
+                if self._is_turn_cancelled(msg_id): return
+                self._run_chat_step(cid, msg_id, agent, prompt, project_id, write, confirm_write, full_access)
+                # Queue admission, release readback and dequeue form one locked
+                # decision. A followup arriving at step completion cannot skip
+                # the previous writer's evidence/claim barrier.
+                while True:
+                    with self._lock:
+                        turn = self._active_turn
+                        if not turn or turn.get("turn_id") != task_id or self._is_turn_cancelled(msg_id): return
+                        outcome = turn.get("step_status", "failed")
+                        if outcome != "completed" or not turn.get("instructions"):
+                            if outcome != "completed":
+                                self._discard_instructions("Görev tamamlanmadı; ek talimat çalıştırılmadı.")
+                            turn["status"] = outcome
+                            turn["run_id"] = None
+                            return
+                        run_ids = list(turn.get("run_ids", []))
+                        pending = self.agent_service.pending_writer_runs(run_ids) if write and run_ids else []
+                        if not isinstance(pending, list):
+                            raise TypeError("Invalid writer ownership readback")
+                        if pending:
+                            turn["progress_step"] = "Önceki adımın dosya denetimi tamamlanıyor..."
+                        else:
+                            turn.pop("step_status", None)
+                            item = turn["instructions"].pop(0)
+                            msg_id, prompt = item["message_id"], item["text"]
+                            turn.update(message_id=msg_id, message_ids=[msg_id], user_message_id=item["user_message_id"],
+                                        progress_step="Ek talimat uygulanıyor...", agent_progress={})
+                            turn.setdefault("all_message_ids", []).append(msg_id)
+                            for key in ("user_message_id", "message_id"):
+                                self.store.update_message_content(cid, item[key], item["text"] if key == "user_message_id" else "",
+                                    metadata={"instruction_state":"running", "status":"starting" if key == "message_id" else "completed"})
+                            break
+                    time.sleep(.05)
+        except Exception as exc:
+            with self._lock:
+                turn = self._active_turn
+                if turn and turn.get("turn_id") == task_id and not self._is_turn_cancelled(msg_id):
+                    turn["status"] = "failed"
+                    turn["error_type"] = type(exc).__name__
+                    self._discard_instructions("Görev devam ettirilemedi; ek talimat uygulanmadı.")
+                    message = next((m for m in self.store.get(cid).get("messages", []) if m["id"] == msg_id), {})
+                    if (message.get("metadata") or {}).get("status") == "completed":
+                        self.store.update_message_content(cid, msg_id, message.get("content", ""),
+                            metadata={"cleanup_error_type":type(exc).__name__})
+                    else:
+                        self.store.update_message_content(cid, msg_id,
+                            "Görev devam ettirilemedi. Süreç ve dosya denetimi tamamlanmadan yeniden başlatılmayacak.",
+                            metadata={"status":"failed", "error_type":type(exc).__name__})
+        finally:
+            self._worker_finished(task_id)
 
     def _run_chat_step(self, cid: str, msg_id: str, agent: str, prompt: str,
                        project_id: str | None, write: bool, confirm_write: bool, full_access: bool = False):
@@ -905,6 +1130,21 @@ class AgentChatService:
             "total_ms": round((finished - bubble_started_at) * 1000, 1),
         }
 
+    def _dispatch_chat_run(self, dispatch, cid, msg_id, *args, **kwargs):
+        try:
+            return dispatch(*args, **kwargs)
+        except WriterDispatchError as exc:
+            if exc.run_id:
+                self._set_turn_progress("Başlatma sonrası süreç temizliği gerekiyor.", current_msg_id=msg_id,
+                                        run_id=exc.run_id, agent=exc.provider)
+            else:
+                with self._lock:
+                    turn = self._active_turn
+                    if turn and turn.get("conversation_id") == cid and msg_id in turn.get("message_ids", []):
+                        uncertain = turn.setdefault("unresolved_dispatch", [])
+                        if exc.claim_id not in uncertain: uncertain.append(exc.claim_id)
+            raise
+
     def _execute_antigravity_bubble(self, cid: str, msg_id: str, full_prompt: str,
                                     project_id: str | None, write: bool, confirm_write: bool,
                                     *, use_session: bool = True, squad_task_id: str | None = None,
@@ -938,7 +1178,7 @@ class AgentChatService:
         }
         if conversation_only:
             dispatch_kwargs["conversation_only"] = True
-        dispatch_res = self.agent_service.dispatch_antigravity(
+        dispatch_res = self._dispatch_chat_run(self.agent_service.dispatch_antigravity, cid, msg_id,
             full_prompt, chat_mode=True, squad_task_id=squad_task_id,
             model=selected_model, effort=selected_effort, **dispatch_kwargs
         )
@@ -953,11 +1193,8 @@ class AgentChatService:
             if squad_info.get("error"):
                 meta["squad_error"] = squad_info["error"]
 
-        with self._lock:
-            if self._is_turn_cancelled(msg_id):
-                self.agent_service.cancel(run_id)
-                return ""
-            self._set_turn_progress("Antigravity yanıtlıyor...", current_msg_id=msg_id, run_id=run_id, agent='antigravity')
+        if not self._set_turn_progress("Antigravity yanıtlıyor...", current_msg_id=msg_id, run_id=run_id, agent='antigravity'):
+            return ""
 
         run, status = self._stream_antigravity_run(cid, msg_id, run_id, meta, save_session=use_session)
         if self._is_turn_cancelled(msg_id) or status == "cancelled":
@@ -1115,7 +1352,7 @@ class AgentChatService:
         }
         if conversation_only:
             dispatch_kwargs["conversation_only"] = True
-        dispatch_res = self.agent_service.dispatch_codex(
+        dispatch_res = self._dispatch_chat_run(self.agent_service.dispatch_codex, cid, msg_id,
             full_prompt, chat_mode=True, squad_task_id=squad_task_id,
             model=selected_model, effort=selected_effort, **dispatch_kwargs
         )
@@ -1130,11 +1367,8 @@ class AgentChatService:
             if squad_info.get("error"):
                 meta["squad_error"] = squad_info["error"]
 
-        with self._lock:
-            if self._is_turn_cancelled(msg_id):
-                self.agent_service.cancel(run_id)
-                return ""
-            self._set_turn_progress("Codex yanıtlıyor...", current_msg_id=msg_id, run_id=run_id, agent='codex')
+        if not self._set_turn_progress("Codex yanıtlıyor...", current_msg_id=msg_id, run_id=run_id, agent='codex'):
+            return ""
 
         run, status = self._stream_codex_run(cid, msg_id, run_id, meta, save_session=use_session)
         if self._is_turn_cancelled(msg_id) or status == "cancelled":
@@ -1242,6 +1476,7 @@ class AgentChatService:
             cid, "assistant", "", sender=sender,
             metadata={
                 "status": "starting",
+                "task_id":(self._active_turn or {}).get("turn_id"),
                 "agent": sender,
                 "sender": sender,
                 "recipient": recipient,
@@ -1446,7 +1681,7 @@ class AgentChatService:
                     return
                 err_msg = self._format_error("codex", exc)
                 codex_r1_meta.update({"status": "failed", "error": str(exc)})
-                self.store.update_message_content(cid, first_msg_id, err_msg, metadata=codex_r1_meta)
+                self._publish_run_update(cid, first_msg_id, err_msg, codex_r1_meta)
 
         def run_agy_r1():
             try:
@@ -1475,7 +1710,7 @@ class AgentChatService:
                     return
                 err_msg = self._format_error("antigravity", exc)
                 agy_r1_meta.update({"status": "failed", "error": str(exc)})
-                self.store.update_message_content(cid, agy_r1_id, err_msg, metadata=agy_r1_meta)
+                self._publish_run_update(cid, agy_r1_id, err_msg, agy_r1_meta)
 
         t_codex_r1 = threading.Thread(target=run_codex_r1, name=f"collab-c1-{cid[:6]}", daemon=True)
         t_agy_r1 = threading.Thread(target=run_agy_r1, name=f"collab-a1-{cid[:6]}", daemon=True)
@@ -1640,7 +1875,7 @@ class AgentChatService:
                     return
                 err_msg = self._format_error("codex", exc)
                 codex_r2_meta.update({"status": "failed", "error": str(exc)})
-                self.store.update_message_content(cid, codex_r2_id, err_msg, metadata=codex_r2_meta)
+                self._publish_run_update(cid, codex_r2_id, err_msg, codex_r2_meta)
 
         def run_agy_eval():
             try:
@@ -1658,7 +1893,7 @@ class AgentChatService:
                     return
                 err_msg = self._format_error("antigravity", exc)
                 agy_r2_meta.update({"status": "failed", "error": str(exc)})
-                self.store.update_message_content(cid, agy_r2_id, err_msg, metadata=agy_r2_meta)
+                self._publish_run_update(cid, agy_r2_id, err_msg, agy_r2_meta)
 
         t_c2 = threading.Thread(target=run_codex_eval, name=f"collab-c{round_num}-{cid[:6]}", daemon=True)
         t_a2 = threading.Thread(target=run_agy_eval, name=f"collab-a{round_num}-{cid[:6]}", daemon=True)

@@ -98,6 +98,8 @@ class ConversationStore:
                         last_task_event[meta['natural_task']] = msg.get('id')
                 for msg in conv.get('messages', []):
                     meta = msg.get('metadata') or {}
+                    if msg.get('role') == 'user' and meta.get('instruction_state') in {'queued', 'running'}:
+                        msg['metadata']['instruction_state'] = 'interrupted'
                     abandoned_task = (meta.get('natural_task') and
                         last_task_event.get(meta['natural_task']) == msg.get('id') and
                         meta.get('task_status') in active_states)
@@ -107,6 +109,7 @@ class ConversationStore:
                     meta.update(status='interrupted', recovered_at=now,
                         recovery_reason='Application restarted before a terminal result',
                         automatic_replay=False, permissions_restored=False)
+                    if meta.get('instruction_state') in {'queued', 'running'}: meta['instruction_state'] = 'interrupted'
                     if abandoned_task: meta['task_status'] = 'interrupted'
                     msg['status'] = 'interrupted'
                     if not msg.get('content', '').strip():
@@ -180,7 +183,7 @@ class ConversationStore:
             self._conversations[cid] = record
             self._active_id = cid
             self._save()
-            return dict(record)
+            return deepcopy(record)
 
     def get_active(self) -> dict:
         with self._lock:
@@ -192,7 +195,7 @@ class ConversationStore:
             rec = self._conversations[self._active_id]
             rec["models"] = self._normalize_models(rec.get("models"))
             rec["permission_level"] = "full"
-            return dict(rec)
+            return deepcopy(rec)
 
     def get(self, conversation_id: str) -> dict:
         with self._lock:
@@ -201,7 +204,7 @@ class ConversationStore:
             rec = self._conversations[conversation_id]
             rec["models"] = self._normalize_models(rec.get("models"))
             rec["permission_level"] = "full"
-            return dict(rec)
+            return deepcopy(rec)
 
     def select(self, conversation_id: str) -> dict:
         with self._lock:
@@ -212,7 +215,7 @@ class ConversationStore:
             rec["models"] = self._normalize_models(rec.get("models"))
             rec["permission_level"] = "full"
             self._save()
-            return dict(rec)
+            return deepcopy(rec)
 
     def delete(self, conversation_id: str) -> dict:
         return self.delete_many([conversation_id])["active_conversation"]
@@ -310,7 +313,7 @@ class ConversationStore:
                 raise KeyError(f"Conversation not found: {conversation_id}")
             msg_id = uuid.uuid4().hex
             now = time.time()
-            meta = dict(metadata or {})
+            meta = deepcopy(metadata or {})
             resolved_sender = sender or meta.get("sender") or role
             entry = {
                 "id": msg_id,
@@ -333,7 +336,7 @@ class ConversationStore:
                 if clean_title:
                     conv["title"] = clean_title
             self._save()
-            return entry
+            return deepcopy(entry)
 
     def update_message_content(self, conversation_id: str, message_id: str, content: str,
                                metadata: dict | None = None) -> None:
@@ -345,7 +348,7 @@ class ConversationStore:
                 if msg["id"] == message_id:
                     msg["content"] = content
                     if metadata:
-                        msg["metadata"].update(metadata)
+                        msg["metadata"].update(deepcopy(metadata))
                         for key in ("sender", "recipient", "sequence", "squad_task_id", "status"):
                             if key in metadata and metadata[key] is not None:
                                 msg[key] = metadata[key]

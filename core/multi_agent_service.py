@@ -20,6 +20,16 @@ from core.writer_journal import WriterJournal
 from core.path_identity import canonical_key
 
 
+class WriterDispatchError(RuntimeError):
+    """A start was attempted; preserve ownership even if dispatch cannot return."""
+    def __init__(self, provider, claim_id, run_id=None):
+        super().__init__("Writer dispatch failed after start was attempted; cleanup/recovery must be verified.")
+        self.provider = provider
+        self.claim_id = claim_id
+        self.run_id = run_id
+        self.unresolved_start = run_id is None
+
+
 class MultiAgentService:
     MANAGER_ID = "manager"
     CODEX_ID = "quartz-codex"
@@ -102,11 +112,23 @@ class MultiAgentService:
             with self._lock: self._writer_threads[run['id']] = worker
             worker.start()
             return run
-        except Exception:
+        except Exception as exc:
             # A start call may have spawned a process before raising. Durable
             # uncertainty must survive; never remove it just to allow a retry.
             if 'claim' in locals() and not starting:
                 self._writer_journal.finish(claim)
+            if starting:
+                rid = run.get('id') if isinstance(locals().get('run'), dict) else None
+                with self._lock:
+                    self._writers[key].update(owner=rid, pending=True, dispatch_failed=True)
+                    if rid:
+                        self._links[rid] = {"provider":provider, "project_id":project["id"],
+                                            "journal_claim":claim, "dispatch_failed":True}
+                if rid:
+                    runtime = self.codex if provider == "codex" else self.antigravity
+                    try: runtime.cancel(rid)
+                    except Exception: pass  # Ownership is retained; caller must confirm exit.
+                raise WriterDispatchError(provider, claim, rid) from exc
             with self._lock:
                 self._writers.pop(key, None)
             raise
@@ -678,6 +700,25 @@ class MultiAgentService:
             run["source_validation"] = evidence.get("source_validation", {})
         return run
 
+    def pending_writer_runs(self, run_ids):
+        """Passive ownership readback, not a permission/claim release operation."""
+        requested = set(run_ids)
+        with self._lock:
+            pending = {item.get("owner") for item in self._writers.values()
+                       if item.get("owner") in requested}
+            pending.update(rid for rid in self._writer_threads if rid in requested)
+            claims_by_run = {rid:self._links.get(rid, {}).get("journal_claim") for rid in requested}
+        # A watcher can finish while durable release failed. A missing thread
+        # is not permission to ignore the remaining recovery claim.
+        recovery = self._writer_journal.recovery_status()
+        if recovery.get("error"):
+            raise RuntimeError("Writer recovery readback is unavailable")
+        pending.update(item["run_id"] for item in recovery.get("claims", [])
+                       if item.get("run_id") in requested)
+        pending.update(rid for rid, claim_id in claims_by_run.items() if claim_id and
+                       any(item.get("id") == claim_id for item in recovery.get("claims", [])))
+        return sorted(pending)
+
     def run_evidence(self, run_id):
         """Read-only receipt; no runtime probe, command or implicit retest."""
         from copy import deepcopy
@@ -815,7 +856,7 @@ class MultiAgentService:
         with self._lock:
             writer = self._writers.get(project_key)
             if writer:
-                return {"locked": True, **writer}
+                return {"locked": True, **writer, "recovery_required":bool(writer.get("dispatch_failed"))}
         recovery = self.writer_recovery_status()
         for claim in recovery['claims']:
             if self._writer_journal.conflicts(project_key, False, claim):
@@ -828,7 +869,7 @@ class MultiAgentService:
         if refresh: self._writer_journal.refresh()
         raw = self._writer_journal.recovery_status()
         with self._lock:
-            managed = {w.get('journal_claim') for w in self._writers.values()}
+            managed = {w.get('journal_claim') for w in self._writers.values() if not w.get('dispatch_failed')}
         raw['claims'] = [c for c in raw['claims'] if c['id'] not in managed]
         raw['blocked'] = bool(raw['claims'] or raw.get('error'))
         return raw

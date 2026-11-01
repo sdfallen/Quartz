@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from core.agent_chat import AgentChatService
-from core.multi_agent_service import MultiAgentService
+from core.multi_agent_service import MultiAgentService, WriterDispatchError
 
 
 class AgentPermissionTests(unittest.TestCase):
@@ -101,11 +101,13 @@ class AgentPermissionTests(unittest.TestCase):
                 self.assertFalse(self.service._writer_status(self.tmp.name)['locked'])
         self.service.codex.start.assert_not_called()
 
-    def test_failed_start_releases_writer_reservation(self):
+    def test_attempted_start_failure_retains_uncertainty_without_replay(self):
         self.service.codex.start.side_effect = OSError('mock start failure')
-        with self.writer_guards(), self.assertRaises(OSError):
+        with self.writer_guards(), self.assertRaises(WriterDispatchError) as failure:
             self.service.dispatch_codex('test', chat_mode=True, write=True, confirm_write=True)
-        self.assertFalse(self.service._writer_status(self.tmp.name)['locked'])
+        self.assertIsInstance(failure.exception.__cause__, OSError)
+        self.assertTrue(self.service._writer_status(self.tmp.name)['locked'])
+        self.assertTrue(self.service._writer_status(self.tmp.name)['recovery_required'])
 
     def test_full_writer_blocks_other_project_and_nested_project(self):
         project = self.service.projects.selected()

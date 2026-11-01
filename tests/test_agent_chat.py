@@ -12,6 +12,16 @@ class AgentChatServiceTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.store_path = Path(self.tmp.name) / "conv.json"
         self.agent_service = MagicMock()
+        # Model the runtime contract: a terminal test record is produced after
+        # its fake process exits. Local cancellation alone is tested elsewhere.
+        def get_run(run_id):
+            for runtime in (self.agent_service.codex, self.agent_service.antigravity):
+                record = runtime.get(run_id)
+                if isinstance(record, dict) and record.get("id") == run_id:
+                    return {**record, "process_exit_confirmed":record.get("status") in {"completed", "failed", "cancelled"}}
+            return {"status":"unknown", "process_exit_confirmed":False}
+        self.agent_service.get_run.side_effect = get_run
+        self.agent_service.pending_writer_runs.return_value = []
         self.chat = AgentChatService(self.agent_service, self.store_path)
 
     def tearDown(self):
