@@ -11,3 +11,6 @@ workers.json
 AGENTS.md
 CLAUDE.md
 tsconfig.examples.json
+.claudeignore
+.codexignore
+README.md

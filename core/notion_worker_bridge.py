@@ -46,14 +46,16 @@ def store_bridge_key(target, key):
     import win32cred
     if len(key) != 32: raise ValueError('Invalid bridge key')
     win32cred.CredWrite({'Type': win32cred.CRED_TYPE_GENERIC, 'TargetName': target,
-        'UserName': 'Quartz Notion read-only bridge', 'CredentialBlob': key,
+        'UserName': 'Quartz Notion read-only bridge', 'CredentialBlob': key.hex(),
         'Persist': win32cred.CRED_PERSIST_LOCAL_MACHINE}, 0)
 
 
 def load_bridge_key(target):
     import win32cred
-    key = win32cred.CredRead(target, win32cred.CRED_TYPE_GENERIC)['CredentialBlob']
-    if not isinstance(key, bytes) or len(key) != 32: raise ValueError('Bridge key unavailable')
+    raw = win32cred.CredRead(target, win32cred.CRED_TYPE_GENERIC)['CredentialBlob']
+    text = raw.decode('utf-16-le') if isinstance(raw, bytes) else raw
+    if not isinstance(text, str) or not re.fullmatch(r'[a-f0-9]{64}', text): raise ValueError('Bridge key unavailable')
+    key = bytes.fromhex(text)
     return key
 
 

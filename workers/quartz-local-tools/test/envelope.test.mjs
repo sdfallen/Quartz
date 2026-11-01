@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
+import {resolve} from 'node:path';
 import {sign,verify,requestFromGrant} from '../dist/envelope.js';
 
 const key = '12'.repeat(32); // synthetic test key, never deployed
@@ -27,4 +29,11 @@ test('oversized payload and unavailable key fail closed',()=>{
   assert.throws(()=>sign('request',{text:'a'.repeat(13000)},key));
   assert.throws(()=>sign('request',grant,''));
   assert.throws(()=>verify('a'.repeat(16001),'request',key));
+});
+test('Python and Worker verify each others UTF-8 envelopes',()=>{
+  const input = JSON.stringify(sign('request',{note:'Türkçe kanıt'},key));
+  const script = `import sys,json\nfrom core.notion_worker_bridge import verify,sign\nk=bytes.fromhex('12'*32)\np=verify(sys.stdin.read(),'request',k)\nprint(sign('result',p,k))`;
+  const p = spawnSync('python',['-B','-c',script], {cwd:resolve('../..'),input,encoding:'utf8',env:{...process.env,PYTHONIOENCODING:'utf-8'}});
+  assert.equal(p.status,0,p.stderr);
+  assert.equal(verify(p.stdout.trim(),'result',key).note,'Türkçe kanıt');
 });
