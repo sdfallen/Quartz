@@ -1,5 +1,8 @@
 # Claude görevi — Notion hız deneyimi ve model alanı (eşit iş bölümü)
 
+> DURDURULDU: 2026-11-01 kullanıcı kararıyla bu görev askıda.
+> Yeni geliştirme/dağıtım yapma. Güncel karar: SUSPENDED.md.
+
 Kullanıcı Codex ve Claude arasında eşit sorumluluk paylaşımını istedi. Bu
 belge Claude'u otomatik başlatmaz; kullanıcı dış Claude oturumuna iletir.
 
