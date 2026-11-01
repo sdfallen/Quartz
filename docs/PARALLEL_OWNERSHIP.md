@@ -1,5 +1,13 @@
 # Quartz paralel görev ve dosya sahipliği
 
+## Güncel dar kapsam — 1 Kasım Notion araç entegrasyonu
+
+Kullanıcı, Codex + Gemini 3.8 Flash + Claude 5.5 Opus arasında yeni görev bölümü
+istedi. Bu görevdeki aktif sahiplik, baseline ve kabul kapıları
+[Notion araç entegrasyonu planında](notion-tools/PLAN.md) tanımlıdır.
+Bu dar kapsamda yeni tablo aşağıdaki tarihsel görev dağılımından önce gelir;
+diğer alanların sahipliği değişmez. Bu belge dış ajan oturumu başlatmaz.
+
 Karar: 31 Ekim 2026. Başlangıç kaynak referansı: `cba9972`.
 Bu dosyayı ekleyen koordinasyon commit'i ortak başlangıç baseline'ıdır.
 `git log --all -- CLAUDE.md docs/PARALLEL_OWNERSHIP.md` ile bulunabilir.
