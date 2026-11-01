@@ -46,3 +46,28 @@ bağlantısı, kayıtlı sohbetler ve arşivlenen prototip kaynakları korunur.
   doğrulandıktan sonra eski dist yedeklenip mevcut kullanıcı dosyaları
   korunarak yeni paket alınmalı; hash readback ve mümkünse yeni pencere
   UIA/görsel kabul yapılmalı. Notion masaüstü uygulamasını kapatma.
+
+## Yedekli dağıtım tamamlandı
+
+Kullanıcı iki Quartz penceresini normal kapattığını bildirdi. Süreç yokluğu
+tekrar doğrulandı; paket kod doğrulaması yeniden geçti. Eski dist klasörü
+`C:\Users\LENAVO\.codex\backups\quartz-before-notion-ui-removal-20261101T161854Z`
+altına korunarak taşındı. 42 kullanıcı dosyası yeni pakete kopyalandı,
+önce/sonra bütün hash'ler eşleşti. Eski kurulum silinmedi.
+
+Yeni EXE: `C:\Users\LENAVO\Desktop\Jarvis config\dist\Quartz\Quartz.exe`.
+SHA256: e2af66ddd7572acf6a2a5722c9530f6a999fd13d5b321cad9b2e004400c7fb0f.
+
+Gerçek yeni uygulama açıldı. Canlı accessibility ağacıyla Notion ajan
+düğmesi, sidebar satırı ve model alanının yokluğu; Codex, Antigravity ve
+Birlikte düğmelerinin varlığı doğrulandı. Eski Notion mesajları geçmişte
+korunuyor. Bu mesajların görünmesi aktif Notion ajanı olduğu anlamına gelmez.
+
+Ekran yakalama iki taze pencere denemesinde channel timeout verdi;
+PIXEL VISUAL QA = BLOCKED. Accessibility doğrulaması görsel QA sayılmaz.
+Uygulama açık bırakıldı; test mesajı gönderilmedi veya ajan görevi başlatılmadı.
+
+Açılıştan sonra .env, memory, conversations, projects ve mobile_access
+dosyaları dağıtım öncesiyle hash eşitliğini korudu (5/5).
+Yerel kanıtlar: ui-removal-deployment.json,
+ui-removal-live-accessibility.json, ui-removal-postlaunch-preservation.json.
