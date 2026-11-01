@@ -1,0 +1,737 @@
+{
+  "baseline": "e2ce872",
+  "scope": "core/*.py; static AST, including lazy/conditional imports; not a runtime trace",
+  "modules": [
+    {
+      "file": "core/agent_chat.py",
+      "lines": 1697,
+      "classes": [
+        "AgentChatService"
+      ],
+      "static_core_imports": [
+        "core.async_snapshot",
+        "core.conversation_store",
+        "core.desktop_task_ui",
+        "core.message_intent",
+        "core.multi_agent_service",
+        "core.notion_worker_task",
+        "core.response_style"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/antigravity_runtime.py",
+      "lines": 478,
+      "classes": [
+        "AntigravityRuntime"
+      ],
+      "static_core_imports": [
+        "core.cli_installer",
+        "core.desktop_agents",
+        "core.process_tree"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/application_knowledge.py",
+      "lines": 379,
+      "classes": [
+        "ApplicationKnowledge",
+        "ApplicationLearning"
+      ],
+      "static_core_imports": [
+        "core.artifact_diagnostics",
+        "core.atomic_json",
+        "core.path_identity"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/artifact_diagnostics.py",
+      "lines": 143,
+      "classes": [
+        "ArtifactDiagnosticsService"
+      ],
+      "static_core_imports": [
+        "core.application_knowledge",
+        "core.rea_adapter",
+        "core.self_diagnostics"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/async_snapshot.py",
+      "lines": 65,
+      "classes": [
+        "AsyncSnapshot"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/atomic_json.py",
+      "lines": 56,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/branding.py",
+      "lines": 21,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/chat_coordination.py",
+      "lines": 330,
+      "classes": [
+        "ApprovedLog",
+        "ChatCoordination"
+      ],
+      "static_core_imports": [
+        "core.antigravity_runtime",
+        "core.codex_runtime",
+        "core.desktop_agents",
+        "core.desktop_launch",
+        "core.gemini_runtime",
+        "core.multi_agent_service",
+        "core.response_style",
+        "core.squad_adapter",
+        "core.task_outcome"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/cli_installer.py",
+      "lines": 287,
+      "classes": [
+        "CliInstaller"
+      ],
+      "static_core_imports": [
+        "core.atomic_json",
+        "core.install_security"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/codex_runtime.py",
+      "lines": 488,
+      "classes": [
+        "CodexRuntime"
+      ],
+      "static_core_imports": [
+        "core.cli_installer",
+        "core.desktop_agents",
+        "core.process_tree"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/confirmation_manager.py",
+      "lines": 36,
+      "classes": [
+        "ConfirmationManager"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/continuity_engine.py",
+      "lines": 221,
+      "classes": [
+        "ContinuityEngine"
+      ],
+      "static_core_imports": [
+        "core.atomic_json"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/conversation_store.py",
+      "lines": 356,
+      "classes": [
+        "ConversationStore"
+      ],
+      "static_core_imports": [
+        "core.atomic_json"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/desktop_agents.py",
+      "lines": 215,
+      "classes": [
+        "DesktopAgentService"
+      ],
+      "static_core_imports": [
+        "core.antigravity_runtime",
+        "core.atomic_json",
+        "core.codex_runtime",
+        "core.desktop_broker",
+        "core.desktop_mcp",
+        "core.desktop_native",
+        "core.gemini_runtime",
+        "core.multi_agent_service",
+        "core.screen_overlay"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/desktop_broker.py",
+      "lines": 322,
+      "classes": [
+        "DesktopBroker"
+      ],
+      "static_core_imports": [
+        "core.desktop_launch",
+        "core.low_spec_optimizer"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/desktop_control.py",
+      "lines": 217,
+      "classes": [
+        "DesktopController"
+      ],
+      "static_core_imports": [
+        "core.low_spec_optimizer"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/desktop_launch.py",
+      "lines": 67,
+      "classes": [],
+      "static_core_imports": [
+        "core.desktop_native"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/desktop_mcp.py",
+      "lines": 167,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/desktop_native.py",
+      "lines": 452,
+      "classes": [
+        "NativeDesktopBackend"
+      ],
+      "static_core_imports": [
+        "core.desktop_control",
+        "core.elevation"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/desktop_task_ui.py",
+      "lines": 84,
+      "classes": [],
+      "static_core_imports": [
+        "core.message_intent"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/diagnostics_intent.py",
+      "lines": 26,
+      "classes": [],
+      "static_core_imports": [
+        "core.message_intent"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/elevation.py",
+      "lines": 101,
+      "classes": [
+        "ElevationRequired"
+      ],
+      "static_core_imports": [
+        "core.desktop_launch"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/gemini_auth.py",
+      "lines": 122,
+      "classes": [],
+      "static_core_imports": [
+        "core.atomic_json"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/gemini_runtime.py",
+      "lines": 202,
+      "classes": [
+        "GeminiRuntime"
+      ],
+      "static_core_imports": [
+        "core.antigravity_runtime",
+        "core.atomic_json",
+        "core.cli_installer",
+        "core.desktop_agents",
+        "core.desktop_mcp",
+        "core.gemini_auth"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/history_manager.py",
+      "lines": 23,
+      "classes": [
+        "HistoryStore"
+      ],
+      "static_core_imports": [
+        "core.atomic_json"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/install_security.py",
+      "lines": 76,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/llm_provider.py",
+      "lines": 84,
+      "classes": [
+        "LLMGateway"
+      ],
+      "static_core_imports": [
+        "core.request_budget"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/local_ipc.py",
+      "lines": 18,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/local_search.py",
+      "lines": 111,
+      "classes": [
+        "LocalSearchEngine"
+      ],
+      "static_core_imports": [
+        "core.atomic_json",
+        "core.sandbox"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/low_spec_optimizer.py",
+      "lines": 420,
+      "classes": [
+        "_MEMORYSTATUSEX",
+        "LazyClientProxy"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/message_intent.py",
+      "lines": 75,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/multi_agent_service.py",
+      "lines": 1069,
+      "classes": [
+        "MultiAgentService"
+      ],
+      "static_core_imports": [
+        "core.antigravity_runtime",
+        "core.chat_coordination",
+        "core.codex_runtime",
+        "core.gemini_runtime",
+        "core.notion_runtime",
+        "core.notion_worker_task",
+        "core.path_identity",
+        "core.project_registry",
+        "core.run_evidence_store",
+        "core.source_verification",
+        "core.squad_adapter",
+        "core.workspace_checkpoint",
+        "core.writer_journal"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/natural_desktop.py",
+      "lines": 1186,
+      "classes": [
+        "NaturalDesktopTask"
+      ],
+      "static_core_imports": [
+        "core.application_knowledge",
+        "core.atomic_json",
+        "core.chat_coordination",
+        "core.codex_runtime",
+        "core.desktop_agents",
+        "core.desktop_launch",
+        "core.elevation",
+        "core.gemini_runtime",
+        "core.multi_agent_service",
+        "core.path_identity",
+        "core.screen_overlay",
+        "core.squad_adapter",
+        "core.task_outcome",
+        "core.warband_workspace"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/notion_cli.py",
+      "lines": 215,
+      "classes": [
+        "NotionError",
+        "NotionCli"
+      ],
+      "static_core_imports": [
+        "core.atomic_json",
+        "core.cli_installer"
+      ],
+      "archived_prototype": true
+    },
+    {
+      "file": "core/notion_local_tools.py",
+      "lines": 141,
+      "classes": [
+        "NotionLocalTools"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": true
+    },
+    {
+      "file": "core/notion_runtime.py",
+      "lines": 347,
+      "classes": [
+        "NotionRuntime"
+      ],
+      "static_core_imports": [
+        "core.atomic_json",
+        "core.notion_cli"
+      ],
+      "archived_prototype": true
+    },
+    {
+      "file": "core/notion_tool_transport.py",
+      "lines": 496,
+      "classes": [
+        "NotionTransportError",
+        "ValidationError",
+        "SessionMismatchError",
+        "ReplayError",
+        "PayloadLimitError",
+        "NotionToolRequest",
+        "NotionToolResult",
+        "NotionToolTransport"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": true
+    },
+    {
+      "file": "core/notion_worker_bridge.py",
+      "lines": 195,
+      "classes": [
+        "NotionQueueApi",
+        "ReadOnlyWorkerBridge"
+      ],
+      "static_core_imports": [
+        "core.notion_cli"
+      ],
+      "archived_prototype": true
+    },
+    {
+      "file": "core/notion_worker_task.py",
+      "lines": 469,
+      "classes": [
+        "NotionToolCancelled",
+        "NotionWorkerTasks"
+      ],
+      "static_core_imports": [
+        "core.atomic_json",
+        "core.notion_cli",
+        "core.notion_worker_bridge"
+      ],
+      "archived_prototype": true
+    },
+    {
+      "file": "core/onboarding.py",
+      "lines": 318,
+      "classes": [
+        "OnboardingService"
+      ],
+      "static_core_imports": [
+        "core.antigravity_runtime",
+        "core.atomic_json",
+        "core.cli_installer",
+        "core.gemini_auth"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/package_repair.py",
+      "lines": 163,
+      "classes": [
+        "PackageRepair"
+      ],
+      "static_core_imports": [
+        "core.atomic_json",
+        "core.self_diagnostics"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/path_identity.py",
+      "lines": 23,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/plugin_loader.py",
+      "lines": 53,
+      "classes": [
+        "PluginManifest"
+      ],
+      "static_core_imports": [
+        "core.tool_registry"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/process_tree.py",
+      "lines": 45,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/project_registry.py",
+      "lines": 155,
+      "classes": [
+        "ProjectRegistry"
+      ],
+      "static_core_imports": [
+        "core.atomic_json"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/provider_manager.py",
+      "lines": 116,
+      "classes": [
+        "ProviderManager"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/rea_adapter.py",
+      "lines": 276,
+      "classes": [
+        "ReaAdapter"
+      ],
+      "static_core_imports": [
+        "core.cli_installer",
+        "core.process_tree"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/request_budget.py",
+      "lines": 73,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/response_style.py",
+      "lines": 46,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/rollback_manager.py",
+      "lines": 49,
+      "classes": [
+        "RollbackManager"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/run_evidence_store.py",
+      "lines": 54,
+      "classes": [
+        "RunEvidenceStore"
+      ],
+      "static_core_imports": [
+        "core.atomic_json"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/sandbox.py",
+      "lines": 28,
+      "classes": [
+        "SandboxViolation",
+        "PathSandbox"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/screen_advisor.py",
+      "lines": 94,
+      "classes": [
+        "ScreenAdvisor"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/screen_interaction.py",
+      "lines": 34,
+      "classes": [
+        "ScreenTarget"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/screen_overlay.py",
+      "lines": 358,
+      "classes": [
+        "ScreenControlOverlay"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/self_diagnostics.py",
+      "lines": 239,
+      "classes": [
+        "InspectionCancelled",
+        "SelfDiagnosticsService"
+      ],
+      "static_core_imports": [
+        "core.atomic_json",
+        "core.cli_installer",
+        "core.rea_adapter"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/source_verification.py",
+      "lines": 44,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/squad_adapter.py",
+      "lines": 273,
+      "classes": [
+        "SquadCommandError",
+        "SquadAdapter"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/task_engine.py",
+      "lines": 96,
+      "classes": [
+        "TaskEngine"
+      ],
+      "static_core_imports": [
+        "core.atomic_json"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/task_outcome.py",
+      "lines": 33,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/tool_compat.py",
+      "lines": 32,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/tool_registry.py",
+      "lines": 155,
+      "classes": [
+        "ToolSpec",
+        "ToolRegistry"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/warband_workspace.py",
+      "lines": 717,
+      "classes": [
+        "GameLoading",
+        "SaveGuard",
+        "WarbandWorkspace"
+      ],
+      "static_core_imports": [
+        "core.desktop_native",
+        "core.process_tree"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/windows_prerequisites.py",
+      "lines": 98,
+      "classes": [],
+      "static_core_imports": [
+        "core.install_security"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/workspace_checkpoint.py",
+      "lines": 170,
+      "classes": [],
+      "static_core_imports": [
+        "core.path_identity"
+      ],
+      "archived_prototype": false
+    },
+    {
+      "file": "core/writer_journal.py",
+      "lines": 167,
+      "classes": [
+        "WriterJournal"
+      ],
+      "static_core_imports": [
+        "core.atomic_json"
+      ],
+      "archived_prototype": false
+    }
+  ]
+}

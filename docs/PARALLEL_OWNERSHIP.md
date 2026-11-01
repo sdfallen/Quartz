@@ -1,5 +1,14 @@
 # Quartz paralel görev ve dosya sahipliği
 
+## AKTİF — 1 Kasım sistem piramidi
+
+Güncel sözleşme: [architecture/PYRAMID.md](architecture/PYRAMID.md) ve
+[architecture/TEAM.md](architecture/TEAM.md). Aşağıdaki Notion ve Kimi
+görevleri tarihsel kayıttır; Notion araç ajanı durduruldu, yeni geliştirme
+yetkisi oluşturmaz. Üçlü aktif ekip Codex, Antigravity ve Claude'dur.
+Çalışan baseline e2ce872; mimari hazırlık dalı
+codex/architecture-pyramid-20261101. Bu belge dış ajan başlatmaz.
+
 ## Güncel dar kapsam — 1 Kasım Notion araç entegrasyonu
 
 Kullanıcı, Codex + Gemini 3.8 Flash + Claude 5.5 Opus arasında yeni görev bölümü
