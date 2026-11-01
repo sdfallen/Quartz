@@ -27,6 +27,8 @@ class AgentChatService:
         self.recovery = self.store.recover_interrupted()
         self._lock = threading.RLock()
         self._active_turn: dict | None = None
+        self._closed = False
+        self._worker_threads = {}
         self._diagnostics = AsyncSnapshot(self.agent_service.status)
 
     def _next_sequence(self, conv: dict) -> int:
@@ -156,8 +158,11 @@ class AgentChatService:
             return self.new_conversation(project_id=project["id"])
 
     def close(self):
+        with self._lock:
+            self._closed = True
+        result = self.cancel_active()
         self._diagnostics.close()
-        return self.cancel_active()
+        return result
 
     def prepare_resume(self, conversation_id, message_id):
         """Return an editable draft only. No dispatch, permission or session reuse."""
@@ -295,6 +300,7 @@ class AgentChatService:
         relevant = [
             m for m in messages
             if m.get("id") not in exclude_ids and (m.get("content") or "").strip()
+            and (m.get("metadata") or {}).get("instruction_state") not in {"queued","cancelled"}
         ][-limit:]
         if not relevant:
             return ""
@@ -367,8 +373,14 @@ class AgentChatService:
             raise PermissionError("Yazma yetkisi için açık kullanıcı onayı gerekli.")
 
         with self._lock:
-            if self._active_turn and self._active_turn.get("status") in {"running", "cancelling"}:
-                raise RuntimeError("Zaten devam eden bir yanıt üretimi var. Lütfen bekleyin veya iptal edin.")
+            if self._closed:
+                raise RuntimeError("Quartz kapanıyor; yeni görev başlatılamaz.")
+            self._refresh_stop_receipt()
+            if self._active_turn and self._active_turn.get("status") == "running":
+                return self._queue_instruction(text, agent, conversation_id, write, full_access)
+            if self._active_turn and (self._active_turn.get("status") == "cancelling" or
+                    self._active_turn.get("stop_receipt", {}).get("status") == "pending"):
+                raise RuntimeError("Önceki ajan süreçlerinin durduğu henüz doğrulanmadı.")
 
             if conversation_id:
                 conv = self.store.get(conversation_id)
@@ -384,12 +396,13 @@ class AgentChatService:
                 raise ValueError("Geçersiz ajan türü.")
             project_id = conv.get("project_id")
 
+            task_id = "turn-" + uuid.uuid4().hex
             user_seq = self._next_sequence(conv)
             recipient_for_user = "all" if selected_agent in {"collaboration", "both"} else selected_agent
             user_msg = self.store.append_message(
                 cid, "user", text, sender="user",
                 metadata={
-                    "sender": "user",
+                    "sender": "user", "task_id":task_id,
                     "recipient": recipient_for_user,
                     "conversation_id": cid,
                     "squad_task_id": None,
@@ -412,7 +425,7 @@ class AgentChatService:
             bot_msg = self.store.append_message(
                 cid, "assistant", "", sender=first_sender,
                 metadata={
-                    "status": "starting",
+                    "status": "starting", "task_id":task_id,
                     "requested_permission_level":requested_permission_level,
                     "agent": first_sender,
                     "sender": first_sender,
@@ -431,7 +444,9 @@ class AgentChatService:
                 "conversation_only": conversation_only,
                 "requested_permission_level":requested_permission_level,
                 "permission_level":'full' if full_access else 'project' if write else 'read-only',
-                "turn_id": "turn-" + uuid.uuid4().hex,
+                "turn_id": task_id, "project_id":project_id,
+                "execution_flags": {"write":write,"confirm_write":confirm_write,"full_access":full_access},
+                "instructions": [],
                 "conversation_id": cid,
                 "message_id": bot_msg["id"],
                 "message_ids": [bot_msg["id"]],
@@ -446,12 +461,13 @@ class AgentChatService:
             }
             self._active_turn = turn_state
 
-        threading.Thread(
+        worker = threading.Thread(
             target=self._run_chat_turn,
             args=(cid, bot_msg["id"], selected_agent, text, project_id, write, confirm_write, full_access),
-            name=f"agent-chat-{cid[:8]}",
-            daemon=True,
-        ).start()
+            name=f"agent-chat-{cid[:8]}", daemon=True)
+        with self._lock:
+            self._worker_threads[task_id] = worker
+        worker.start()
 
         return {
             "conversation_id": cid,
@@ -463,6 +479,11 @@ class AgentChatService:
     def continue_discussion(self, conversation_id: str | None = None) -> dict:
         """Trigger 1 additional mutual evaluation round between Codex and Antigravity in Birlikte mode."""
         with self._lock:
+            if self._closed:
+                raise RuntimeError("Quartz kapanıyor; yeni görev başlatılamaz.")
+            self._refresh_stop_receipt()
+            if self._active_turn and self._active_turn.get('stop_receipt', {}).get('status') == 'pending':
+                raise RuntimeError("Önceki ajan süreçlerinin durduğu henüz doğrulanmadı.")
             if self._active_turn and self._active_turn.get("status") in {"running", "cancelling"}:
                 raise RuntimeError("Zaten devam eden bir yanıt üretimi var. Lütfen bekleyin veya iptal edin.")
             conv = self.store.get(conversation_id) if conversation_id else self.store.get_active()
@@ -694,6 +715,11 @@ class AgentChatService:
         with self._lock:
             if not self._active_turn or self._active_turn.get("status") != "running" or self._is_turn_cancelled(owner_msg_id):
                 return False
+            if status == "completed" and self._active_turn.get("instructions"):
+                self._active_turn["progress_step"] = "Sıradaki ek talimat hazırlanıyor..."
+                return False
+            if status == "failed":
+                self._discard_instructions("Görev başarısız oldu; ek talimat çalıştırılmadı.")
             self._active_turn["status"] = status
             self._active_turn["run_id"] = None
             for entry in self._active_turn.get('agent_progress', {}).values():
@@ -711,6 +737,8 @@ class AgentChatService:
             if provider and session:
                 self.store.set_agent_session(cid, provider, session)
             if metadata is not None:
+                metadata = {**metadata, "task_id":self._active_turn.get("turn_id"),
+                            "conversation_id":cid,"project_id":self._active_turn.get("project_id")}
                 self.store.update_message_content(cid, msg_id, content, metadata=metadata)
                 agent = metadata.get('agent') or provider
                 progress = self._active_turn.setdefault('agent_progress', {})
@@ -720,7 +748,7 @@ class AgentChatService:
                                        'run_id':metadata.get('run_id'), 'updated_at':time.time()}
             return True
 
-    def _run_chat_turn(self, cid: str, msg_id: str, agent: str, prompt: str,
+    def _run_chat_step(self, cid: str, msg_id: str, agent: str, prompt: str,
                        project_id: str | None, write: bool, confirm_write: bool, full_access: bool = False):
         try:
             if agent == "notion":
