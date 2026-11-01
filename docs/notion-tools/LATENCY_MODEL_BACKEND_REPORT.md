@@ -65,3 +65,26 @@ Claude henüz bu oturumdan başlatılmadı; kullanıcı promptu kendi Claude
 oturumuna iletecek. Frontend model alanı, kısmi cevap ve gecikme görünümü,
 izin/Stop ve paketli UI testi onun sorumluluğudur. Son birleştirme ve
 gerçek uygulama kabulü Codex'te. Yeni EXE dağıtılmadı.
+
+## Sonraki teslim ekran görüntüsü ve yoklama kontrolü
+
+Kullanıcı Claude'un bundle'ı 4b6c103 üzerine alma ve izole paket testi yapma
+notunu ekran görüntüsüyle iletti. Yeni bundle/rapor, kontrol edilen yerel
+claude-handoff klasöründe, Downloads dosyalarında veya origin dal listesinde
+bulunmadı; yalnız eski d6174f6 main-chat teslimi var. Kullanıcıdan yeni
+artifact'ın konumu istendi. Yeni teslim alınmış/birleştirilmiş sayılmaz.
+
+Bağımsız iki kaynak sohbet koşusu (aynı basit soru, iki yeni oturum):
+
+| Yoklama | Toplam | İlk metin gözlemi | İstek sayısı | İstekler dışında süre |
+|---|---|---|---|---|
+| 1 saniye | 5490.76 ms | 5490.72 ms | 4 | 1019.25 ms |
+| 250 ms | 6781.39 ms | 4880.92 ms | 6 | 520.92 ms |
+
+İki yanıt da gerçek Notion ajanından doğru geldi. Bu istatistiksel veya
+tekrarlı eşleştirilmiş benchmark değildir; bulut gecikmesi değişir. Ancak
+"gecikmenin büyük kısmı kesinlikle 1 sn yoklamadan" sonucu bu örneklerden
+çıkarılamaz. Sık yoklama daha fazla CLI/ağ isteği üretti. Varsayılan interval
+kanıtsız biçimde düşürülmedi. İlk metin gözlemi ile tamamlanma ayrı tutulur.
+Kanıt: aynı yerel backup klasöründe polling-comparison.json. Paketli GUI
+kabulü veya stream transport başarısı olarak raporlanmaz.
