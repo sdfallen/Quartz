@@ -117,7 +117,8 @@ UAC, taze gözlem, kapsam ve veri korumalarını kaldırmaz.
 
 P1, P2 ve P3 farklı dosyalarda paralel ilerleyebilir; ortak sözleşme önce
 sabitlenir. Her değişiklik küçük commit, checkpoint ve geri alma yolu taşır.
-Henüz P1–P4 uygulanmış değildir. Özel yeni engine/registry veya geniş rewrite
+P1'de ilk kimlik/yayın sınırı düzeltmesi SOURCE/TESTED düzeyinde tamamlandı
+(CODEX_P1.md); birleşik BUILT/LIVE ve diğer geçiş dilimleri açık. Özel yeni engine/registry veya geniş rewrite
 ile bu planın üstüne altıncı bir mimari eklenmeyecek.
 
 ## Kabul kapıları

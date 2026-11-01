@@ -703,7 +703,10 @@ class AgentChatService:
     def _publish_run_update(self, cid, msg_id, content, metadata, *, provider=None, session=None):
         """The cancellation fence and persistence share one ownership lock."""
         with self._lock:
-            if not getattr(self, '_active_turn', None) or self._is_turn_cancelled(msg_id) or self._active_turn.get('status') != 'running':
+            if (not getattr(self, '_active_turn', None)
+                    or self._active_turn.get('conversation_id') != cid
+                    or self._is_turn_cancelled(msg_id)
+                    or self._active_turn.get('status') != 'running'):
                 return False
             if provider and session:
                 self.store.set_agent_session(cid, provider, session)
