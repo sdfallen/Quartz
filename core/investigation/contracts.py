@@ -130,6 +130,11 @@ def validate_finding(value, evidence):
         raise InvestigationError('invalid-evidence-links')
     if any(not isinstance(ref, str) or ref not in evidence for ref in refs + counters):
         raise InvestigationError('unknown-evidence')
+    # Independence is by distinct evidence id: citing one artifact twice is not
+    # two verifications. Without this a procedure could be "verified" by
+    # evidence_ids=[X, X] passing the len>=2 LIVE check below.
+    if len(set(refs)) != len(refs) or len(set(counters)) != len(counters):
+        raise InvestigationError('duplicate-evidence-link')
     if not isinstance(value.get('confidence_basis'), str) or not value['confidence_basis'] or len(value['confidence_basis']) > 2000:
         raise InvestigationError('missing-confidence-basis')
     if type(value.get('reproducible')) is not bool:

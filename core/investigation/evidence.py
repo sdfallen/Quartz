@@ -108,6 +108,10 @@ class EvidenceRepository:
             self.state = state
             self._persist()
 
+    # Provenance fields fixed when the artifact was produced; the trust root for
+    # them is the per-session manifest, not the portable knowledge JSON.
+    ATTESTED_FIELDS = ('evidence_id', 'level', 'origin', 'kind', 'digest', 'bytes', 'target_fingerprint')
+
     @staticmethod
     def verify_record(root, record, event, deadline):
         if not isinstance(record, dict): raise InvestigationError('invalid-evidence-record')
@@ -121,6 +125,44 @@ class EvidenceRepository:
         path = safe_path(root.joinpath(*parts.parts))
         if root not in path.parents:
             raise InvestigationError('artifact-outside-store')
+        # Hashing the artifact only proves the bytes are unchanged. It does NOT
+        # prove the record's claimed level/origin/kind: editing just the
+        # knowledge JSON to say level=LIVE, origin=host-verification would keep
+        # the digest valid and could promote a static artifact into a
+        # procedure-verifying one. Cross-check the attestation against the
+        # session manifest written when the artifact was first produced. This
+        # is internal consistency, not protection against a writer that also
+        # rewrites the manifest (full local-account compromise is out of scope).
+        EvidenceRepository._attest_from_manifest(root, parts.parts[1], record, event, deadline)
         if digest_file(path, event, deadline, maximum=EvidenceRepository.MAX_FILE_BYTES) != record.get('digest'):
             raise InvestigationError('stored-artifact-changed')
         return path
+
+    @staticmethod
+    def _attest_from_manifest(root, session_id, record, event, deadline):
+        guard(event, deadline)
+        if not isinstance(session_id, str) or len(session_id) != 32 or any(c not in '0123456789abcdef' for c in session_id):
+            raise InvestigationError('invalid-artifact-path')
+        manifest_path = safe_path(root / 'evidence' / session_id / 'manifest.json', exists=False)
+        if root not in manifest_path.parents or not manifest_path.is_file() or manifest_path.is_symlink():
+            raise InvestigationError('missing-attestation')
+        if manifest_path.stat().st_size > 8 * 1024 * 1024:
+            raise InvestigationError('attestation-limit')
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+        except (OSError, ValueError) as exc:
+            raise InvestigationError('invalid-attestation') from exc
+        evidence_id = record.get('evidence_id')
+        records = manifest.get('records') if isinstance(manifest, dict) else None
+        if (not isinstance(manifest, dict) or manifest.get('instruction_authority') is not False
+                or not isinstance(records, dict) or not isinstance(evidence_id, str)
+                or evidence_id not in records):
+            raise InvestigationError('evidence-attestation-mismatch')
+        attested = records[evidence_id]
+        if not isinstance(attested, dict):
+            raise InvestigationError('evidence-attestation-mismatch')
+        for field in EvidenceRepository.ATTESTED_FIELDS:
+            if record.get(field) != attested.get(field):
+                raise InvestigationError('evidence-attestation-mismatch')
+        if attested.get('level') != 'SOURCE' and attested.get('origin') != 'host-verification':
+            raise InvestigationError('untrusted-evidence-level')

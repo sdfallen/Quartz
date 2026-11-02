@@ -87,6 +87,25 @@ class InvestigationMemory:
         coverage = report.get('coverage', [])
         if not isinstance(coverage, list) or len(coverage)>64 or any(not isinstance(x,str) or not IDENTIFIER.fullmatch(x) for x in coverage):
             raise InvestigationError('invalid-coverage')
+        # A reusable inventory may only claim coverage it actually carries, and
+        # must be a bounded typed summary (no NaN/exotic objects survive
+        # bounded_json, but nested shape and the coverage/summary agreement are
+        # checked here so a forged inventory cannot be promoted on reload).
+        inventory = report.get('reusable_inventory')
+        if inventory is not None:
+            if not isinstance(inventory, dict) or set(inventory) - {'status', 'message', 'evidence'}:
+                raise InvestigationError('invalid-reusable-inventory')
+            if inventory.get('status') != 'PASS' or 'static_inventory' not in coverage:
+                raise InvestigationError('invalid-reusable-inventory')
+            meta = inventory.get('evidence')
+            if not isinstance(meta, dict) or meta.get('artifact_sha256') != target.sha256:
+                raise InvestigationError('invalid-reusable-inventory')
+            source_ref = meta.get('source_evidence_sha256')
+            if not any(item.get('kind') == 'rea-full-artifact' and item.get('digest') == source_ref
+                       for item in evidence.values()):
+                raise InvestigationError('invalid-reusable-inventory')
+        elif 'static_inventory' in coverage:
+            raise InvestigationError('invalid-coverage')
         record = {'schema_version': 1, 'key': self.key(target, question, tool_fingerprint),
                   'target_sha256': target.sha256, 'target_fingerprint': list(target.version_fingerprint),
                   'tool_fingerprint': tool_fingerprint, 'observed_at': time.time(),
@@ -105,6 +124,19 @@ class InvestigationMemory:
         record = deepcopy(prepared.record)
         with self._publication() as folder:
             guard(event, deadline)
+            existing = sorted(folder.glob(record['key'] + '.*.json'),
+                              key=lambda p: p.stat().st_mtime_ns, reverse=True)
+            # Idempotency: republishing an identical report must not grow the
+            # store without bound. If the newest record for this key has the
+            # same content digest (observed_at excluded), reuse it in place.
+            for candidate in existing[:1]:
+                try:
+                    if candidate.stat().st_size <= self.MAX_RECORD_BYTES:
+                        prior = json.loads(candidate.read_text(encoding='utf-8'))
+                        if isinstance(prior, dict) and self._content_digest(prior) == self._content_digest(record):
+                            return deepcopy(prior)
+                except (OSError, ValueError):
+                    pass
             if len(list(folder.glob('*.json'))) >= self.MAX_RECORDS:
                 raise InvestigationError('knowledge-limit')
             # Check just before the write; parent job publishes memory only after
@@ -115,9 +147,69 @@ class InvestigationMemory:
             atomic_write_json(path, record)
         return deepcopy(record)
 
+    @staticmethod
+    def _content_digest(record):
+        """Identity of a knowledge record ignoring its observation timestamp."""
+        payload = {k: v for k, v in record.items() if k != 'observed_at'}
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
     def publish(self, target, question, tool_fingerprint, report, event, deadline):
         prepared = self.prepare(target, question, tool_fingerprint, report, event, deadline)
         return self.commit(target, prepared, event, deadline)
+
+    def _load_valid_record(self, path, target, event, deadline, *, require_key=None, require_tool=None):
+        """Return a verified, invalidation-applied record, or None on any defect.
+
+        ``require_key``/``require_tool`` are enforced for the question-scoped
+        lookup; target-scoped reads pass None and match on target identity only.
+        Malformed, modified, expired, cross-target or unverifiable records are
+        rejected — a cache miss, never a crash or a silent wrong hit."""
+        safe_path(path)
+        if path.stat().st_size > self.MAX_RECORD_BYTES: return None
+        record = json.loads(path.read_text(encoding='utf-8'))
+        if not isinstance(record, dict): return None
+        if (record.get('schema_version') != 1
+                or (require_key is not None and record.get('key') != require_key)
+                or (require_tool is not None and record.get('tool_fingerprint') != require_tool)
+                or record.get('target_sha256') != target.sha256
+                or record.get('target_fingerprint') != list(target.version_fingerprint)
+                or record.get('instruction_authority') is not False
+                or not 0 <= time.time() - record.get('observed_at', 0) <= self.TTL):
+            return None
+        evidence = record['evidence']
+        if not isinstance(evidence, dict) or len(evidence) > 128: return None
+        for identity, item in evidence.items():
+            if item.get('target_fingerprint') != target.sha256 or item.get('evidence_id') != identity:
+                raise InvestigationError('evidence-target-mismatch')
+            EvidenceRepository.verify_record(self.root, item, event, deadline)
+        if not isinstance(record.get('findings'), list) or len(record['findings']) > 128: return None
+        for item in record['findings']: validate_finding(item, evidence)
+        target.revalidate(event, deadline)
+        invalidated = []
+        for item in record['findings']:
+            failure = self.root / 'outcomes' / (target.target_id + '.' + item['claim_id'] + '.json')
+            if failure.exists():
+                # A failed later procedure must not be retried just because its
+                # earlier success was valid. Corrupt outcome data fails closed
+                # for this procedure only.
+                try:
+                    safe_path(failure)
+                    if failure.stat().st_size > 32 * 1024: raise InvestigationError('outcome-limit')
+                    outcome = json.loads(failure.read_text(encoding='utf-8'))
+                    if (outcome.get('target_sha256') != target.sha256 or outcome.get('claim_id') != item['claim_id']):
+                        raise InvestigationError('invalid-outcome')
+                    EvidenceRepository.verify_record(self.root, outcome['evidence'], event, deadline)
+                    if outcome['observed_at'] >= record['observed_at']: invalidated.append(item['claim_id'])
+                except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                    invalidated.append(item['claim_id'])
+        if invalidated:
+            record['findings'] = [f for f in record['findings'] if f['claim_id'] not in invalidated]
+            record['invalidated_claim_ids'] = invalidated
+            if 'static.rea' in invalidated:
+                record['coverage'] = [x for x in record['coverage'] if x != 'static_inventory']
+                record['reusable_inventory'] = None
+        return deepcopy(record) | {'historical': True, 'instruction_authority': False,
+                                   'requires_current_grant': True}
 
     def lookup(self, target, question, tool_fingerprint, event, deadline):
         """Malformed, modified, expired or unverifiable records are cache misses."""
@@ -134,51 +226,51 @@ class InvestigationMemory:
             for path in candidates:
                 guard(event, deadline)
                 try:
-                    safe_path(path)
+                    record = self._load_valid_record(path, target, event, deadline,
+                                                     require_key=key, require_tool=tool_fingerprint)
+                    if record is not None: return record
+                except (OSError, ValueError, TypeError, KeyError, RecursionError):
+                    guard(event, deadline)
+                    continue
+            return None
+        except (OSError, ValueError, TypeError, KeyError, RecursionError):
+            guard(event, deadline)
+            return None
+
+    def context_for_target(self, target, event, deadline, *, maximum_scan=64):
+        """Bounded, path-free context of the most recent valid record for this
+        target, independent of the question/tool key.
+
+        For the application-knowledge layer, whose scope is the executable
+        itself, not one question. The result is historical and carries no
+        grant or instruction authority; it never restores scope or a task.
+        A failed-verification outcome still drops the stale procedure."""
+        try:
+            guard(event, deadline)
+            target.revalidate(event, deadline)
+            folder = self.root / 'knowledge'
+            if not folder.is_dir(): return None
+            safe_path(folder)
+            candidates = sorted(folder.glob('*.json'), key=lambda p: p.stat().st_mtime_ns, reverse=True)
+            if len(candidates) > self.MAX_RECORDS: candidates = candidates[:self.MAX_RECORDS]
+            scanned = 0
+            for path in candidates:
+                guard(event, deadline)
+                # Cheap pre-filter so an unrelated target's records do not each
+                # cost a full verification pass.
+                try:
                     if path.stat().st_size > self.MAX_RECORD_BYTES: continue
-                    record = json.loads(path.read_text(encoding='utf-8'))
-                    if not isinstance(record, dict): continue
-                    if (record.get('schema_version') != 1 or record.get('key') != key
-                            or record.get('tool_fingerprint') != tool_fingerprint
-                            or record.get('target_sha256') != target.sha256
-                            or record.get('target_fingerprint') != list(target.version_fingerprint)
-                            or record.get('instruction_authority') is not False
-                            or not 0 <= time.time() - record.get('observed_at', 0) <= self.TTL):
+                    head = json.loads(path.read_text(encoding='utf-8'))
+                    if not isinstance(head, dict) or head.get('target_sha256') != target.sha256:
                         continue
-                    evidence = record['evidence']
-                    if not isinstance(evidence, dict) or len(evidence) > 128: continue
-                    for identity, item in evidence.items():
-                        if item.get('target_fingerprint') != target.sha256 or item.get('evidence_id') != identity:
-                            raise InvestigationError('evidence-target-mismatch')
-                        EvidenceRepository.verify_record(self.root, item, event, deadline)
-                    if not isinstance(record.get('findings'), list) or len(record['findings']) > 128: continue
-                    for item in record['findings']: validate_finding(item, evidence)
-                    target.revalidate(event, deadline)
-                    invalidated=[]
-                    for item in record['findings']:
-                        failure=self.root/'outcomes'/(target.target_id+'.'+item['claim_id']+'.json')
-                        if failure.exists():
-                            # A failed later procedure must not be retried just
-                            # because its earlier success was valid. Corrupt
-                            # outcome data fails closed for this procedure only.
-                            try:
-                                safe_path(failure)
-                                if failure.stat().st_size>32*1024:raise InvestigationError('outcome-limit')
-                                outcome=json.loads(failure.read_text(encoding='utf-8'))
-                                if (outcome.get('target_sha256')!=target.sha256 or outcome.get('claim_id')!=item['claim_id']):
-                                    raise InvestigationError('invalid-outcome')
-                                EvidenceRepository.verify_record(self.root,outcome['evidence'],event,deadline)
-                                if outcome['observed_at']>=record['observed_at']:invalidated.append(item['claim_id'])
-                            except (OSError,ValueError,KeyError,TypeError,AttributeError):
-                                invalidated.append(item['claim_id'])
-                    if invalidated:
-                        record['findings']=[f for f in record['findings'] if f['claim_id'] not in invalidated]
-                        record['invalidated_claim_ids']=invalidated
-                        if 'static.rea' in invalidated:
-                            record['coverage']=[x for x in record['coverage'] if x!='static_inventory']
-                            record['reusable_inventory']=None
-                    return deepcopy(record) | {'historical': True, 'instruction_authority': False,
-                                                'requires_current_grant': True}
+                except (OSError, ValueError):
+                    continue
+                scanned += 1
+                if scanned > maximum_scan: break
+                try:
+                    record = self._load_valid_record(path, target, event, deadline)
+                    if record is not None:
+                        return self.context(record)
                 except (OSError, ValueError, TypeError, KeyError, RecursionError):
                     guard(event, deadline)
                     continue
