@@ -24,3 +24,7 @@ Paketli GUI hâlâ BLOCKED ise tam COMPLETE veya USER ACCEPTED yazma. Registry/O
 Kullanıcı Gönder'e bastı. Aynı EXE/hash üzerinde gerçek ana sohbet görevi ve iki ajan/Squad round1+round2 tamamlandı. Counter gerçek b"1"; doğru files/ prefix checkpoint diff yalnız counter.txt, missing/new0; host receipt aynı dosya, writer claims boş. Kanıt packaged-gui-send-result.json; task turn-47e82e9e6600406185887032f70365a1. USER ACCEPTED veya bütün mimari COMPLETE değil; HUMAN-ASSISTED LIVE VERIFIED. Önceki mesaj0/counter0 durumu tarihsel.
 
 Screenshot yine channel timeout; tamamlanan görevin ardından Tab failed to activate captured window verdi. Yeni güvenli gözlem olmadan input gönderme. Ek talimat/Stop GUI kabulü açık. Üretim deploy yapılmadı; ayrı test penceresi hâlâ açık olabilir. Güncel süreç kimliğiyle kontrol et.
+
+## Ek talimat kabulü
+
+Counter1→2→3 gerçek checkpoint zinciri ve aynı host task içindeki queued gönderim doğrulandı: packaged-gui-followup-result.json. Son kullanıcı mesajı tamamlandı, writer claims boş. GUI normal kapanışı 14:55:43 confirmed/error0 ve süreç yokluğu gözlemlendi. İzole paket Stop testi için yeniden açıldı; üretim hâlâ eski. Son Antigravity özetindeki Gemini ayrı kişi sanılması rol adı kalite kusuru olarak raporda; gerçek round1 incelemesi mevcut.

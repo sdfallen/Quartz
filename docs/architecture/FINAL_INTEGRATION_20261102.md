@@ -48,7 +48,8 @@ Eski iki Node harness yalnız `sendAgentMessage` fonksiyonunu koparıp yeni ger�
 | Paket normal kapanışı / restart | VERIFIED — LIVE | Alt+F4; GUI/backend/backend_thread confirmed makbuzu; süreç sonlandı ve aynı izole profil tekrar açıldı |
 | Gerçek authenticated RPC / CLI | VERIFIED — LIVE SOURCE | Gerçek socket/token, gerçek Codex hesabı, iki sıralı `46` / `27`, queued=true, gerçek process exit, backend join ve owned process count 0 |
 | Paketli ana sohbet Gönder | VERIFIED — HUMAN-ASSISTED LIVE | Kullanıcı gerçek Gönder’e bastı; gerçek chat_send, host task/run ve Squad kaydı oluştu. `packaged-gui-send-result.json` |
-| Paketli ana sohbet ek talimat / Stop | BLOCKED | Tamamlanan görev sonrası normal Tab girdisi `failed to activate captured window` verdi; kaynak/RPC kanıtı bu GUI kabulünün yerine geçmez |
+| Paketli ana sohbet ek talimat | VERIFIED — HUMAN-ASSISTED LIVE | İkinci kullanıcı mesajı ilk adım sürerken +7.63 saniyede aynı host task içinde kabul edildi. Sonraki yazma checkpoint’inde gerçek counter2; final counter3. Ayrı Squad adımları ve run receipt’leri mevcut |
+| Paketli ana sohbet Stop | NOT TESTED | Kaynak/RPC testleri geçti; gerçek GUI Stop tıklamasının süreç readback’i hâlâ gerekli |
 | Paketli gerçek görev / Squad | VERIFIED — HUMAN-ASSISTED LIVE | Counter tam `b"1"`; checkpoint karşılaştırmasında yalnız counter.txt değişti. İki ajan round1 + round2 ve gerçek çift yönlü Squad mesajları; writer claims boş |
 | Piksel görsel QA | BLOCKED | İki screenshot channel timeout; accessibility kanıtı görsel QA olarak sayılmadı |
 | Gerçek Desktop Broker grant / UAC akışı | NOT TESTED bu dilimde | Koruma ve kaynak regresyonları geçti; yeni canlı izin verilmedi, mevcut güvenlikler kaldırılmadı |
@@ -86,3 +87,13 @@ Sonuç: **HUMAN-ASSISTED PACKAGED GUI LIVE VERIFIED — tek dosya görevi ve Squ
 ## Kalan en küçük canlı adımlar
 
 Güvenli pencere girdisi sağlandığında aynı sohbetten ek talimat ve Stop/retry; ardından normal kapanış/restart receipt. Bu yeni görev koşusunun normal kapanışı da ayrıca kaydedilmeli. Hazır testin tamamlanması, mevcut kullanıcının açık penceresine kör girdi veya zorla kill izni değildir. Kurulu kullanıcı paketine yedekli dağıtım hâlâ yapılmadı; temiz staged klasör kullanılacak, özel test profili taşınmayacak.
+
+## Ek talimat ve normal kapanış — devam kabulü
+
+Aynı EXE ve kod commit 2b8d1e3 üzerinde host task `turn-81a1cba051504a46a869ea2b5e926a2d`: ilk kullanıcı mesajı 1793620214.072, ikinci mesaj 1793620221.699. İlk Codex run 44.21 saniye sürdüğü için ikinci gönderim gerçek çalışan görev sırasında yapıldı. İki mesaj aynı host task kimliğini korudu; ayrı Squad adımları fdee8b2f-4199-40be-b7a3-a27d55a1bd87 ve e18f82ec-f819-4790-b0db-735f78807b53.
+
+İlk writer checkpoint gerçek counter1, sonraki writer checkpoint counter2; final dosya tek bayt51 (3). İki kalıcı run receipt yalnız counter.txt değişikliğini gösterdi. Tüm10 ilgili mesaj completed, queued user instruction_state completed, son writer claims boş. Gerçek iki review ve karşılıklı Squad sonuçları mevcut. `packaged-gui-followup-result.json` dar kabul kanıtı. Mesajların kayıt oluşturma zamanları yürütme başlangıcı değildir; ikinci checkpoint’in sonra alınması ve gerçek önceki dosya değeri yürütme sırasını doğrular.
+
+Kalan kalite kusuru: son Antigravity round2 özetinde Gemini ayrı bir eksik inceleyiciymiş gibi anılıyor; oysa aynı Antigravity/Gemini run’ı round1’de gerçek incelemeyi tamamlamış. Bu model çıktısı/rol adlandırması kusuru gizlenmedi; kayıp reviewer dispatch veya kuyruk başarısızlığı olarak gösterilmedi. Kalıcı rol adı iyileştirmesi yapılırsa yeni paket/kabul kapsamı ayrıca izlenmeli.
+
+Kullanıcı testten sonra pencereyi kapatmış: 14:55:43 GUI/backend/backend_thread confirmed, hata0; gerçek Quartz süreci yoktu. Son Stop testi için aynı izole paket yeniden açıldı; eski görev tekrar çalıştırılmadı. Üretim EXE'si değiştirilmedi. Son zorunlu dar GUI adımı aktif görevde Durdur ve gerçek provider/process readback; piksel QA ayrı açık.
