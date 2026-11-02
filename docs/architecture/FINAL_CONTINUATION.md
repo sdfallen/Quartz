@@ -18,3 +18,9 @@ Fixture `gui-workspace` (kanıt kökünde), ilk counter değeri `0\n`. Proje nor
 Kaynak gerçek authenticated RPC testi ayrı portta ve disposable store üzerinde geçti: gerçek Codex 46 ve27, queued=true, doğrulanmış çıkış, backend join, iki provider owner process sayısı0. `live-rpc.json`; bu GUI testi değildir. Source chat service'in önceki Codex/Google gerçek testleri kendi build/hash sınırlarıyla ayrı raporda tutulur.
 
 Paketli GUI hâlâ BLOCKED ise tam COMPLETE veya USER ACCEPTED yazma. Registry/Overlay/driver/security/power değişikliği yapma. ASTER ve Notion üçüncü ajan kapsam dışıdır.
+
+## 2026-11-02 — Gönder engelinin dar kapanışı
+
+Kullanıcı Gönder'e bastı. Aynı EXE/hash üzerinde gerçek ana sohbet görevi ve iki ajan/Squad round1+round2 tamamlandı. Counter gerçek b"1"; doğru files/ prefix checkpoint diff yalnız counter.txt, missing/new0; host receipt aynı dosya, writer claims boş. Kanıt packaged-gui-send-result.json; task turn-47e82e9e6600406185887032f70365a1. USER ACCEPTED veya bütün mimari COMPLETE değil; HUMAN-ASSISTED LIVE VERIFIED. Önceki mesaj0/counter0 durumu tarihsel.
+
+Screenshot yine channel timeout; tamamlanan görevin ardından Tab failed to activate captured window verdi. Yeni güvenli gözlem olmadan input gönderme. Ek talimat/Stop GUI kabulü açık. Üretim deploy yapılmadı; ayrı test penceresi hâlâ açık olabilir. Güncel süreç kimliğiyle kontrol et.
