@@ -95,7 +95,8 @@ class ArtifactDiagnosticsService(SelfDiagnosticsService):
     SCOPE = 'artifact'
 
     def __init__(self, selected_path, *, knowledge=None, question=None, investigation_root=None,
-                 investigation=True, analyzer=None, analysis_enabled=True, **kwargs):
+                 investigation=True, analyzer=None, analysis_enabled=True,
+                 workbench=None, tool_specs=None, tool_effects=(), **kwargs):
         self.target = selected_artifact(selected_path)
         stat = self.target.stat()
         self.identity = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
@@ -110,6 +111,17 @@ class ArtifactDiagnosticsService(SelfDiagnosticsService):
         self._inventories = {}
         self.analyzer = analyzer
         self.analysis_enabled = bool(analysis_enabled)
+        # External tool authority stays in ToolWorkbench. Without an injected
+        # workbench the gateway keeps its previous behaviour (builtin parser
+        # only); supplying one does not widen effects by itself.
+        self.workbench = workbench
+        self.tool_specs = dict(tool_specs) if tool_specs else {}
+        effects = frozenset(tool_effects or ())
+        if not effects <= {'read_target', 'write_workspace', 'execute_tool'}:
+            raise ValueError('Desteklenmeyen inceleme aracı etkisi')
+        if effects and workbench is None:
+            raise ValueError('Araç etkisi için doğrulanmış bir workbench gerekir')
+        self.tool_effects = effects
         self._gateways = {}
         self._gateway_cleanup = {}
         self._investigation_closed = False
@@ -205,9 +217,9 @@ class ArtifactDiagnosticsService(SelfDiagnosticsService):
         self._update(identity,phase='analysis',progress=80,message='Dosyanın yapı ve bağımlılık ilişkileri inceleniyor…')
         root=safe_path(self.investigation_root/'workspaces',exists=False);root.mkdir(parents=True,exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='analysis-',dir=root) as folder:
-            gateway=InvestigationToolGateway(session,None,workspace=folder,
-                policy=InvestigationPolicy(effects=frozenset({'read_target','write_workspace'}),max_output_bytes=4*1024*1024),
-                tool_specs={})
+            gateway=InvestigationToolGateway(session,self.workbench,workspace=folder,
+                policy=InvestigationPolicy(effects=frozenset({'read_target','write_workspace'})|self.tool_effects,max_output_bytes=4*1024*1024),
+                tool_specs=self.tool_specs)
             self._gateways[identity]=gateway
             try:
                 catalog=bounded_json(analyzer.capabilities(session.target.as_dict()))

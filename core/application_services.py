@@ -210,6 +210,11 @@ class ApplicationServices:
         self._closing = False
         self._components: dict[str, str] = {}
         self._activities = 0
+        # Chat-bound investigation tasks (core.investigation.chat_task). These
+        # are bounded records, not components: they own no process and no file,
+        # so they are not part of CLOSE_ORDER. Shutdown fences new ones and
+        # cancels the open ones so nothing pending looks confirmed.
+        self._chat_tasks: dict[str, object] = {}
 
     @contextmanager
     def activity(self):
@@ -242,6 +247,37 @@ class ApplicationServices:
             if self._closing and instance is not None:
                 raise ServicesClosed()
             self._instances[name] = instance
+
+    # ── chat-bound investigation tasks ──
+    MAX_CHAT_TASKS = 8
+
+    def register_chat_task(self, task):
+        """Keep a bounded record of main-chat investigation tasks.
+
+        The record carries no process and no grant; it exists so a permission
+        answer can resume the SAME task instead of opening a new one.
+        """
+        with self._lock:
+            self.ensure_open()
+            identity = getattr(task, 'task_id', None)
+            terminal = getattr(task, 'TERMINAL_STATES', frozenset())
+            if not isinstance(identity, str) or not identity:
+                raise KeyError('invalid-chat-task')
+            for key, value in list(self._chat_tasks.items()):
+                if getattr(value, 'state', None) in getattr(value, 'TERMINAL_STATES', terminal):
+                    self._chat_tasks.pop(key, None)
+            if identity not in self._chat_tasks and len(self._chat_tasks) >= self.MAX_CHAT_TASKS:
+                raise RuntimeError('chat-task-budget')
+            self._chat_tasks[identity] = task
+            return task
+
+    def chat_task(self, task_id):
+        """Existing record or None. Never creates one."""
+        return self._chat_tasks.get(task_id) if isinstance(task_id, str) else None
+
+    def open_chat_tasks(self):
+        return [task for task in self._chat_tasks.values()
+                if getattr(task, 'state', None) in getattr(task, 'OPEN_STATES', frozenset())]
 
     def _release(self, name):
         with self._lock:
@@ -330,6 +366,16 @@ class ApplicationServices:
                 self._closing = True
                 targets = [(name, self._instances[name]) for name in CLOSE_ORDER]
                 activities = self._activities
+                chat_tasks = list(self._chat_tasks.values())
+            # Fence the chat-side records first: a task waiting on a permission
+            # answer must not look resumable after shutdown began.
+            for task in chat_tasks:
+                cancel = getattr(task, 'cancel', None)
+                if callable(cancel) and getattr(task, 'state', None) in getattr(task, 'OPEN_STATES', frozenset()):
+                    try:
+                        cancel('shutdown')
+                    except Exception:
+                        pass
             desktop = self.peek('desktop')
             if activities:
                 # No new grants or inputs survive a pending startup action.
