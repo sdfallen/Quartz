@@ -78,10 +78,12 @@ elif op in {"create-artifact", "--create-artifact"}:
     print(f"CREATED:{filename}")
 elif op in {"spawn-child", "--spawn-child"}:
     import subprocess
-    # Spawn background child process
-    cmd = ["cmd.exe", "/c", "ping", "127.0.0.1", "-n", "20"]
+    # Use the explicit interpreter: the tool environment deliberately has no PATH.
+    # Child output is a handshake proving it actually started before timeout.
+    cmd = [sys.executable, "-I", "-S", "-c",
+           "import time; print('CHILD_READY', flush=True); time.sleep(20)"]
     p = subprocess.Popen(cmd)
-    print(f"CHILD_PID:{p.pid}")
+    print(f"CHILD_PID:{p.pid}", flush=True)
     time.sleep(10)
 """,
             encoding="utf-8",
@@ -294,12 +296,25 @@ elif op in {"spawn-child", "--spawn-child"}:
             step_id="step-1",
             operation="spawn-child",
             tool_id="test_runner",
-            deadline_monotonic=time.monotonic() + 0.5,
+            # Allow both Python interpreters to start, then exercise the real deadline.
+            deadline_monotonic=time.monotonic() + 2.0,
         )
 
         receipt = self.executor.execute(self.manifest, str(self.script_path), req)
-        self.assertEqual(receipt.status, "timeout")
-        self.assertTrue(receipt.cleanup_receipt["process_exited"])
+        diagnostics = {"receipt": receipt.to_dict(), "stdout": receipt.stdout.decode("utf-8", "replace"),
+                       "stderr": receipt.stderr.decode("utf-8", "replace")}
+        self.assertEqual(receipt.status, "timeout", diagnostics)
+        self.assertIn(b"CHILD_READY", receipt.stdout, diagnostics)
+        self.assertRegex(receipt.stdout, rb"CHILD_PID:[0-9]+", diagnostics)
+        import psutil
+        child_line = next(line for line in receipt.stdout.splitlines() if line.startswith(b"CHILD_PID:"))
+        child_pid = int(child_line.split(b":", 1)[1])
+        self.assertFalse(psutil.pid_exists(child_pid), diagnostics)
+        self.assertFalse(psutil.pid_exists(receipt.process_identity["pid"]), diagnostics)
+        self.assertEqual(receipt.cleanup_receipt["status"], "confirmed", diagnostics)
+        self.assertTrue(receipt.cleanup_receipt["process_exited"], diagnostics)
+        self.assertTrue(receipt.cleanup_receipt["children_reaped"], diagnostics)
+        self.assertTrue(receipt.cleanup_receipt["drains_finished"], diagnostics)
 
 
 if __name__ == "__main__":
