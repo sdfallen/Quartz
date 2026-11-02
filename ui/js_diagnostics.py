@@ -211,9 +211,11 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
 
     const reaCheck = checks.find(c => c.id === 'rea');
     const reaUsed = Boolean(job.rea_used);
+    const investigation = job.investigation && typeof job.investigation === 'object' ? job.investigation : {};
+    const knowledgeReused = investigation.knowledge_reused === true;
     const reaTagText = reaUsed
       ? 'REA: Kullanıldı'
-      : (reaCheck?.status === 'NOT_TESTED' ? 'REA: Test Edilmedi' : (isRunning ? 'REA: Hazırlanıyor' : 'REA: Devre Dışı'));
+      : (knowledgeReused ? 'REA: Önceki kanıt doğrulandı' : (reaCheck?.status === 'NOT_TESTED' ? 'REA: Test Edilmedi' : (isRunning ? 'REA: Hazırlanıyor' : 'REA: Devre Dışı')));
 
     const limitations = Array.isArray(job.limitations)
       ? job.limitations.map(item => redactDiagText(item)).filter(Boolean)
@@ -231,6 +233,13 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
       knowledge_saved: knowledgeSaved,
       counts,
       report_saved: Boolean(job.report_path),
+      investigation: {
+        evidence_count: Number.isInteger(investigation.evidence_count) && investigation.evidence_count >= 0 && investigation.evidence_count <= 128 ? investigation.evidence_count : 0,
+        findings_count: Number.isInteger(investigation.findings_count) && investigation.findings_count >= 0 && investigation.findings_count <= 128 ? investigation.findings_count : 0,
+        knowledge_reused: knowledgeReused,
+        knowledge_saved: job.investigation_knowledge_saved === true,
+        instruction_authority: false,
+      },
     };
 
     return {

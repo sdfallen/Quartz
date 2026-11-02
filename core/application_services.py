@@ -68,9 +68,9 @@ def _natural(desktop, emit):
     return NaturalDesktopTask(desktop, emit)
 
 
-def _artifact_diagnostics(path):
+def _artifact_diagnostics(path, *, question=None):
     from core.artifact_diagnostics import ArtifactDiagnosticsService
-    return ArtifactDiagnosticsService(path)
+    return ArtifactDiagnosticsService(path, question=question)
 
 
 def _repair():
@@ -290,7 +290,7 @@ class ApplicationServices:
             self._instances["natural"] = task
             return task
 
-    def replace_artifact_diagnostics(self, selected_path):
+    def replace_artifact_diagnostics(self, selected_path, *, question=None):
         """Build diagnostics for a path the native picker returned."""
         with self._lock:
             self.ensure_open()
@@ -299,7 +299,8 @@ class ApplicationServices:
                 previous.shutdown()
                 if any(t.is_alive() for t in getattr(previous, 'threads', {}).values()):
                     raise RuntimeError('Önceki incelemenin kapanışı henüz tamamlanmadı.')
-            service = self.factories.artifact_diagnostics(selected_path)
+            service = (self.factories.artifact_diagnostics(selected_path, question=question)
+                       if question is not None else self.factories.artifact_diagnostics(selected_path))
             self._instances["artifact_diagnostics"] = service
             return service
 

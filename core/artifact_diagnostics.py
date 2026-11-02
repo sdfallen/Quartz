@@ -83,11 +83,20 @@ def parse_pe_metadata(stream, file_size: int) -> dict | None:
 class ArtifactDiagnosticsService(SelfDiagnosticsService):
     SCOPE = 'artifact'
 
-    def __init__(self, selected_path, *, knowledge=None, **kwargs):
+    def __init__(self, selected_path, *, knowledge=None, question=None, investigation_root=None,
+                 investigation=True, **kwargs):
         self.target = selected_executable(selected_path)
         stat = self.target.stat()
         self.identity = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
         super().__init__(**kwargs)
+        from core.investigation.session import DEFAULT_QUESTION
+        self.question = question or DEFAULT_QUESTION
+        if not isinstance(self.question, str) or not 1 <= len(self.question.strip()) <= 2000:
+            raise ValueError('İnceleme sorusu geçersiz')
+        self.investigation_root = Path(investigation_root) if investigation_root is not None else self.reports.parent / 'investigations'
+        self.investigation_enabled = bool(investigation)
+        self._investigations = {}
+        self._inventories = {}
         if knowledge is False:
             self.knowledge = None
         elif knowledge is not None:
@@ -105,8 +114,51 @@ class ArtifactDiagnosticsService(SelfDiagnosticsService):
                 snapshot['knowledge_saved'] = True
             except Exception:
                 snapshot['knowledge_saved'] = False
+        session = self._investigations.get(identity)
+        if session is not None:
+            try:
+                session.prepare_publication()
+            except (OSError, ValueError) as exc:
+                if str(exc) in {'target-changed', 'file-changed'}:
+                    raise
+                snapshot['investigation_knowledge_saved'] = False
+            snapshot['investigation'] = session.summary()
+
+    def _commit_completed(self, identity, snapshot):
+        session = self._investigations.get(identity)
+        if session is not None and session.prepared is not None:
+            try:
+                record = session.publish()
+                snapshot['investigation_knowledge_saved'] = True
+                from core.investigation.memory import InvestigationMemory
+                snapshot['investigation']['context'] = InvestigationMemory.context(record)
+            except (OSError, ValueError):
+                snapshot['investigation_knowledge_saved'] = False
 
     def _inspect(self, identity, event, deadline, include_rea):
+        from core.investigation.contracts import Cancelled
+        from core.investigation.session import InvestigationSession
+        from core.self_diagnostics import InspectionCancelled
+        from core.rea_adapter import ReaAdapter
+        session = None
+        try:
+            if self.investigation_enabled:
+                tool_identity = (ReaAdapter.runtime_identity() if self.rea is None else
+                                 {'provider':'injected-analyzer', 'type':type(self.rea).__name__})
+                session = InvestigationSession(self.target, root=self.investigation_root,
+                    event=event, deadline=deadline, tool_identity=tool_identity, question=self.question)
+                self._investigations[identity] = session
+            self._inspect_static(identity, event, deadline, include_rea, session)
+            if session is not None:
+                session.finish(self.status(identity)['checks'], self._inventories.get(identity))
+                self._update(identity, investigation=session.summary())
+        except Cancelled as exc:
+            raise InspectionCancelled() from exc
+        finally:
+            if session is not None:
+                session.close(cancelled=event.is_set())
+
+    def _inspect_static(self, identity, event, deadline, include_rea, session=None):
         target = selected_executable(self.target)
         stat = target.stat()
         if self.identity != (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns):
@@ -132,7 +184,14 @@ class ArtifactDiagnosticsService(SelfDiagnosticsService):
         self._guard(event, deadline)
         if include_rea:
             from core.rea_adapter import ReaAdapter
-            result = (self.rea or ReaAdapter()).inspect(target, event=event, deadline=deadline)
+            result = session.cached_inventory() if session is not None else None
+            if result is None:
+                adapter = self.rea or ReaAdapter()
+                options = {'event':event, 'deadline':deadline}
+                if session is not None and getattr(adapter, 'supports_evidence_sink', False) is True:
+                    options['evidence_sink'] = session.capture_rea
+                result = adapter.inspect(target, **options)
+            self._inventories[identity] = result
             self._guard(event, deadline)
             self._check(identity, 'rea', result['status'], 'REA statik incelemesi',
                         result['message'], **result.get('evidence', {}))

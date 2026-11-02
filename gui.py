@@ -158,7 +158,7 @@ class Api:
         return ipc_send("diagnostics_cancel", {"job_id": job_id})
 
     @_application_action
-    def diagnostics_select_application(self):
+    def diagnostics_select_application(self, question=None):
         """GUI-local native picker is the grant; arbitrary IPC paths stay forbidden."""
         with self._diagnostic_tools_lock:
             try:
@@ -171,7 +171,9 @@ class Api:
                     allow_multiple=False, file_types=('Uygulama (*.exe)',))
                 if not selected:
                     return {'status': 'ok', 'data': None}
-                service = self._services.replace_artifact_diagnostics(selected[0])
+                if question is not None and (not isinstance(question, str) or not 1 <= len(question.strip()) <= 2000):
+                    raise ValueError('İnceleme sorusu geçersiz')
+                service = self._services.replace_artifact_diagnostics(selected[0], question=question)
                 return {'status': 'ok', 'data': service.start()}
             except ServicesClosed as exc:
                 return {'status': 'error', 'data': str(exc)}
@@ -294,7 +296,7 @@ class Api:
             from core.diagnostics_intent import diagnostics_intent
             diagnostic_command = diagnostics_intent(text)
             if diagnostic_command == 'artifact':
-                result = self.diagnostics_select_application()
+                result = self.diagnostics_select_application(question=text)
                 if result.get('status') != 'ok':
                     return result
                 return {'status': 'ok', 'data': {'handled': True, 'diagnostics_started': True,

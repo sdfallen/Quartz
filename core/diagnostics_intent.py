@@ -14,9 +14,11 @@ def diagnostics_intent(text):
         return 'repair'
     if re.fullmatch(
         r'(?:başka (?:bir )?uygulamayı|uygulama dosyasını|seçtiğim uygulamayı|bir uygulamayı)\s+'
-        r'(?:incele|teşhis et|analiz et|(?:rea|tersine mühendislik)\s+ile\s+(?:incele|analiz et))',
+        r'(?:incele|araştır|teşhis et|analiz et|(?:rea|tersine mühendislik)\s+ile\s+(?:incele|araştır|analiz et))',
         value,
     ):
+        return 'artifact'
+    if re.fullmatch(r'(?:seçtiğim|bir)\s+oyunun\s+motorunu\s+(?:incele|araştır|analiz et)', value):
         return 'artifact'
     if re.fullmatch(
         r'(?:(?:öğrenilen|incelenen|kayıtlı)\s+uygulamaları|uygulama\s+(?:hafızasını|bilgisini))\s+(?:göster|listele)',

@@ -331,7 +331,9 @@ class ApplicationLearning:
                     return
                 if cached is None:
                     # The learner persists once below; avoid a duplicate save/hash.
-                    service = ArtifactDiagnosticsService(path, knowledge=False)
+                    service = ArtifactDiagnosticsService(path, knowledge=False,
+                        reports=self.store.root.parent / 'diagnostics',
+                        investigation_root=self.store.root.parent / 'investigations')
                     job = service.start()
                     while service.status(job['id'])['state'] == 'running':
                         if self.cancel.wait(.2):
@@ -349,6 +351,13 @@ class ApplicationLearning:
                         pass
                 with self.lock:
                     self.jobs[key] = {'state': 'completed', 'knowledge': cached}
+                    # Only host-produced, path-free evidence context; never a
+                    # grant, task replay or arbitrary text from the executable.
+                    if service is not None:
+                        report = service.status(job['id'])
+                        context = (report.get('investigation') or {}).get('context')
+                        if context:
+                            self.jobs[key]['investigation'] = context
         except Exception as exc:
             with self.lock:
                 self.jobs[key] = {'state': 'unavailable', 'reason': type(exc).__name__, 'knowledge': None}

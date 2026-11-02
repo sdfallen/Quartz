@@ -1,3 +1,5 @@
+> 2026-11-02: Bu özgün görev durduruldu; yeni bağımsız görev CLAUDE_MEMORY_PROMPT.md içindedir. Aşağıdaki metin tarihsel kayıt olarak korunuyor.
+
 # Claude — Quartz REA derin çözümleme ve motor bilgisi
 
 İstenen model: Claude Opus5.5. Diğer iki uzmanla aynı ana görevde paralel çalışıyorsun. Sorumluluğun hafif review veya arayüz değildir: gerçek analysis engine senin alanın.

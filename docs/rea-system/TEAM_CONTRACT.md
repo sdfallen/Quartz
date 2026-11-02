@@ -1,6 +1,6 @@
 # Quartz REA — tek görev, üç uzman, birleşik teslim
 
-Durum: kullanıcı kapsamı onayladı; görev sözleşmesi hazır. Henüz yeni REA sistemi uygulanmış veya dış model oturumları başlatılmış değildir.
+Durum: kullanıcı promptları iletti. Codex araştırma/kanıt/hafıza başlangıcını uyguladı; genel sistem ve yeni paket kabul edilmiş değildir. Claude özgün analiz görevini kendi oturumundaki filtre nedeniyle kod teslim etmeden durdurdu; aşağıdaki yeniden dağıtım geçerlidir.
 Tarih: 2026-11-02. Kod/rapor başlangıcı: 732791af26a7e6ab0cba0c36ae52221e8984006f. Son mevcut kod düzeltmesi: 3b1d506. Windows temel suite967 PASS/skip0. Kurulu EXE de512a5d362bf7bf073a3e32af5ac2d6e8725c27686dabce54edf1a3ddb68d05 korunur; yeni teslim doğrulanmadan değiştirilmez.
 
 ## Ürün hedefi
@@ -13,8 +13,8 @@ Hedef yetenekler: oyun motoru/runtime tanıma, native/managed/paketli uygulama �
 
 | Sahip / istenen model | Kritik üretim sorumluluğu | Tek yazacağı alanlar |
 |---|---|---|
-| Codex / 6.1 Sol high | Investigation yaşam döngüsü, soru/araç planı, kanıt ve sürümlü hafıza, ana sohbet/Broker/REA bağları, tek writer, son paketli kabul ve entegrasyon | core/investigation/, mevcut core/rea_adapter.py ve application_knowledge.py, servis/GUI bağları, tests/test_investigation_*.py, paket kayıtları |
-| Claude / Opus5.5 | Gerçek native/managed/app paket çözümleyiciler, motor/mimari ve fonksiyon/kaynak ilişkileri, hipotez ve davranış analizi, format başına gerçek doğrulama | core/rea_analysis/, tests/test_rea_analysis_*.py, labs/rea-analysis/, docs/rea-system/CLAUDE_REPORT.md |
+| Codex / 6.1 Sol high | Motor/native/managed/paket çözümleme, investigation yaşam döngüsü, soru/araç yürütmesi, chat/Broker/REA bağları, son kabul ve entegrasyon | core/rea_analysis/, core/investigation/session.py gateway.py planning.py, core/rea_adapter.py, servis/GUI/paket bağları; kendi analiz/gateway/frontend testleri |
+| Claude / Opus5.5 | Kanıt kökeni ve bütünlüğü, doğrulanmış öğrenme/prosedür hafızası, çelişki/başarısızlık sonrası invalidation, eski bilginin güvenli kullanımı | core/investigation/contracts.py evidence.py memory.py ve yeni learning.py; core/application_knowledge.py; tests/test_investigation_evidence.py test_rea_learning.py ve yeni test_learning_*.py; docs/rea-system/CLAUDE_MEMORY_REPORT.md |
 | Gemini / 3.8Flash | GitHub keşif/edinim ve uyumluluk, yönetilen araç ortamları, süreç/Stop/limit/artifact sahipliği, araç kökeni ve gerçek uçtan uca araç testleri/ölçümleri | core/tool_workbench/, tests/test_tool_workbench_*.py, scripts/tool_workbench_*.py, labs/tool-workbench/, docs/rea-system/GEMINI_REPORT.md |
 
 Her sahibi kendi üretim kodu, olumsuz testler, gerçek araç/uygulama kanıtı ve teslim raporundan sorumludur. Claude ve Gemini yalnız tasarım, mock veya metin denetimi teslim etmeyecek. Son birleştirme Codex'te; herkes bütün kaynakları okuyabilir fakat diğerinin alanına doğrudan yazamaz. Ortak main.py/gui.py, task/store/process_tree, scripts/run_safe_tests.py, .spec/CI/installer/model tercihleri yalnız Codex entegrasyonundan değişir. Gereken sınır değişikliğini integration request olarak raporla.
@@ -65,3 +65,9 @@ Her ajan kendi aşağıdaki kapsamını üretim + gerçek kanıt ile kapatır. E
 Her ajan görev alanındaki uygulamayı bağımsız tamamlayacak; ilk incelemeden sonra durmayacak. Tek görevin içindeki mühendislik kapıları kullanıcıya ayrı ayrı onaylatılmaz. Başarısız yöntem kanıtsız tekrar edilmez. Bağımsız işler insan UI testi nedeniyle durmaz. Gerçek kullanıcı müdahalesi gereken dar işlem açık gerekçesiyle konsolide edilir.
 
 Rapor: ortak base ve commit, dosya listesi, SOURCE/BUILT/LIVE kanıtı, gerçek hedef/tool sürümü, test komutu/çıktısı, manifest/digest, süreç/Stop readback, benchmark koşulları, açık sınırlar ve integration request. Demo/stub dışarıdan çalışan sistem diye sunulmaz. Claude/Gemini kendi paketini üretim dist'e dağıtmaz; public upload/push/release yok. Kullanıcı verisi ve .env hiçbir bundle'a eklenmez. C:/WarbandIsland ve ASTER/kayıtlar okunmaz/değiştirilmez; Notion üçüncü ajan kapsam dışı, shared memory korunur.
+
+## 2026-11-02 — Claude görev değişikliği
+
+Kullanıcının ekran görüntülerinde Claude, kendi oturumunda bir güvenlik filtresinin derin çözümleme çalışmasını durdurduğunu ve core/rea_analysis için kod yazmadığını bildirdi. Filtrenin kesin nedeni bilinmiyor; yeniden ifadeyle aynı işi tekrarlama talimatı verilmedi. CLAUDE_MEMORY_PROMPT.md tamamen farklı, veri/kanıt/öğrenme üretim görevini tanımlar ve eski CLAUDE_PROMPT.md'nin yerine geçer. Motor/analiz alanı Codex'e taşındı; önceden Codex'in oluşturduğu kanıt ve hafıza kodu baseline olarak Claude'a devredildi. Gemini'nin alanı ve başlangıç dalı değişmedi.
+
+Claude'a ayrılan dosyalar handoff checkpoint sonrası Codex tarafından paralel düzenlenmeyecek. Ortak veri şemasında geriye uyumsuz değişiklik, session veya gateway düzenlemesi integration request ile ilerler. Yeni baseline bundle/manifest aktarılmalı; eski cbc303b bundle'ı yeni hafıza implementasyonunu içermez. Bu sözleşme değişikliği çalışan EXE dağıtımı değildir.
