@@ -1,170 +1,125 @@
-"""
-core/tool_workbench/workbench.py
-Production Tool Workbench facade for Quartz REA system.
-Implements catalog, resolve, acquire, execute, stop, and close lifecycle.
-"""
+"""Registered tools only, with owned acquisition/execution and JSON receipts.
 
+This is supervision, not an OS security sandbox. Catalog registration is a
+trusted host operation; a repository README or tool output cannot register code.
+"""
 from __future__ import annotations
 
-import logging
+from copy import deepcopy
 from pathlib import Path
 import threading
 import time
-from typing import Any, Dict, List, Optional, Union
+import uuid
 
-from core.tool_workbench.acquisition import ToolAcquirer, get_default_managed_dir
-from core.tool_workbench.catalog import ToolCatalog
-from core.tool_workbench.contracts import (
-    AcquisitionPolicy,
-    ToolManifest,
-    ToolReceipt,
-    ToolRequest,
-)
-from core.tool_workbench.errors import AcquisitionError, ExecutionError, ResolutionError
-from core.tool_workbench.execution import ToolExecutor
+from .acquisition import ToolAcquirer, get_default_managed_dir
+from .catalog import ToolCatalog
+from .contracts import AcquisitionPolicy, ToolManifest, ToolRequest
+from .errors import AcquisitionError, ExecutionError, ResolutionError
+from .execution import ToolExecutor
 
-log = logging.getLogger("quartz.workbench")
+
+class _Cancellation:
+    def __init__(self, *events): self.events = [e for e in events if e is not None]
+    def is_set(self): return any(e.is_set() for e in self.events)
+    def wait(self, timeout=None):
+        until = None if timeout is None else time.monotonic() + timeout
+        while not self.is_set():
+            if until is not None and time.monotonic() >= until: return False
+            time.sleep(.02)
+        return True
 
 
 class ToolWorkbench:
-    """
-    Main Production Workbench Facade.
-    Provides verified tool resolution, isolated managed acquisition, and supervised execution.
-    """
-
-    def __init__(
-        self,
-        managed_dir: Optional[Union[str, Path]] = None,
-        workspace_dir: Optional[Union[str, Path]] = None,
-        catalog: Optional[ToolCatalog] = None,
-    ):
+    def __init__(self, managed_dir=None, workspace_dir=None, catalog=None):
         self._managed_path = Path(managed_dir or get_default_managed_dir()).resolve()
-        self._catalog = catalog or ToolCatalog()
+        self._catalog = catalog if catalog is not None else ToolCatalog()
         self._acquirer = ToolAcquirer(base_managed_dir=self._managed_path)
-        self._executor = ToolExecutor(workspace_root=Path(workspace_dir).resolve() if workspace_dir else None)
+        self._executor = ToolExecutor(workspace_root=Path(workspace_dir) if workspace_dir else None)
         self._lock = threading.RLock()
-        self._installed_cache: Dict[str, Dict[str, Any]] = {}  # tool_id -> acquisition dict
+        self._closed = False
+        self._operations = {}
 
     @property
-    def managed_dir(self) -> Path:
-        return self._managed_path
-
+    def managed_dir(self): return self._managed_path
     @property
-    def catalog_service(self) -> ToolCatalog:
-        return self._catalog
+    def catalog_service(self): return self._catalog
+    def catalog(self, query=None): return self._catalog.catalog(query)
+    def resolve(self, requirements): return self._catalog.resolve(requirements)
 
-    def catalog(self, query: Optional[Union[str, Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
-        """List and search available tool manifests."""
-        return self._catalog.catalog(query)
+    def _begin(self, investigation_id, external):
+        with self._lock:
+            if self._closed: raise ExecutionError("Workbench is closed")
+            token, event = uuid.uuid4().hex, threading.Event()
+            self._operations[token] = (investigation_id, event)
+            return token, _Cancellation(event, external)
 
-    def resolve(self, requirements: Union[List[Dict[str, Any]], Dict[str, Any], str]) -> Dict[str, Any]:
-        """Resolve capability requirements to a compatible tool manifest."""
-        return self._catalog.resolve(requirements)
+    def _end(self, token):
+        with self._lock: self._operations.pop(token, None)
 
-    def acquire(
-        self,
-        selection: Union[Dict[str, Any], ToolManifest, str],
-        policy: Optional[Union[AcquisitionPolicy, Dict[str, Any]]] = None,
-        cancel_event: Optional[threading.Event] = None,
-    ) -> Dict[str, Any]:
-        """
-        Acquire a tool into the managed directory according to security policy.
-        Never executes README or install scripts. Verifies cryptographic digest.
-        """
-        if isinstance(selection, ToolManifest):
-            manifest = selection
-        elif isinstance(selection, str):
-            manifest = self._catalog.get(selection)
-            if not manifest:
-                raise ResolutionError(f"Tool ID '{selection}' not found in catalog")
+    def _manifest(self, selection):
+        if isinstance(selection, ToolManifest): supplied, identity = selection, selection.tool_id
+        elif isinstance(selection, str): supplied, identity = None, selection
         elif isinstance(selection, dict):
-            if "tool_id" in selection and "executable_subpath" in selection:
-                manifest = ToolManifest.from_dict(selection)
-            elif "tool_id" in selection:
-                manifest = self._catalog.get(selection["tool_id"])
-                if not manifest:
-                    raise ResolutionError(f"Tool ID '{selection['tool_id']}' not found in catalog")
-            else:
-                raise ValueError("Invalid selection dictionary for tool acquisition")
-        else:
-            raise TypeError("Selection must be ToolManifest, tool_id string, or dict")
+            identity = selection.get('tool_id')
+            supplied = ToolManifest.from_dict(selection) if 'executable_subpath' in selection else None
+        else: raise ResolutionError("Invalid tool selection")
+        registered = self._catalog.get(identity)
+        if registered is None: raise ResolutionError("Tool is not registered")
+        if supplied is not None and supplied.to_dict() != registered.to_dict():
+            raise ResolutionError("Selection does not match registered manifest")
+        # Detach nested mutable fields from concurrent catalog callers.
+        return ToolManifest.from_dict(deepcopy(registered.to_dict()))
 
-        acq_policy: AcquisitionPolicy
-        if isinstance(policy, AcquisitionPolicy):
-            acq_policy = policy
-        elif isinstance(policy, dict):
-            acq_policy = AcquisitionPolicy(**policy)
-        else:
-            acq_policy = AcquisitionPolicy(managed_dir=str(self._managed_path))
+    def acquire(self, selection, policy=None, cancel_event=None):
+        manifest = self._manifest(selection)
+        if isinstance(policy, dict): policy = AcquisitionPolicy(**policy)
+        policy = policy or AcquisitionPolicy(managed_dir=str(self._managed_path))
+        token, event = self._begin(None, cancel_event)
+        try:
+            if event.is_set(): raise AcquisitionError("Acquisition cancelled")
+            result = self._acquirer.acquire(manifest, policy, event)
+            with self._lock:
+                if self._closed or event.is_set(): raise AcquisitionError("Acquisition cancelled before publication")
+            return result
+        finally: self._end(token)
 
-        result = self._acquirer.acquire(manifest, acq_policy, cancel_event)
+    def execute(self, request, cancel_event=None):
+        """JSON in/out for gateways; retain typed receipts for Python callers."""
+        json_request = isinstance(request, dict)
+        req = ToolRequest.from_dict(request) if json_request else request
+        if not isinstance(req, ToolRequest): raise TypeError("Invalid tool request")
+        manifest = self._manifest(req.tool_id)
+        token, event = self._begin(req.investigation_id, cancel_event)
+        try:
+            if event.is_set(): raise ExecutionError("Execution cancelled")
+            # Rehash the installed files on EVERY execution. Cached metadata or
+            # a matching ID alone cannot attest to current executable bytes.
+            installed = self._acquirer.validate_installation(manifest,
+                self._managed_path / manifest.tool_id / manifest.pinned_revision,
+                cancel_event=event)
+            receipt = self._executor.execute(manifest, installed['executable_path'], req, event)
+            if not json_request: return receipt
+            value = receipt.to_dict()
+            value['status'] = {'confirmed':'completed', 'failed':'failed',
+                'cancelled':'cancelled', 'timeout':'blocked', 'output_limit':'blocked'}.get(receipt.status, 'blocked')
+            return value
+        finally: self._end(token)
+
+    def _stop(self, investigation_id=None, *, closing=False):
         with self._lock:
-            self._installed_cache[manifest.tool_id] = result
-        return result
-
-    def execute(
-        self,
-        request: Union[ToolRequest, Dict[str, Any]],
-        cancel_event: Optional[threading.Event] = None,
-    ) -> ToolReceipt:
-        """
-        Execute an operation using an acquired managed tool in an isolated workspace.
-        Enforces secrets stripping, output limits, monotonic timeouts, and process tracking.
-        """
-        req: ToolRequest
-        if isinstance(request, ToolRequest):
-            req = request
-        elif isinstance(request, dict):
-            req = ToolRequest.from_dict(request)
-        else:
-            raise TypeError("Request must be ToolRequest instance or dict")
-
-        manifest = self._catalog.get(req.tool_id)
-        if not manifest:
-            raise ResolutionError(f"Tool '{req.tool_id}' is not registered in catalog")
-
+            if closing: self._closed = True
+            for owner, event in self._operations.values():
+                if owner is None or investigation_id is None or owner == investigation_id: event.set()
+        executor = self._executor.close() if closing else self._executor.stop_all(investigation_id)
+        acquirer = self._acquirer.close() if closing else self._acquirer.stop()
         with self._lock:
-            installed = self._installed_cache.get(req.tool_id)
+            pending = sum(1 for owner, _ in self._operations.values()
+                if owner is None or investigation_id is None or owner == investigation_id)
+        confirmed = not pending and executor.get('status') == 'confirmed' and acquirer.get('status') == 'confirmed'
+        return {'status':'confirmed' if confirmed else 'pending',
+            'all_exited':confirmed, 'stopped_count':executor.get('stopped_count',0),
+            'pending_operations':pending, 'investigation_id':investigation_id,
+            'components':{'executor':executor, 'acquirer':acquirer}, 'timestamp':time.time()}
 
-        # If not in cache, verify if already present on disk
-        if not installed:
-            installed_path = self._managed_path / req.tool_id / manifest.pinned_revision
-            cached = self._acquirer._verify_existing_installation(installed_path, manifest)
-            if cached:
-                installed = cached
-                with self._lock:
-                    self._installed_cache[req.tool_id] = installed
-
-        if not installed:
-            raise AcquisitionError(
-                f"Tool '{req.tool_id}' is not acquired in managed directory. Call acquire() first."
-            )
-
-        exe_path = installed["executable_path"]
-        receipt = self._executor.execute(manifest, exe_path, req, cancel_event)
-        return receipt
-
-    def stop(self, investigation_id: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Stop active workbench tool processes. Confirmed only upon observed exit.
-        """
-        result = self._executor.stop_all(investigation_id)
-        return {
-            "status": result["status"],  # "confirmed" | "pending"
-            "investigation_id": investigation_id,
-            "stopped_count": result["stopped_count"],
-            "all_exited": result["all_exited"],
-            "timestamp": time.time(),
-        }
-
-    def close(self) -> Dict[str, Any]:
-        """
-        Cleanly terminate all active workbench tool executions and release resources.
-        """
-        stop_result = self.stop()
-        return {
-            "status": stop_result["status"],
-            "stopped_count": stop_result["stopped_count"],
-            "all_exited": stop_result["all_exited"],
-            "timestamp": time.time(),
-        }
+    def stop(self, investigation_id=None): return self._stop(investigation_id)
+    def close(self): return self._stop(closing=True)

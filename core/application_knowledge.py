@@ -359,7 +359,7 @@ class ApplicationLearning:
                     # The learner persists once below; avoid a duplicate save/hash.
                     service = ArtifactDiagnosticsService(path, knowledge=False,
                         reports=self.store.root.parent / 'diagnostics',
-                        investigation_root=self.store.root.parent / 'investigations')
+                        investigation_root=self.investigation_root)
                     job = service.start()
                     while service.status(job['id'])['state'] == 'running':
                         if self.cancel.wait(.2):

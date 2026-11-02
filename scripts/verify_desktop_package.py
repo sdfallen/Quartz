@@ -30,13 +30,13 @@ def main():
     for module in ("gui", "ui.document", "ui.styles", "ui.theme", "ui.shell", "ui.app_js",
                    "ui.js_setup", "ui.js_messages", "ui.js_chat", "ui.js_desktop", "ui.js_diagnostics", "ui.js_advanced", "ui.js_lifecycle",
                    "main", "advanced_controller", "core.application_services", "core.shutdown", "core.agent_chat", "core.conversation_store", "core.response_style", "core.local_ipc",
-                   "core.cli_installer", "core.install_security", "core.windows_prerequisites", "core.elevation", "core.application_knowledge", "core.investigation", "core.investigation.contracts", "core.investigation.evidence", "core.investigation.memory", "core.investigation.session", "core.investigation.planning", "core.investigation.gateway", "core.self_diagnostics", "core.rea_adapter", "core.artifact_diagnostics", "core.package_repair", "core.diagnostics_intent", "core.onboarding", "core.gemini_runtime", "core.gemini_auth", "core.low_spec_optimizer", "core.squad_adapter",
+                   "core.cli_installer", "core.install_security", "core.windows_prerequisites", "core.elevation", "core.application_knowledge", "core.investigation", "core.investigation.contracts", "core.investigation.evidence", "core.investigation.memory", "core.investigation.session", "core.investigation.planning", "core.investigation.gateway", "core.investigation.learning", "core.tool_workbench", "core.tool_workbench.acquisition", "core.tool_workbench.catalog", "core.tool_workbench.contracts", "core.tool_workbench.errors", "core.tool_workbench.execution", "core.tool_workbench.workbench", "core.self_diagnostics", "core.rea_adapter", "core.artifact_diagnostics", "core.package_repair", "core.diagnostics_intent", "core.onboarding", "core.gemini_runtime", "core.gemini_auth", "core.low_spec_optimizer", "core.squad_adapter",
                    "core.desktop_agents", "core.desktop_control", "core.desktop_native", "core.desktop_broker",
                    "core.desktop_mcp", "core.desktop_launch", "core.desktop_task_ui", "core.natural_desktop", "core.warband_workspace", "core.project_registry", "core.multi_agent_service", "core.message_intent", "core.codex_runtime", "core.antigravity_runtime", "core.process_tree", "core.chat_coordination", "core.branding",
                    "core.async_snapshot", "core.task_outcome", "core.source_verification", "core.run_evidence_store", "core.writer_journal", "core.screen_overlay",
                    "core.rea_analysis", "core.rea_analysis.binary", "core.rea_analysis.managed", "core.rea_analysis.packages", "core.rea_analysis.service"):
         source = ROOT / (module.replace(".", "/") + ".py")
-        if module in {"core.investigation", "core.rea_analysis"}: source = ROOT / module.replace('.', '/') / '__init__.py'
+        if module in {"core.investigation", "core.rea_analysis", "core.tool_workbench"}: source = ROOT / module.replace('.', '/') / '__init__.py'
         if module not in pyz.toc:
             # desktop_mcp is a standalone helper, not imported into the GUI.
             checks[module] = "standalone helper" if module == "core.desktop_mcp" else False

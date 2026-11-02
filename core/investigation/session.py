@@ -130,7 +130,13 @@ class InvestigationSession:
             self.evidence.finalize('cancelled' if cancelled else 'failed')
 
     def summary(self):
+        from .learning import assess_record
+        quality = assess_record(dict(self.report, target_sha256=self.target.sha256)) if self.report else None
         return {'schema_version':1, 'investigation_id':self.evidence.id,
                 'knowledge_reused':bool(self.report and self.report['knowledge_reused']),
                 'findings_count':len(self.findings), 'evidence_count':len(self.report['evidence']) if self.report else len(self.evidence.records),
-                'context':InvestigationMemory.context(self.previous), 'instruction_authority':False}
+                'context':InvestigationMemory.context(self.previous),
+                'learning_quality': ({'tier_counts':quality['tier_counts'],
+                    'has_reusable_procedure':quality['has_reusable_procedure'],
+                    'instruction_authority':False} if quality else None),
+                'instruction_authority':False}

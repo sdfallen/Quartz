@@ -107,6 +107,7 @@ class TestToolWorkbenchAcquisition(unittest.TestCase):
             "/corrupt.zip": self.corrupt_bytes,
         })
         self.server.start()
+        self.local_policy = AcquisitionPolicy(allowed_sources=[f"http://127.0.0.1:{self.server.port}/"])
 
     def tearDown(self):
         self.server.stop()
@@ -131,7 +132,7 @@ class TestToolWorkbenchAcquisition(unittest.TestCase):
             supported_operations={"run": {}},
         )
 
-        res = self.acquirer.acquire(manifest)
+        res = self.acquirer.acquire(manifest, policy=self.local_policy)
         self.assertEqual(res["status"], "acquired")
         self.assertEqual(res["tool_id"], "sample_tool")
         self.assertEqual(res["package_digest"], self.valid_digest)
@@ -142,7 +143,7 @@ class TestToolWorkbenchAcquisition(unittest.TestCase):
         self.assertTrue(receipt_path.is_file())
 
         # Second call returns cached without redownloading
-        res2 = self.acquirer.acquire(manifest)
+        res2 = self.acquirer.acquire(manifest, policy=self.local_policy)
         self.assertEqual(res2["status"], "cached")
 
     def test_tampered_cache_triggers_reacquisition(self):
@@ -161,14 +162,14 @@ class TestToolWorkbenchAcquisition(unittest.TestCase):
             supported_operations={"run": {}},
         )
 
-        res = self.acquirer.acquire(manifest)
+        res = self.acquirer.acquire(manifest, policy=self.local_policy)
         self.assertEqual(res["status"], "acquired")
 
         # Corrupt the executable
         Path(res["executable_path"]).unlink()
 
         # Re-acquisition detects corruption and reinstalls
-        res2 = self.acquirer.acquire(manifest)
+        res2 = self.acquirer.acquire(manifest, policy=self.local_policy)
         self.assertEqual(res2["status"], "acquired")
         self.assertTrue(Path(res2["executable_path"]).is_file())
 
@@ -189,7 +190,7 @@ class TestToolWorkbenchAcquisition(unittest.TestCase):
         )
 
         with self.assertRaises(DigestMismatchError) as ctx:
-            self.acquirer.acquire(manifest)
+            self.acquirer.acquire(manifest, policy=self.local_policy)
 
         self.assertIn("Cryptographic digest mismatch", str(ctx.exception))
         # Ensure target install directory was NOT created
@@ -213,7 +214,7 @@ class TestToolWorkbenchAcquisition(unittest.TestCase):
         )
 
         with self.assertRaises(SecurityViolationError) as ctx:
-            self.acquirer.acquire(manifest)
+            self.acquirer.acquire(manifest, policy=self.local_policy)
 
         self.assertTrue("traversal" in str(ctx.exception) or "Zip slip" in str(ctx.exception))
         # Verify no file escaped outside managed directory
@@ -237,7 +238,7 @@ class TestToolWorkbenchAcquisition(unittest.TestCase):
         )
 
         with self.assertRaises(SecurityViolationError) as ctx:
-            self.acquirer.acquire(manifest)
+            self.acquirer.acquire(manifest, policy=self.local_policy)
 
         self.assertTrue("Absolute path" in str(ctx.exception) or "Zip slip" in str(ctx.exception))
 
@@ -258,7 +259,7 @@ class TestToolWorkbenchAcquisition(unittest.TestCase):
         )
 
         with self.assertRaises(SecurityViolationError) as ctx:
-            self.acquirer.acquire(manifest)
+            self.acquirer.acquire(manifest, policy=self.local_policy)
 
         self.assertIn("Symlinks prohibited", str(ctx.exception))
 
@@ -279,7 +280,7 @@ class TestToolWorkbenchAcquisition(unittest.TestCase):
         )
 
         with self.assertRaises(CorruptedArchiveError):
-            self.acquirer.acquire(manifest)
+            self.acquirer.acquire(manifest, policy=self.local_policy)
 
     def test_untrusted_source_url_rejected(self):
         """Source URL not matching allowed_sources is rejected immediately without request."""
@@ -319,7 +320,7 @@ class TestToolWorkbenchAcquisition(unittest.TestCase):
             supported_operations={"run": {}},
         )
 
-        policy = AcquisitionPolicy(allow_network=False)
+        policy = AcquisitionPolicy(allow_network=False, allowed_sources=self.local_policy.allowed_sources)
         with self.assertRaises(DownloadError) as ctx:
             self.acquirer.acquire(manifest, policy=policy)
 
@@ -345,7 +346,7 @@ class TestToolWorkbenchAcquisition(unittest.TestCase):
         cancel_ev.set()  # Pre-cancelled
 
         with self.assertRaises(CancellationError):
-            self.acquirer.acquire(manifest, cancel_event=cancel_ev)
+            self.acquirer.acquire(manifest, policy=self.local_policy, cancel_event=cancel_ev)
 
         # Staging should be completely empty
         stagings = list(self.managed_dir.glob(".staging*"))

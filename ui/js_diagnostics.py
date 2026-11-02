@@ -240,6 +240,10 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
         findings_count: Number.isInteger(investigation.findings_count) && investigation.findings_count >= 0 && investigation.findings_count <= 128 ? investigation.findings_count : 0,
         knowledge_reused: knowledgeReused,
         knowledge_saved: job.investigation_knowledge_saved === true,
+        learning_quality: Object.fromEntries(['verified_procedure', 'observed', 'hypothesis', 'unverified', 'contradicted'].map(key => {
+          const n = investigation.learning_quality?.tier_counts?.[key];
+          return [key, Number.isInteger(n) && n >= 0 && n <= 128 ? n : 0];
+        })),
         instruction_authority: false,
       },
     };

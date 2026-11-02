@@ -128,7 +128,8 @@ def validate_finding(value, evidence):
     counters = value.get('counter_evidence_ids', [])
     if not isinstance(refs, list) or not 1 <= len(refs) <= 32 or not isinstance(counters, list) or len(counters) > 32:
         raise InvestigationError('invalid-evidence-links')
-    if any(not isinstance(ref, str) or ref not in evidence for ref in refs + counters):
+    if (not isinstance(evidence, dict) or any(not isinstance(ref, str) or ref not in evidence
+            or not isinstance(evidence[ref], dict) for ref in refs + counters)):
         raise InvestigationError('unknown-evidence')
     # Independence is by distinct evidence id: citing one artifact twice is not
     # two verifications. Without this a procedure could be "verified" by
@@ -180,6 +181,18 @@ def validate_finding(value, evidence):
                 or not isinstance(success, dict) or set(success)-{'operation','locator','expected'}
                 or success.get('operation') not in {'verify_control','compare_digest'}):
             raise InvestigationError('missing-procedure-preconditions')
+        locator = success.get('locator', {})
+        if (not isinstance(locator, dict) or set(locator) - {'automation_id','control_type','name','relative_file'}
+                or any(not isinstance(v, str) or len(v) > 512 for v in locator.values())):
+            raise InvestigationError('invalid-procedure-locator')
+        relative = locator.get('relative_file')
+        if relative is not None and (':' in relative or relative.startswith(('/', '\\'))
+                or '..' in relative.replace('\\', '/').split('/')):
+            raise InvestigationError('procedure-outside-scope')
+        expected = success.get('expected')
+        if (type(expected) not in (str, int, bool) or isinstance(expected, str) and len(expected) > 1000
+                or success['operation'] == 'compare_digest' and (not isinstance(expected, str) or not SHA256.fullmatch(expected))):
+            raise InvestigationError('invalid-procedure-expectation')
         if counters:
             raise InvestigationError('contradicted-procedure')
     return value

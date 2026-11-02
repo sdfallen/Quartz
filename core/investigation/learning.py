@@ -22,10 +22,17 @@ TIERS = ('verified_procedure', 'observed', 'hypothesis', 'unverified', 'contradi
 MAX_FINDINGS = 128
 
 
+def _refs(finding, name):
+    value = finding.get(name, [])
+    if not isinstance(value, list) or len(value) > 32 or any(not isinstance(x, str) for x in value):
+        raise ValueError('invalid-evidence-links')
+    return value
+
+
 def _independent_live(finding, evidence):
     """Distinct evidence ids that are LIVE host verifications (not duplicates)."""
     ids = set()
-    for ref in finding.get('evidence_ids', []):
+    for ref in _refs(finding, 'evidence_ids'):
         item = evidence.get(ref)
         if isinstance(item, dict) and item.get('level') == 'LIVE' and item.get('origin') == 'host-verification':
             ids.add(ref)
@@ -37,8 +44,8 @@ def finding_quality(finding, evidence):
     if not isinstance(finding, dict) or not isinstance(evidence, dict):
         raise ValueError('invalid-finding-input')
     claim_type = finding.get('claim_type')
-    refs = finding.get('evidence_ids', []) if isinstance(finding.get('evidence_ids'), list) else []
-    counters = finding.get('counter_evidence_ids', []) if isinstance(finding.get('counter_evidence_ids'), list) else []
+    refs = _refs(finding, 'evidence_ids')
+    counters = _refs(finding, 'counter_evidence_ids')
     live = _independent_live(finding, evidence)
     reproducible = finding.get('reproducible') is True
     basis = {
@@ -49,7 +56,10 @@ def finding_quality(finding, evidence):
         'reproducible': reproducible,
     }
     blocked_by = []
-    if counters:
+    if not refs or any(not isinstance(evidence.get(ref), dict) for ref in refs + counters):
+        tier = 'unverified'
+        blocked_by.append('missing_evidence')
+    elif counters:
         tier = 'contradicted'
         blocked_by.append('has_counter_evidence')
     elif claim_type == 'verified_procedure':
@@ -90,6 +100,9 @@ def assess_record(record):
         raise ValueError('invalid-record')
     evidence = record.get('evidence') if isinstance(record.get('evidence'), dict) else {}
     findings = record.get('findings') if isinstance(record.get('findings'), list) else []
+    invalidated = record.get('invalidated_claim_ids', [])
+    if not isinstance(invalidated, list) or any(not isinstance(x, str) for x in invalidated):
+        raise ValueError('invalid-record')
     qualities = [finding_quality(f, evidence) for f in findings[:MAX_FINDINGS] if isinstance(f, dict)]
     counts = {tier: 0 for tier in TIERS}
     for q in qualities:
@@ -99,7 +112,7 @@ def assess_record(record):
         'target_sha256': record.get('target_sha256'),
         'tier_counts': counts,
         'findings': qualities,
-        'invalidated_claim_ids': list(record.get('invalidated_claim_ids', []))[:MAX_FINDINGS],
+        'invalidated_claim_ids': invalidated[:MAX_FINDINGS],
         # Reusable only if at least one structurally verified procedure survived.
         'has_reusable_procedure': counts['verified_procedure'] > 0,
         'historical': True,
@@ -118,9 +131,14 @@ def separate_by_type(record, *, maximum_per_type=24):
     """
     if not isinstance(record, dict):
         raise ValueError('invalid-record')
+    if type(maximum_per_type) is not int or not 0 <= maximum_per_type <= MAX_FINDINGS:
+        raise ValueError('invalid-retrieval-limit')
     evidence = record.get('evidence') if isinstance(record.get('evidence'), dict) else {}
     buckets = {'verified_procedures': [], 'observations': [], 'hypotheses': []}
-    for finding in (record.get('findings') or [])[:MAX_FINDINGS]:
+    findings = record.get('findings', [])
+    if not isinstance(findings, list):
+        raise ValueError('invalid-record')
+    for finding in findings[:MAX_FINDINGS]:
         if not isinstance(finding, dict):
             continue
         quality = finding_quality(finding, evidence)

@@ -8,8 +8,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import hashlib
+import json
+import math
 import os
 from pathlib import Path
+import re
 import time
 from typing import Any, Dict, List, Optional, Union
 import uuid
@@ -24,10 +27,10 @@ class Target:
     size: int
     format: str  # "pe", "dotnet", "native", "archive", "json", "unknown"
     version_fingerprint: str = ""
-    approved_scope: str = "read_only"
+    approved_scope: Union[str, List[str]] = "read_only"
 
     @classmethod
-    def from_file(cls, path: Union[str, Path], approved_scope: str = "read_only") -> Target:
+    def from_file(cls, path: Union[str, Path], approved_scope: Union[str, List[str]] = "read_only") -> Target:
         p = Path(path).resolve()
         if not p.is_file():
             raise FileNotFoundError(f"Target file not found: {p}")
@@ -72,6 +75,9 @@ class Target:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Target:
+        if (not isinstance(data, dict) or type(data.get('size')) is not int
+                or any(not isinstance(data.get(k), str) for k in ('target_id','canonical_path','sha256','format'))):
+            raise ValueError('Invalid target field types')
         return cls(
             target_id=str(data.get("target_id", "")),
             canonical_path=str(data.get("canonical_path", "")),
@@ -79,7 +85,7 @@ class Target:
             size=int(data.get("size", 0)),
             format=str(data.get("format", "unknown")),
             version_fingerprint=str(data.get("version_fingerprint", "")),
-            approved_scope=str(data.get("approved_scope", "read_only")),
+            approved_scope=data.get("approved_scope", "read_only"),
         )
 
 
@@ -170,8 +176,6 @@ class AcquisitionPolicy:
         default_factory=lambda: [
             "https://github.com/",
             "https://raw.githubusercontent.com/",
-            "http://127.0.0.1:",  # For local testing servers
-            "http://localhost:",
         ]
     )
     managed_dir: Optional[str] = None
@@ -239,6 +243,21 @@ class ToolRequest:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> ToolRequest:
+        if not isinstance(data, dict) or data.get('schema_version', 1) != 1:
+            raise ValueError('Invalid tool request schema')
+        for name in ('investigation_id','step_id','tool_id','operation','request_id'):
+            if name in data and (not isinstance(data[name], str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,199}', data[name])):
+                raise ValueError('Invalid tool request identity')
+        limit = data.get('max_output_bytes', 2 * 1024 * 1024)
+        deadline = data.get('deadline_monotonic', 0.0)
+        if (type(limit) is not int or not 1 <= limit <= 8 * 1024 * 1024
+                or type(deadline) not in (int, float) or not math.isfinite(deadline)):
+            raise ValueError('Invalid tool request resource types')
+        options = data.get('options', {})
+        if not isinstance(options, dict) or len(json.dumps(options, allow_nan=False)) > 128 * 1024:
+            raise ValueError('Invalid tool request options')
+        if data.get('workspace') is not None and not isinstance(data['workspace'], str):
+            raise ValueError('Invalid tool workspace')
         target = data.get("target")
         if isinstance(target, dict):
             target = Target.from_dict(target)
@@ -249,10 +268,10 @@ class ToolRequest:
             operation=str(data["operation"]),
             tool_id=str(data["tool_id"]),
             target=target,
-            options=dict(data.get("options", {})),
+            options=json.loads(json.dumps(options, allow_nan=False)),
             workspace=data.get("workspace"),
-            deadline_monotonic=float(data.get("deadline_monotonic", 0.0)),
-            max_output_bytes=int(data.get("max_output_bytes", 2 * 1024 * 1024)),
+            deadline_monotonic=deadline,
+            max_output_bytes=limit,
         )
 
 

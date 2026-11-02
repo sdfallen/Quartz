@@ -51,7 +51,9 @@ class TestToolWorkbenchCatalog(unittest.TestCase):
     def test_catalog_query(self):
         """Query catalog with string filter or capability filter."""
         all_tools = self.catalog.catalog()
-        self.assertGreaterEqual(len(all_tools), 3)
+        self.assertEqual(len(all_tools), 1)
+        self.assertNotIn("pe_inspector", BUILTIN_MANIFESTS)
+        self.assertNotIn("rea_static", BUILTIN_MANIFESTS)
 
         # Query by name substring
         rg_query = self.catalog.catalog("ripgrep")
@@ -60,8 +62,7 @@ class TestToolWorkbenchCatalog(unittest.TestCase):
 
         # Query by capability
         cap_query = self.catalog.catalog({"capability": "pe_header_analysis"})
-        self.assertEqual(len(cap_query), 1)
-        self.assertEqual(cap_query[0]["tool_id"], "pe_inspector")
+        self.assertEqual(cap_query, [])  # no unverified/fabricated upstream tools
 
         # Query with non-matching filter
         none_query = self.catalog.catalog("nonexistent_tool_xyz")

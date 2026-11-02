@@ -7,6 +7,10 @@ for Quartz Tool Workbench.
 from __future__ import annotations
 
 import json
+import hashlib
+import io
+import zipfile
+from unittest.mock import patch
 import os
 from pathlib import Path
 import shutil
@@ -45,6 +49,21 @@ class TestToolWorkbenchLifecycle(unittest.TestCase):
     def tearDown(self):
         self.workbench.close()
         self.temp_dir.cleanup()
+
+    def _acquire_script(self, manifest, script):
+        # Exercise real acquisition/receipt generation, replacing transport only.
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, 'w') as z:
+            z.writestr(manifest.executable_subpath, script)
+        data = archive.getvalue()
+        manifest.source_url = 'https://github.com/quartz-tests/local-fixture/archive.zip'
+        manifest.package_digest = hashlib.sha256(data).hexdigest()
+        self.workbench.catalog_service.register(manifest)
+        response = io.BytesIO(data)
+        response.geturl = lambda: manifest.source_url
+        with patch('core.tool_workbench.acquisition.urllib.request.build_opener') as opener:
+            opener.return_value.open.return_value = response
+            self.workbench.acquire(manifest)
 
     def test_full_lifecycle_mock_tool(self):
         """Full lifecycle: catalog -> resolve -> acquire -> execute -> stop -> close."""
@@ -86,19 +105,7 @@ with open(target, 'r', encoding='utf-8') as f:
         )
         self.workbench.catalog_service.register(test_manifest)
 
-        # Manually mark as installed in test managed dir
-        install_dir = self.managed_dir / "test_resolver" / "1.0.0"
-        install_dir.mkdir(parents=True, exist_ok=True)
-        shutil_script = install_dir / "test_script.py"
-        shutil_script.write_text(test_script.read_text(encoding="utf-8"), encoding="utf-8")
-        receipt_data = {
-            "tool_id": "test_resolver",
-            "pinned_revision": "1.0.0",
-            "package_digest": "test_digest",
-            "executable_subpath": "test_script.py",
-            "acquired_at": time.time(),
-        }
-        (install_dir / "tool_receipt.json").write_text(json.dumps(receipt_data), encoding="utf-8")
+        self._acquire_script(test_manifest, test_script.read_text(encoding="utf-8"))
 
         # 4. Execute
         req = ToolRequest(
@@ -151,16 +158,7 @@ print(f"CONCURRENT_RESULT:{arg_val}")
         )
         self.workbench.catalog_service.register(manifest)
 
-        install_dir = self.managed_dir / "concurrent_tool" / "1.0.0"
-        install_dir.mkdir(parents=True, exist_ok=True)
-        (install_dir / "concurrent_script.py").write_text(test_script.read_text(encoding="utf-8"), encoding="utf-8")
-        (install_dir / "tool_receipt.json").write_text(json.dumps({
-            "tool_id": "concurrent_tool",
-            "pinned_revision": "1.0.0",
-            "package_digest": "conc_digest",
-            "executable_subpath": "concurrent_script.py",
-            "acquired_at": time.time(),
-        }), encoding="utf-8")
+        self._acquire_script(manifest, test_script.read_text(encoding="utf-8"))
 
         results = {}
 
@@ -204,6 +202,7 @@ print(f"CONCURRENT_RESULT:{arg_val}")
         current_keys = set(os.environ.keys())
         self.assertEqual(current_keys, initial_keys)
 
+    @unittest.skipUnless(os.environ.get("QUARTZ_LIVE_TOOL_TESTS") == "1", "explicit live network acceptance only")
     def test_real_github_tool_ripgrep_acquisition_and_execution(self):
         """
         Real Acceptance Test:

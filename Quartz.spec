@@ -23,7 +23,9 @@ hiddenimports += ['core.elevation']
 hiddenimports += ['core.application_services', 'core.shutdown']
 hiddenimports += ['core.investigation', 'core.investigation.contracts', 'core.investigation.evidence',
                   'core.investigation.memory', 'core.investigation.session', 'core.investigation.planning',
-                  'core.investigation.gateway']
+                  'core.investigation.gateway', 'core.investigation.learning']
+hiddenimports += ['core.tool_workbench', 'core.tool_workbench.acquisition', 'core.tool_workbench.catalog',
+                  'core.tool_workbench.contracts', 'core.tool_workbench.errors', 'core.tool_workbench.execution', 'core.tool_workbench.workbench']
 hiddenimports += ['core.rea_analysis', 'core.rea_analysis.binary', 'core.rea_analysis.managed',
                   'core.rea_analysis.packages', 'core.rea_analysis.service']
 hiddenimports += ['core.notion_cli', 'core.notion_runtime', 'ui', 'ui.document', 'ui.styles', 'ui.theme']
