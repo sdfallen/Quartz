@@ -28,3 +28,9 @@ Screenshot yine channel timeout; tamamlanan görevin ardından Tab failed to act
 ## Ek talimat kabulü
 
 Counter1→2→3 gerçek checkpoint zinciri ve aynı host task içindeki queued gönderim doğrulandı: packaged-gui-followup-result.json. Son kullanıcı mesajı tamamlandı, writer claims boş. GUI normal kapanışı 14:55:43 confirmed/error0 ve süreç yokluğu gözlemlendi. İzole paket Stop testi için yeniden açıldı; üretim hâlâ eski. Son Antigravity özetindeki Gemini ayrı kişi sanılması rol adı kalite kusuru olarak raporda; gerçek round1 incelemesi mevcut.
+
+## İptal / Stop kabulü ve yeni dar düzeltme
+
+Kullanıcı İptal’e bastı; doğru chat Stop kontrolü. Eski3b81f5fc pakette çalışan Codex cancelled ve reviewer starting aşaması iptal edildi; UI Durduruldu, writer claims boş, counter3, provider process yokluğu, 15:02:38 normal confirmed kapanış/süreç yokluğu. Kanıt packaged-gui-stop-result.json. İki aktif provider koşusu kanıtlanmadı.
+
+Kaynakta gerçek bug fix: cancel_request artık kullanılmayan legacy asistanı oluşturmaz; varsa mevcut owner’ı iptal eder. Failing regression→fix→50 hedef PASS, son full967 PASS. Actual authenticated kaynak RPC legacy import/owner0 ve shutdown confirmed. UI btnCancel etiketi Görevi durdur; kimlik/handler aynı. Pre-change zip korunur. Yeni build stop-label-build.log altında sürüyor; staged kaynak imzalarını doğrulamadan deploy etme. Ana üretim EXE’si henüz eski, verileri korunuyor.

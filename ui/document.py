@@ -105,7 +105,7 @@ NOTION_TOOLS_SCRIPT = r"""
     return !!(button && !button.hidden && !button.disabled && button.getClientRects().length &&
               (button.style || {}).display !== 'none');
   }
-  // Which EXISTING Stop control covers this task: the chat turn's İptal
+  // Which EXISTING Stop control covers this task: the chat turn's Görevi durdur
   // (Notion tool turns) or the desktop task strip. Never a new control.
   function stopAvailable() {
     if (usable('btnCancel')) return 'chat';
@@ -206,7 +206,7 @@ NOTION_TOOLS_SCRIPT = r"""
     if (ACTIVE[state]) {
       var stopWith = stopAvailable();
       copy.append(make('span', 'notion-tools-stop', stopWith === 'chat'
-        ? 'Durdurmak için sohbetteki İptal düğmesini kullanın.'
+        ? 'Durdurmak için sohbetteki Görevi durdur düğmesini kullanın.'
         : stopWith === 'desktop' ? 'Durdurmak için görev şeridindeki Görevi durdur düğmesini kullanın.'
         : 'Bu görev için Quartz durdurma yolu görünmüyor; görevi doğrulayın.'));
     }

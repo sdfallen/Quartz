@@ -163,7 +163,7 @@ SHELL_MARKUP = r"""
       <div class="thinking-row" id="thinkingRow">
         <div class="d"></div><div class="d"></div><div class="d"></div>
         <span id="thinkingText">işleniyor...</span>
-        <button class="control-btn" id="btnCancel" style="display:none">İptal</button>
+        <button class="control-btn" id="btnCancel" title="Etkin görevi ve ajan süreçlerini durdur" style="display:none">Görevi durdur</button>
       </div>
       <div class="inputbar">
         <input type="text" id="msgInput" aria-label="Ekibe yazın veya görev verin" aria-keyshortcuts="Control+L" title="Sohbete odaklan: Ctrl+L · Gönder: Enter" placeholder="Antigravity veya Codex'e mesaj yaz..." autofocus>

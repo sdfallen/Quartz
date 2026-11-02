@@ -614,7 +614,12 @@ class IPCServer:
             }
 
         if action == "cancel_request":
-            self._assistant.cancel_current()
+            # The shared Stop button also calls this legacy compatibility path.
+            # Cancelling must not construct an assistant that has no request.
+            with self._assistant_lock:
+                assistant = self._assistant_instance
+            if assistant is not None:
+                assistant.cancel_current()
             return {"status": "ok", "data": "Cancellation requested"}
 
         if action == "safe_mode":

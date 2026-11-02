@@ -186,3 +186,22 @@ class FinalLifecycleTests(unittest.TestCase):
         with self.assertRaises(RuntimeError): owner.start_natural(None, None)
         self.assertIs(owner.peek('natural'), old)
         factory.assert_not_called()
+
+
+class StopLegacyBoundaryTests(unittest.TestCase):
+    def test_chat_cancel_compatibility_does_not_construct_unused_legacy_assistant(self):
+        server = IPCServer(coordinator=ShutdownCoordinator())
+        with patch('main.GitHubAssistant') as factory:
+            result = server._dispatch_action({'action': 'cancel_request'})
+        self.assertEqual(result['status'], 'ok')
+        factory.assert_not_called()
+        self.assertIsNone(server._assistant_instance)
+
+    def test_legacy_request_still_cancelled_when_owner_already_exists(self):
+        assistant = Mock()
+        server = IPCServer(assistant=assistant, coordinator=ShutdownCoordinator())
+        with patch('main.GitHubAssistant') as factory:
+            result = server._dispatch_action({'action': 'cancel_request'})
+        self.assertEqual(result['status'], 'ok')
+        assistant.cancel_current.assert_called_once_with()
+        factory.assert_not_called()
