@@ -158,7 +158,7 @@ class Api:
         return ipc_send("diagnostics_cancel", {"job_id": job_id})
 
     @_application_action
-    def diagnostics_select_application(self, question=None):
+    def diagnostics_select_application(self, question=None, chat_request=None, conversation_id=None):
         """GUI-local native picker is the grant; arbitrary IPC paths stay forbidden."""
         with self._diagnostic_tools_lock:
             try:
@@ -175,11 +175,50 @@ class Api:
                 if question is not None and (not isinstance(question, str) or not 1 <= len(question.strip()) <= 2000):
                     raise ValueError('İnceleme sorusu geçersiz')
                 service = self._services.replace_artifact_diagnostics(selected[0], question=question)
-                return {'status': 'ok', 'data': service.start()}
+                started = service.start()
+                if chat_request is None:
+                    return {'status': 'ok', 'data': started}
+                # Bind the main-chat task to the owner the picker just produced,
+                # so a later permission answer resumes this same investigation.
+                from core.investigation.chat_task import ChatInvestigationTask
+                identity = re.sub(r'[^a-zA-Z0-9_.-]', '', str(started.get('id') or service.latest))[:80]
+                conversation = re.sub(r'[^a-zA-Z0-9_.-]', '', str(conversation_id or ''))[:80]
+                task = ChatInvestigationTask(chat_request,
+                    task_id='chat.' + (identity or 'investigation'),
+                    conversation_id=conversation or 'active')
+                task.bind_owner(service)
+                self._services.register_chat_task(task)
+                return {'status': 'ok', 'data': started, 'chat_task': task.summary()}
             except ServicesClosed as exc:
                 return {'status': 'error', 'data': str(exc)}
             except Exception:
                 return {'status': 'error', 'data': 'Seçilen dosya güvenli inceleme için açılamadı. Desteklenen uygulama veya paket dosyasını seçin.'}
+
+    @_application_action
+    def investigation_task_status(self, task_id):
+        """Read-only view of a bound main-chat investigation task."""
+        task = self._services.chat_task(task_id)
+        if task is None:
+            return {'status': 'error', 'data': 'Bu kimliğe bağlı etkin bir inceleme görevi yok.'}
+        return {'status': 'ok', 'data': task.summary()}
+
+    @_application_action
+    def investigation_grant_scope(self, task_id, request_id, generation, effect, confirmed=False):
+        """Apply the existing permission card's answer to the SAME task.
+
+        A stale, replayed or mismatched answer is refused and never opens a new
+        investigation or widens scope.
+        """
+        task = self._services.chat_task(task_id)
+        if task is None:
+            return {'status': 'error', 'data': 'Bu kimliğe bağlı etkin bir inceleme görevi yok.'}
+        try:
+            return {'status': 'ok', 'data': task.grant_scope(
+                request_id=str(request_id), generation=int(generation),
+                effect=str(effect), granted=confirmed is True)}
+        except (TypeError, ValueError):
+            return {'status': 'error',
+                    'data': 'Bu onay güncel inceleme isteğine ait değil; yeni görev başlatılmadı.'}
 
     @_application_action
     def diagnostics_prepare_repair(self):
@@ -314,6 +353,23 @@ class Api:
                     return result
                 return {'status': 'ok', 'data': {'handled': True, 'diagnostics_knowledge': True,
                     'learned_items': result['data'], 'user_text': text}}
+            if diagnostic_command is None:
+                # A natural application-investigation task binds to the existing
+                # investigation owner instead of opening a desktop operator. The
+                # native picker still provides the target grant.
+                from core.investigation.chat_task import classify_investigation_request
+                chat_request = classify_investigation_request(text)
+                if chat_request is not None and chat_request['diagnose_requested']:
+                    result = self.diagnostics_select_application(
+                        question=text, chat_request=chat_request, conversation_id=conversation_id)
+                    if result.get('status') != 'ok':
+                        return result
+                    if result.get('data') is None:
+                        return {'status': 'ok', 'data': {'handled': True, 'user_text': text,
+                            'investigation_target_required': True}}
+                    return {'status': 'ok', 'data': {'handled': True, 'diagnostics_started': True,
+                        'diagnostics': result['data'], 'investigation_task': result.get('chat_task'),
+                        'user_text': text}}
             if tools_disallowed(text):
                 for service in (self._natural, self._coordination):
                     if service is not None and service.status().get("active"):
