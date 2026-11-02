@@ -70,14 +70,14 @@ class ToolWorkbench:
         # Detach nested mutable fields from concurrent catalog callers.
         return ToolManifest.from_dict(deepcopy(registered.to_dict()))
 
-    def acquire(self, selection, policy=None, cancel_event=None):
+    def acquire(self, selection, policy=None, cancel_event=None, *, deadline_monotonic=None):
         manifest = self._manifest(selection)
         if isinstance(policy, dict): policy = AcquisitionPolicy(**policy)
         policy = policy or AcquisitionPolicy(managed_dir=str(self._managed_path))
         token, event = self._begin(None, cancel_event)
         try:
             if event.is_set(): raise AcquisitionError("Acquisition cancelled")
-            result = self._acquirer.acquire(manifest, policy, event)
+            result = self._acquirer.acquire(manifest, policy, event, deadline_monotonic=deadline_monotonic)
             with self._lock:
                 if self._closed or event.is_set(): raise AcquisitionError("Acquisition cancelled before publication")
             return result

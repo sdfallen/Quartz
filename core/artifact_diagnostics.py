@@ -2,6 +2,7 @@
 from pathlib import Path
 import struct
 import tempfile
+import shutil
 
 from core.self_diagnostics import SelfDiagnosticsService
 
@@ -96,7 +97,8 @@ class ArtifactDiagnosticsService(SelfDiagnosticsService):
 
     def __init__(self, selected_path, *, knowledge=None, question=None, investigation_root=None,
                  investigation=True, analyzer=None, analysis_enabled=True,
-                 workbench=None, tool_specs=None, tool_effects=(), **kwargs):
+                 workbench=None, tool_specs=None, tool_effects=(), registered_search=None,
+                 workbench_factory=None, **kwargs):
         self.target = selected_artifact(selected_path)
         stat = self.target.stat()
         self.identity = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
@@ -122,6 +124,18 @@ class ArtifactDiagnosticsService(SelfDiagnosticsService):
         if effects and workbench is None:
             raise ValueError('Araç etkisi için doğrulanmış bir workbench gerekir')
         self.tool_effects = effects
+        if registered_search is not None:
+            from core.investigation.contracts import bounded_json
+            registered_search = bounded_json(registered_search, maximum=2048)
+            if (not isinstance(registered_search,dict) or set(registered_search)!={'pattern'}
+                    or not isinstance(registered_search['pattern'],str) or not 1<=len(registered_search['pattern'])<=512
+                    or any(c in registered_search['pattern'] for c in ('\x00','\r','\n'))):
+                raise ValueError('Geçersiz dize araması')
+        self.registered_search = registered_search
+        self._workbench_factory = workbench_factory
+        self._owned_workbench = None
+        self._tool_approvals = {}
+        self._workspaces = {}
         self._gateways = {}
         self._gateway_cleanup = {}
         self._investigation_closed = False
@@ -159,13 +173,26 @@ class ArtifactDiagnosticsService(SelfDiagnosticsService):
             if any(x.get('status')!='confirmed' for x in self._gateway_cleanup.values()):
                 raise RuntimeError('Önceki inceleme aracının kapanışı doğrulanmalı.')
             result=super().start(include_rea)
+            self._tool_approvals.setdefault(result['id'], None)
             # The existing diagnostics inventory is bounded to five jobs. Drop
             # matching completed domain scopes too; retain unconfirmed owners.
             for old in set(self._investigations)-set(self.jobs):
                 if self._gateway_cleanup.get(old,{}).get('status','confirmed')=='confirmed':
                     self._investigations.pop(old,None);self._inventories.pop(old,None)
                     self._gateways.pop(old,None);self._gateway_cleanup.pop(old,None)
+                    self._tool_approvals.pop(old,None)
+                    if not self._workspaces.get(old):self._workspaces.pop(old,None)
             return result
+
+    def authorize_registered_tool(self, job_id, granted):
+        """Only the validated, task-bound GUI approval adapter calls this."""
+        with self.lock:
+            if (type(granted) is not bool or self.registered_search is None or self._investigation_closed
+                    or job_id != self.latest or job_id not in self.jobs
+                    or self.jobs[job_id]['state'] != 'running' or self.events[job_id].is_set()
+                    or self._tool_approvals.get(job_id) is not None):
+                raise ValueError('Dize araması onayı güncel işe ait değil')
+            self._tool_approvals[job_id] = granted
 
     def _commit_completed(self, identity, snapshot):
         session = self._investigations.get(identity)
@@ -202,10 +229,16 @@ class ArtifactDiagnosticsService(SelfDiagnosticsService):
             if session is not None:
                 if self.analysis_enabled:
                     self._inspect_structure(identity,event,deadline,session,analyzer)
+                if self.registered_search is not None:
+                    self._inspect_registered_tool(identity,event,deadline,session)
                 session.finish(self.status(identity)['checks'], self._inventories.get(identity))
                 self._update(identity, investigation=session.summary())
         except Cancelled as exc:
             raise InspectionCancelled() from exc
+        except Exception as exc:
+            if event.is_set():
+                raise InspectionCancelled() from exc
+            raise
         finally:
             if session is not None:
                 session.close(cancelled=event.is_set())
@@ -216,7 +249,10 @@ class ArtifactDiagnosticsService(SelfDiagnosticsService):
         from core.investigation.planning import InvestigationPolicy
         self._update(identity,phase='analysis',progress=80,message='Dosyanın yapı ve bağımlılık ilişkileri inceleniyor…')
         root=safe_path(self.investigation_root/'workspaces',exists=False);root.mkdir(parents=True,exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix='analysis-',dir=root) as folder:
+        folder=tempfile.mkdtemp(prefix='analysis-',dir=root)
+        self._workspaces.setdefault(identity,set()).add(folder)
+        gateway=None
+        try:
             gateway=InvestigationToolGateway(session,self.workbench,workspace=folder,
                 policy=InvestigationPolicy(effects=frozenset({'read_target','write_workspace'})|self.tool_effects,max_output_bytes=4*1024*1024),
                 tool_specs=self.tool_specs)
@@ -245,16 +281,133 @@ class ArtifactDiagnosticsService(SelfDiagnosticsService):
                     capabilities=report['capabilities_used'],findings=len(report['findings']),
                     unsupported=report.get('unsupported',[])[:12])
             finally:
-                self._gateway_cleanup[identity]=gateway.close()
+                self._close_gateway(identity,gateway)
+        finally:
+            if gateway is None:self._close_gateway(identity,None)
+            self._cleanup_workspaces(identity)
+
+    def _cleanup_workspaces(self, identity):
+        """Never delete a workspace while an owned tool/drain remains pending."""
+        from core.investigation.contracts import safe_path
+        if self._gateway_cleanup.get(identity,{}).get('status')!='confirmed': return
+        paths=list(self._workspaces.get(identity,set()))
+        if not paths:return
+        root=safe_path(self.investigation_root/'workspaces',exists=False)
+        for value in paths:
+            path=safe_path(value,exists=False)
+            if root not in path.parents or path.parent!=root:
+                self._gateway_cleanup[identity]={'status':'failed','reason':'workspace-outside-owner'}
+                return
+            try:
+                if path.exists():shutil.rmtree(path)
+                self._workspaces[identity].discard(value)
+            except OSError:
+                self._gateway_cleanup[identity]={'status':'failed','reason':'workspace-cleanup-failed'}
+                return
+
+    def _close_gateway(self, identity, gateway):
+        try:
+            receipt=gateway.close() if gateway is not None else {'status':'confirmed'}
+            if not isinstance(receipt,dict) or receipt.get('status') not in {'confirmed','pending','failed'}:
+                receipt={'status':'failed','reason':'invalid-cleanup-receipt'}
+        except Exception:
+            receipt={'status':'failed','reason':'gateway-close-failed'}
+        self._gateway_cleanup[identity]=receipt
+        return receipt
+
+    def _inspect_registered_tool(self, identity, event, deadline, session):
+        from core.investigation.gateway import InvestigationToolGateway
+        from core.investigation.planning import InvestigationPolicy
+        from core.investigation.contracts import safe_path
+        self._update(identity,phase='tool_permission',progress=85,
+            message='Seçilen dosyada dize araması için araç onayı bekleniyor…')
+        while True:
+            self._guard(event,deadline)
+            with self.lock: approved=self._tool_approvals.get(identity)
+            if approved is not None:break
+            event.wait(.1)
+        if approved is False:
+            self._check(identity,'registered_tool','NOT_TESTED','Kayıtlı araç araması',
+                'Araç çalıştırma izni verilmedi; dize araması yapılmadı.')
+            return
+        if self._gateway_cleanup.get(identity,{}).get('status','confirmed')!='confirmed':
+            self._check(identity,'registered_tool','UNKNOWN','Kayıtlı araç araması',
+                'Önceki analiz temizliği doğrulanmadığı için araç başlatılmadı.')
+            return
+        session.target.revalidate(event,deadline)
+        root=safe_path(self.investigation_root/'workspaces',exists=False);root.mkdir(parents=True,exist_ok=True)
+        from core.tool_workbench import ToolWorkbench
+        factory=self._workbench_factory or ToolWorkbench
+        if self._owned_workbench is not None:
+            previous=self._owned_workbench.close()
+            if not isinstance(previous,dict) or previous.get('status')!='confirmed':
+                raise RuntimeError('Önceki araç sahibi kapanmadan yenisi oluşturulamaz')
+        self._guard(event,deadline)
+        self._owned_workbench=factory(workspace_dir=root)
+        resolution=self._owned_workbench.resolve({'capability_id':'binary_string_search'})
+        manifest=resolution.get('manifest') if isinstance(resolution,dict) else None
+        if (not isinstance(manifest,dict) or resolution.get('status')!='resolved'
+                or manifest.get('tool_id')!='ripgrep'):
+            self._check(identity,'registered_tool','NOT_TESTED','Kayıtlı araç araması',
+                'Bu platform için doğrulanmış kayıtlı dize aracı bulunamadı.')
+            return
+        folder=tempfile.mkdtemp(prefix='tool-',dir=root)
+        self._workspaces.setdefault(identity,set()).add(folder)
+        gateway=InvestigationToolGateway(session,self._owned_workbench,workspace=folder,
+            policy=InvestigationPolicy(effects=frozenset({'read_target','write_workspace','execute_tool'}),allow_acquire=True),
+            tool_specs={'ripgrep':{'source_url':manifest['source_url'],'pinned_revision':manifest['pinned_revision'],
+                'package_digest':manifest['package_digest'],'operations':['strings'],
+                'effects':['read_target','write_workspace','execute_tool']}})
+        self._gateways[identity]=gateway
+        try:
+            self._update(identity,phase='tool_acquire',progress=88,message='Kayıtlı araç sürümü ve dosyaları doğrulanıyor…')
+            self._owned_workbench.acquire('ripgrep',cancel_event=event,deadline_monotonic=deadline)
+            self._guard(event,deadline)
+            receipt=gateway.execute({'investigation_id':session.evidence.id,'step_id':'registered-strings',
+                'tool_id':'ripgrep','operation':'strings','target':session.target.as_dict(),
+                'workspace':folder,'options':{'pattern':self.registered_search['pattern']},
+                'max_output_bytes':512*1024},event)
+            self._guard(event,deadline)
+            no_match=(receipt.get('status')=='failed' and receipt.get('exit_code')==1 and receipt.get('stderr_bytes')==0
+                and receipt.get('stdout_bytes')==0)
+            passed=receipt.get('status')=='completed' or no_match
+            self._check(identity,'registered_tool','PASS' if passed else 'UNKNOWN','Kayıtlı araç araması',
+                ('Dize araması tamamlandı; eşleşme bulunmadı.' if no_match else
+                 'Dize araması gerçek araçla tamamlandı; çıktı kalıcı kanıta bağlandı.') if passed else
+                'Araç araması tamamlanamadı; uygulamanın hatalı olduğu sonucu çıkarılmadı.',
+                tool_id='ripgrep',exit_code=receipt.get('exit_code'),evidence_ids=receipt.get('evidence_ids',[]),
+                stdout_bytes=receipt.get('stdout_bytes'),stderr_bytes=receipt.get('stderr_bytes'))
+            if passed:
+                session.accept_analysis({'schema_version':1,'target':session.target.as_dict(),
+                    'capabilities_used':['registered-string-search'],'findings':[{
+                        'claim_id':'registered.strings','claim':('Kayıtlı araç seçilen dosyada eşleşme bulmadı.' if no_match else
+                        'Kayıtlı araç seçilen dosyada dize araması yürüttü; çıktı bayt sayısı: '+str(receipt.get('stdout_bytes',0))),
+                        'claim_type':'observation','evidence_ids':receipt['evidence_ids'],
+                        'confidence_basis':'Hedef hash kontrolü, sabit araç kimliği ve gerçek süreç çıkış kaydı.',
+                        'counter_evidence_ids':[],'reproducible':True,
+                        'limitations':['Dize araması SOURCE kanıtıdır; fonksiyon semantiği, uygulama onarımı veya GUI doğrulaması değildir.']}]},
+                    executed_capabilities=['registered-string-search'])
+        finally:
+            self._close_gateway(identity,gateway)
+            self._update(identity,tool_cleanup=self._gateway_cleanup[identity])
+            self._cleanup_workspaces(identity)
 
     def shutdown(self):
         with self.lock:self._investigation_closed=True
         super().shutdown()
         for identity,gateway in list(self._gateways.items()):
-            self._gateway_cleanup[identity]=gateway.close()
+            self._close_gateway(identity,gateway)
+            self._cleanup_workspaces(identity)
+        bench_cleanup=self._owned_workbench.close() if self._owned_workbench is not None else {'status':'confirmed'}
         states=[x.get('status','pending') for x in self._gateway_cleanup.values()]
+        states.append(bench_cleanup.get('status','pending'))
+        for identity,receipt in list(self._gateway_cleanup.items()):
+            if identity in self.jobs and 'tool_cleanup' in self.jobs[identity]:
+                status=('failed' if 'failed' in {receipt.get('status'),bench_cleanup.get('status')} else
+                        'pending' if {receipt.get('status'),bench_cleanup.get('status')} != {'confirmed'} else 'confirmed')
+                self._update(identity,tool_cleanup={'status':status})
         status='pending' if any(t.is_alive() for t in self.threads.values()) or 'pending' in states else 'failed' if 'failed' in states else 'confirmed'
-        return {'status':status,'components':{'analysis_gateways':dict(self._gateway_cleanup)}}
+        return {'status':status,'components':{'analysis_gateways':dict(self._gateway_cleanup),'registered_workbench':bench_cleanup}}
 
     def _inspect_static(self, identity, event, deadline, include_rea, session=None):
         target = selected_artifact(self.target)

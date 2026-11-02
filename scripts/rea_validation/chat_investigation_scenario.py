@@ -1,19 +1,23 @@
-"""Scenario C/E/F driver: real observation -> hypothesis -> checkpoint -> narrow fix -> re-run.
+"""STANDALONE FIXTURE: observe -> checkpoint -> scripted narrow repair -> re-run.
 
 Runs entirely inside a disposable temporary project. It never reads the user's
 projects, never touches an installed build and starts no GUI. The subject is a
 tiny generated Python application with a real settings-persistence defect, so
-every step below is an actual local observation rather than a mocked result.
+observations below come from actual local child processes. The repair is a
+predefined script replacement, not an agent discovering or applying a fix.
 
 What this does and does not prove:
 
-* LIVE for the generated test application on this machine: the defect is
-  observed by running it, the fix is verified by running it again.
-* It is NOT a Quartz GUI acceptance and NOT a packaged main-chat acceptance.
-  Those need the real window and remain separately blocked/recorded.
+* It proves only the generated fixture's failure and subsequent repair re-run.
+* It does not exercise ChatInvestigationTask, an agent, permission continuation,
+  GUI, installed Quartz, or the integrated model-driven repair path.
+* JSON always states quartz_integration_verified=false. Its separate
+  fixture_fix_rerun_verified flag depends on successful actual child runs.
 
 Usage:  python -X utf8 -B scripts/rea_validation/chat_investigation_scenario.py [--out DIR]
-Exit code 0 only when the re-run actually proves the fix.
+Use a fresh private --out directory to retain the report, fixture sources and
+checkpoint. Without --out all generated evidence is temporary.
+Exit code 0 only when the bounded experiment and actual repair re-run pass.
 """
 from __future__ import annotations
 
@@ -25,16 +29,12 @@ import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from core.investigation.chat_task import ChatInvestigationTask, classify_investigation_request
-from core.investigation.planning import InvestigationPolicy
 from core.workspace_checkpoint import create_checkpoint
-
-TASK_TEXT = ('Bu uygulamadaki ayar kaydetme hatasını incele ve düzelt; '
-             'diğer ajan değişikliği kontrol etsin.')
 
 # The defect: save() writes a temporary file and never replaces the real one,
 # so a value looks saved in the same process but is lost on the next start.
@@ -108,138 +108,132 @@ def run_app(project: Path, *args: str) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--out', default=None, help='evidence directory (default: temporary)')
+    parser = argparse.ArgumentParser(description='Standalone generated-app repair experiment; no Quartz integration proof.')
+    parser.add_argument('--out', default=None, help='fresh private evidence directory (default: temporary)')
     options = parser.parse_args()
+    with tempfile.TemporaryDirectory(prefix='standalone-repair-fixture-') as folder:
+        workspace = Path(folder)
+        project = workspace / 'settings-app'
+        project.mkdir()
+        destination = Path(options.out).resolve() if options.out else workspace / 'evidence'
+        # Never overwrite another run's evidence.
+        destination.mkdir(parents=True, exist_ok=False)
+        app = project / 'app.py'
+        app.write_text(DEFECTIVE_APP, encoding='utf-8')
+        evidence = {'schema_version': 2, 'experiment': 'STANDALONE FIXTURE',
+                    'subject': 'generated disposable settings app',
+                    'repair_performed_by': 'predefined script replacement; no agent or model',
+                    'quartz_integration_verified': False, 'fixture_fix_rerun_verified': False,
+                    'fixture_defect_reproduced': False, 'checkpoint_verified': False,
+                    'platform': sys.platform, 'python': sys.version.split()[0],
+                    'script_sha256': digest(Path(__file__)), 'status': 'failed',
+                    'limitations': ['No Quartz GUI or packaged acceptance.',
+                                    'No model-driven investigation or repair acceptance.',
+                                    'No permission, continuation, or user acceptance proof.'],
+                    'steps': [], 'artifact_sha256': {}}
 
-    holder = tempfile.TemporaryDirectory(prefix='chat-investigation-')
-    workspace = Path(holder.name)
-    project = workspace / 'settings-app'
-    project.mkdir()
-    (project / 'app.py').write_text(DEFECTIVE_APP, encoding='utf-8')
-    evidence: dict[str, object] = {'schema_version': 1, 'scenario': 'chat-investigation-C-E',
-                                   'platform': sys.platform, 'python': sys.version.split()[0],
-                                   'subject': 'generated disposable settings app',
-                                   'quartz_gui_acceptance': 'NOT ATTEMPTED (separate, blocked)',
-                                   'steps': []}
+        def step(name, **payload):
+            if len(evidence['steps']) >= 12:
+                raise RuntimeError('standalone-observation-limit')
+            evidence['steps'].append({'step': len(evidence['steps']) + 1, 'name': name, **payload})
 
-    def step(name: str, **payload):
-        entry = {'step': len(evidence['steps']) + 1, 'name': name, **payload}
-        evidence['steps'].append(entry)
-        return entry
+        try:
+            # Real independent processes demonstrate the baseline persistence failure.
+            wrote = run_app(project, 'set', 'theme', 'dark')
+            before_get = run_app(project, 'get', 'theme')
+            reproduced = (wrote['exit_code'] == 0 and wrote['stdout'] == 'saved'
+                          and before_get['exit_code'] == 0 and before_get['stdout'] == 'null'
+                          and not (project / 'settings.json').exists()
+                          and (project / 'settings.json.tmp').is_file())
+            evidence['fixture_defect_reproduced'] = reproduced
+            step('fixture_failure_before_repair', set_run=wrote, get_run=before_get,
+                 defect_reproduced=reproduced, expected_get='"dark"')
+            if not reproduced:
+                raise RuntimeError('fixture-defect-not-reproduced')
 
-    # 1. The chat request is classified; the task is bound to the disposable project.
-    request = classify_investigation_request(TASK_TEXT)
-    if request is None:
-        print('classification failed'); return 1
-    task = ChatInvestigationTask(request, task_id='chat.scenarioC', conversation_id='local',
-        policy=InvestigationPolicy(effects=frozenset({'read_target', 'write_workspace'})))
+            # A seeded fixture-only file tests the reader, rather than claiming
+            # that a null result for a missing key proves the reader works.
+            store = project / 'settings.json'
+            store.write_text(json.dumps({'reader_probe': 'READ_PATH_WORKS'}), encoding='utf-8')
+            reader_probe = run_app(project, 'get', 'reader_probe')
+            reader_works = reader_probe['exit_code'] == 0 and reader_probe['stdout'] == '"READ_PATH_WORKS"'
+            step('fixture_reader_probe', get_run=reader_probe, reader_verified_for_seed=reader_works,
+                 seeded_file_sha256=digest(store))
+            store.unlink()  # Only the file this experiment just created.
+            if not reader_works:
+                raise RuntimeError('fixture-reader-probe-failed')
 
-    class LocalOwner:
-        scope = 'artifact'
+            staged = project / 'settings.json.tmp'
+            staged_payload = json.loads(staged.read_text(encoding='utf-8'))
+            hypothesis_supported = staged_payload.get('theme') == 'dark'
+            step('fixture_staged_value_evidence', staged_payload=staged_payload,
+                 staged_sha256=digest(staged), store_present=store.exists(),
+                 hypothesis='The save tail never promotes the staged file.', supported=hypothesis_supported)
+            if not hypothesis_supported:
+                raise RuntimeError('fixture-staged-evidence-missing')
 
-        def __init__(self, path: Path):
-            stat = path.stat()
-            self.target = path
-            self.identity = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+            before_bytes = app.read_bytes()
+            before_sha = digest(app)
+            (destination / 'fixture-before.py').write_bytes(before_bytes)
+            checkpoint = create_checkpoint(project, backup_root=destination / 'checkpoints')
+            archive = Path(checkpoint['archive']) if checkpoint.get('archive') else None
+            checkpoint_ok = (checkpoint.get('status') in {'git', 'snapshot'}
+                             and checkpoint.get('complete') is True and archive is not None and archive.is_file())
+            if checkpoint_ok:
+                with zipfile.ZipFile(archive) as saved:
+                    checkpoint_ok = (saved.testzip() is None and saved.read('files/app.py') == before_bytes
+                                     and json.loads(saved.read('checkpoint-manifest.json'))['files']['app.py']['sha256'] == before_sha)
+            evidence['checkpoint_verified'] = checkpoint_ok
+            step('fixture_checkpoint', status=checkpoint.get('status'), verified=checkpoint_ok,
+                 archive=str(archive) if archive else None, archive_sha256=digest(archive) if archive else None,
+                 app_before_sha256=before_sha)
+            if not checkpoint_ok:
+                raise RuntimeError('fixture-checkpoint-unverified-write-refused')
 
-    task.bind_owner(LocalOwner(project / 'app.py'))
-    step('classify_and_bind', question=TASK_TEXT, state=task.state,
-         granted_effects=sorted(task.granted_effects))
+            source = app.read_text(encoding='utf-8')
+            if source.count(DEFECTIVE_SAVE) != 1:
+                raise RuntimeError('fixture-defective-block-not-unique-write-refused')
+            fixed = source.replace(DEFECTIVE_SAVE, FIXED_SAVE)
+            app.write_text(fixed, encoding='utf-8')
+            after_sha = digest(app)
+            (destination / 'fixture-after.py').write_bytes(app.read_bytes())
+            narrow_verified = app.read_text(encoding='utf-8') == fixed and before_sha != after_sha
+            step('fixture_scripted_narrow_change', changed_file='app.py', replacement_count=1,
+                 before_sha256=before_sha, after_sha256=after_sha,
+                 verified_unique_replacement=narrow_verified)
+            if not narrow_verified:
+                raise RuntimeError('fixture-narrow-change-unverified')
 
-    # 2. OBSERVATION: run it. The value does not survive a second start.
-    wrote = run_app(project, 'set', 'theme', 'dark')
-    read_back = run_app(project, 'get', 'theme')
-    observed_defect = read_back['stdout'] == 'null'
-    task.record_round(action='observe_runtime', status='completed',
-                      observation={'set': wrote['stdout'], 'get': read_back['stdout']})
-    step('observe_defect', set_run=wrote, get_run=read_back, defect_reproduced=observed_defect,
-         settings_file_present=(project / 'settings.json').is_file(),
-         staged_file_present=(project / 'settings.json.tmp').is_file())
-    if not observed_defect:
-        print('fixture did not reproduce the defect'); return 1
-
-    # 3. A WRONG HYPOTHESIS FIRST (scenario E): blame the reader. A targeted
-    #    check refutes it, the method is recorded as failed and not retried.
-    probe = run_app(project, 'get', 'missing_key')
-    wrong_refuted = probe['stdout'] == 'null' and probe['exit_code'] == 0
-    task.record_round(action='check_reader', status='failed',
-                      observation={'probe': probe['stdout']})
-    task.record_failed_method('blame_loader', 'Okuyucu sağlam; eksik anahtar da null döndürüyor')
-    step('refute_wrong_hypothesis', hypothesis='load() bozuk olabilir',
-         probe=probe, refuted=wrong_refuted, failed_methods=task.failed_methods)
-
-    # 4. CORRECT HYPOTHESIS from real file evidence: the staged file holds the
-    #    value while the real store was never replaced.
-    staged = project / 'settings.json.tmp'
-    staged_payload = json.loads(staged.read_text(encoding='utf-8')) if staged.is_file() else None
-    hypothesis_supported = isinstance(staged_payload, dict) and staged_payload.get('theme') == 'dark'
-    task.record_round(action='inspect_scoped_files', status='completed',
-                      observation={'staged': staged_payload})
-    step('evidence_backed_hypothesis',
-         hypothesis='save() geçici dosyayı yazıyor ama gerçek dosyayla değiştirmiyor',
-         staged_contents=staged_payload, staged_sha256=digest(staged),
-         store_sha256=digest(project / 'settings.json'), supported=hypothesis_supported)
-    if not hypothesis_supported:
-        print('hypothesis evidence missing'); return 1
-
-    # 5. CHECKPOINT before any write, using the existing production helper.
-    checkpoint = create_checkpoint(project, backup_root=workspace / 'checkpoints')
-    step('checkpoint', status=checkpoint.get('status'), complete=checkpoint.get('complete'),
-         file_count=checkpoint.get('file_count'), warning=checkpoint.get('warning'))
-    if checkpoint.get('status') not in {'git', 'snapshot'} or checkpoint.get('complete') is not True:
-        step('checkpoint_refused', detail='write skipped because no usable checkpoint exists')
-        print('no usable checkpoint; refusing to write'); return 1
-
-    # 6. NARROW FIX: replace only the defective save tail.
-    source = (project / 'app.py').read_text(encoding='utf-8')
-    before_sha = digest(project / 'app.py')
-    if source.count(DEFECTIVE_SAVE) != 1:
-        print('defective block not uniquely found'); return 1
-    (project / 'app.py').write_text(source.replace(DEFECTIVE_SAVE, FIXED_SAVE), encoding='utf-8')
-    after_sha = digest(project / 'app.py')
-    changed_lines = sum(1 for a, b in zip(source.splitlines(),
-                        (project / 'app.py').read_text(encoding='utf-8').splitlines()) if a != b)
-    step('narrow_fix', before_sha256=before_sha, after_sha256=after_sha,
-         changed_line_count=changed_lines)
-
-    # 7. RE-RUN is the verification. A claim of success is not accepted.
-    for stale in (project / 'settings.json', project / 'settings.json.tmp'):
-        if stale.is_file():
-            stale.unlink()
-    rerun_set = run_app(project, 'set', 'theme', 'dark')
-    rerun_get = run_app(project, 'get', 'theme')
-    verified = rerun_get['stdout'] == '"dark"' and rerun_get['exit_code'] == 0
-    task.record_round(action='rerun_verify', status='completed' if verified else 'failed',
-                      observation={'get': rerun_get['stdout']})
-    step('rerun_verification', set_run=rerun_set, get_run=rerun_get, verified=verified,
-         settings_sha256=digest(project / 'settings.json'))
-
-    # 8. Conclusion: only a real re-run may close this as completed.
-    if verified:
-        outcome = task.conclude('completed', summary='Ayar kaydetme hatası düzeltildi ve '
-                                'yeniden çalıştırma ile doğrulandı.', verified_by='rerun')
-    else:
-        outcome = task.conclude('blocked', summary='Düzeltme yeniden çalıştırmada doğrulanamadı.')
-    evidence['outcome'] = outcome
-    evidence['rounds'] = task.summary()['rounds']
-    evidence['unverified_completion_rejected'] = True
-    try:
-        task.conclude('completed', summary='model öyle diyor', verified_by='model_claim')
-        evidence['unverified_completion_rejected'] = False
-    except Exception:
-        pass
-
-    destination = Path(options.out).resolve() if options.out else workspace / 'evidence'
-    destination.mkdir(parents=True, exist_ok=True)
-    manifest = destination / 'chat-investigation-scenario.json'
-    manifest.write_text(json.dumps(evidence, indent=2, ensure_ascii=False), encoding='utf-8')
-    print(json.dumps({'verified': verified, 'outcome': outcome['status'],
-                      'rounds': evidence['rounds'], 'manifest': str(manifest),
-                      'manifest_sha256': digest(manifest)}, indent=2, ensure_ascii=False))
-    if options.out is None:
-        holder.cleanup()
-    return 0 if verified and outcome['status'] == 'completed' else 1
+            for name in ('settings.json', 'settings.json.tmp'):
+                path = project / name
+                if path.is_file():
+                    path.unlink()  # Generated fixture state, never user data.
+            rerun_set = run_app(project, 'set', 'theme', 'dark')
+            rerun_get = run_app(project, 'get', 'theme')
+            verified = (rerun_set['exit_code'] == 0 and rerun_set['stdout'] == 'saved'
+                        and rerun_get['exit_code'] == 0 and rerun_get['stdout'] == '"dark"'
+                        and store.is_file() and json.loads(store.read_text(encoding='utf-8')).get('theme') == 'dark'
+                        and not (project / 'settings.json.tmp').exists())
+            evidence['fixture_fix_rerun_verified'] = verified
+            step('fixture_repair_rerun', set_run=rerun_set, get_run=rerun_get,
+                 fixture_fix_rerun_verified=verified, settings_sha256=digest(store))
+            if not verified:
+                raise RuntimeError('fixture-repair-rerun-failed')
+            evidence['status'] = 'passed'
+        except Exception as exc:
+            evidence['failure'] = {'type': type(exc).__name__, 'reason': str(exc)[:500]}
+        for artifact in sorted(destination.rglob('*')):
+            if artifact.is_file():
+                evidence['artifact_sha256'][artifact.relative_to(destination).as_posix()] = digest(artifact)
+        manifest = destination / 'standalone-fixture-repair.json'
+        with manifest.open('x', encoding='utf-8') as stream:
+            json.dump(evidence, stream, indent=2, ensure_ascii=False, allow_nan=False)
+        print(json.dumps({'experiment': 'STANDALONE FIXTURE', 'status': evidence['status'],
+                          'quartz_integration_verified': False,
+                          'fixture_fix_rerun_verified': evidence['fixture_fix_rerun_verified'],
+                          'manifest': str(manifest), 'manifest_sha256': digest(manifest),
+                          'evidence_retained': options.out is not None}, indent=2, ensure_ascii=False))
+        return 0 if evidence['status'] == 'passed' else 1
 
 
 if __name__ == '__main__':

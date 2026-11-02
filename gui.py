@@ -143,82 +143,130 @@ class Api:
     @_application_action
     def diagnostics_start(self, include_rea: bool = True) -> dict:
         if self._artifact_diagnostics and self._artifact_diagnostics.status()['state'] == 'running':
-            return {'status': 'ok', 'data': self._artifact_diagnostics.status()}
+            try:return {'status':'ok','data':self._diagnostic_task_view(self._artifact_diagnostics,self._artifact_diagnostics.latest)}
+            except (ValueError,PermissionError):return {'status':'error','data':'Başka sohbette inceleme sürüyor.'}
         return ipc_send("diagnostics_start", {"include_rea": include_rea})
+
+    def _diagnostic_task_view(self, service, job_id):
+        view = service.status(job_id)
+        task = self._services.chat_task_for_job(service, job_id)
+        if task is not None:
+            state = ipc_send('chat_status')
+            active = (state.get('data') or {}).get('active_conversation') or {}
+            if state.get('status') != 'ok' or active.get('id') != task.conversation_id:
+                raise PermissionError('Sohbet değişti; inceleme durumu eski sohbete aittir.')
+            view['chat_task'] = task.summary()
+            view['conversation_id'] = task.conversation_id
+        return view
 
     def diagnostics_status(self, job_id: str | None = None) -> dict:
         if self._artifact_diagnostics and job_id in self._artifact_diagnostics.jobs:
-            return {"status": "ok", "data": self._artifact_diagnostics.status(job_id)}
-        payload = {"job_id": job_id} if job_id not in (None, "") else {}
+            try:
+                return {"status":"ok", "data":self._diagnostic_task_view(self._artifact_diagnostics,job_id)}
+            except (ValueError, PermissionError):
+                return {"status":"error", "data":"İnceleme bu sohbete ait değil veya artık mevcut değil."}
+        payload = {"job_id":job_id} if job_id not in (None, "") else {}
         return ipc_send("diagnostics_status", payload)
 
     def diagnostics_cancel(self, job_id: str) -> dict:
         if self._artifact_diagnostics and job_id in self._artifact_diagnostics.jobs:
-            return {"status": "ok", "data": self._artifact_diagnostics.cancel(job_id)}
-        return ipc_send("diagnostics_cancel", {"job_id": job_id})
+            try:
+                self._diagnostic_task_view(self._artifact_diagnostics,job_id)
+                task=self._services.chat_task_for_job(self._artifact_diagnostics,job_id)
+                if task is not None:task.cancel('Kullanıcı incelemeyi durdurdu')
+                else:self._artifact_diagnostics.cancel(job_id)
+                return {"status":"ok","data":self._diagnostic_task_view(self._artifact_diagnostics,job_id)}
+            except (ValueError, PermissionError):
+                return {"status":"error","data":"Bu inceleme durdurma isteği güncel değil."}
+        return ipc_send("diagnostics_cancel", {"job_id":job_id})
 
     @_application_action
     def diagnostics_select_application(self, question=None, chat_request=None, conversation_id=None):
-        """GUI-local native picker is the grant; arbitrary IPC paths stay forbidden."""
+        """Native file selection grants one target read, never tool execution."""
         with self._diagnostic_tools_lock:
+            task=None
             try:
-                if self._artifact_diagnostics and self._artifact_diagnostics.status()['state'] == 'running':
-                    return {'status': 'ok', 'data': self._artifact_diagnostics.status()}
-                self._services.ensure_open()  # no picker once shutdown began
-                if not webview.windows:
-                    raise ValueError('Pencere hazır değil')
-                selected = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN,
-                    allow_multiple=False, file_types=('Uygulamalar (*.exe;*.dll;*.pyd)',
-                                                      'Oyun ve uygulama paketleri (*.zip;*.pck;*.pkg)'))
-                if not selected:
-                    return {'status': 'ok', 'data': None}
-                if question is not None and (not isinstance(question, str) or not 1 <= len(question.strip()) <= 2000):
+                self._services.ensure_open()
+                if question is not None and (not isinstance(question,str) or not 1<=len(question.strip())<=2000):
                     raise ValueError('İnceleme sorusu geçersiz')
-                service = self._services.replace_artifact_diagnostics(selected[0], question=question)
-                started = service.start()
-                if chat_request is None:
-                    return {'status': 'ok', 'data': started}
-                # Bind the main-chat task to the owner the picker just produced,
-                # so a later permission answer resumes this same investigation.
-                from core.investigation.chat_task import ChatInvestigationTask
-                identity = re.sub(r'[^a-zA-Z0-9_.-]', '', str(started.get('id') or service.latest))[:80]
-                conversation = re.sub(r'[^a-zA-Z0-9_.-]', '', str(conversation_id or ''))[:80]
-                task = ChatInvestigationTask(chat_request,
-                    task_id='chat.' + (identity or 'investigation'),
-                    conversation_id=conversation or 'active')
-                task.bind_owner(service)
-                self._services.register_chat_task(task)
-                return {'status': 'ok', 'data': started, 'chat_task': task.summary()}
-            except ServicesClosed as exc:
-                return {'status': 'error', 'data': str(exc)}
+                if chat_request is not None:
+                    from core.investigation.chat_task import classify_investigation_request
+                    expected=classify_investigation_request(question)
+                    if (expected is None or chat_request != expected or expected['fix_requested']
+                            or expected['review_requested']):
+                        raise ValueError('Bu görev salt okunur dosya incelemesi değildir')
+                    chat_request=expected
+                    from core.investigation.contracts import IDENTIFIER
+                    if not isinstance(conversation_id,str) or not IDENTIFIER.fullmatch(conversation_id):
+                        raise ValueError('İnceleme sohbeti geçersiz')
+                    state=ipc_send('chat_status')
+                    data=state.get('data') or {}
+                    if (state.get('status')!='ok' or (data.get('active_conversation')or{}).get('id')!=conversation_id
+                            or (data.get('active_turn')or{}).get('status') in {'running','cancelling'}):
+                        raise PermissionError('Sohbet değişti veya başka bir görev sürüyor')
+                if self._artifact_diagnostics and self._artifact_diagnostics.status()['state']=='running':
+                    current=self._artifact_diagnostics.latest
+                    return {'status':'ok','data':self._diagnostic_task_view(self._artifact_diagnostics,current)}
+                if not webview.windows:raise RuntimeError('Uygulama penceresi hazır değil')
+                selected=webview.windows[0].create_file_dialog(webview.OPEN_DIALOG,allow_multiple=False,
+                    file_types=('Uygulama ve oyun paketleri (*.exe;*.dll;*.pyd;*.zip;*.pkg;*.pck)', 'Tüm dosyalar (*.*)'))
+                if not selected:return {'status':'ok','data':None}
+                if chat_request is not None:
+                    state=ipc_send('chat_status')
+                    if state.get('status')!='ok' or ((state.get('data')or{}).get('active_conversation')or{}).get('id')!=conversation_id:
+                        raise PermissionError('Dosya seçilirken sohbet değişti')
+                search=({'pattern':chat_request['search_pattern']} if chat_request and chat_request.get('search_requested') else None)
+                service=self._services.replace_artifact_diagnostics(selected[0],question=question,registered_search=search)
+                if chat_request is not None:
+                    import uuid
+                    from core.investigation.chat_task import ChatInvestigationTask
+                    from core.investigation.planning import InvestigationPolicy
+                    policy=(InvestigationPolicy(effects=frozenset({'read_target','write_workspace','execute_tool'}),allow_acquire=True)
+                            if search else InvestigationPolicy())
+                    task=ChatInvestigationTask(chat_request,task_id='chat.'+uuid.uuid4().hex,
+                        conversation_id=conversation_id,policy=policy)
+                    task.bind_owner(service)
+                    self._services.register_chat_task(task)
+                started=service.start()
+                if task is not None:
+                    task.attach_job(started['id'])
+                    if search:
+                        task.request_scope('execute_tool','Seçilen dosyada dize araması için resmî ripgrep 14.1.1 aracı indirilsin ve çalıştırılsın mı? Yalnız seçilen dosya okunur; araç ve çıktılar Quartz çalışma alanına yazılır.')
+                    started['chat_task']=task.summary();started['conversation_id']=conversation_id
+                return {'status':'ok','data':started,'chat_task':task.summary() if task else None}
             except Exception:
-                return {'status': 'error', 'data': 'Seçilen dosya güvenli inceleme için açılamadı. Desteklenen uygulama veya paket dosyasını seçin.'}
+                if task is not None:
+                    try:task.cancel('İnceleme başlangıcı tamamlanamadı')
+                    except Exception:pass
+                return {'status':'error','data':'Dosya incelemesi başlatılamadı; güncel sohbeti ve desteklenen hedefi kontrol edin.'}
 
     @_application_action
     def investigation_task_status(self, task_id):
-        """Read-only view of a bound main-chat investigation task."""
-        task = self._services.chat_task(task_id)
-        if task is None:
-            return {'status': 'error', 'data': 'Bu kimliğe bağlı etkin bir inceleme görevi yok.'}
-        return {'status': 'ok', 'data': task.summary()}
+        task=self._services.chat_task(task_id)
+        if task is None:return {'status':'error','data':'Bu kimliğe bağlı bir inceleme görevi yok.'}
+        try:
+            self._diagnostic_task_view(task.owner,task.job_id)
+            return {'status':'ok','data':task.summary()}
+        except (ValueError, PermissionError):return {'status':'error','data':'İnceleme güncel sohbete ait değil.'}
 
     @_application_action
-    def investigation_grant_scope(self, task_id, request_id, generation, effect, confirmed=False):
-        """Apply the existing permission card's answer to the SAME task.
-
-        A stale, replayed or mismatched answer is refused and never opens a new
-        investigation or widens scope.
-        """
-        task = self._services.chat_task(task_id)
-        if task is None:
-            return {'status': 'error', 'data': 'Bu kimliğe bağlı etkin bir inceleme görevi yok.'}
+    def investigation_grant_scope(self, task_id, request_id, generation, effect, confirmed=False, conversation_id=None):
+        task=self._services.chat_task(task_id)
+        if task is None:return {'status':'error','data':'Bu kimliğe bağlı bir inceleme görevi yok.'}
         try:
-            return {'status': 'ok', 'data': task.grant_scope(
-                request_id=str(request_id), generation=int(generation),
-                effect=str(effect), granted=confirmed is True)}
-        except (TypeError, ValueError):
-            return {'status': 'error',
-                    'data': 'Bu onay güncel inceleme isteğine ait değil; yeni görev başlatılmadı.'}
+            if (not isinstance(request_id,str) or type(generation)is not int or not isinstance(effect,str)
+                    or type(confirmed)is not bool or conversation_id != task.conversation_id):
+                raise ValueError('Geçersiz onay alanları')
+            self._diagnostic_task_view(task.owner,task.job_id)
+            answer=task.grant_scope(request_id=request_id,generation=generation,effect=effect,granted=confirmed)
+            if effect=='execute_tool':
+                try:task.owner.authorize_registered_tool(task.job_id,confirmed)
+                except Exception:
+                    task.cancel('Araç kapsamı uygulanamadı')
+                    raise
+            return {'status':'ok','data':dict(answer,diagnostics=self._diagnostic_task_view(task.owner,task.job_id),chat_task=task.summary())}
+        except (TypeError,ValueError,PermissionError):
+            return {'status':'error','data':'Onay güncel inceleme isteğine ait değil; yeni görev veya ikinci işlem başlatılmadı.'}
 
     @_application_action
     def diagnostics_prepare_repair(self):
@@ -335,7 +383,22 @@ class Api:
             message_kind = message_intent(text)
             from core.diagnostics_intent import diagnostics_intent
             diagnostic_command = diagnostics_intent(text)
-            if diagnostic_command == 'artifact':
+            from core.investigation.chat_task import classify_investigation_request
+            chat_request = classify_investigation_request(text)
+            native_active = ((self._natural is not None and self._natural.status().get('active')) or
+                             (self._coordination is not None and self._coordination.status().get('active')))
+            if not native_active and re.fullmatch(r'\s*(dur|durdur|görevi durdur|iptal et)[.!]?\s*',text,re.I):
+                pending = [t for t in self._services.open_chat_tasks() if t.conversation_id == conversation_id]
+                if pending:
+                    result = self.diagnostics_cancel(pending[-1].job_id)
+                    if result.get('status') != 'ok':return result
+                    return {'status':'ok','data':{'handled':True,'diagnostics_cancelled':True,
+                        'diagnostics':result['data'],'user_text':text}}
+            if chat_request and (chat_request['fix_requested'] or chat_request['review_requested']):
+                # A static inventory cannot consume a request to fix or review.
+                # Keep the existing writer/checkpoint/Squad/operator lifecycle.
+                diagnostic_command = None
+            if diagnostic_command == 'artifact' and not native_active:
                 result = self.diagnostics_select_application(question=text)
                 if result.get('status') != 'ok':
                     return result
@@ -353,23 +416,13 @@ class Api:
                     return result
                 return {'status': 'ok', 'data': {'handled': True, 'diagnostics_knowledge': True,
                     'learned_items': result['data'], 'user_text': text}}
-            if diagnostic_command is None:
-                # A natural application-investigation task binds to the existing
-                # investigation owner instead of opening a desktop operator. The
-                # native picker still provides the target grant.
-                from core.investigation.chat_task import classify_investigation_request
-                chat_request = classify_investigation_request(text)
-                if chat_request is not None and chat_request['diagnose_requested']:
-                    result = self.diagnostics_select_application(
-                        question=text, chat_request=chat_request, conversation_id=conversation_id)
-                    if result.get('status') != 'ok':
-                        return result
-                    if result.get('data') is None:
-                        return {'status': 'ok', 'data': {'handled': True, 'user_text': text,
-                            'investigation_target_required': True}}
-                    return {'status': 'ok', 'data': {'handled': True, 'diagnostics_started': True,
-                        'diagnostics': result['data'], 'investigation_task': result.get('chat_task'),
-                        'user_text': text}}
+            if (diagnostic_command is None and not native_active and chat_request is not None
+                    and not chat_request['fix_requested'] and not chat_request['review_requested']):
+                result = self.diagnostics_select_application(question=text,chat_request=chat_request,
+                    conversation_id=conversation_id)
+                if result.get('status') != 'ok':return result
+                return {'status':'ok','data':{'handled':True,'diagnostics_started':True,
+                    'diagnostics':result.get('data'),'investigation_task':result.get('chat_task'),'user_text':text}}
             if tools_disallowed(text):
                 for service in (self._natural, self._coordination):
                     if service is not None and service.status().get("active"):

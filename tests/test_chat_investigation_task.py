@@ -5,20 +5,26 @@ These are SOURCE-level regressions with real local persistence where a store is
 needed; no Quartz GUI, no packaged build and no real tool acquisition is implied.
 """
 import json
+from copy import deepcopy
 from pathlib import Path
 import tempfile
+import threading
 import unittest
+from unittest.mock import Mock, patch
 import zipfile
 
-from core.application_services import ApplicationServices, ServicesClosed
+from core.application_services import ApplicationServices, ServiceFactories, ServicesClosed
 from core.artifact_diagnostics import ArtifactDiagnosticsService
 from core.investigation.chat_task import (
     ChatInvestigationTask, classify_investigation_request, reusable_procedures)
 from core.investigation.contracts import InvestigationError
 from core.investigation.planning import InvestigationPolicy
+from core.tool_workbench import ToolWorkbench, ToolManifest
+from core.tool_workbench.catalog import ToolCatalog
 
 TASK_TEXT = ('Bu uygulamadaki ayar kaydetme hatasını incele ve düzelt; '
              'diğer ajan değişikliği kontrol etsin.')
+INSPECT_TEXT = 'Bu uygulamanın dosya yapısını incele.'
 
 
 def task(request=None, *, policy=None, max_rounds=8):
@@ -27,11 +33,36 @@ def task(request=None, *, policy=None, max_rounds=8):
                                  policy=policy, max_rounds=max_rounds)
 
 
-class FakeOwner:
-    scope = 'artifact'
+def unit_owner(target='/tmp/app.zip'):
+    """Spec-mocked lifecycle for unit tests, not production acceptance evidence."""
+    owner = Mock(spec=ArtifactDiagnosticsService)
+    owner.target, owner.identity = Path(target), (1, 2, 3, 4)
+    owner.lock = threading.RLock()
+    owner.latest = 'unit-job'
+    owner.jobs = {'unit-job': {'id':'unit-job', 'state':'running', 'scope':'artifact', 'checks':[]}}
+    owner.events = {'unit-job':threading.Event()}
+    worker = Mock(spec=threading.Thread)
+    worker.ident = 1
+    worker.is_alive.return_value = True
+    owner.threads = {'unit-job':worker}
+    owner._gateway_cleanup, owner._gateways = {}, {}
+    owner.status.side_effect = lambda identity=None: deepcopy(owner.jobs[identity or owner.latest])
+    owner.cancel.side_effect = lambda identity: (owner.events[identity].set(), owner.status(identity))[1]
+    return owner
 
-    def __init__(self, target='/tmp/app.zip', identity=(1, 2, 3, 4)):
-        self.target, self.identity = target, identity
+
+def bind_task(current, owner=None):
+    owner = owner if owner is not None else unit_owner()
+    current.bind_owner(owner)
+    current.attach_job(owner.latest)
+    return owner
+
+
+def finish_owner(current, state='completed'):
+    owner = current.owner
+    owner.jobs[current.job_id]['state'] = state
+    owner.threads[current.job_id].is_alive.return_value = False
+    return current.summary()
 
 
 class OrdinaryChatTests(unittest.TestCase):
@@ -70,7 +101,7 @@ class PermissionContinuationTests(unittest.TestCase):
 
     def setUp(self):
         self.task = task()
-        self.task.bind_owner(FakeOwner())
+        bind_task(self.task)
 
     def test_target_binding_requires_a_host_built_owner(self):
         fresh = task()
@@ -78,10 +109,10 @@ class PermissionContinuationTests(unittest.TestCase):
         with self.assertRaises(InvestigationError):
             fresh.bind_owner(object())  # an arbitrary object is not a selection
         self.assertEqual(fresh.state, 'awaiting_target')
-        fresh.bind_owner(FakeOwner())
+        bind_task(fresh)
         self.assertEqual(fresh.state, 'running')
         with self.assertRaises(InvestigationError):
-            fresh.bind_owner(FakeOwner('/tmp/other.zip'))  # no silent retarget
+            fresh.bind_owner(unit_owner('/tmp/other.zip'))  # no silent retarget
 
     def test_permission_answer_resumes_the_same_task(self):
         pending = self.task.request_scope('read_target', 'Dosya kimliğini doğrulamak için')
@@ -140,26 +171,31 @@ class ToolGapTests(unittest.TestCase):
 
     def grantable(self, policy):
         current = task(policy=policy)
-        current.bind_owner(FakeOwner())
+        bind_task(current)
         pending = current.request_scope('execute_tool', 'Kayıtlı arama aracı gerekiyor')['pending_permission']
         current.grant_scope(request_id=pending['request_id'],
                             generation=pending['generation'], effect='execute_tool')
         return current
 
+    def workbench(self, **kwargs):
+        workbench = Workbench(**kwargs)
+        self.addCleanup(workbench.close)
+        return workbench
+
     def test_without_granted_scope_the_gap_is_unsupported(self):
         current = task(policy=self.allowing)
-        current.bind_owner(FakeOwner())
-        result = current.plan_external_tool(['binary_pattern_search'], Workbench())
+        bind_task(current)
+        result = current.plan_external_tool(['pattern_search'], self.workbench())
         self.assertEqual((result['status'], result['reason']), ('unsupported', 'tool-scope-not-granted'))
 
     def test_without_policy_acquisition_the_gap_is_unsupported(self):
         policy = InvestigationPolicy(effects=frozenset({'read_target', 'execute_tool'}),
                                      allow_acquire=False)
-        result = self.grantable(policy).plan_external_tool(['binary_pattern_search'], Workbench())
+        result = self.grantable(policy).plan_external_tool(['pattern_search'], self.workbench())
         self.assertEqual((result['status'], result['reason']), ('unsupported', 'acquisition-not-allowed'))
 
     def test_registered_candidate_is_planned_with_pinned_provenance(self):
-        result = self.grantable(self.allowing).plan_external_tool(['binary_pattern_search'], Workbench())
+        result = self.grantable(self.allowing).plan_external_tool(['pattern_search'], self.workbench())
         self.assertEqual(result['status'], 'planned')
         self.assertTrue(result['requires_managed_acquisition'])
         candidate = result['candidates'][0]
@@ -169,32 +205,40 @@ class ToolGapTests(unittest.TestCase):
 
     def test_unknown_capability_and_catalog_failure_stay_unsupported(self):
         current = self.grantable(self.allowing)
-        result = current.plan_external_tool(['no_such_capability'], Workbench())
+        result = current.plan_external_tool(['no_such_capability'], self.workbench())
         self.assertEqual((result['status'], result['reason']), ('unsupported', 'no-registered-tool'))
         self.assertEqual(result['missing'], ['no_such_capability'])
         crashing = self.grantable(self.allowing)
-        broken = crashing.plan_external_tool(['binary_pattern_search'], Workbench(raise_on_resolve=True))
+        broken = crashing.plan_external_tool(['pattern_search'], self.workbench(raise_on_resolve=True))
         self.assertEqual(broken['status'], 'unsupported')  # a catalog error is not a crash
 
     def test_no_workbench_is_reported_not_assumed(self):
-        result = self.grantable(self.allowing).plan_external_tool(['binary_pattern_search'], None)
+        result = self.grantable(self.allowing).plan_external_tool(['pattern_search'], None)
         self.assertEqual((result['status'], result['reason']), ('unsupported', 'no-tool-workbench'))
 
 
-class Workbench:
-    """Minimal stand-in for the separately owned ToolWorkbench catalog."""
+class Workbench(ToolWorkbench):
+    """Actual resolver/catalog with a disposable tool root; no acquisition."""
 
     def __init__(self, raise_on_resolve=False):
         self.raise_on_resolve = raise_on_resolve
+        self.temp = tempfile.TemporaryDirectory()
+        root = Path(self.temp.name)
+        manifest = ToolManifest('ripgrep', 'Unit fixture', '14.1.1',
+            'https://github.com/quartz-tests/fixture/rg.zip', '14.1.1', 'a' * 64,
+            'test', ['any'], ['pattern_search'], 'rg.exe', {'search':{'options':{}}})
+        super().__init__(managed_dir=root/'managed', workspace_dir=root/'work',
+                         catalog=ToolCatalog({manifest.tool_id:manifest}))
+
+    def close(self):
+        result = super().close()
+        self.temp.cleanup()
+        return result
 
     def resolve(self, requirements):
         if self.raise_on_resolve:
             raise RuntimeError('catalog unavailable')
-        if requirements.get('capability_id') != 'binary_pattern_search':
-            return {'status': 'unresolved', 'tool_manifest': None}
-        return {'status': 'resolved', 'tool_manifest': {
-            'tool_id': 'ripgrep', 'source_url': 'https://example.invalid/rg.zip',
-            'pinned_revision': '14.1.1', 'package_digest': 'a' * 64}}
+        return super().resolve(requirements)
 
 
 class BoundedLoopTests(unittest.TestCase):
@@ -202,7 +246,7 @@ class BoundedLoopTests(unittest.TestCase):
 
     def setUp(self):
         self.task = task(max_rounds=3)
-        self.task.bind_owner(FakeOwner())
+        bind_task(self.task)
 
     def test_repeated_identical_outcome_makes_no_progress_and_stalls(self):
         first = self.task.record_round(action='static_scan', observation={'hits': 0}, status='failed')
@@ -223,6 +267,7 @@ class BoundedLoopTests(unittest.TestCase):
     def test_blocked_outcome_records_the_failed_method(self):
         self.task.record_failed_method('string_scan', 'Yalnız string araması; semantik kanıt vermedi')
         self.task.record_failed_method('string_scan', 'Yalnız string araması; semantik kanıt vermedi')
+        finish_owner(self.task)
         outcome = self.task.conclude('blocked', summary='Desteklenen kanıt üretilemedi')
         self.assertEqual(len(outcome['failed_methods']), 1)  # deduplicated
         self.assertEqual(outcome['status'], 'blocked')
@@ -233,9 +278,11 @@ class BoundedLoopTests(unittest.TestCase):
             self.task.conclude('completed', summary='Düzelttim')
         with self.assertRaises(InvestigationError):
             self.task.conclude('completed', summary='Düzelttim', verified_by='model_says_so')
-        outcome = self.task.conclude('completed', summary='Yeniden çalıştırma geçti',
-                                     verified_by='rerun', evidence_ids=['e1'])
-        self.assertEqual(outcome['verified_by'], 'rerun')
+        with self.assertRaises(InvestigationError):
+            self.task.conclude('completed', summary='Yeniden çalıştırma geçti',
+                               verified_by='rerun', evidence_ids=['e1'])
+        finish_owner(self.task)
+        self.assertFalse(self.task.summary()['fix_verified'])
 
 
 class KnowledgeReuseTests(unittest.TestCase):
@@ -280,29 +327,35 @@ class StopAndShutdownTests(unittest.TestCase):
 
     def test_stop_during_pending_permission_cancels_without_resuming(self):
         current = task()
-        current.bind_owner(FakeOwner())
+        bind_task(current)
         pending = current.request_scope('read_target', 'gerekçe')['pending_permission']
         outcome = current.cancel('kullanıcı durdurdu')
-        self.assertEqual(outcome['status'], 'cancelled')
+        self.assertEqual(outcome['status'], 'cancelling')
+        self.assertFalse(outcome['stop_confirmed'])
+        current.owner.cancel.assert_called_once_with(current.job_id)
         self.assertIsNone(current.summary()['pending_permission'])
         with self.assertRaises(InvestigationError):
             current.grant_scope(request_id=pending['request_id'],
                                 generation=pending['generation'], effect='read_target')
+        finish_owner(current, 'cancelled')
         self.assertEqual(current.state, 'cancelled')
 
     def test_cancel_is_idempotent_and_keeps_the_first_outcome(self):
         current = task()
-        current.bind_owner(FakeOwner())
+        bind_task(current)
         first = current.cancel('ilk')
         self.assertEqual(current.cancel('ikinci')['summary'], first['summary'])
 
     def test_services_shutdown_cancels_open_chat_tasks_and_fences_new_ones(self):
         services = ApplicationServices()
         current = task()
-        current.bind_owner(FakeOwner())
+        bind_task(current)
         services.register_chat_task(current)
         self.assertEqual(services.chat_task('chat.t1'), current)
         self.assertEqual(len(services.open_chat_tasks()), 1)
+        services.shutdown()
+        self.assertEqual(current.state, 'cancelling')
+        finish_owner(current, 'cancelled')
         services.shutdown()
         self.assertEqual(current.state, 'cancelled')
         self.assertEqual(services.open_chat_tasks(), [])
@@ -314,7 +367,8 @@ class StopAndShutdownTests(unittest.TestCase):
         for index in range(ApplicationServices.MAX_CHAT_TASKS):
             done = ChatInvestigationTask(classify_investigation_request(TASK_TEXT),
                                          task_id='chat.done%d' % index, conversation_id='c1')
-            done.bind_owner(FakeOwner())
+            bind_task(done)
+            finish_owner(done)
             done.conclude('blocked', summary='bitti')
             services.register_chat_task(done)
         services.register_chat_task(task())  # finished records are reclaimed
@@ -390,9 +444,22 @@ class ChatBridgeRoutingTests(unittest.TestCase):
         self.target = self.root / 'application.zip'
         with zipfile.ZipFile(self.target, 'w') as archive:
             archive.writestr('settings.json', '{}')
+        self.active_conversation = 'conv1'
+        ipc = patch('gui.ipc_send', side_effect=lambda action, *args: {
+            'status':'ok', 'data': {'active_conversation':{'id':self.active_conversation}, 'active_turn':None}
+            if action == 'chat_status' else {}})
+        ipc.start()
+        self.addCleanup(ipc.stop)
 
     def api(self):
-        return self.gui.Api()
+        def artifact(path, **kwargs):
+            rea = Mock()
+            rea.inspect.return_value = {'status':'NOT_TESTED', 'message':'Unit fixture, no REA process', 'used':False}
+            return ArtifactDiagnosticsService(path, rea=rea, knowledge=False, investigation=False,
+                analysis_enabled=False, reports=self.root/'reports', investigation_root=self.root/'investigations', **kwargs)
+        services = ApplicationServices(ServiceFactories(artifact_diagnostics=artifact))
+        self.addCleanup(services.shutdown)
+        return self.gui.Api(services)
 
     def test_ordinary_chat_opens_no_picker_and_no_investigation(self):
         from unittest.mock import patch
@@ -415,12 +482,21 @@ class ChatBridgeRoutingTests(unittest.TestCase):
                                         'chat_task': {'task_id': 'chat.job1'}}) as picker, \
              patch.object(api, 'natural_start',
                           side_effect=AssertionError('desktop operator started instead')):
-            result = api.coordination_route(TASK_TEXT, 'conv1', 'p', {}, 'project')
+            result = api.coordination_route(INSPECT_TEXT, 'conv1', 'p', {}, 'project')
         self.assertTrue(result['data']['diagnostics_started'])
         self.assertEqual(result['data']['investigation_task']['task_id'], 'chat.job1')
-        self.assertEqual(picker.call_args.kwargs['question'], TASK_TEXT)
+        self.assertEqual(picker.call_args.kwargs['question'], INSPECT_TEXT)
         self.assertEqual(picker.call_args.kwargs['conversation_id'], 'conv1')
-        self.assertTrue(picker.call_args.kwargs['chat_request']['fix_requested'])
+        self.assertFalse(picker.call_args.kwargs['chat_request']['fix_requested'])
+
+    def test_fix_and_review_request_keeps_the_existing_writer_route(self):
+        api = self.api()
+        with patch.object(api, 'diagnostics_select_application', side_effect=AssertionError('writer intercepted')), \
+             patch.object(api, 'natural_start', return_value={'status':'ok','data':{'natural_started':True}}) as start:
+            result = api.coordination_route(TASK_TEXT, 'conv1', 'p', {}, 'project')
+        self.assertTrue(result['data']['natural_started'])
+        start.assert_called_once_with(TASK_TEXT, 'conv1', 'p', {}, 'project')
+        self.assertEqual(api._services.open_chat_tasks(), [])
 
     def test_real_picker_selection_binds_and_registers_one_task(self):
         from unittest.mock import Mock, patch
@@ -430,18 +506,22 @@ class ChatBridgeRoutingTests(unittest.TestCase):
         with patch.object(self.gui.webview, 'windows', [window]), \
              patch.object(api, 'natural_start',
                           side_effect=AssertionError('desktop operator started instead')):
-            result = api.coordination_route(TASK_TEXT, 'conv1', 'p', {}, 'project')
+            result = api.coordination_route(INSPECT_TEXT, 'conv1', 'p', {}, 'project')
             service = api._artifact_diagnostics
             self.addCleanup(service.shutdown)
             for thread in service.threads.values():
                 thread.join(10)
         summary = result['data']['investigation_task']
         self.assertEqual(summary['conversation_id'], 'conv1')
-        self.assertEqual(summary['state'], 'running')
-        self.assertEqual(summary['question'], TASK_TEXT)
+        self.assertEqual(summary['question'], INSPECT_TEXT)
         self.assertEqual(summary['granted_effects'], [])  # binding is not a grant
+        completed = api.investigation_task_status(summary['task_id'])['data']
+        self.assertEqual(completed['state'], 'completed')
+        self.assertEqual(completed['verification'], 'SOURCE')
+        self.assertFalse(completed['fix_verified'])
         tasks = api._services.open_chat_tasks()
-        self.assertEqual([t.task_id for t in tasks], [summary['task_id']])
+        self.assertEqual(tasks, [])
+        self.assertEqual(api._services.chat_task(summary['task_id']).job_id, result['data']['diagnostics']['id'])
 
     def test_cancelled_selection_opens_no_task(self):
         from unittest.mock import Mock, patch
@@ -451,31 +531,33 @@ class ChatBridgeRoutingTests(unittest.TestCase):
         with patch.object(self.gui.webview, 'windows', [window]), \
              patch.object(api, 'natural_start',
                           side_effect=AssertionError('desktop operator started instead')):
-            result = api.coordination_route(TASK_TEXT, 'conv1', 'p', {}, 'project')
-        self.assertTrue(result['data']['investigation_target_required'])
+            result = api.coordination_route(INSPECT_TEXT, 'conv1', 'p', {}, 'project')
+        self.assertIsNone(result['data']['diagnostics'])
         self.assertEqual(api._services.open_chat_tasks(), [])
 
     def test_permission_answer_resumes_and_a_replay_is_refused(self):
+        self.active_conversation = 'c1'
         api = self.api()
         current = task()
-        current.bind_owner(FakeOwner())
+        bind_task(current)
         api._services.register_chat_task(current)
         pending = current.request_scope('read_target', 'gerekçe')['pending_permission']
         granted = api.investigation_grant_scope('chat.t1', pending['request_id'],
-                                                pending['generation'], 'read_target', True)
+                                                pending['generation'], 'read_target', True, 'c1')
         self.assertEqual(granted['status'], 'ok')
         self.assertTrue(granted['data']['resumed_same_task'])
         replay = api.investigation_grant_scope('chat.t1', pending['request_id'],
-                                               pending['generation'], 'read_target', True)
+                                               pending['generation'], 'read_target', True, 'c1')
         self.assertEqual(replay['status'], 'error')
         self.assertEqual(len(api._services.open_chat_tasks()), 1)
-        unknown = api.investigation_grant_scope('chat.missing', 'x', 1, 'read_target', True)
+        unknown = api.investigation_grant_scope('chat.missing', 'x', 1, 'read_target', True, 'c1')
         self.assertEqual(unknown['status'], 'error')
 
     def test_status_is_read_only(self):
+        self.active_conversation = 'c1'
         api = self.api()
         current = task()
-        current.bind_owner(FakeOwner())
+        bind_task(current)
         api._services.register_chat_task(current)
         state = api.investigation_task_status('chat.t1')
         self.assertEqual(state['data']['state'], 'running')

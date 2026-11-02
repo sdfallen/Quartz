@@ -38,6 +38,8 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
     manifest: 'Paket manifesti ve SHA-256 doğrulaması',
     rea: 'REA statik ikili / arşiv incelemesi',
     analysis: 'Yapı ve bağımlılık ilişkileri inceleniyor',
+    tool_permission: 'Kayıtlı araç izni bekleniyor',
+    tool_acquire: 'Kayıtlı araç sürümü doğrulanıyor',
     report: 'Teşhis kanıtları kaydediliyor',
     done: 'Ölçüm tamamlandı',
   };
@@ -235,6 +237,11 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
       knowledge_saved: knowledgeSaved,
       counts,
       report_saved: Boolean(job.report_path),
+      chat_task: job.chat_task && typeof job.chat_task === 'object' ? {
+        task_id: String(job.chat_task.task_id || ''),
+        state: String(job.chat_task.state || ''),
+        permission_pending: Boolean(job.chat_task.pending_permission),
+      } : null,
       investigation: {
         evidence_count: Number.isInteger(investigation.evidence_count) && investigation.evidence_count >= 0 && investigation.evidence_count <= 128 ? investigation.evidence_count : 0,
         findings_count: Number.isInteger(investigation.findings_count) && investigation.findings_count >= 0 && investigation.findings_count <= 128 ? investigation.findings_count : 0,
@@ -274,9 +281,11 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
   }
 
   let activeDiagJobId = null;
+  let activeDiagConversationId = null;
   let diagPollTimer = null;
   let diagPollBusy = false;
   const diagPollFailures = new Map();
+  const diagScopeDecisions = new Map();
 
   function hasActiveDiagnosticsJob() {
     return Boolean(activeDiagJobId && (diagPollFailures.get(activeDiagJobId) || 0) <= 3);
@@ -364,9 +373,77 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
     return card;
   }
 
+  function appendInvestigationPermission(card, job, container) {
+    card.dataset.investigationPermission = '';
+    const task = job.chat_task;
+    const request = task?.pending_permission;
+    const conversationId = typeof currentConvId === 'string' ? currentConvId : '';
+    if (!task || task.state !== 'awaiting_permission' || !request || !conversationId ||
+        task.conversation_id !== conversationId || typeof task.task_id !== 'string' || !task.task_id ||
+        typeof request.request_id !== 'string' || !request.request_id ||
+        !Number.isSafeInteger(request.generation) || request.generation < 0 ||
+        typeof request.effect !== 'string' || !request.effect) return;
+    // Only host-supplied primitive identities are captured. UI text cannot supply
+    // a scope, callback, script or approval value to the backend.
+    const bound = Object.freeze({taskId:task.task_id, requestId:request.request_id,
+      generation:request.generation, effect:request.effect, conversationId, jobId:String(job.id)});
+    const key = JSON.stringify(bound);
+    card.dataset.investigationPermission = key;
+    const box = document.createElement('div'); box.className = 'diag-scope-permission';
+    box.setAttribute('role', 'group'); box.setAttribute('aria-label', 'İnceleme kapsamı izni');
+    const title = document.createElement('strong'); title.textContent = 'İnceleme için ek izin gerekiyor';
+    const reason = document.createElement('p'); reason.textContent = redactDiagText(request.reason || 'İstenen işlem için kararınızı bekliyor.');
+    const scope = document.createElement('p'); scope.textContent = 'İstenen kapsam: ' + redactDiagText(bound.effect);
+    const feedback = document.createElement('p'); feedback.setAttribute('role', 'status');
+    const approve = document.createElement('button'); approve.type = 'button'; approve.className = 'control-btn';
+    approve.dataset.investigationApprove = bound.requestId; approve.textContent = 'Bu kapsam için izin ver';
+    const deny = document.createElement('button'); deny.type = 'button'; deny.className = 'control-btn';
+    deny.dataset.investigationDeny = bound.requestId; deny.textContent = 'İzin verme';
+    const decision = diagScopeDecisions.get(key);
+    if (decision) { approve.disabled = true; deny.disabled = true; feedback.textContent = decision.message; }
+    const stillCurrent = () => typeof currentConvId === 'string' && currentConvId === bound.conversationId &&
+      card.dataset.investigationPermission === key;
+    async function answer(granted) {
+      if (!stillCurrent() || diagScopeDecisions.has(key)) return;
+      const receipt = {message:'İzin kararı uygulanıyor…'};
+      diagScopeDecisions.set(key, receipt);
+      approve.disabled = true; deny.disabled = true; feedback.textContent = receipt.message;
+      try {
+        const result = await window.pywebview.api.investigation_grant_scope(
+          bound.taskId, bound.requestId, bound.generation, bound.effect, granted === true, bound.conversationId);
+        if (!stillCurrent()) return;
+        const data = result?.data;
+        if (result?.status !== 'ok' || !data?.diagnostics || data.diagnostics.id !== bound.jobId ||
+            data.chat_task?.task_id !== bound.taskId || data.chat_task?.conversation_id !== bound.conversationId) {
+          throw new Error('scope-decision-unconfirmed');
+        }
+        receipt.message = granted ? 'İzin uygulandı; aynı inceleme devam ediyor.' : 'İzin verilmedi; kapsam genişletilmedi.';
+        renderSelfDiagnosticsCard({...data.diagnostics, chat_task:data.chat_task}, container);
+        if (data.diagnostics.state === 'running' || ['running','awaiting_permission'].includes(data.chat_task.state)) {
+          scheduleSelfDiagnosticsPoll(bound.jobId);
+        }
+      } catch (_) {
+        receipt.message = 'İzin kararı doğrulanamadı veya istek güncel değil. Durumu yeniden okuyun; yeni görev başlatılmadı.';
+        if (stillCurrent()) {
+          feedback.textContent = receipt.message;
+          const refresh = document.createElement('button'); refresh.type = 'button'; refresh.className = 'control-btn';
+          refresh.textContent = 'Durumu yeniden oku';
+          refresh.onclick = async () => { if (!stillCurrent() || refresh.disabled) return; refresh.disabled = true; await pollSelfDiagnostics(bound.jobId); };
+          box.append(refresh);
+        }
+      }
+    }
+    approve.onclick = () => answer(true);
+    deny.onclick = () => answer(false);
+    box.append(title, reason, scope, feedback, approve, deny);
+    card.append(box);
+  }
+
   function renderSelfDiagnosticsCard(job, targetContainer = null) {
     const container = targetContainer || (typeof chatEl !== 'undefined' ? chatEl : null);
     if (!container) return null;
+    if (job?.chat_task?.conversation_id && typeof currentConvId === 'string' &&
+        job.chat_task.conversation_id !== currentConvId) return null;
     const view = buildSelfDiagnosticsView(job);
     const selector = `[data-diagnostics-job="${view.id.replace(/["\\]/g, '')}"]`;
     let card = container.querySelector ? container.querySelector(selector) : null;
@@ -457,6 +534,7 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
     bar.append(fill);
     progRow.append(phaseLine, bar);
     card.append(progRow);
+    appendInvestigationPermission(card, job, container);
 
     // 3. Status Counts (PASS / FAIL / UNKNOWN / NOT TESTED)
     const countsRow = document.createElement('div');
@@ -562,17 +640,24 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
 
   async function pollSelfDiagnostics(jobId = activeDiagJobId) {
     if (diagPollBusy || !jobId) return;
+    if (typeof activeDiagConversationId !== 'undefined' && activeDiagConversationId &&
+        activeDiagJobId === jobId && typeof currentConvId === 'string' &&
+        activeDiagConversationId !== currentConvId) return;
     diagPollBusy = true;
+    const polledConversationId = typeof currentConvId === 'string' ? currentConvId : null;
     let keepPolling = false;
     let terminal = false;
     try {
       const resp = await window.pywebview.api.diagnostics_status(jobId);
+      if (polledConversationId !== null && currentConvId !== polledConversationId) return;
       if (!resp || resp.status !== 'ok' || !resp.data || resp.data.id !== jobId) throw new Error('diagnostics-status-unavailable');
+      if (resp.data.chat_task?.conversation_id && resp.data.chat_task.conversation_id !== polledConversationId) return;
       renderSelfDiagnosticsCard(resp.data);
       diagPollFailures.delete(jobId);
-      keepPolling = resp.data.state === 'running';
+      keepPolling = resp.data.state === 'running' || ['running','awaiting_permission'].includes(resp.data.chat_task?.state);
       terminal = !keepPolling;
     } catch (_) {
+      if (polledConversationId !== null && currentConvId !== polledConversationId) return;
       const failures = (diagPollFailures.get(jobId) || 0) + 1;
       diagPollFailures.set(jobId, failures);
       keepPolling = failures <= 3;
@@ -615,6 +700,9 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
   function scheduleSelfDiagnosticsPoll(jobId) {
     if (!jobId) return;
     activeDiagJobId = jobId;
+    if (typeof activeDiagConversationId !== 'undefined') {
+      activeDiagConversationId = typeof currentConvId === 'string' ? currentConvId : null;
+    }
     if (diagPollTimer) {
       clearTimeout(diagPollTimer);
       diagPollTimer = null;

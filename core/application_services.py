@@ -68,9 +68,9 @@ def _natural(desktop, emit):
     return NaturalDesktopTask(desktop, emit)
 
 
-def _artifact_diagnostics(path, *, question=None):
+def _artifact_diagnostics(path, *, question=None, registered_search=None):
     from core.artifact_diagnostics import ArtifactDiagnosticsService
-    return ArtifactDiagnosticsService(path, question=question)
+    return ArtifactDiagnosticsService(path, question=question, registered_search=registered_search)
 
 
 def _repair():
@@ -251,6 +251,11 @@ class ApplicationServices:
     # ── chat-bound investigation tasks ──
     MAX_CHAT_TASKS = 8
 
+    @staticmethod
+    def _chat_task_open(task, snapshot):
+        return (snapshot['state'] in task.OPEN_STATES or
+                task.job_id is not None and snapshot.get('stop_confirmed') is not True)
+
     def register_chat_task(self, task):
         """Keep a bounded record of main-chat investigation tasks.
 
@@ -259,12 +264,21 @@ class ApplicationServices:
         """
         with self._lock:
             self.ensure_open()
+            from core.investigation.chat_task import ChatInvestigationTask
+            if not isinstance(task, ChatInvestigationTask):
+                raise KeyError('invalid-chat-task')
             identity = getattr(task, 'task_id', None)
             terminal = getattr(task, 'TERMINAL_STATES', frozenset())
             if not isinstance(identity, str) or not identity:
                 raise KeyError('invalid-chat-task')
+            existing = self._chat_tasks.get(identity)
+            if existing is not None:
+                if existing is not task:
+                    raise RuntimeError('duplicate-chat-task')
+                return existing
             for key, value in list(self._chat_tasks.items()):
-                if getattr(value, 'state', None) in getattr(value, 'TERMINAL_STATES', terminal):
+                snapshot=value.summary()
+                if snapshot['state'] in value.TERMINAL_STATES and not self._chat_task_open(value,snapshot):
                     self._chat_tasks.pop(key, None)
             if identity not in self._chat_tasks and len(self._chat_tasks) >= self.MAX_CHAT_TASKS:
                 raise RuntimeError('chat-task-budget')
@@ -273,11 +287,18 @@ class ApplicationServices:
 
     def chat_task(self, task_id):
         """Existing record or None. Never creates one."""
-        return self._chat_tasks.get(task_id) if isinstance(task_id, str) else None
+        with self._lock:
+            return self._chat_tasks.get(task_id) if isinstance(task_id, str) else None
 
     def open_chat_tasks(self):
-        return [task for task in self._chat_tasks.values()
-                if getattr(task, 'state', None) in getattr(task, 'OPEN_STATES', frozenset())]
+        with self._lock:
+            return [task for task in self._chat_tasks.values()
+                    if self._chat_task_open(task,task.summary())]
+
+    def chat_task_for_job(self, owner, job_id):
+        with self._lock:
+            return next((task for task in self._chat_tasks.values()
+                         if task.owner is owner and task.job_id == job_id), None)
 
     def _release(self, name):
         with self._lock:
@@ -328,7 +349,7 @@ class ApplicationServices:
             self._instances["natural"] = task
             return task
 
-    def replace_artifact_diagnostics(self, selected_path, *, question=None):
+    def replace_artifact_diagnostics(self, selected_path, *, question=None, registered_search=None):
         """Build diagnostics for a path the native picker returned."""
         with self._lock:
             self.ensure_open()
@@ -339,8 +360,10 @@ class ApplicationServices:
                     raise RuntimeError('Önceki inceleme aracının kapanışı henüz doğrulanmadı.')
                 if any(t.is_alive() for t in getattr(previous, 'threads', {}).values()):
                     raise RuntimeError('Önceki incelemenin kapanışı henüz tamamlanmadı.')
-            service = (self.factories.artifact_diagnostics(selected_path, question=question)
-                       if question is not None else self.factories.artifact_diagnostics(selected_path))
+            options = {}
+            if question is not None: options['question'] = question
+            if registered_search is not None: options['registered_search'] = registered_search
+            service = self.factories.artifact_diagnostics(selected_path, **options)
             self._instances["artifact_diagnostics"] = service
             return service
 
@@ -369,20 +392,19 @@ class ApplicationServices:
                 chat_tasks = list(self._chat_tasks.values())
             # Fence the chat-side records first: a task waiting on a permission
             # answer must not look resumable after shutdown began.
+            errors = []
             for task in chat_tasks:
-                cancel = getattr(task, 'cancel', None)
-                if callable(cancel) and getattr(task, 'state', None) in getattr(task, 'OPEN_STATES', frozenset()):
-                    try:
-                        cancel('shutdown')
-                    except Exception:
-                        pass
+                try:
+                    if self._chat_task_open(task,task.summary()):
+                        task.cancel('shutdown')
+                except Exception as exc:
+                    errors.append({'component':'chat_tasks','code':'cancel_failed','type':type(exc).__name__})
             desktop = self.peek('desktop')
             if activities:
                 # No new grants or inputs survive a pending startup action.
                 if desktop is not None and callable(getattr(desktop.broker, 'stop', None)):
                     desktop.broker.stop()
-                return {'status':PENDING, 'components':{'inflight_gui':PENDING}, 'errors':[]}
-            errors = []
+                return {'status':PENDING, 'components':{'inflight_gui':PENDING}, 'errors':errors}
             for name, instance in targets:
                 if self._components.get(name) == CONFIRMED:
                     continue  # never close a confirmed component twice
@@ -396,5 +418,13 @@ class ApplicationServices:
                     errors.append({"component": name, "code": "close_failed",
                                    "type": type(exc).__name__})
             components = dict(self._components)
+            if chat_tasks:
+                try:
+                    components['chat_tasks'] = (PENDING if any(
+                        self._chat_task_open(t,t.summary()) for t in chat_tasks) else CONFIRMED)
+                except Exception as exc:
+                    components['chat_tasks'] = FAILED
+                    errors.append({'component':'chat_tasks','code':'state_unconfirmed','type':type(exc).__name__})
+                if any(e['component']=='chat_tasks' for e in errors): components['chat_tasks']=FAILED
             return {"status": overall_status(components), "components": components,
                     "errors": errors}
