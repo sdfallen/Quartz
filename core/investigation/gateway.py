@@ -133,4 +133,45 @@ class InvestigationToolGateway:
         self._closed=True
         # The existing host owner decides when to cancel; a receipt never kills
         # a process or restores authority by itself.
-        return self.workbench.stop(self.session.evidence.id)
+        return self.workbench.stop(self.session.evidence.id) if self.workbench is not None else {'status':'confirmed'}
+
+    def capture_analysis(self, artifact_path, expected_sha256, request, cancel_event):
+        """Capture the builtin parser's snapshot; never promotes it to LIVE."""
+        if not self._lock.acquire(blocking=False):raise InvestigationError('tool-call-in-progress')
+        try:
+            guard(self.session.event,self.session.deadline)
+            if self._closed or cancel_event is not self.session.event:raise InvestigationError('wrong-capture-owner')
+            request=bounded_json(request,maximum=128*1024)
+            if (not isinstance(request,dict) or request.get('investigation_id')!=self.session.evidence.id
+                    or request.get('target')!=self.session.target.as_dict()
+                    or request.get('operation')!='builtin-analysis-snapshot'
+                    or request.get('tool_id')!='quartz-builtin-analysis'
+                    or safe_path(request.get('workspace',''))!=self.workspace
+                    or not {'read_target','write_workspace'}<=self.policy.effects):
+                raise InvestigationError('invalid-analysis-capture')
+            step=request.get('step_id')
+            if not isinstance(step,str) or not IDENTIFIER.fullmatch(step):raise InvestigationError('invalid-tool-step')
+            if not isinstance(expected_sha256,str) or not SHA256.fullmatch(expected_sha256):raise InvestigationError('invalid-artifact-digest')
+            source=safe_path(artifact_path)
+            if self.workspace not in source.parents or source.stat().st_size>self.policy.max_output_bytes:
+                raise InvestigationError('analysis-snapshot-outside-workspace')
+            key=hashlib.sha256(json.dumps([request,expected_sha256],sort_keys=True).encode()).hexdigest()
+            if step in self._receipts:
+                previous=self._receipts[step]
+                if previous['digest']!=key:raise InvestigationError('conflicting-step-id')
+                return deepcopy(previous['result'])|{'replayed_receipt':True}
+            if len(self._receipts)>=self.policy.max_steps:raise InvestigationError('step-budget')
+            self.session.target.revalidate(self.session.event,self.session.deadline)
+            payload=json.loads(source.read_text(encoding='utf-8'))
+            if not isinstance(payload,dict):raise InvestigationError('invalid-analysis-snapshot')
+            subject=payload.get('target')
+            actual=payload.get('target_sha256') or (subject.get('sha256') if isinstance(subject,dict) else None)
+            if actual!=self.session.target.sha256:raise InvestigationError('analysis-snapshot-wrong-target')
+            record=self.session.evidence.ingest_file(source,source_root=self.workspace,
+                expected_sha256=expected_sha256,kind='analysis-snapshot',origin='quartz-builtin-analysis')
+            self.session.target.revalidate(self.session.event,self.session.deadline)
+            result={'evidence_ids':[record['evidence_id']],'status':'completed',
+                    'level':'SOURCE','instruction_authority':False}
+            self._receipts[step]={'digest':key,'result':deepcopy(result)}
+            return result
+        finally:self._lock.release()

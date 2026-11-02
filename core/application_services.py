@@ -100,7 +100,9 @@ class ServiceFactories:
 # Each returns CONFIRMED only when the component's own state says it stopped.
 
 def _close_artifact_diagnostics(service, _owner):
-    service.shutdown()
+    receipt=service.shutdown()
+    if isinstance(receipt,dict) and receipt.get('status') in {PENDING,FAILED}:
+        return receipt['status']
     threads = list(getattr(service, "threads", {}).values())
     return PENDING if any(t.is_alive() for t in threads) else CONFIRMED
 
@@ -296,7 +298,9 @@ class ApplicationServices:
             self.ensure_open()
             previous = self._instances["artifact_diagnostics"]
             if previous is not None:
-                previous.shutdown()
+                receipt=previous.shutdown()
+                if isinstance(receipt,dict) and receipt.get('status')!='confirmed':
+                    raise RuntimeError('Önceki inceleme aracının kapanışı henüz doğrulanmadı.')
                 if any(t.is_alive() for t in getattr(previous, 'threads', {}).values()):
                     raise RuntimeError('Önceki incelemenin kapanışı henüz tamamlanmadı.')
             service = (self.factories.artifact_diagnostics(selected_path, question=question)

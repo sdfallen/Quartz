@@ -24,6 +24,8 @@ hiddenimports += ['core.application_services', 'core.shutdown']
 hiddenimports += ['core.investigation', 'core.investigation.contracts', 'core.investigation.evidence',
                   'core.investigation.memory', 'core.investigation.session', 'core.investigation.planning',
                   'core.investigation.gateway']
+hiddenimports += ['core.rea_analysis', 'core.rea_analysis.binary', 'core.rea_analysis.managed',
+                  'core.rea_analysis.packages', 'core.rea_analysis.service']
 hiddenimports += ['core.notion_cli', 'core.notion_runtime', 'ui', 'ui.document', 'ui.styles', 'ui.theme']
 # Main-chat read-only Notion Worker fixture (lazy imports; pywin32 Credential Manager).
 hiddenimports += ['core.notion_worker_task', 'core.notion_worker_bridge', 'win32cred']

@@ -1,6 +1,7 @@
 """GUI-selected executable inspection. No directory scans or target execution."""
 from pathlib import Path
 import struct
+import tempfile
 
 from core.self_diagnostics import SelfDiagnosticsService
 
@@ -15,6 +16,16 @@ def selected_executable(value):
             or path.stat().st_size > 512 * 1024 * 1024
             or any(p.casefold() in {'warbandisland', 'ai_island_test'} for p in path.parts)):
         raise ValueError('Bu dosya izinli uygulama incelemesi kapsamında değil')
+    return path
+
+
+def selected_artifact(value):
+    """One native-picker selection; legacy EXE callers keep their strict API."""
+    from core.investigation.contracts import safe_path
+    path = safe_path(value)
+    if (not path.is_file() or path.suffix.casefold() not in {'.exe','.dll','.pyd','.zip','.pkg','.pck'}
+            or path.stat().st_size>512*1024*1024):
+        raise ValueError('Bu dosya izinli uygulama veya oyun paketi incelemesi kapsamında değil')
     return path
 
 
@@ -84,8 +95,8 @@ class ArtifactDiagnosticsService(SelfDiagnosticsService):
     SCOPE = 'artifact'
 
     def __init__(self, selected_path, *, knowledge=None, question=None, investigation_root=None,
-                 investigation=True, **kwargs):
-        self.target = selected_executable(selected_path)
+                 investigation=True, analyzer=None, analysis_enabled=True, **kwargs):
+        self.target = selected_artifact(selected_path)
         stat = self.target.stat()
         self.identity = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
         super().__init__(**kwargs)
@@ -97,6 +108,11 @@ class ArtifactDiagnosticsService(SelfDiagnosticsService):
         self.investigation_enabled = bool(investigation)
         self._investigations = {}
         self._inventories = {}
+        self.analyzer = analyzer
+        self.analysis_enabled = bool(analysis_enabled)
+        self._gateways = {}
+        self._gateway_cleanup = {}
+        self._investigation_closed = False
         if knowledge is False:
             self.knowledge = None
         elif knowledge is not None:
@@ -124,6 +140,21 @@ class ArtifactDiagnosticsService(SelfDiagnosticsService):
                 snapshot['investigation_knowledge_saved'] = False
             snapshot['investigation'] = session.summary()
 
+    def start(self, include_rea=True):
+        with self.lock:
+            if self._investigation_closed:
+                raise RuntimeError('İnceleme kapanmış; yeni iş başlatılmadı.')
+            if any(x.get('status')!='confirmed' for x in self._gateway_cleanup.values()):
+                raise RuntimeError('Önceki inceleme aracının kapanışı doğrulanmalı.')
+            result=super().start(include_rea)
+            # The existing diagnostics inventory is bounded to five jobs. Drop
+            # matching completed domain scopes too; retain unconfirmed owners.
+            for old in set(self._investigations)-set(self.jobs):
+                if self._gateway_cleanup.get(old,{}).get('status','confirmed')=='confirmed':
+                    self._investigations.pop(old,None);self._inventories.pop(old,None)
+                    self._gateways.pop(old,None);self._gateway_cleanup.pop(old,None)
+            return result
+
     def _commit_completed(self, identity, snapshot):
         session = self._investigations.get(identity)
         if session is not None and session.prepared is not None:
@@ -143,13 +174,22 @@ class ArtifactDiagnosticsService(SelfDiagnosticsService):
         session = None
         try:
             if self.investigation_enabled:
-                tool_identity = (ReaAdapter.runtime_identity() if self.rea is None else
+                tool_identity = (ReaAdapter.runtime_identity() if include_rea and self.rea is None else
                                  {'provider':'injected-analyzer', 'type':type(self.rea).__name__})
+                if self.analysis_enabled:
+                    from core.rea_analysis import AnalysisService
+                    from core.rea_analysis.service import PARSER_VERSION
+                    analyzer = self.analyzer or AnalysisService()
+                    version = getattr(analyzer, 'runtime_identity', None)
+                    tool_identity = {'inventory':tool_identity,
+                        'analysis':version() if callable(version) else PARSER_VERSION}
                 session = InvestigationSession(self.target, root=self.investigation_root,
                     event=event, deadline=deadline, tool_identity=tool_identity, question=self.question)
                 self._investigations[identity] = session
             self._inspect_static(identity, event, deadline, include_rea, session)
             if session is not None:
+                if self.analysis_enabled:
+                    self._inspect_structure(identity,event,deadline,session,analyzer)
                 session.finish(self.status(identity)['checks'], self._inventories.get(identity))
                 self._update(identity, investigation=session.summary())
         except Cancelled as exc:
@@ -158,14 +198,60 @@ class ArtifactDiagnosticsService(SelfDiagnosticsService):
             if session is not None:
                 session.close(cancelled=event.is_set())
 
+    def _inspect_structure(self, identity, event, deadline, session, analyzer):
+        from core.investigation.contracts import bounded_json, safe_path
+        from core.investigation.gateway import InvestigationToolGateway
+        from core.investigation.planning import InvestigationPolicy
+        self._update(identity,phase='analysis',progress=80,message='Dosyanın yapı ve bağımlılık ilişkileri inceleniyor…')
+        root=safe_path(self.investigation_root/'workspaces',exists=False);root.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='analysis-',dir=root) as folder:
+            gateway=InvestigationToolGateway(session,None,workspace=folder,
+                policy=InvestigationPolicy(effects=frozenset({'read_target','write_workspace'}),max_output_bytes=4*1024*1024),
+                tool_specs={})
+            self._gateways[identity]=gateway
+            try:
+                catalog=bounded_json(analyzer.capabilities(session.target.as_dict()))
+                available={c['capability_id'] for c in catalog if isinstance(c,dict) and c.get('available') is True}
+                request={'investigation_id':session.evidence.id,'step_id':'structure',
+                    'operation':'analyze_structure','tool_id':'quartz-builtin-analysis',
+                    'target':session.target.as_dict(),'workspace':folder,'options':{},
+                    'deadline_monotonic':deadline,'max_output_bytes':4*1024*1024}
+                report=bounded_json(analyzer.analyze(request,gateway,event),maximum=512*1024)
+                self._guard(event,deadline)
+                cleanup=report.get('cleanup_receipt') if isinstance(report,dict) else None
+                if not isinstance(cleanup,dict) or cleanup.get('status')!='confirmed':
+                    self._check(identity,'analysis','UNKNOWN','Yapı çözümlemesi','Analiz temizliği doğrulanmadı; sonuç kabul edilmedi.')
+                    return
+                if report.get('errors') or not report.get('findings'):
+                    self._check(identity,'analysis','UNKNOWN','Yapı çözümlemesi',
+                        'Desteklenen yapı ilişkileri doğrulanamadı; bu durum uygulamanın bozuk olduğunu kanıtlamaz.',
+                        unsupported=report.get('unsupported',[])[:12])
+                    return
+                session.accept_analysis(report,executed_capabilities=available)
+                self._check(identity,'analysis','PASS','Yapı ve bağımlılık çözümlemesi',
+                    'Desteklenen dosya ilişkileri gerçek kaynak kanıtına bağlandı; çalışma davranışı test edilmedi.',
+                    capabilities=report['capabilities_used'],findings=len(report['findings']),
+                    unsupported=report.get('unsupported',[])[:12])
+            finally:
+                self._gateway_cleanup[identity]=gateway.close()
+
+    def shutdown(self):
+        with self.lock:self._investigation_closed=True
+        super().shutdown()
+        for identity,gateway in list(self._gateways.items()):
+            self._gateway_cleanup[identity]=gateway.close()
+        states=[x.get('status','pending') for x in self._gateway_cleanup.values()]
+        status='pending' if any(t.is_alive() for t in self.threads.values()) or 'pending' in states else 'failed' if 'failed' in states else 'confirmed'
+        return {'status':status,'components':{'analysis_gateways':dict(self._gateway_cleanup)}}
+
     def _inspect_static(self, identity, event, deadline, include_rea, session=None):
-        target = selected_executable(self.target)
+        target = selected_artifact(self.target)
         stat = target.stat()
         if self.identity != (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns):
             raise ValueError('Seçilen dosya değişti; yeniden seçilmeli')
         self._update(identity, phase='scope', progress=10,
                      message='Seçilen uygulama çalıştırılmadan inceleniyor…',
-                     limitations=['Yalnız seçilen EXE okunur; komşu dosyalar, hesaplar ve günlükler taranmaz.',
+                     limitations=['Yalnız seçilen dosya okunur; komşu dosyalar, hesaplar ve günlükler taranmaz.',
                                   'Statik dosya incelemesi; güvenlik, ekran davranışı veya hatasız çalışma garantisi değildir.'])
         digest = self._hash(target, event, deadline)
         self._check(identity, 'artifact', 'PASS', 'Seçilen dosya',

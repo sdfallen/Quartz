@@ -33,9 +33,10 @@ def main():
                    "core.cli_installer", "core.install_security", "core.windows_prerequisites", "core.elevation", "core.application_knowledge", "core.investigation", "core.investigation.contracts", "core.investigation.evidence", "core.investigation.memory", "core.investigation.session", "core.investigation.planning", "core.investigation.gateway", "core.self_diagnostics", "core.rea_adapter", "core.artifact_diagnostics", "core.package_repair", "core.diagnostics_intent", "core.onboarding", "core.gemini_runtime", "core.gemini_auth", "core.low_spec_optimizer", "core.squad_adapter",
                    "core.desktop_agents", "core.desktop_control", "core.desktop_native", "core.desktop_broker",
                    "core.desktop_mcp", "core.desktop_launch", "core.desktop_task_ui", "core.natural_desktop", "core.warband_workspace", "core.project_registry", "core.multi_agent_service", "core.message_intent", "core.codex_runtime", "core.antigravity_runtime", "core.process_tree", "core.chat_coordination", "core.branding",
-                   "core.async_snapshot", "core.task_outcome", "core.source_verification", "core.run_evidence_store", "core.writer_journal", "core.screen_overlay"):
+                   "core.async_snapshot", "core.task_outcome", "core.source_verification", "core.run_evidence_store", "core.writer_journal", "core.screen_overlay",
+                   "core.rea_analysis", "core.rea_analysis.binary", "core.rea_analysis.managed", "core.rea_analysis.packages", "core.rea_analysis.service"):
         source = ROOT / (module.replace(".", "/") + ".py")
-        if module == "core.investigation": source = ROOT / "core/investigation/__init__.py"
+        if module in {"core.investigation", "core.rea_analysis"}: source = ROOT / module.replace('.', '/') / '__init__.py'
         if module not in pyz.toc:
             # desktop_mcp is a standalone helper, not imported into the GUI.
             checks[module] = "standalone helper" if module == "core.desktop_mcp" else False

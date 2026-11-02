@@ -37,6 +37,7 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
     resources: 'Gerekli kaynak bileşenleri kontrolü',
     manifest: 'Paket manifesti ve SHA-256 doğrulaması',
     rea: 'REA statik ikili / arşiv incelemesi',
+    analysis: 'Yapı ve bağımlılık ilişkileri inceleniyor',
     report: 'Teşhis kanıtları kaydediliyor',
     done: 'Ölçüm tamamlandı',
   };
@@ -47,6 +48,7 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
     resources: 'Gerekli paket bileşenleri',
     manifest: 'Paket manifesti ve bütünlük',
     rea: 'REA statik paket incelemesi',
+    analysis: 'Yapı ve bağımlılık çözümlemesi',
     inspection: 'Teşhis yürütme durumu',
   };
   const DIAG_STATUS_BADGES = {

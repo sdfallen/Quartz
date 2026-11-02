@@ -168,7 +168,8 @@ class Api:
                 if not webview.windows:
                     raise ValueError('Pencere hazır değil')
                 selected = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN,
-                    allow_multiple=False, file_types=('Uygulama (*.exe)',))
+                    allow_multiple=False, file_types=('Uygulamalar (*.exe;*.dll;*.pyd)',
+                                                      'Oyun ve uygulama paketleri (*.zip;*.pck;*.pkg)'))
                 if not selected:
                     return {'status': 'ok', 'data': None}
                 if question is not None and (not isinstance(question, str) or not 1 <= len(question.strip()) <= 2000):
@@ -178,7 +179,7 @@ class Api:
             except ServicesClosed as exc:
                 return {'status': 'error', 'data': str(exc)}
             except Exception:
-                return {'status': 'error', 'data': 'Seçilen dosya güvenli inceleme için açılamadı. Normal bir EXE dosyası seçin.'}
+                return {'status': 'error', 'data': 'Seçilen dosya güvenli inceleme için açılamadı. Desteklenen uygulama veya paket dosyasını seçin.'}
 
     @_application_action
     def diagnostics_prepare_repair(self):
