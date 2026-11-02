@@ -1,6 +1,6 @@
 # Quartz REA — tek görev, üç uzman, birleşik teslim
 
-Durum: kullanıcı promptları iletti. Codex araştırma/kanıt/hafıza başlangıcını uyguladı; genel sistem ve yeni paket kabul edilmiş değildir. Claude özgün analiz görevini kendi oturumundaki filtre nedeniyle kod teslim etmeden durdurdu; aşağıdaki yeniden dağıtım geçerlidir.
+Durum: üç teslim ayrı geçmişleri korunarak birleştirildi ve ek Windows incelemesiyle düzeltildi. Üretim kodu d69e04f, test/inceleme8ddbc40; son1148-case suite hata0/skip2. Yeni paketli ana sohbet incelemesi BLOCKED; kullanıcı kurulumu değiştirilmedi. Ayrıntı INTEGRATION_REVIEW_20261102.md ve FINAL_VALIDATION.json.
 Tarih: 2026-11-02. Kod/rapor başlangıcı: 732791af26a7e6ab0cba0c36ae52221e8984006f. Son mevcut kod düzeltmesi: 3b1d506. Windows temel suite967 PASS/skip0. Kurulu EXE de512a5d362bf7bf073a3e32af5ac2d6e8725c27686dabce54edf1a3ddb68d05 korunur; yeni teslim doğrulanmadan değiştirilmez.
 
 ## Ürün hedefi
@@ -32,7 +32,7 @@ Her sahibi kendi üretim kodu, olumsuz testler, gerçek araç/uygulama kanıtı 
 - KnowledgeRecord: target/version/tool/procedure fingerprint, findings, verification_runs, preconditions, success_check, invalidation, provenance. Bayat bilgi tekrar doğrulanır; model çıktısı talimat/izin kaynağına dönüşmez.
 - AnalysisReport: schema_version, target, capabilities_used, findings, artifacts, unsupported, errors, cancellation, cleanup_receipt.
 
-Claude facade: AnalysisService.capabilities(target) ve analyze(request, tool_executor, cancel_event) -> AnalysisReport. İcra gerektiğinde yalnız enjekte edilmiş tool_executor.execute(ToolRequest, cancel_event) kullanılır; global indirici/runtime/memory yazıcısı kurulmaz. Facade için sahte examiner yerine gerçek araç adaptörleri teslim edilir.
+Codex analiz facade: AnalysisService.capabilities(target) ve analyze(request, tool_executor, cancel_event) -> AnalysisReport. İcra gerektiğinde yalnız enjekte edilmiş tool_executor.execute(ToolRequest, cancel_event) kullanılır; global indirici/runtime/memory yazıcısı kurulmaz. Facade için sahte examiner yerine gerçek araç adaptörleri teslim edilir.
 Gemini facade: ToolWorkbench.catalog(query), resolve(requirements), acquire(selection, policy, cancel_event), execute(request, cancel_event), stop(investigation_id), close(). acquire hiçbir izin/kapsam üretmez. Read-only executable probe, managed install ve target attach etkileri ayrıdır. Stop/close status confirmed/pending/failed; süreç ölümü gözlenmeden confirmed yok.
 Codex bu facadeleri mevcut ApplicationServices ve investigation owner'a bağlar. Startup idle REA/Ghidra/indirici başlatmaz. Normal sohbet gereksiz analiz/araç işi açmaz. Her facade aynı şemayı tests/fixture içinden de kullanabilir; ortak production contract dosyası Codex'te, başkasının paketine circular import ekleme.
 
