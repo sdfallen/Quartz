@@ -264,6 +264,8 @@ class DesktopBroker:
                 s["snapshot"] = None
                 self.backend.focus(current)
                 if not self.backend.is_foreground(current):
+                    if s.get("persistent_control"):
+                        raise PermissionError("Hedef pencere öne alınamadı; görev açık, girdi gönderilmedi. desktop_switch ile yeniden deneyin.")
                     self.stop("could not switch target")
                     raise PermissionError("Window activation failed; input revoked")
                 s["target"], s["focused"] = current, True

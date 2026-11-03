@@ -310,6 +310,26 @@ class NaturalTaskTests(unittest.TestCase):
         self.assertEqual(session, self.broker.status()["id"])
         self.assertEqual(self.backend.actions, [])
 
+    def test_focus_loss_never_stops_the_task_in_warband_profile(self):
+        self.task.warband = Mock()
+        self.approve();self.call("desktop_focus");self.backend.foreground=False
+        session = self.broker.status()["id"]
+        self.assertEqual(self.task.status()["operator"]["session"]["id"], session)
+        self.assertTrue(self.call("desktop_observe")["focus_recovered"])
+        self.assertEqual(session, self.broker.status()["id"])
+        self.assertEqual(self.backend.actions, [])
+
+    def test_warband_game_window_still_revokes_on_focus_loss(self):
+        self.task.warband = Mock()
+        self.backend.target["exe"] = r"C:\\Game\\mb_warband.exe"
+        self.approve();self.call("desktop_focus");self.backend.foreground=False
+        self.assertFalse(self.broker.status()["active"])
+        self.assertIn("user takeover", self.broker.stop_reason)
+
+    def test_agents_are_told_to_continue_until_stop(self):
+        from core.natural_desktop import INSTRUCTIONS
+        self.assertIn("keep working until the user presses Stop", INSTRUCTIONS)
+
     def test_start_runs_both_selected_models_without_granting_input(self):
         from tests.test_chat_coordination import MODELS
         class Runtime:

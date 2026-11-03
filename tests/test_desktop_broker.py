@@ -106,6 +106,17 @@ class BrokerTests(unittest.TestCase):
         self.assertTrue(self.broker.status()["active"])
         self.assertIsNone(self.broker._session["snapshot"])
 
+    def test_persistent_failed_switch_keeps_task_without_input(self):
+        token = self.broker.grant(1, "codex", confirmed=True, persistent_control=True)["token"]
+        self.broker.call(token, {"name": "desktop_focus"})
+        self.backend.focus = MagicMock()
+        self.backend.is_foreground = MagicMock(side_effect=[True, False])
+        with self.assertRaises(PermissionError):
+            self.broker.call(token, {"name": "desktop_switch", "arguments": {"handle": 1}})
+        self.assertEqual(self.backend.actions, [])
+        self.assertTrue(self.broker.status()["active"])
+        self.assertIsNone(self.broker._session["snapshot"])
+
     def test_recovery_cannot_cross_locked_session_or_replaced_window(self):
         token = self.broker.grant(1, "codex", confirmed=True, persistent_control=True)["token"]
         first = self.broker.call(token, {"name": "desktop_focus"})
