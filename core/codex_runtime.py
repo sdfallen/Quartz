@@ -11,7 +11,8 @@ import time
 import uuid
 from pathlib import Path
 
-from core.process_tree import stop_process_tree, wait_for_owned_cleanup
+from core.process_tree import (OwnedCleanupUnconfirmed, owned_cleanup_pending,
+                               stop_process_tree, wait_for_owned_cleanup)
 
 
 class CodexRuntime:
@@ -390,8 +391,7 @@ class CodexRuntime:
                 return self.get(run_id)
             record["cancel_requested"] = True
             record["status"] = "cancelling"
-        pending = getattr(process, "_quartz_pending_children", [])
-        if process is not None and (process.poll() is None or (isinstance(pending, list) and pending)):
+        if owned_cleanup_pending(process):
             stop_process_tree(process, timeout=max(1, timeout))
         return self.get(run_id)
 
@@ -399,13 +399,11 @@ class CodexRuntime:
         with self._lock:
             owned = list(self._processes.items())
         for run_id, process in owned:
-            pending = getattr(process, "_quartz_pending_children", [])
-            if process.poll() is None or (isinstance(pending, list) and pending):
+            if owned_cleanup_pending(process):
                 self.cancel(run_id)
         # Sending Stop is not proof that an owned process actually exited.
         for _, process in owned:
-            pending = getattr(process, "_quartz_pending_children", [])
-            if process.poll() is None or (isinstance(pending, list) and pending):
+            if owned_cleanup_pending(process):
                 raise RuntimeError("Owned runtime cleanup is not confirmed")
 
     def _command(self, args):
@@ -531,8 +529,8 @@ class CodexRuntime:
                     exit_known = True
                 except Exception:
                     code = -1
-            known_children = getattr(process, "_quartz_pending_children", [])
-            if not exit_known or (isinstance(known_children, list) and known_children):
+            if not exit_known or owned_cleanup_pending(process, include_root=False):
+                exit_known = False
                 code = wait_for_owned_cleanup(process, pending_cleanup)
                 exit_known = True
             stdout_thread.join(timeout=5)
@@ -564,7 +562,12 @@ class CodexRuntime:
                     record["process_exit_confirmed"] = exit_known
                     if exit_known:
                         record["finished_at"] = time.time()
-                    record["errors"].append("Process watcher failed; inspect cleanup status")
+                    if isinstance(exc, OwnedCleanupUnconfirmed):
+                        record.update(root_exit_confirmed=True, exit_code=exc.root_returncode,
+                                      cleanup_error='tree_discovery_incomplete')
+                        record["errors"].append("Ana süreç durdu; alt süreçlerin kapanışı doğrulanamadı.")
+                    else:
+                        record["errors"].append("Process watcher failed; inspect cleanup status")
         finally:
             with self._lock:
                 if exit_known:

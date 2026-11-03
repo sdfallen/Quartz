@@ -310,6 +310,8 @@ class ToolExecutor:
         job = record.get("job")
         if job:
             return job.empty()
+        if getattr(process, '_quartz_tree_discovery_incomplete', False) is True:
+            return False
         import psutil
         for child in record["children"].values():
             try:
