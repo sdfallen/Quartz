@@ -35,6 +35,7 @@ No model, UI, permission, learning-record, game, or user-data behavior changed.
 - REGRESSION: 1245 tests OK, 14 skipped. Twelve require the worktree's built
   desktop helper; those were subsequently rerun after copying the unchanged,
   hash-verified helper. The other two remain skips, not successful acceptance.
+  Helper-dependent module rerun: 22 tests OK, no skips.
 - Targeted cancellation/lifecycle regression: 63 tests PASS, then all 11 new
   fault/concurrency tests PASS after the concurrency case was added.
 - REAL PROCESS: four runtime cancel/watcher cases PASS: Codex and Antigravity,
@@ -50,6 +51,8 @@ Logs: `stop-A02-full-suite.log`, `stop-A02-targets-final.log`,
 Process evidence: `stop-A02-live-20261103-first/result.json`, including source
 hashes. Its source_commit is the parent baseline plus recorded working-file
 hashes, not a claim that the patch was already committed during that run.
+The final four-case run `stop-A02-live-b27f8ae/result.json` is VERIFIED and
+records the exact committed source `b27f8ae030cf9e6bab3581daa01a95bf0b99a658`.
 
 ## Honest boundary
 
@@ -68,3 +71,16 @@ registry by this patch. No broad REA or learning rewrite was attempted.
 Keep the installed Quartz unchanged until integration with Claude's learning
 delivery is coordinated. Deliver the scoped commit and private package evidence.
 Runtime fixtures are not USER ACCEPTED and do not establish whole-system completion.
+
+Private candidate: `stop-A02-dist/Quartz/Quartz.exe` beneath the evidence root.
+SHA256: `c3711a17207e4de590054aebdac41b7efa47365664fed746be7f1d44dc494221`.
+BUILT: PyInstaller completed. Package/source verification: 88 checks, zero
+failures; all four changed runtime modules match source. See
+`stop-A02-package-verification.json`. This does not launch the GUI.
+Clean distribution audit: PASS, 1919 files, zero findings
+(`stop-A02-package-audit.json`).
+
+Preservation check: all 43 previously recorded user files still exist; only
+`assistant.log` and `quartz_entry.log` differ. Installed EXE remains SHA256
+`955df5bec7e35cb20f51574485313fccbd450accee7a59ef5ece09cc58530498`.
+See private `stop-A02-preservation.json`. No production deployment in this task.
