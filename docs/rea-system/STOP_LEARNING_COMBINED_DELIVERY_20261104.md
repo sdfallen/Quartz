@@ -42,3 +42,14 @@ Receipt and rollback originals:
 Installed checks: `stop-learning-installed-verification.json`.
 Original learning package receipt:
 `C:\Users\LENAVO\.codex\backups\quartz-workspace-package-20261103-235539/deployment-receipt.json`.
+
+## Independent delivery recheck
+
+After the user's "Claude finished" message, current installed bytes were checked
+again without launching or replacing the app. All 88 package/source checks pass;
+the packaged atomic writer separately matches the corrected source. All 43
+user files match the combined-promotion receipt (zero missing/changed).
+Evidence: private `claude-finished-independent-check-20261104.json` and
+`claude-finished-installed-recheck-20261104.json`. No newer learning gameplay or
+model-training capability is inferred from this packaging delivery. Real chat
+memory reuse after restart and live GUI Stop remain the product acceptance gates.
