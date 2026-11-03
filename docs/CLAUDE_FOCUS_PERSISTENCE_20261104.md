@@ -32,3 +32,23 @@ görev de biter; talimat bunu odak nedeniyle yapmamasını söyler ama zorlamaz.
 
 TESTED: yeni regresyonlar düzeltmesiz kodda başarısız, düzeltmeyle başarılı.
 Gerçek Windows odak değişimi ve paketli sohbet kabulü bu belgede kanıtlanmaz.
+
+## Codex entegrasyon kontrolü
+
+4 Kasım 2026: `claude/focus-persist-20261104` (`19601a2`) dalı,
+`codex/rea-chat-review-20261102` entegrasyon dalına fast-forward alındı.
+Bu işlem `main` birleşmesi veya uzak repoya yayın değildir. Yeni paketler
+`19601a2` ve sonrasındaki bu entegrasyon kaynağından üretilmeli; eski ana
+çalışma klasöründen derleme odak düzeltmesini içermeyebilir.
+
+Kurulu EXE SHA256:
+`87fd63861d814f1ef5b6668b43bac1be14f20186b14217bf8a1b340f2a726df1`.
+88 paket/kaynak kontrolü hatasız; önceki Stop (`b27f8ae`) ve öğrenme
+(`05890c7`) düzeltmeleri ancestry içinde korunuyor. Hedefli broker, doğal
+masaüstü, ajan ve Stop regresyonları: 89 test OK. Bu bağımsız incelemede
+uygulama başlatılmadı veya kurulum değiştirilmedi; gerçek GUI kabulü yapılmadı.
+
+Özel kanıt kökü: `C:\Users\LENAVO\.codex\backups\quartz-final-integration-20261102`.
+Kanıtlar: `focus-merge-targeted-20261104.log`,
+`focus-installed-verification-20261104.json`.
+Birleşme öncesi checkpoint: `before-focus-merge-4120f5e.bundle`.
