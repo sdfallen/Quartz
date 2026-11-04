@@ -17,7 +17,16 @@ JAVASCRIPT = r"""
   function applyUiPreference(key, value, persist=true) {
     uiRoot.dataset[key] = value;
     markPrefButtons();
-    if (persist) Promise.resolve().then(() => window.pywebview.api.ui_set_preference(key, value)).catch(() => {});
+    if (!persist) return;
+    const notice = document.getElementById('prefNotice');
+    const report = text => { notice.textContent = text; notice.hidden = !text; };
+    report('');
+    Promise.resolve().then(() => window.pywebview.api.ui_set_preference(key, value)).then(result => {
+      if (result?.status !== 'ok') throw new Error(result?.data || 'Bilinmeyen hata');
+    }).catch(error => {
+      report('Görünüm tercihi kaydedilemedi; yalnız bu oturumda geçerli.');
+      logLine('Görünüm tercihi kaydedilemedi: ' + String(error.message || error));
+    });
   }
   if (!uiRoot.dataset.theme) uiRoot.dataset.theme = UI_DEFAULTS.theme;
   if (!uiRoot.dataset.crystal) uiRoot.dataset.crystal = UI_DEFAULTS.crystal;

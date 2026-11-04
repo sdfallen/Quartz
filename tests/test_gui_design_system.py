@@ -11,6 +11,7 @@ import gui
 from core import ui_preferences, ui_window
 from ui.js_workspace import JAVASCRIPT as WORKSPACE
 from ui.shell import SHELL_MARKUP
+from ui.theme import MODERN_CSS
 from ui.styles import BASE_CSS, _LIGHT_CRYSTALS, _LIGHT_TOKENS
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -175,6 +176,46 @@ class ShellTests(unittest.TestCase):
         self.assertIn(".desktop-task-bar[data-state=\"normal\"]:has(#btnDesktopTaskStop[hidden])", css)
         # The strip only hides when there is nothing to stop.
         self.assertNotRegex(css, r'\.desktop-task-bar\[data-state="normal"\]\s*\{')
+
+    def test_stop_buttons_sit_above_panels_and_overlays(self):
+        css = (ROOT / "assets" / "workspace.css").read_text(encoding="utf-8")
+        self.assertIn("#btnDesktopTaskStop, #btnCancel { position: relative; z-index: 950; }", css)
+        layers = [int(v) for v in re.findall(r"z-index:\s*(\d+)", css)]
+        self.assertEqual(max(layers), 950)
+        # Containment or animation on an ancestor would trap Stop under the panels.
+        self.assertNotRegex(re.search(r"\.main \{[^}]*\}", css).group(0), r"container-type|contain:|transform|z-index")
+        self.assertNotRegex(MODERN_CSS, r"\.thinking-row\.show \{")
+
+    def test_status_cards_name_the_local_assistant(self):
+        for label in ("Yerel asistan operasyonu", "Yerel asistan görevleri", "Yerel asistan modeli (API)"):
+            self.assertIn(label, SHELL_MARKUP)
+
+    def test_failed_preference_save_is_reported_not_swallowed(self):
+        self.assertNotIn(".catch(() => {});", WORKSPACE[:WORKSPACE.index("function moveThumb")])
+        self.assertIn('id="prefNotice"', SHELL_MARKUP)
+        start = WORKSPACE.index("  function applyUiPreference")
+        end = WORKSPACE.index("  if (!uiRoot.dataset.theme)")
+        script = r'''
+const assert=require('node:assert/strict');
+const notice={textContent:'',hidden:true};const logs=[];
+const uiRoot={dataset:{}};const markPrefButtons=()=>{};const logLine=t=>logs.push(t);
+const document={getElementById:()=>notice};let reply;
+const window={pywebview:{api:{ui_set_preference:()=>reply()}}};
+''' + WORKSPACE[start:end] + r'''
+(async()=>{
+ reply=()=>Promise.resolve({status:'error',data:'disk dolu'});
+ applyUiPreference('theme','light');await new Promise(r=>setTimeout(r,5));
+ assert.equal(uiRoot.dataset.theme,'light');assert.equal(notice.hidden,false);assert.match(logs[0],/disk dolu/);
+ reply=()=>Promise.reject(new Error('köprü yok'));
+ applyUiPreference('theme','dark');await new Promise(r=>setTimeout(r,5));
+ assert.equal(notice.hidden,false);assert.match(logs[1],/köprü yok/);
+ reply=()=>Promise.resolve({status:'ok',data:{}});
+ applyUiPreference('theme','dark');await new Promise(r=>setTimeout(r,5));
+ assert.equal(notice.hidden,true);
+})().catch(e=>{console.error(e);process.exit(1)});
+'''
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_palette_cannot_run_destructive_actions(self):
         commands = WORKSPACE[WORKSPACE.index("function paletteCommands()"):WORKSPACE.index("const paletteFold")]

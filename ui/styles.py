@@ -68,8 +68,8 @@ BASE_CSS = r"""
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
   --mono: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
-  --text-xs: 11.5px;
-  --text-sm: 12.5px;
+  --text-xs: 12px;
+  --text-sm: 13px;
   --text-md: 14px;
   --text-lg: 15px;
 

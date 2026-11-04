@@ -239,19 +239,19 @@ SHELL_MARKUP = r"""
         <div class="stat-row"><div class="stat-top"><span>Disk</span><span class="val" id="diskVal">--%</span></div><div class="stat-bar"><div class="stat-fill" id="diskFill"></div></div></div>
       </section>
       <section class="card">
-        <div class="card-label">Aktif operasyon</div>
-        <div class="log-box" id="operationStatus">Aktif görev yok</div>
+        <div class="card-label">Yerel asistan operasyonu</div>
+        <div class="log-box" id="operationStatus">Operasyon yok</div>
         <div class="card-actions">
           <button type="button" class="control-btn" id="btnLearnOperation" style="display:none">Öğren</button>
           <button type="button" class="control-btn" id="btnFinishOperation" style="display:none">Bitir</button>
         </div>
       </section>
       <section class="card">
-        <div class="card-label">Görevler</div>
-        <div class="log-box" id="taskList">Henüz görev yok</div>
+        <div class="card-label">Yerel asistan görevleri</div>
+        <div class="log-box" id="taskList">Yerel asistan görevi yok</div>
       </section>
       <section class="card">
-        <div class="card-label">Sağlayıcı</div>
+        <div class="card-label">Yerel asistan modeli (API)</div>
         <div class="log-box" id="providerStatus">Kontrol ediliyor...</div>
         <div class="card-actions">
           <button type="button" class="control-btn" id="btnProviderProbe">Bağlantıyı test et</button>
@@ -262,7 +262,7 @@ SHELL_MARKUP = r"""
         <div class="card-label">Oturum</div>
         <div class="sess-row"><span>Mesaj</span><span class="val" id="sessMsgs">0</span></div>
         <div class="sess-row"><span>Süre</span><span class="val" id="sessUptime">00:00:00</span></div>
-        <div class="sess-row"><span>Durum</span><span class="val" id="sessStatus">—</span></div>
+        <div class="sess-row"><span>Bağlantı</span><span class="val" id="sessStatus">—</span></div>
         <div class="sess-row"><span>Saat</span><span class="val" id="clock">--:--:--</span></div>
       </section>
     </div>
@@ -287,6 +287,7 @@ SHELL_MARKUP = r"""
             <button type="button" data-value="smoky" title="Dumanlı kuvars" aria-label="Dumanlı kuvars"></button>
           </div>
         </div>
+        <div class="pref-notice" id="prefNotice" role="status" hidden></div>
         <div class="pref-row stacked">
           <label for="responseDetail">Yanıt ayrıntısı</label>
           <select class="agent-select" id="responseDetail">

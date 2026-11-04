@@ -40,7 +40,6 @@ MODERN_CSS = r"""
   body:not(.low-spec) .palette { animation:q-palette var(--t-med) var(--ease) both; }
   body.show-panels:not(.low-spec) .inspector { animation:q-panel-in var(--t-slow) var(--ease) both; }
   body:not(.low-spec) .tab-panel:not([hidden]) { animation:q-fade var(--t-med) var(--ease) both; }
-  body:not(.low-spec) .thinking-row.show { animation:q-rise var(--t-med) var(--ease) both; }
   body:not(.low-spec) .notion-tools:not([hidden]) { animation:q-rise var(--t-slow) var(--ease) both; }
 
   body:not(.low-spec) .signature-intro { animation:q-intro-out 220ms var(--ease-exit) 620ms both; }

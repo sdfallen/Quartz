@@ -48,7 +48,7 @@ JAVASCRIPT = r"""  let lastUserActivityAt = Date.now();
             learnOperationBtn.style.display = 'inline-block';
             finishOperationBtn.style.display = 'inline-block';
           } else {
-            operationStatus.textContent = 'Aktif görev yok';
+            operationStatus.textContent = 'Operasyon yok';
             learnOperationBtn.style.display = 'none';
             finishOperationBtn.style.display = 'none';
           }

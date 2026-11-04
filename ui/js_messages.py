@@ -419,7 +419,7 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
   }
 
   function renderTasks(tasks=[]) {
-    if (!tasks.length) { taskList.textContent = 'Henüz görev yok'; return; }
+    if (!tasks.length) { taskList.textContent = 'Yerel asistan görevi yok'; return; }
     taskList.innerHTML = '';
     for (const task of tasks.slice(0, 5)) {
       const row = document.createElement('div'); row.className = 'task-row';
