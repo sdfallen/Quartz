@@ -1,6 +1,5 @@
 """Frontend boundary contracts: ui/ assembly, packaging paths, offline, API surface."""
 import ast
-import base64
 import re
 import sys
 import tempfile
@@ -76,8 +75,6 @@ class DocumentAssemblyTests(unittest.TestCase):
                 self.assertEqual(document.asset_root(), assets)
                 built = document.build_document("\n</head>\n<body>" + document.BRAND_PLACEHOLDER + "</body>")
         self.assertIn(".fake-workspace{color:red}", built)
-        self.assertIn("data:image/png;base64," + base64.b64encode(b"\x89PNG-test").decode("ascii"), built)
-        self.assertNotIn(document.BRAND_PLACEHOLDER, built)
 
     def test_source_checkout_root_is_repository_assets(self):
         if hasattr(sys, "_MEIPASS"):
@@ -86,12 +83,12 @@ class DocumentAssemblyTests(unittest.TestCase):
         self.assertEqual(gui._ASSET_ROOT, ROOT / "assets")
         self.assertEqual(gui._BRAND_MARK, ROOT / "assets" / "branding" / "quartz-q-48.png")
 
-    def test_missing_brand_mark_keeps_text_placeholder(self):
+    def test_brand_mark_does_not_depend_on_a_packaged_png(self):
         with tempfile.TemporaryDirectory() as directory:
             assets = _fake_assets(Path(directory), png=None)
-            built = document.build_document("\n</head>" + document.BRAND_PLACEHOLDER, assets)
+            built = document.build_document(gui._HTML_BODY, assets)
+        self.assertIn('class="q-mark brand-icon"', built)
         self.assertIn(document.BRAND_PLACEHOLDER, built)
-        self.assertNotIn('class="brand-icon"', built)
 
     def test_missing_workspace_css_still_fails_loudly(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -99,7 +96,7 @@ class DocumentAssemblyTests(unittest.TestCase):
                 document.build_document("\n</head>", Path(directory) / "assets")
 
     def test_shipped_document_keeps_brand_and_turkish_shell(self):
-        self.assertIn('class="brand-icon"', gui._HTML)
+        self.assertIn('class="q-mark brand-icon"', gui._HTML)
         self.assertIn('<html lang="tr">', gui._HTML)
         self.assertIn('<meta charset="UTF-8">', gui._HTML)
 
@@ -119,7 +116,7 @@ class PackagingContractTests(unittest.TestCase):
         self.assertIn("ui.app_js", imported(ROOT / "gui.py"))
         self.assertIn("ui.styles", imported(ROOT / "ui" / "document.py"))
         self.assertEqual({"ui.js_setup", "ui.js_messages", "ui.js_chat", "ui.js_desktop",
-                          "ui.js_diagnostics", "ui.js_advanced", "ui.js_lifecycle"},
+                          "ui.js_diagnostics", "ui.js_advanced", "ui.js_workspace", "ui.js_lifecycle"},
                          imported(ROOT / "ui" / "app_js.py"))
 
     def test_document_loads_no_remote_resources(self):
@@ -151,7 +148,7 @@ class ScriptAndApiContractTests(unittest.TestCase):
         self.assertEqual(shipped, [APPLICATION_JS])
         self.assertEqual(SCRIPT_BLOCK.findall(SCRIPT_DOCUMENT), shipped)
         self.assertEqual(SCRIPT_BLOCK.findall(source), [])
-        self.assertEqual(len(SCRIPT_PARTS), 7)
+        self.assertEqual(len(SCRIPT_PARTS), 8)
         self.assertTrue(all(part.strip() for part in SCRIPT_PARTS))
         self.assertEqual(APPLICATION_JS, "".join(SCRIPT_PARTS))
 

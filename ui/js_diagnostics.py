@@ -771,7 +771,7 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
     const r = await window.pywebview.api.set_safe_mode(!safeMode);
     safeMode = !!(r.data && r.data.enabled);
     safeBtn.classList.toggle('active', safeMode);
-    safeBtn.textContent = `Güvenli Mod: ${safeMode ? 'AÇIK' : 'KAPALI'}`;
+    document.getElementById('safeLabel').textContent = `Güvenli mod: ${safeMode ? 'açık' : 'kapalı'}`;
   });
 
   providerProbeBtn.addEventListener('click', async () => {

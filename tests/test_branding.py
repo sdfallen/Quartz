@@ -12,9 +12,27 @@ ROOT=Path(__file__).resolve().parents[1]
 
 
 class BrandingTests(unittest.TestCase):
-    def test_source_assets_are_user_supplied_exact_copies(self):
-        self.assertEqual((ROOT/'assets/branding/quartz-q.png').read_bytes(),(ROOT/'715d52a3-0f49-49c1-9fe1-b6733ea89145.png').read_bytes())
-        self.assertEqual((ROOT/'assets/branding/quartz-q.ico').read_bytes(),(ROOT/'download.ico').read_bytes())
+    def test_committed_assets_match_the_generator(self):
+        import hashlib, json
+        from scripts.build_brand_assets import build
+        manifest=json.loads((ROOT/'assets/branding/brand-manifest.json').read_text(encoding='utf-8'))
+        for name,key in (('quartz-q.svg','svg_sha256'),('quartz-q.png','png_sha256'),('quartz-q.ico','ico_sha256')):
+            self.assertEqual(hashlib.sha256((ROOT/'assets/branding'/name).read_bytes()).hexdigest(),manifest[key])
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(build(directory),manifest)
+    def test_small_icon_frames_are_generated_not_downscaled(self):
+        from scripts.build_brand_assets import ICO_SIZES,SOLID_TONE
+        with Image.open(ROOT/'assets/branding/quartz-q.ico') as icon:
+            self.assertEqual(sorted(icon.ico.sizes()),[(s,s) for s in ICO_SIZES])
+            small=icon.ico.getimage((16,16)).convert('RGBA')
+        tone=[int(SOLID_TONE[i:i+2],16) for i in (1,3,5)]
+        opaque=[small.getpixel((x,y))[:3] for x in range(16) for y in range(16) if small.getpixel((x,y))[3]==255]
+        self.assertTrue(opaque)
+        for pixel in opaque: self.assertLessEqual(max(abs(a-b) for a,b in zip(pixel,tone)),2)
+    def test_in_app_mark_uses_the_same_geometry(self):
+        from scripts.build_brand_assets import facets,TAIL,_points
+        from ui.shell import SHELL_MARKUP
+        for polygon in [*facets(),TAIL]: self.assertIn(_points(polygon),SHELL_MARKUP)
     def test_required_sizes_present_and_decodable(self):
         path=ROOT/'assets/branding/quartz-q.ico'
         sizes={tuple(e['size']) for e in ico_entries(path)}
@@ -44,8 +62,8 @@ class BrandingTests(unittest.TestCase):
             self.assertFalse(target.exists())
     def test_gui_header_embeds_small_local_q_mark(self):
         import gui
-        self.assertIn('alt="Quartz Q"',gui._HTML)
-        self.assertIn('class="brand-icon"',gui._HTML)
+        self.assertIn('aria-label="Quartz"',gui._HTML)
+        self.assertIn('brand-icon"',gui._HTML)
         self.assertNotIn('fonts.googleapis.com',gui._HTML)
     @unittest.skipUnless(os.name=='nt','Windows shell-link file test')
     def test_shortcut_created_read_back_and_backed_up_before_update(self):

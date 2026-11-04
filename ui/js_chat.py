@@ -134,7 +134,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       codexModelPill.classList.toggle('active-codex', agent === 'codex' || isCollab);
     }
     if (btnContinueCollab) {
-      btnContinueCollab.style.display = isCollab ? 'inline-block' : 'none';
+      btnContinueCollab.style.display = isCollab ? 'inline-flex' : 'none';
     }
     renderAgentConnections(undefined, agent);
   }
@@ -424,7 +424,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
   function updatePermissionSelectionHint() {
     const select=document.getElementById('mainPermissionLevel');
     const hint=document.getElementById('permissionSelectionHint');
-    const labels={'read-only':'Tam Yetki',project:'Proje Yetkisi',full:'◉ Tam Yetki Aktif'};
+    const labels={'read-only':'Tam Yetki',project:'Proje Yetkisi',full:'Tam Yetki'};
     const level=select?.value || 'full';
     if(hint){hint.textContent=`${labels[level] || labels['full']}`;
       hint.title='Tek Yetki Sistemi (Tam Yetki) kalıcı olarak aktiftir.';}
@@ -620,31 +620,5 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     list.scrollTop=top;
   }
 
-  function initializeWorkspaceLayout() {
-    const left=document.querySelector('.rail.left'), right=document.querySelector('.rail.right');
-    const old=document.createElement('details');old.id='legacyTools';
-    const summary=document.createElement('summary');summary.textContent='Eski araçlar ve gelişmiş teşhis';old.append(summary);
-    [...left.children].forEach(item=>old.append(item));right.append(old);
-    for(const id of ['btnWake','btnTts'])old.append(document.getElementById(id));
-    const heading=document.createElement('div');heading.className='workspace-nav-title';heading.textContent='Çalışma alanı';
-    const project=document.createElement('div');project.className='workspace-project';project.append(mainProjectSelect,document.getElementById('btnAddProject'));
-    const newChat=document.createElement('button');newChat.className='conversation-entry';newChat.textContent='＋ Yeni sohbet';newChat.onclick=()=>document.getElementById('btnNewChat').click();
-    const title=document.createElement('div');title.className='workspace-nav-title';title.textContent='Sohbetler';
-    const clearProject=document.createElement('button');clearProject.id='btnDeleteProjectChats';
-    clearProject.className='project-chats-delete';clearProject.textContent='Bu projenin sohbetlerini temizle';
-    clearProject.onclick=()=>requestChatDeletion(navigationConversations.filter(c=>(c.project_id||'squad-pilot')===mainProjectSelect.value),mainProjectSelect.value);
-    const history=document.createElement('div');history.id='conversationList';history.className='conversation-list';
-    const setting=document.getElementById('responseDetail').closest('.card');
-    const agentsTitle=document.createElement('div');agentsTitle.className='workspace-nav-title';agentsTitle.id='agentConnectionsTitle';agentsTitle.textContent='Ajanlar';
-    const agents=document.createElement('div');agents.id='agentConnections';agents.className='agent-connections';
-    agents.setAttribute('role','list');agents.setAttribute('aria-labelledby','agentConnectionsTitle');
-    left.append(heading,project,newChat,title,history,clearProject,agentsTitle,agents,setting);
-    renderAgentConnections();
-    document.getElementById('btnPanels').textContent='Gelişmiş';
-    document.getElementById('btnAgentCenter').textContent='Ajan tanılama';
-    document.getElementById('signatureIntro')?.remove();
-    inputEl.placeholder='Ekibe yazın veya görev verin…';
-  }
-  initializeWorkspaceLayout();
 
 """

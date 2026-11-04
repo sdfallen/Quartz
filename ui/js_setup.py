@@ -51,7 +51,7 @@ JAVASCRIPT = r"""
 
   function updateAntigravitySafety(status) {
     antigravitySafetyWarning = String(status?.safety_warning || '');
-    for (const [agent, label] of [['antigravity', '◈ Antigravity'], ['collaboration', '◈ Birlikte']]) {
+    for (const [agent, label] of [['antigravity', 'Antigravity'], ['collaboration', 'Birlikte']]) {
       const button = document.querySelector(`.agent-seg-btn[data-agent="${agent}"]`);
       if (!button) continue;
       button.textContent = label + (antigravitySafetyWarning ? ' ⚠' : '');
@@ -67,7 +67,6 @@ JAVASCRIPT = r"""
     return accepted;
   }
 
-  signatureIntro.addEventListener('animationend', () => signatureIntro.remove());
 
   async function checkApiSetup() {
     try {

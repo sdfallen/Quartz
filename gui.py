@@ -21,6 +21,8 @@ import webview
 from core.application_services import (ServicesClosed,
     CONFIRMED, FAILED, PENDING, ApplicationServices, ServicesClosed, overall_status)
 from core.local_ipc import request_token
+from core.ui_preferences import apply_to_document, load_ui_preferences, save_ui_preference, window_background
+from core.ui_window import full_window_rect, initial_geometry
 from ui.document import BRAND_MARK, asset_root, build_document
 from ui.shell import SHELL_MARKUP
 from ui.app_js import SCRIPT_DOCUMENT
@@ -920,6 +922,16 @@ class Api:
         except Exception:
             return {"cpu": 0, "mem": 0, "disk": 0}
 
+    def ui_preferences(self) -> dict:
+        """Theme and crystal accent; survives restarts unlike the private WebView profile."""
+        return {"status": "ok", "data": load_ui_preferences()}
+
+    def ui_set_preference(self, key: str, value: str) -> dict:
+        try:
+            return {"status": "ok", "data": save_ui_preference(key, value)}
+        except (ValueError, OSError) as error:
+            return {"status": "error", "data": str(error)}
+
     def minimize(self):
         if webview.windows:
             webview.windows[0].minimize()
@@ -928,8 +940,14 @@ class Api:
         """Resize the main window into a draggable, chat-only companion."""
         self._compact = bool(enabled)
         if webview.windows:
-            width, height = ((390, 520) if self._compact else (1160, 740))
-            webview.windows[0].resize(width, height)
+            window = webview.windows[0]
+            if self._compact:
+                window.resize(390, 520)
+            else:
+                width, height, x, y = full_window_rect()
+                window.resize(width, height)
+                if x is not None:
+                    window.move(x, y)
         return {"compact": self._compact}
 
     def close(self):
@@ -1097,14 +1115,13 @@ class QuartzUI:
         self._api = Api()
         self._window = webview.create_window(
             "Quartz",
-            html=_HTML,
+            html=apply_to_document(_HTML),
             js_api=self._api,
-            width=1160,
-            height=740,
             min_size=(360, 420),
             frameless=True,
             easy_drag=False,
-            background_color="#141517",
+            background_color=window_background(),
+            **initial_geometry(),
         )
         # Fires on ANY close path (our button, Alt+F4,
         # taskbar "Close window", etc.) — not just the

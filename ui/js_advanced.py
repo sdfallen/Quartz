@@ -173,7 +173,7 @@ JAVASCRIPT = r"""  function addAgentRow(container, title, details, status='') {
     if (!handle || !prompt) { desktopStatus.textContent = 'Önce pencere seçin ve görev açıklaması yazın.'; return; }
     const cfg = provider === 'codex' ? {model:codexModelSelect.value,effort:codexEffortSelect.value} : {model:agyModelSelect.value,effort:agyEffortSelect.value};
     if (provider === 'antigravity' && !window.confirm('Antigravity Windows istemcisi katı dosya/terminal sandbox garantisi vermiyor. Bu köprü pencere girdisini sınırlar; genel CLI dosya erişimini işletim sistemi düzeyinde yalıtmaz. Bu sınırlamayla yalnız bu masaüstü görevi başlatılsın mı?')) return;
-    if (!window.confirm('Bu görev için seçili pencereye ekran okuma ve sınırlı klavye/fare izni verilsin mi? Görüntüler seçili model sağlayıcısına gönderilir. Başka pencereye geçmek kontrolü durdurur. Dosya yazma yetkisi verilmez.')) return;
+    if (!window.confirm('Bu görev için seçili pencereye ekran okuma ve sınırlı klavye/fare izni verilsin mi? Görüntüler seçili model sağlayıcısına gönderilir. Dosya yazma yetkisi verilmez.')) return;
     const response = await window.pywebview.api.desktop_operator_start(provider, handle, prompt, cfg.model, cfg.effort, true);
     if (response.status !== 'ok') { desktopStatus.textContent = response.data; return; }
     if (!desktopPolling) { desktopPolling = true; pollDesktopOperator(); }
@@ -195,7 +195,7 @@ JAVASCRIPT = r"""  function addAgentRow(container, title, details, status='') {
     const r = await window.pywebview.api.set_screen_advisor(!advisorEnabled);
     advisorEnabled = !!(r.data && r.data.enabled);
     advisorBtn.classList.toggle('active', advisorEnabled);
-    advisorBtn.innerHTML = `<span class="ic">${advisorEnabled ? '◉' : '◌'}</span> Ekran Rehberi: ${advisorEnabled ? 'AÇIK' : 'KAPALI'}`;
+    document.getElementById('advisorLabel').textContent = `Ekran rehberi: ${advisorEnabled ? 'açık' : 'kapalı'}`;
     logLine(`Ekran Rehberi ${advisorEnabled ? 'açıldı' : 'kapatıldı'}`);
   });
   learnOperationBtn.addEventListener('click', () => sendDirect('bu işi öğren'));
@@ -210,12 +210,13 @@ JAVASCRIPT = r"""  function addAgentRow(container, title, details, status='') {
   });
   inputEl.addEventListener('keydown', (e) => {
     if (e.isComposing || e.repeat) return;
-    if (e.key === 'Enter') { e.preventDefault(); sendAgentMessage(); }
+    if (e.key === 'Enter') { if (e.shiftKey) return; e.preventDefault(); sendAgentMessage(); }
     else if (e.key === 'ArrowUp') {
-      if (!inpHistory.length) return;
+      if (!inpHistory.length || inputEl.value.includes('\n')) return;
       histCursor = Math.min(histCursor + 1, inpHistory.length - 1);
       inputEl.value = inpHistory[inpHistory.length - 1 - histCursor];
     } else if (e.key === 'ArrowDown') {
+      if (inputEl.value.includes('\n')) return;
       if (histCursor <= 0) { histCursor = -1; inputEl.value = ''; return; }
       histCursor--;
       inputEl.value = inpHistory[inpHistory.length - 1 - histCursor];
@@ -258,13 +259,13 @@ JAVASCRIPT = r"""  function addAgentRow(container, title, details, status='') {
     addDetail('TAILSCALE YAYINI', data.tailscale_command);
     const copyButton = document.createElement('button');
     copyButton.type = 'button'; copyButton.className = 'mobile-card-action';
-    copyButton.textContent = '▣ ANAHTARI KOPYALA';
+    copyButton.textContent = 'ANAHTARI KOPYALA';
     copyButton.onclick = async () => {
       copyButton.disabled = true;
       const result = await window.pywebview.api.copy_mobile_token();
-      copyButton.textContent = result.status === 'ok' ? '✓ KOPYALANDI' : '! KOPYALANAMADI';
+      copyButton.textContent = result.status === 'ok' ? 'KOPYALANDI' : 'KOPYALANAMADI';
       if (result.status !== 'ok') logLine(result.data);
-      setTimeout(() => { copyButton.disabled = false; copyButton.textContent = '▣ ANAHTARI KOPYALA'; }, 1800);
+      setTimeout(() => { copyButton.disabled = false; copyButton.textContent = 'ANAHTARI KOPYALA'; }, 1800);
     };
     bubble.appendChild(copyButton);
   });
@@ -277,7 +278,6 @@ JAVASCRIPT = r"""  function addAgentRow(container, title, details, status='') {
       const result = await window.pywebview.api.set_compact(compactMode);
       compactMode = !!result.compact;
       document.body.classList.toggle('compact', compactMode);
-      button.textContent = compactMode ? '□' : '─';
       button.title = compactMode ? 'Tam arayüze dön' : 'Kompakt sohbete geç';
       inputEl.focus();
     } catch (e) {
@@ -321,7 +321,7 @@ JAVASCRIPT = r"""  function addAgentRow(container, title, details, status='') {
       return;
     }
     wakeBtn.classList.toggle('active', r.enabled);
-    wakeBtn.textContent = r.enabled ? '◉ Wake ON' : '◎ Wake';
+    document.getElementById('wakeLabel').textContent = `Uyandırma kelimesi: ${r.enabled ? 'açık' : 'kapalı'}`;
     logLine(r.enabled ? '"Hey Quartz" dinleniyor...' : 'Wake-word kapatıldı');
   });
 
@@ -330,7 +330,7 @@ JAVASCRIPT = r"""  function addAgentRow(container, title, details, status='') {
     ttsEnabled = !ttsEnabled;
     await window.pywebview.api.set_tts_enabled(ttsEnabled);
     ttsBtn.classList.toggle('active', ttsEnabled);
-    ttsBtn.textContent = ttsEnabled ? '🔊 TTS' : '🔇 TTS';
+    document.getElementById('ttsLabel').textContent = `Sesli yanıt: ${ttsEnabled ? 'açık' : 'kapalı'}`;
   });
 
   // ── Voice: callbacks pushed from the Python wake-word thread ──

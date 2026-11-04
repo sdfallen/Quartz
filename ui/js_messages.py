@@ -12,17 +12,8 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
   let requestStarted = 0;
   let requestTimer = null;
 
-  const orbStates = {
-    idle:      { core: 'radial-gradient(circle at 35% 30%, #8ff6ff 0%, #17b7d6 45%, #063a47 100%)', glow: 'rgba(52,234,255,0.55)',  speed: '2.6s' },
-    listening: { core: 'radial-gradient(circle at 35% 30%, #c9b8ff 0%, #7c6cff 45%, #2a1f66 100%)', glow: 'rgba(124,108,255,0.6)',  speed: '1.1s' },
-    thinking:  { core: 'radial-gradient(circle at 35% 30%, #ffe6a8 0%, #ffb454 45%, #6b3d05 100%)', glow: 'rgba(255,180,84,0.6)',   speed: '0.9s' },
-    error:     { core: 'radial-gradient(circle at 35% 30%, #ffb3ba 0%, #ff5c72 45%, #5c0d17 100%)', glow: 'rgba(255,92,114,0.6)',   speed: '2.6s' },
-  };
   function setOrb(state) {
-    const s = orbStates[state] || orbStates.idle;
-    orbCore.style.background = s.core;
-    orbCore.style.boxShadow = `0 0 14px 2px ${s.glow}, 0 0 28px 8px ${s.glow}`;
-    orbCore.style.animationDuration = s.speed;
+    orbCore.dataset.state = ['listening', 'thinking', 'error'].includes(state) ? state : 'idle';
   }
 
   function tick() {
@@ -169,10 +160,11 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     const key = JSON.stringify([text, view.details, view.state, level]);
     if (bubble.dataset.renderKey === key) return false;
     bubble.dataset.renderKey = key;
+    bubble.classList?.toggle('pending', view.summary === '...');
     bubble.replaceChildren();
     if (view.state) {
-      const state = document.createElement('div'); state.textContent = view.state;
-      state.style.cssText = 'font-size:11px;opacity:.8;margin-bottom:5px'; bubble.append(state);
+      const state = document.createElement('div'); state.className = 'msg-state'; state.textContent = view.state;
+      bubble.append(state);
     }
     const body = document.createElement('div'); appendMessageText(body, view.summary); bubble.append(body);
     if (msg?.status === 'interrupted' && msg.id) {
@@ -430,13 +422,13 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     if (!tasks.length) { taskList.textContent = 'Henüz görev yok'; return; }
     taskList.innerHTML = '';
     for (const task of tasks.slice(0, 5)) {
-      const row = document.createElement('div'); row.style.marginBottom = '8px';
+      const row = document.createElement('div'); row.className = 'task-row';
       const done = task.steps.filter(s => s.status === 'completed').length;
       const title = document.createElement('div');
-      title.textContent = `${task.status === 'completed' ? '✓' : '◈'} ${task.title}`;
+      title.textContent = `${task.status === 'completed' ? '✓ ' : ''}${task.title}`;
       const meta = document.createElement('div');
       meta.textContent = `${done}/${task.steps.length} adım · ${task.status}`;
-      meta.style.color = 'var(--txt-faint)';
+      meta.className = 'task-meta';
       row.append(title, meta);
       if (!['completed','failed','cancelled'].includes(task.status)) {
         const stop = document.createElement('button'); stop.className = 'control-btn';

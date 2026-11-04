@@ -6,7 +6,6 @@ the document head, the base theme and the offline asset injection that used to
 run at the bottom of ``gui.py``, plus two frontend layers that gui.py does not
 own: the modern theme (``ui/theme.py``) and the Notion tool-status renderer.
 """
-import base64
 import sys
 from pathlib import Path
 
@@ -24,11 +23,6 @@ def asset_root() -> Path:
     if base is None:
         base = Path(__file__).resolve().parents[1]
     return Path(base) / "assets"
-
-
-def brand_markup(png: bytes) -> str:
-    return ('<div class="brand"><img class="brand-icon" alt="Quartz Q" width="28" height="28" '
-            'src="data:image/png;base64,' + base64.b64encode(png).decode("ascii") + '">QUARTZ</div>')
 
 
 # Notion local-tool status for the main chat (docs/notion-tools/PLAN.md, the
@@ -253,16 +247,13 @@ def build_document(body: str, assets: Path | None = None) -> str:
 
     ``body`` is everything from ``</head>`` to ``</html>``, exactly as it sits
     in gui.py. The modern theme (``ui/theme.py``) is appended after
-    ``workspace.css`` so it wins the cascade. ``workspace.css`` is required (as before, a missing file raises);
-    the brand mark is optional and only replaces the text placeholder when the
-    PNG exists. The archived Notion renderer is not shipped in the document.
+    ``workspace.css`` so it wins the cascade. ``workspace.css`` is required (as before, a missing file raises).
+    The brand mark is inline SVG in the shell so it follows the theme. The
+    archived Notion renderer is not shipped in the document.
     """
     assets = asset_root() if assets is None else Path(assets)
     html = DOCUMENT_HEAD + "<style>\n" + BASE_CSS + "</style>" + body
     workspace_css = (assets / WORKSPACE_CSS).read_text(encoding="utf-8")
     html = html.replace("</head>", "<style>" + workspace_css + "</style>"
                         + '<style id="quartz-modern-theme">' + MODERN_CSS + "</style></head>")
-    mark = assets / BRAND_MARK
-    if mark.is_file():
-        html = html.replace(BRAND_PLACEHOLDER, brand_markup(mark.read_bytes()))
     return html

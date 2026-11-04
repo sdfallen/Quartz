@@ -7,9 +7,13 @@ import gui
 class FakeWindow:
     def __init__(self):
         self.sizes = []
+        self.moves = []
 
     def resize(self, width, height):
         self.sizes.append((width, height))
+
+    def move(self, x, y):
+        self.moves.append((x, y))
 
 
 class CompactWindowTests(unittest.TestCase):
@@ -21,10 +25,17 @@ class CompactWindowTests(unittest.TestCase):
         api = gui.Api.__new__(gui.Api)
         api._compact = False
         window = FakeWindow()
-        with patch.object(gui.webview, "windows", [window]):
+        with patch.object(gui.webview, "windows", [window]),                 patch("core.ui_window.work_area", return_value=(0, 0, 1920, 1040)):
             self.assertEqual(api.set_compact(True), {"compact": True})
             self.assertEqual(api.set_compact(False), {"compact": False})
         self.assertEqual(window.sizes, [(390, 520), (1160, 740)])
+        self.assertEqual(window.moves, [(380, 150)])
+
+    def test_returning_from_compact_fits_a_small_screen(self):
+        from core.ui_window import full_window_rect
+        width, height, x, y = full_window_rect((0, 0, 1366, 728))
+        self.assertLessEqual(x + width, 1366)
+        self.assertLessEqual(y + height, 728)
 
     def test_creator_signature_is_present_in_both_layouts(self):
         self.assertIn("DESIGNED &amp; ENGINEERED BY", gui._HTML)
