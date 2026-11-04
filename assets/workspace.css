@@ -324,6 +324,8 @@ body.show-panels .inspector { display: flex; }
 /* Width rules --------------------------------------------------------- */
 /* The conversation title outranks status text when the panel narrows the column. */
 @container (max-width: 720px) { .squad-badge, .perm-hint { display: none; } }
+/* Short windows keep the composer and Stop clear of the start suggestions. */
+@media (max-height: 560px) { .prompt-chips, .empty-state p { display: none; } .empty-state .q-mark { width: 36px; height: 36px; margin-bottom: 2px; } .empty-state h1 { font-size: 19px; } }
 @media (max-width: 1080px) {
   body.show-panels .inspector { position: fixed; top: 0; right: 0; bottom: 0; z-index: 60; box-shadow: var(--shadow-3); }
   .perm-hint { display: none; }
