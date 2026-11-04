@@ -63,10 +63,10 @@ async function pollNaturalTask(){}
 (async()=>{
  await pollPing();
  assert.equal(pingCalls,1);
- assert.equal(statusText.textContent,'ÇEVRİMİÇİ');
+ assert.equal(statusText.textContent,'Çevrimiçi');
  assert.equal(timers.at(-1).fn,pollPing);
  fail=true;await pollPing();
- assert.equal(statusText.textContent,'ÇEVRİMDIŞI');
+ assert.equal(statusText.textContent,'Çevrimdışı');
  assert.equal(timers.at(-1).fn,pollPing);
  assert.equal(timers.at(-1).ms,600);
  thinking=false;chatPollInterval=null;lastUserActivityAt=0;

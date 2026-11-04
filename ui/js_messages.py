@@ -12,17 +12,8 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
   let requestStarted = 0;
   let requestTimer = null;
 
-  const orbStates = {
-    idle:      { core: 'radial-gradient(circle at 35% 30%, #8ff6ff 0%, #17b7d6 45%, #063a47 100%)', glow: 'rgba(52,234,255,0.55)',  speed: '2.6s' },
-    listening: { core: 'radial-gradient(circle at 35% 30%, #c9b8ff 0%, #7c6cff 45%, #2a1f66 100%)', glow: 'rgba(124,108,255,0.6)',  speed: '1.1s' },
-    thinking:  { core: 'radial-gradient(circle at 35% 30%, #ffe6a8 0%, #ffb454 45%, #6b3d05 100%)', glow: 'rgba(255,180,84,0.6)',   speed: '0.9s' },
-    error:     { core: 'radial-gradient(circle at 35% 30%, #ffb3ba 0%, #ff5c72 45%, #5c0d17 100%)', glow: 'rgba(255,92,114,0.6)',   speed: '2.6s' },
-  };
   function setOrb(state) {
-    const s = orbStates[state] || orbStates.idle;
-    orbCore.style.background = s.core;
-    orbCore.style.boxShadow = `0 0 14px 2px ${s.glow}, 0 0 28px 8px ${s.glow}`;
-    orbCore.style.animationDuration = s.speed;
+    orbCore.dataset.state = ['listening', 'thinking', 'error'].includes(state) ? state : 'idle';
   }
 
   function tick() {
@@ -169,12 +160,20 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     const key = JSON.stringify([text, view.details, view.state, level]);
     if (bubble.dataset.renderKey === key) return false;
     bubble.dataset.renderKey = key;
+    bubble.classList?.toggle('pending', view.summary === '...');
     bubble.replaceChildren();
     if (view.state) {
-      const state = document.createElement('div'); state.textContent = view.state;
-      state.style.cssText = 'font-size:11px;opacity:.8;margin-bottom:5px'; bubble.append(state);
+      const state = document.createElement('div'); state.className = 'msg-state'; state.textContent = view.state;
+      bubble.append(state);
     }
-    const body = document.createElement('div'); appendMessageText(body, view.summary); bubble.append(body);
+    const body = document.createElement('div');
+    const isUserMessage = msg?.role === 'user' || String(msg?.sender || '').toLowerCase() === 'user';
+    if (isUserMessage) {
+      body.textContent = view.summary;
+    } else {
+      appendMessageText(body, view.summary);
+    }
+    bubble.append(body);
     if (msg?.status === 'interrupted' && msg.id) {
       const resume = document.createElement('button'); resume.className = 'control-btn';
       resume.textContent = 'Yeni görev taslağı hazırla';
@@ -204,14 +203,171 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
 
   // Fenced ``` blocks become monospace code panels. Text only: no HTML is parsed.
   function appendMessageText(container, text) {
+  const INLINE_RE = /(?<!`)`([^`\n]+)`(?!`)|(?<=^|[\s([{"'«“‘])(?:\[([^\[\]\n]+)\]\((https?:\/\/[^()\s\n]+)\)|\*\*(?=[^\s*\n])([^*\n]+)(?<=[^\s*\n])\*\*|__(?=[^\s_\n])([^_\n]+)(?<=[^\s_\n])__|\*(?!\*)(?=[^\s*.\n])([^*\n]+)(?<=[^\s*\n])\*(?!\*)|_(?!_)(?=[^\s_.\n])([^_\n]+)(?<=[^\s_\n])_(?!_))(?=$|[\s)\]}"'»”’,!?:;]|\.(?=$|[\s)\]}"'»”’]))/u;
+  function hasMarkdownSyntax(value) {
+    const src = String(value ?? '');
+    if (/^(?:[ \t]*#{1,6}[ \t]+\S|[ \t]*(?:[-*•]|\d+[.)])[ \t]+\S)/m.test(src)) return true;
+    return INLINE_RE.test(src);
+  }
+
+  function appendInlineFormatted(parent, text) {
+    const src = String(text ?? '');
+    const tokenRe = new RegExp(INLINE_RE.source, 'gu');
+    let lastIndex = 0;
+    let match = null;
+    while ((match = tokenRe.exec(src)) !== null) {
+      if (match.index > lastIndex) {
+        const plain = document.createElement('span');
+        plain.textContent = src.slice(lastIndex, match.index);
+        parent.append(plain);
+      }
+      if (match[1] !== undefined) {
+        const code = document.createElement('code');
+        code.className = 'msg-inline-code';
+        code.textContent = match[1];
+        parent.append(code);
+      } else if (match[2] !== undefined) {
+        const link = document.createElement('span');
+        link.className = 'msg-link';
+        link.textContent = match[2];
+        link.title = match[3].trim();
+        parent.append(link);
+      } else if (match[4] !== undefined || match[5] !== undefined) {
+        const strong = document.createElement('strong');
+        appendInlineFormatted(strong, match[4] ?? match[5]);
+        parent.append(strong);
+      } else if (match[6] !== undefined || match[7] !== undefined) {
+        const em = document.createElement('em');
+        appendInlineFormatted(em, match[6] ?? match[7]);
+        parent.append(em);
+      }
+      lastIndex = tokenRe.lastIndex;
+    }
+    if (lastIndex === 0) {
+      parent.textContent = src;
+      return;
+    }
+    if (lastIndex < src.length) {
+      const tail = document.createElement('span');
+      tail.textContent = src.slice(lastIndex);
+      parent.append(tail);
+    }
+  }
+
+  function appendProseBlocks(target, prose) {
+    const lines = String(prose ?? '').split(/\r?\n/);
+    let listStack = [];
+    let paragraphLines = [];
+    const createListEl = (type, startNum) => {
+      const el = document.createElement(type);
+      el.className = 'msg-list';
+      if (type === 'ol' && startNum > 1) {
+        el.start = startNum;
+        if (typeof el.setAttribute === 'function') el.setAttribute('start', String(startNum));
+      }
+      return el;
+    };
+    const flushParagraph = () => {
+      if (!paragraphLines.length) return;
+      const p = document.createElement('p');
+      p.className = 'msg-p';
+      appendInlineFormatted(p, paragraphLines.join('\n'));
+      target.append(p);
+      paragraphLines = [];
+    };
+    const flushList = () => {
+      listStack = [];
+    };
+    for (const rawLine of lines) {
+      const trimmed = rawLine.trim();
+      if (!trimmed) {
+        flushParagraph();
+        continue;
+      }
+      const headingMatch = /^[ \t]*(#{1,6})[ \t]+(.+?)[ \t]*$/.exec(rawLine);
+      if (headingMatch) {
+        flushParagraph();
+        flushList();
+        const level = Math.min(4, headingMatch[1].length);
+        const heading = document.createElement('h' + level);
+        heading.className = 'msg-heading msg-h' + level;
+        appendInlineFormatted(heading, headingMatch[2]);
+        target.append(heading);
+        continue;
+      }
+      const listMatch = /^([ \t]*)(?:([-*•])|(\d+)[.)])[ \t]+(.+?)[ \t]*$/.exec(rawLine);
+      if (listMatch) {
+        flushParagraph();
+        const indent = listMatch[1].replace(/\t/g, '  ').length;
+        const itemType = listMatch[2] ? 'ul' : 'ol';
+        const startNum = listMatch[3] ? parseInt(listMatch[3], 10) : 1;
+        const itemText = listMatch[4];
+        while (listStack.length > 1 && indent < listStack[listStack.length - 1].indent) {
+          listStack.pop();
+        }
+        let top = listStack[listStack.length - 1];
+        if (!top) {
+          const rootList = createListEl(itemType, startNum);
+          target.append(rootList);
+          top = {el: rootList, type: itemType, indent};
+          listStack.push(top);
+        } else if (indent > top.indent) {
+          const childList = createListEl(itemType, startNum);
+          const parentItems = top.el.children;
+          const lastLi = parentItems && parentItems.length ? parentItems[parentItems.length - 1] : null;
+          (lastLi || top.el).append(childList);
+          top = {el: childList, type: itemType, indent};
+          listStack.push(top);
+        } else if (top.type !== itemType) {
+          listStack.pop();
+          const replacement = createListEl(itemType, startNum);
+          const parent = listStack[listStack.length - 1];
+          if (parent) {
+            const parentItems = parent.el.children;
+            const lastLi = parentItems && parentItems.length ? parentItems[parentItems.length - 1] : null;
+            (lastLi || parent.el).append(replacement);
+          } else {
+            target.append(replacement);
+          }
+          top = {el: replacement, type: itemType, indent};
+          listStack.push(top);
+        }
+        const li = document.createElement('li');
+        if (itemType === 'ol') {
+          li.value = startNum;
+          if (typeof li.setAttribute === 'function') li.setAttribute('value', String(startNum));
+        }
+        appendInlineFormatted(li, itemText);
+        top.el.append(li);
+        continue;
+      }
+      flushList();
+      paragraphLines.push(rawLine);
+    }
+    flushParagraph();
+    flushList();
+  }
     const value = String(text ?? '');
-    if (!value.includes('```')) { container.textContent = value; return; }
+    if (!value.includes('```')) {
+      if (!hasMarkdownSyntax(value)) { container.textContent = value; return; }
+      appendProseBlocks(container, value);
+      return;
+    }
     const parts = value.split('```');
     parts.forEach((part, index) => {
       const isCode = index % 2 === 1 && index < parts.length - 1;
       if (!isCode) {
         const prose = (index % 2 === 1 ? '```' + part : part).replace(/^\n+|\n+$/g, '');
-        if (prose) { const segment = document.createElement('div'); segment.textContent = prose; container.append(segment); }
+        if (prose) {
+          const segment = document.createElement('div');
+          if (!hasMarkdownSyntax(prose)) {
+            segment.textContent = prose;
+          } else {
+            segment.className = 'msg-prose';
+            appendProseBlocks(segment, prose);
+          }
+          container.append(segment);
+        }
         return;
       }
       const newline = part.indexOf('\n');
@@ -243,18 +399,44 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       } catch (_) {}
     }
     const seqNum = msgObj && (msgObj.sequence || (msgObj.metadata && msgObj.metadata.sequence));
-    const escapeTag = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const seqHtml = seqNum ? `<span class="msg-seq-tag">#${escapeTag(seqNum)}</span>` : '';
     const modelTagText = formatModelTagText(msgObj);
-    const modelHtml = modelTagText ? `<span class="msg-model-tag">${escapeTag(modelTagText)}</span>` : '';
     if (kind === 'sys') {
-      wrap.innerHTML = '<div class="bubble"></div>';
-      wrap.querySelector('.bubble').textContent = text;
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = text;
+      wrap.append(bubble);
     } else {
-      const tagClass = 'tag-' + cleanSender;
-      const senderHtml = label ? `<span class="msg-sender-tag ${escapeTag(tagClass)}">${escapeTag(label)}</span>` : '';
-      wrap.innerHTML = `<div><div class="msg-meta">${senderHtml}${seqHtml}${modelHtml}<span class="msg-ts">${ts}</span></div><div class="bubble"></div></div>`;
-      renderMessageBody(wrap.querySelector('.bubble'), text, msgObj);
+      const inner = document.createElement('div');
+      const meta = document.createElement('div');
+      meta.className = 'msg-meta';
+      if (label) {
+        const senderTag = document.createElement('span');
+        senderTag.className = `msg-sender-tag tag-${cleanSender}`;
+        senderTag.textContent = label;
+        meta.append(senderTag);
+      }
+      if (seqNum) {
+        const seqTag = document.createElement('span');
+        seqTag.className = 'msg-seq-tag';
+        seqTag.textContent = `#${seqNum}`;
+        meta.append(seqTag);
+      }
+      if (modelTagText) {
+        const modelTag = document.createElement('span');
+        modelTag.className = 'msg-model-tag';
+        modelTag.textContent = modelTagText;
+        meta.append(modelTag);
+      }
+      const tsTag = document.createElement('span');
+      tsTag.className = 'msg-ts';
+      tsTag.textContent = ts;
+      meta.append(tsTag);
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      inner.append(meta, bubble);
+      wrap.append(inner);
+      const effectiveMsg = msgObj || (kind === 'user' || cleanSender === 'user' ? {role: 'user', sender: 'user'} : null);
+      renderMessageBody(bubble, text, effectiveMsg);
     }
     chatEl.appendChild(wrap);
     if (!skipScroll) {
@@ -427,16 +609,16 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
   }
 
   function renderTasks(tasks=[]) {
-    if (!tasks.length) { taskList.textContent = 'Henüz görev yok'; return; }
+    if (!tasks.length) { taskList.textContent = 'Yerel asistan görevi yok'; return; }
     taskList.innerHTML = '';
     for (const task of tasks.slice(0, 5)) {
-      const row = document.createElement('div'); row.style.marginBottom = '8px';
+      const row = document.createElement('div'); row.className = 'task-row';
       const done = task.steps.filter(s => s.status === 'completed').length;
       const title = document.createElement('div');
-      title.textContent = `${task.status === 'completed' ? '✓' : '◈'} ${task.title}`;
+      title.textContent = `${task.status === 'completed' ? '✓ ' : ''}${task.title}`;
       const meta = document.createElement('div');
       meta.textContent = `${done}/${task.steps.length} adım · ${task.status}`;
-      meta.style.color = 'var(--txt-faint)';
+      meta.className = 'task-meta';
       row.append(title, meta);
       if (!['completed','failed','cancelled'].includes(task.status)) {
         const stop = document.createElement('button'); stop.className = 'control-btn';

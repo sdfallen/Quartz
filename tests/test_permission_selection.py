@@ -117,10 +117,16 @@ global.currentConvId='c';global.mainProjectSelect={value:'p'};
 global.codexModelSelect=global.agyModelSelect={value:'model'};
 global.codexEffortSelect=global.agyEffortSelect={value:'low'};
 global.mainAgentSelect={value:'codex'};global.thinking=false;global.inpHistory=[];global.histCursor=0;global.msgCount=0;
-global.document={getElementById:id=>id==='mainPermissionLevel'?selected:{textContent:''}};
+const confirmModal={hidden:true};
+const confirmTitle={textContent:''};
+const confirmMessage={textContent:''};
+const confirmCancel={textContent:'',onclick:null,focus(){confirmCalls++;Promise.resolve().then(()=>confirmAccept.onclick());}};
+const confirmAccept={textContent:'',onclick:null,classList:{toggle(){}},focus(){}};
+const confirmScrim={onclick:null};
+global.document={activeElement:null,getElementById:id=>({mainPermissionLevel:selected,confirmModal,confirmTitle,confirmMessage,confirmCancel,confirmAccept,confirmScrim})[id]||{textContent:''}};
 global.chatEl={querySelectorAll:()=>[]};global.appendMsg=()=>({dataset:{},querySelector:()=>({textContent:''})});
 global.setThinking=()=>{};global.logLine=()=>{};global.setOrb=()=>{};global.setTimeout=()=>{};
-global.window={__writeConfirmed:false,confirm:()=>{confirmCalls++;return true},pywebview:{api:{
+global.window={__writeConfirmed:false,pywebview:{api:{
  coordination_route:async(...args)=>{assert.equal(args[4],expectedLevel);selected.value='read-only';return {status:'ok',data:{handled:false,intent:routeIntent}}},
  chat_send:async(...args)=>{sent=args;return {status:'error',data:'fixture stop after dispatch capture'}}}}};
 '''+lifecycle_state+matched.group(0)+r'''

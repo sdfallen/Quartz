@@ -1,15 +1,14 @@
-# Approved Quartz Q artwork
+# Quartz Q mark
 
-User supplied the approved artwork on 21 October 2026:
-`715d52a3-0f49-49c1-9fe1-b6733ea89145.png` and `download.ico` in the project root.
-`quartz-q.png` and `quartz-q.ico` preserve those files byte-for-byte. The ICO
-contains 16, 24, 32, 48, 64, 128 and 256 px frames. A 48 px decoded PNG is used
-only for the custom titlebar. No new logo was generated.
+Redesigned on 4 November 2026 at the user's request: a six-sided quartz crystal
+forming a Q. One geometry in `scripts/build_brand_assets.py` produces
+`quartz-q.svg`, `quartz-q.png`, `quartz-q-48.png`, `quartz-q.ico` and
+`brand-manifest.json`:
 
-The import command was:
+`python scripts/build_brand_assets.py`
 
-`python scripts/import_brand_icon.py 715d52a3-0f49-49c1-9fe1-b6733ea89145.png --ico download.ico`
-
-The PyInstaller, native window and Inno configuration select this ICO.
-`brand-manifest.json` records hashes. `scripts/verify_branding.py` checks
-actual PE icon resource payloads, not just the file extension or HTML appearance.
+Icon frames below 32 px use one solid tone so the mark stays legible. The in-app
+mark in `ui/shell.py` uses the same polygons and follows the selected accent.
+The PyInstaller, native window and Inno configuration select the ICO.
+`scripts/verify_branding.py` checks actual PE icon resource payloads, not just
+the file extension or HTML appearance.

@@ -48,10 +48,32 @@ JAVASCRIPT = r"""
   let antigravityWarningAccepted = false;
 
   let agentPollToken = 0;
+  const modalReturnFocus = new Map();
+
+  function openModalOverlay(el, initialFocusId = '') {
+    if (!el) return;
+    if (!el.classList.contains('show')) {
+      modalReturnFocus.set(el.id, document.activeElement);
+      el.classList.add('show');
+    }
+    const preferred = initialFocusId ? document.getElementById(initialFocusId) : null;
+    const target = (preferred && !preferred.disabled) ? preferred : el.querySelector('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])');
+    if (target && typeof target.focus === 'function') target.focus();
+  }
+
+  function closeModalOverlay(el, restoreFocus = true) {
+    if (!el || !el.classList.contains('show')) return;
+    el.classList.remove('show');
+    const prev = modalReturnFocus.get(el.id);
+    modalReturnFocus.delete(el.id);
+    if (restoreFocus && prev && typeof prev.focus === 'function' && prev.isConnected !== false) {
+      prev.focus();
+    }
+  }
 
   function updateAntigravitySafety(status) {
     antigravitySafetyWarning = String(status?.safety_warning || '');
-    for (const [agent, label] of [['antigravity', '◈ Antigravity'], ['collaboration', '◈ Birlikte']]) {
+    for (const [agent, label] of [['antigravity', 'Antigravity'], ['collaboration', 'Birlikte']]) {
       const button = document.querySelector(`.agent-seg-btn[data-agent="${agent}"]`);
       if (!button) continue;
       button.textContent = label + (antigravitySafetyWarning ? ' ⚠' : '');
@@ -59,22 +81,24 @@ JAVASCRIPT = r"""
     }
   }
 
-  function confirmAntigravitySafety() {
+  async function confirmAntigravitySafety() {
     if (!antigravitySafetyWarning || antigravityWarningAccepted) return true;
-    const accepted = window.confirm('ANTIGRAVITY WINDOWS UYARISI\n\n' + antigravitySafetyWarning +
-      '\n\nBu oturumda inceleme görevlerine devam etmek istiyor musun?');
+    const accepted = await requestUiConfirm(
+      'ANTIGRAVITY WINDOWS UYARISI\n\n' + antigravitySafetyWarning +
+      '\n\nBu oturumda inceleme görevlerine devam etmek istiyor musun?',
+      {title: 'Antigravity güvenlik uyarısı', confirmLabel: 'Devam et'}
+    );
     if (accepted) antigravityWarningAccepted = true;
     return accepted;
   }
 
-  signatureIntro.addEventListener('animationend', () => signatureIntro.remove());
 
   async function checkApiSetup() {
     try {
       const response = await window.pywebview.api.onboarding_status();
       if (response.status !== 'ok') return;
       renderCliStatus(response.data);
-      if (response.data.needs_setup) document.getElementById('cliSetup').classList.add('show');
+      if (response.data.needs_setup) openModalOverlay(document.getElementById('cliSetup'), 'cliProvider');
     } catch (_) {}
   }
 
@@ -160,12 +184,12 @@ JAVASCRIPT = r"""
   document.getElementById('cliValidate').onclick = ()=>beginCli('key');
   document.getElementById('cliInstall').onclick = ()=>beginCli(document.getElementById('cliProvider').value === 'gemini' ? 'install_agy' : 'install');
   document.getElementById('cliCheck').onclick = ()=>refreshCliStatus(true);
-  document.getElementById('btnCliConnections').onclick = async()=>{ document.getElementById('cliSetup').classList.add('show'); await refreshCliStatus(true); };
-  document.getElementById('cliLater').onclick = ()=>{ clearTimeout(cliPollTimer); document.getElementById('cliSetup').classList.remove('show'); };
+  document.getElementById('btnCliConnections').onclick = async()=>{ openModalOverlay(document.getElementById('cliSetup'), 'cliProvider'); await refreshCliStatus(true); };
+  document.getElementById('cliLater').onclick = ()=>{ clearTimeout(cliPollTimer); closeModalOverlay(document.getElementById('cliSetup')); };
   document.getElementById('cliContinue').onclick = async()=>{
     const result = await window.pywebview.api.onboarding_refresh();
     if (result.status !== 'ok') { document.getElementById('cliMessage').textContent=result.data; return; }
-    document.getElementById('cliSetup').classList.remove('show');
+    closeModalOverlay(document.getElementById('cliSetup'));
     const provider = cliState?.providers?.gemini?.ready ? 'antigravity' : 'codex';
     if (currentConvId) await window.pywebview.api.chat_set_agent(currentConvId, provider);
     syncAgentUI(provider);
@@ -183,7 +207,7 @@ JAVASCRIPT = r"""
         document.getElementById('apiProvider').value, key);
       apiKey.value = '';
       if (result.status !== 'ok') throw new Error(result.data || 'Anahtar doğrulanamadı');
-      apiSetup.classList.remove('show');
+      closeModalOverlay(apiSetup);
       appendMsg('bot', 'QUARTZ', 'API bağlantısı doğrulandı. Quartz kullanıma hazır.');
     } catch (error) {
       apiError.textContent = 'Doğrulama başarısız: ' + String(error.message || error);

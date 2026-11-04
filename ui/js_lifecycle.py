@@ -24,8 +24,8 @@ JAVASCRIPT = r"""  let lastUserActivityAt = Date.now();
       const r = await window.pywebview.api.ping();
       statusPill.classList.toggle('online', r.online);
       statusPill.classList.toggle('offline', !r.online);
-      statusText.textContent = r.online ? 'ÇEVRİMİÇİ' : 'ÇEVRİMDIŞI';
-      document.getElementById('sessStatus').textContent = r.online ? 'ONLINE' : 'OFFLINE';
+      statusText.textContent = r.online ? 'Çevrimiçi' : 'Çevrimdışı';
+      document.getElementById('sessStatus').textContent = r.online ? 'Çevrimiçi' : 'Çevrimdışı';
       if (!r.online) {
         nextDelay = 600;
       } else {
@@ -37,10 +37,10 @@ JAVASCRIPT = r"""  let lastUserActivityAt = Date.now();
           renderProvider(c.provider_manager);
           safeMode = !!c.safe_mode;
           safeBtn.classList.toggle('active', safeMode);
-          safeBtn.textContent = `Güvenli Mod: ${safeMode ? 'AÇIK' : 'KAPALI'}`;
+          document.getElementById('safeLabel').textContent = `Güvenli mod: ${safeMode ? 'açık' : 'kapalı'}`;
           advisorEnabled = !!(c.screen_advisor && c.screen_advisor.enabled);
           advisorBtn.classList.toggle('active', advisorEnabled);
-          advisorBtn.innerHTML = `<span class="ic">${advisorEnabled ? '◉' : '◌'}</span> Ekran Rehberi: ${advisorEnabled ? 'AÇIK' : 'KAPALI'}`;
+          document.getElementById('advisorLabel').textContent = `Ekran rehberi: ${advisorEnabled ? 'açık' : 'kapalı'}`;
           const operation = c.operation && c.operation.active;
           if (operation) {
             const actionCount = (operation.actions || []).length;
@@ -48,7 +48,7 @@ JAVASCRIPT = r"""  let lastUserActivityAt = Date.now();
             learnOperationBtn.style.display = 'inline-block';
             finishOperationBtn.style.display = 'inline-block';
           } else {
-            operationStatus.textContent = 'Aktif görev yok';
+            operationStatus.textContent = 'Operasyon yok';
             learnOperationBtn.style.display = 'none';
             finishOperationBtn.style.display = 'none';
           }
@@ -59,7 +59,7 @@ JAVASCRIPT = r"""  let lastUserActivityAt = Date.now();
       nextDelay = 600;
       statusPill.classList.remove('online');
       statusPill.classList.add('offline');
-      statusText.textContent = 'ÇEVRİMDIŞI';
+      statusText.textContent = 'Çevrimdışı';
     } finally {
       setTimeout(pollPing, nextDelay);
     }
@@ -210,7 +210,7 @@ JAVASCRIPT = r"""  let lastUserActivityAt = Date.now();
       if (!v.tts) {
         ttsEnabled = false;
         ttsBtn.classList.remove('active');
-        ttsBtn.textContent = '🔇 TTS';
+        document.getElementById('ttsLabel').textContent = 'Sesli yanıt: kapalı';
         logLine('TTS motoru bulunamadı');
       }
       });
