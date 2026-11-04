@@ -326,7 +326,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     const scrimEl = typeof document.getElementById === 'function' ? document.getElementById('confirmScrim') : null;
     if (scrimEl) scrimEl.onclick = () => resolveActiveConfirm(false);
     modal.hidden = false;
-    const initialTarget = options.danger ? cancelEl : acceptEl;
+    const initialTarget = options.initialFocus === 'accept' ? acceptEl : cancelEl;
     if (typeof initialTarget.focus === 'function') initialTarget.focus();
     return new Promise(resolve => {
       activeConfirmResolver = resolve;
@@ -463,6 +463,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
 
   cancelBtn.addEventListener('click', async () => {
     chatControlEpoch++;
+    if (activeConfirmResolver) resolveActiveConfirm(false);
     cancelBtn.disabled = true;
     renderChatStopReceipt({status:'pending'});
     try {
@@ -564,9 +565,10 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
           : 'Bu görev için proje dosyalarını değiştirme yetkisi verilsin mi? Önce checkpoint alınır. Birlikte modunda Codex yazar, Antigravity inceleme yapar.',
         {title: 'Yetki onayı', confirmLabel: 'Yetki ver'}
       );
-      if (!ok) return;
+      if (!ok || submitEpoch !== chatControlEpoch) return;
       window.__writeConfirmed = true;
     }
+    if (submitEpoch !== chatControlEpoch) return;
 
     chatSubmissionBusy = true;
     if (!wasThinking) setThinking(true);

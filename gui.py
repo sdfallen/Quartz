@@ -22,7 +22,7 @@ from core.application_services import (ServicesClosed,
     CONFIRMED, FAILED, PENDING, ApplicationServices, ServicesClosed, overall_status)
 from core.local_ipc import request_token
 from core.ui_preferences import apply_to_document, load_ui_preferences, save_ui_preference, window_background
-from core.ui_window import full_window_rect, initial_geometry
+from core.ui_window import full_window_rect, initial_geometry, maximized_window_rect
 from ui.document import BRAND_MARK, asset_root, build_document
 from ui.shell import SHELL_MARKUP
 from ui.app_js import SCRIPT_DOCUMENT
@@ -97,6 +97,7 @@ class Api:
     """
 
     _maximized = False
+    _restore_rect = None
 
     def __init__(self, services: ApplicationServices | None = None):
         self._services = services or ApplicationServices()
@@ -938,48 +939,93 @@ class Api:
         if webview.windows:
             webview.windows[0].minimize()
 
-    def toggle_maximize(self, enabled: bool | None = None) -> dict:
-        """Toggle or set maximized state on the main window."""
-        current = getattr(self, "_maximized", False)
-        was_compact = getattr(self, "_compact", False)
-        self._maximized = (not current) if enabled is None else bool(enabled)
-        if self._maximized:
-            self._compact = False
-        if webview.windows:
+    @staticmethod
+    def _capture_window_rect(window):
+        if window is None:
+            return None
+        w = getattr(window, "width", None)
+        h = getattr(window, "height", None)
+        if not (isinstance(w, int) and isinstance(h, int) and w > 0 and h > 0):
+            return None
+        x = getattr(window, "x", None)
+        y = getattr(window, "y", None)
+        return (w, h, x if isinstance(x, int) else None, y if isinstance(y, int) else None)
+
+    @classmethod
+    def _is_window_at_work_area(cls, window, target_rect=None) -> bool:
+        rect = cls._capture_window_rect(window)
+        if rect is None:
+            return False
+        mw, mh, _, _ = target_rect or maximized_window_rect()
+        return abs(rect[0] - mw) <= 2 and abs(rect[1] - mh) <= 2
+
+    def window_state(self) -> dict:
+        """Report and synchronize current maximized and compact window state."""
+        compact = getattr(self, "_compact", False)
+        maximized = getattr(self, "_maximized", False)
+        if webview.windows and not compact:
             window = webview.windows[0]
-            if self._maximized:
-                if was_compact:
-                    width, height, x, y = full_window_rect()
-                    window.resize(width, height)
-                    if x is not None:
-                        window.move(x, y)
-                if hasattr(window, "maximize"):
-                    window.maximize()
-            else:
-                if hasattr(window, "restore"):
-                    window.restore()
-                if was_compact:
-                    width, height, x, y = full_window_rect()
-                    window.resize(width, height)
-                    if x is not None:
-                        window.move(x, y)
+            if self._capture_window_rect(window) is not None:
+                maximized = self._is_window_at_work_area(window)
+                self._maximized = maximized
+        return {"maximized": maximized, "compact": compact}
+
+    def toggle_maximize(self, enabled: bool | None = None) -> dict:
+        """Fit the main window to the monitor work area or restore its previous geometry."""
+        window = webview.windows[0] if webview.windows else None
+        max_rect = maximized_window_rect()
+        was_compact = getattr(self, "_compact", False)
+        current = getattr(self, "_maximized", False)
+        if window is not None and not was_compact and self._capture_window_rect(window) is not None:
+            current = current or self._is_window_at_work_area(window, max_rect)
+        target = (not current) if enabled is None else bool(enabled)
+        if target:
+            if not was_compact and not current:
+                captured = self._capture_window_rect(window)
+                if captured is not None and not self._is_window_at_work_area(window, max_rect):
+                    self._restore_rect = captured
+                elif getattr(self, "_restore_rect", None) is None:
+                    self._restore_rect = full_window_rect()
+            elif getattr(self, "_restore_rect", None) is None:
+                self._restore_rect = full_window_rect()
+            self._maximized = True
+            self._compact = False
+            if window is not None:
+                mw, mh, mx, my = max_rect
+                window.resize(mw, mh)
+                if mx is not None and my is not None:
+                    window.move(mx, my)
+        else:
+            self._maximized = False
+            width, height, x, y = getattr(self, "_restore_rect", None) or full_window_rect()
+            self._restore_rect = None
+            if window is not None:
+                window.resize(width, height)
+                if x is not None and y is not None:
+                    window.move(x, y)
         return {"maximized": self._maximized, "compact": getattr(self, "_compact", False)}
 
     def set_compact(self, enabled: bool) -> dict:
         """Resize the main window into a draggable, chat-only companion."""
+        was_compact = getattr(self, "_compact", False)
+        was_maximized = getattr(self, "_maximized", False)
         self._compact = bool(enabled)
-        if getattr(self, "_maximized", False):
+        window = webview.windows[0] if webview.windows else None
+        if self._compact:
+            if not was_compact and not was_maximized and window is not None:
+                captured = self._capture_window_rect(window)
+                if captured is not None and not self._is_window_at_work_area(window):
+                    self._restore_rect = captured
             self._maximized = False
-            if webview.windows and hasattr(webview.windows[0], "restore"):
-                webview.windows[0].restore()
-        if webview.windows:
-            window = webview.windows[0]
-            if self._compact:
+            if window is not None:
                 window.resize(390, 520)
-            else:
-                width, height, x, y = full_window_rect()
+        else:
+            self._maximized = False
+            width, height, x, y = getattr(self, "_restore_rect", None) or full_window_rect()
+            self._restore_rect = None
+            if window is not None:
                 window.resize(width, height)
-                if x is not None:
+                if x is not None and y is not None:
                     window.move(x, y)
         return {"compact": self._compact}
 

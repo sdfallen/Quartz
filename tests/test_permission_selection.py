@@ -120,8 +120,8 @@ global.mainAgentSelect={value:'codex'};global.thinking=false;global.inpHistory=[
 const confirmModal={hidden:true};
 const confirmTitle={textContent:''};
 const confirmMessage={textContent:''};
-const confirmCancel={textContent:'',onclick:null,focus(){}};
-const confirmAccept={textContent:'',onclick:null,classList:{toggle(){}},focus(){confirmCalls++;Promise.resolve().then(()=>confirmAccept.onclick());}};
+const confirmCancel={textContent:'',onclick:null,focus(){confirmCalls++;Promise.resolve().then(()=>confirmAccept.onclick());}};
+const confirmAccept={textContent:'',onclick:null,classList:{toggle(){}},focus(){}};
 const confirmScrim={onclick:null};
 global.document={activeElement:null,getElementById:id=>({mainPermissionLevel:selected,confirmModal,confirmTitle,confirmMessage,confirmCancel,confirmAccept,confirmScrim})[id]||{textContent:''}};
 global.chatEl={querySelectorAll:()=>[]};global.appendMsg=()=>({dataset:{},querySelector:()=>({textContent:''})});

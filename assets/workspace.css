@@ -132,6 +132,7 @@ body.screen-control-active #btnDesktopTaskStop { display: none; }
 .msg-h2 { font-size: var(--text-md); }
 .msg-h3, .msg-h4 { font-size: var(--text-sm); }
 .msg-list { margin: 4px 0 4px 18px; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.msg-list .msg-list { margin-top: 3px; margin-bottom: 2px; }
 .msg-list li { padding-left: 2px; }
 .msg-inline-code { padding: 1px 6px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm); font: 12px/1.4 var(--mono); color: var(--text); }
 .msg-link { color: var(--accent); text-decoration: underline; text-decoration-color: color-mix(in oklab, var(--accent) 55%, transparent); text-underline-offset: 2px; }
@@ -205,7 +206,8 @@ body.screen-control-active #btnDesktopTaskStop { display: none; }
 .api-submit { height: 36px; padding: 0 16px; font-size: var(--text-sm); font-weight: 600; color: var(--on-accent); background: var(--accent); border-radius: var(--r-md); transition: filter var(--t-fast) var(--ease), transform var(--t-fast) var(--ease); }
 .api-submit:hover:not(:disabled) { filter: brightness(1.07); }
 .api-submit:active:not(:disabled) { transform: scale(.98); }
-.api-submit.danger { background: var(--danger); color: var(--on-stop); }
+.api-submit.danger { background: var(--stop); color: var(--on-stop); }
+.api-submit.danger:hover:not(:disabled) { background: var(--stop-hover); }
 
 /* The controls that stop real work stay solid red and never move. */
 #btnDesktopTaskStop, #btnCancel, #btnHudStopTask, #btnDesktopStop { background: var(--stop); color: var(--on-stop); border: 0; font-weight: 600; opacity: 1; flex: none; }

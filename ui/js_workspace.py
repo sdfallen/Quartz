@@ -89,10 +89,30 @@ JAVASCRIPT = r"""
     const useEl = btnWinMaximize.querySelector('use');
     if (useEl) useEl.setAttribute('href', windowMaximized ? '#i-restore' : '#i-maximize');
   }
+  async function syncWindowDimensions() {
+    if (typeof window !== 'undefined' && window.pywebview?.api?.window_state) {
+      try {
+        const state = await window.pywebview.api.window_state();
+        if (state && typeof state.maximized === 'boolean') {
+          syncWindowMaximizedUi(state.maximized);
+          return state.maximized;
+        }
+      } catch (_) {}
+    }
+    const availW = Number(typeof window !== 'undefined' && window.screen?.availWidth) || 0;
+    const availH = Number(typeof window !== 'undefined' && window.screen?.availHeight) || 0;
+    const curW = Number(typeof window !== 'undefined' && (window.outerWidth || window.innerWidth)) || 0;
+    const curH = Number(typeof window !== 'undefined' && (window.outerHeight || window.innerHeight)) || 0;
+    if (availW > 0 && availH > 0 && curW > 0 && curH > 0) {
+      const fitsWorkArea = Math.abs(curW - availW) <= 2 && Math.abs(curH - availH) <= 2;
+      if (fitsWorkArea !== windowMaximized) syncWindowMaximizedUi(fitsWorkArea);
+    }
+    return windowMaximized;
+  }
   if (btnWinMaximize) {
     btnWinMaximize.addEventListener('click', async () => {
       try {
-        const result = await window.pywebview.api.toggle_maximize(!windowMaximized);
+        const result = await window.pywebview.api.toggle_maximize();
         syncWindowMaximizedUi(result?.maximized);
         if (result && typeof result.compact === 'boolean') {
           compactMode = result.compact;
@@ -105,6 +125,7 @@ JAVASCRIPT = r"""
       }
     });
   }
+  window.addEventListener('resize', () => { syncWindowDimensions(); });
   document.getElementById('btnAddProject').title = 'Windows klasör seçicisiyle proje ekle';
   document.getElementById('btnDeleteProjectChats').addEventListener('click', () =>
     requestChatDeletion(navigationConversations.filter(c=>(c.project_id||'squad-pilot')===mainProjectSelect.value), mainProjectSelect.value));

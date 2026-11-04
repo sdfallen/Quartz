@@ -166,7 +166,14 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       const state = document.createElement('div'); state.className = 'msg-state'; state.textContent = view.state;
       bubble.append(state);
     }
-    const body = document.createElement('div'); appendMessageText(body, view.summary); bubble.append(body);
+    const body = document.createElement('div');
+    const isUserMessage = msg?.role === 'user' || String(msg?.sender || '').toLowerCase() === 'user';
+    if (isUserMessage) {
+      body.textContent = view.summary;
+    } else {
+      appendMessageText(body, view.summary);
+    }
+    bubble.append(body);
     if (msg?.status === 'interrupted' && msg.id) {
       const resume = document.createElement('button'); resume.className = 'control-btn';
       resume.textContent = 'Yeni görev taslağı hazırla';
@@ -196,15 +203,16 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
 
   // Fenced ``` blocks become monospace code panels. Text only: no HTML is parsed.
   function appendMessageText(container, text) {
+  const INLINE_RE = /(?<!`)`([^`\n]+)`(?!`)|(?<=^|[\s([{"'«“‘])(?:\[([^\[\]\n]+)\]\((https?:\/\/[^()\s\n]+)\)|\*\*(?=[\p{L}\p{N}`])([^*\n]+)(?<=[\p{L}\p{N}`’.!?])\*\*|__(?=[\p{L}\p{N}`])([^_\n]+)(?<=[\p{L}\p{N}`’.!?])__|\*(?!\*)(?=[\p{L}\p{N}`])([^*\n]+)(?<=[\p{L}\p{N}`’.!?])\*(?!\*)|_(?!_)(?=[\p{L}\p{N}`])([^_\n]+)(?<=[\p{L}\p{N}`’.!?])_(?!_))(?=$|[\s)\]}"'»”’,!?:;]|\.(?=$|[\s)\]}"'»”’]))/u;
   function hasMarkdownSyntax(value) {
     const src = String(value ?? '');
-    if (/^(?:\s*#{1,6}\s+\S|\s*(?:[-*•]|\d+[.)])\s+\S)/m.test(src)) return true;
-    return /(?<!`)`[^`\n]+`(?!`)|\[[^\]\n]+\]\([^)\n]+\)|\*\*[^*\n]+?\*\*|__[^_\n]+?__|(?<!\*)\*[^*\s\n][^*\n]*?\*(?!\*)|(?<![\w_])_[^_\s\n][^_\n]*?_(?![\w_])/.test(src);
+    if (/^(?:[ \t]*#{1,6}[ \t]+\S|[ \t]*(?:[-*•]|\d+[.)])[ \t]+\S)/m.test(src)) return true;
+    return INLINE_RE.test(src);
   }
 
   function appendInlineFormatted(parent, text) {
     const src = String(text ?? '');
-    const tokenRe = /(?<!`)`([^`\n]+)`(?!`)|\[([^\]\n]+)\]\(([^)\n]+)\)|\*\*([^*\n]+?)\*\*|__([^_\n]+?)__|(?<!\*)\*([^*\s\n](?:[^*\n]*?[^*\s\n])?)\*(?!\*)|(?<![\w_])_([^_\s\n](?:[^_\n]*?[^_\s\n])?)_(?![\w_])/g;
+    const tokenRe = new RegExp(INLINE_RE.source, 'gu');
     let lastIndex = 0;
     let match = null;
     while ((match = tokenRe.exec(src)) !== null) {
@@ -248,9 +256,17 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
 
   function appendProseBlocks(target, prose) {
     const lines = String(prose ?? '').split(/\r?\n/);
-    let listEl = null;
-    let listType = '';
+    let listStack = [];
     let paragraphLines = [];
+    const createListEl = (type, startNum) => {
+      const el = document.createElement(type);
+      el.className = 'msg-list';
+      if (type === 'ol' && startNum > 1) {
+        el.start = startNum;
+        if (typeof el.setAttribute === 'function') el.setAttribute('start', String(startNum));
+      }
+      return el;
+    };
     const flushParagraph = () => {
       if (!paragraphLines.length) return;
       const p = document.createElement('p');
@@ -260,19 +276,15 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       paragraphLines = [];
     };
     const flushList = () => {
-      if (!listEl) return;
-      target.append(listEl);
-      listEl = null;
-      listType = '';
+      listStack = [];
     };
     for (const rawLine of lines) {
       const trimmed = rawLine.trim();
       if (!trimmed) {
         flushParagraph();
-        flushList();
         continue;
       }
-      const headingMatch = /^(#{1,6})\s+(.+?)\s*$/.exec(trimmed);
+      const headingMatch = /^[ \t]*(#{1,6})[ \t]+(.+?)[ \t]*$/.exec(rawLine);
       if (headingMatch) {
         flushParagraph();
         flushList();
@@ -283,32 +295,46 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
         target.append(heading);
         continue;
       }
-      const ulMatch = /^[-*•]\s+(.+?)\s*$/.exec(trimmed);
-      if (ulMatch) {
+      const listMatch = /^([ \t]*)(?:([-*•])|(\d+)[.)])[ \t]+(.+?)[ \t]*$/.exec(rawLine);
+      if (listMatch) {
         flushParagraph();
-        if (listType !== 'ul') {
-          flushList();
-          listEl = document.createElement('ul');
-          listEl.className = 'msg-list';
-          listType = 'ul';
+        const indent = listMatch[1].replace(/\t/g, '  ').length;
+        const itemType = listMatch[2] ? 'ul' : 'ol';
+        const startNum = listMatch[3] ? parseInt(listMatch[3], 10) : 1;
+        const itemText = listMatch[4];
+        while (listStack.length > 1 && indent < listStack[listStack.length - 1].indent) {
+          listStack.pop();
+        }
+        let top = listStack[listStack.length - 1];
+        if (!top) {
+          const rootList = createListEl(itemType, startNum);
+          target.append(rootList);
+          top = {el: rootList, type: itemType, indent};
+          listStack.push(top);
+        } else if (indent > top.indent) {
+          const childList = createListEl(itemType, startNum);
+          const parentItems = top.el.children;
+          const lastLi = parentItems && parentItems.length ? parentItems[parentItems.length - 1] : null;
+          (lastLi || top.el).append(childList);
+          top = {el: childList, type: itemType, indent};
+          listStack.push(top);
+        } else if (top.type !== itemType) {
+          listStack.pop();
+          const replacement = createListEl(itemType, startNum);
+          const parent = listStack[listStack.length - 1];
+          if (parent) {
+            const parentItems = parent.el.children;
+            const lastLi = parentItems && parentItems.length ? parentItems[parentItems.length - 1] : null;
+            (lastLi || parent.el).append(replacement);
+          } else {
+            target.append(replacement);
+          }
+          top = {el: replacement, type: itemType, indent};
+          listStack.push(top);
         }
         const li = document.createElement('li');
-        appendInlineFormatted(li, ulMatch[1]);
-        listEl.append(li);
-        continue;
-      }
-      const olMatch = /^\d+[.)]\s+(.+?)\s*$/.exec(trimmed);
-      if (olMatch) {
-        flushParagraph();
-        if (listType !== 'ol') {
-          flushList();
-          listEl = document.createElement('ol');
-          listEl.className = 'msg-list';
-          listType = 'ol';
-        }
-        const li = document.createElement('li');
-        appendInlineFormatted(li, olMatch[1]);
-        listEl.append(li);
+        appendInlineFormatted(li, itemText);
+        top.el.append(li);
         continue;
       }
       flushList();
@@ -405,7 +431,8 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       bubble.className = 'bubble';
       inner.append(meta, bubble);
       wrap.append(inner);
-      renderMessageBody(bubble, text, msgObj);
+      const effectiveMsg = msgObj || (kind === 'user' || cleanSender === 'user' ? {role: 'user', sender: 'user'} : null);
+      renderMessageBody(bubble, text, effectiveMsg);
     }
     chatEl.appendChild(wrap);
     if (!skipScroll) {

@@ -39,6 +39,18 @@ def full_window_rect(area=None):
     return fit_window(area, loss=(0, 0))
 
 
+def maximized_window_rect(area=None):
+    """(width, height, x, y) filling the work area without covering the taskbar."""
+    try:
+        area = area or work_area()
+    except (OSError, AttributeError, ValueError):
+        area = None
+    if area is None or area[2] <= area[0] or area[3] <= area[1]:
+        return full_window_rect(area)
+    left, top, right, bottom = area
+    return right - left, bottom - top, left, top
+
+
 def initial_geometry():
     """Keyword arguments for ``webview.create_window``."""
     try:

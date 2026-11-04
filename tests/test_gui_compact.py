@@ -5,23 +5,27 @@ import gui
 
 
 class FakeWindow:
-    def __init__(self):
+    def __init__(self, width=None, height=None, x=None, y=None):
         self.sizes = []
         self.moves = []
-        self.maximized_calls = 0
-        self.restored_calls = 0
+        self.width = width
+        self.height = height
+        self.x = x
+        self.y = y
 
     def resize(self, width, height):
         self.sizes.append((width, height))
+        if self.width is not None:
+            self.width = width
+        if self.height is not None:
+            self.height = height
 
     def move(self, x, y):
         self.moves.append((x, y))
-
-    def maximize(self):
-        self.maximized_calls += 1
-
-    def restore(self):
-        self.restored_calls += 1
+        if self.x is not None:
+            self.x = x
+        if self.y is not None:
+            self.y = y
 
 
 class CompactWindowTests(unittest.TestCase):
@@ -82,21 +86,30 @@ class CompactWindowTests(unittest.TestCase):
         api = gui.Api.__new__(gui.Api)
         api._compact = False
         api._maximized = False
-        window = FakeWindow()
+        api._restore_rect = None
+        window = FakeWindow(width=980, height=640, x=120, y=90)
         with patch.object(gui.webview, "windows", [window]), \
-                patch("core.ui_window.work_area", return_value=(0, 0, 1920, 1040)):
+                patch("core.ui_window.work_area", return_value=(10, 20, 1910, 1020)):
+            # Maximizing fits the work area (1900x1000 at 10, 20) without covering the taskbar.
             self.assertEqual(api.toggle_maximize(), {"maximized": True, "compact": False})
-            self.assertEqual(window.maximized_calls, 1)
+            self.assertEqual(window.sizes[-1], (1900, 1000))
+            self.assertEqual(window.moves[-1], (10, 20))
+            # Restoring returns to the saved custom bounds (980x640 at 120, 90).
             self.assertEqual(api.toggle_maximize(), {"maximized": False, "compact": False})
-            self.assertEqual(window.restored_calls, 1)
-            # Maximizing from compact mode restores full bounds first and clears compact state.
+            self.assertEqual(window.sizes[-1], (980, 640))
+            self.assertEqual(window.moves[-1], (120, 90))
+            # External maximize to work area is detected by window_state and toggle_maximize.
+            window.width, window.height, window.x, window.y = 1900, 1000, 10, 20
+            self.assertEqual(api.window_state(), {"maximized": True, "compact": False})
+            self.assertEqual(api.toggle_maximize(), {"maximized": False, "compact": False})
+            # Maximizing from compact mode clears compact state and fits work area.
             api.set_compact(True)
             self.assertEqual(api.toggle_maximize(True), {"maximized": True, "compact": False})
-            self.assertEqual(window.maximized_calls, 2)
-            # Entering compact mode from maximized restores window first.
+            self.assertEqual(window.sizes[-1], (1900, 1000))
+            # Entering compact mode from maximized clears maximized state.
             self.assertEqual(api.set_compact(True), {"compact": True})
             self.assertFalse(api._maximized)
-            self.assertEqual(window.restored_calls, 2)
+            self.assertEqual(window.sizes[-1], (390, 520))
 
     def test_mobile_token_is_sent_to_windows_clipboard(self):
         api = gui.Api()
