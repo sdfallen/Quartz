@@ -188,7 +188,6 @@ JAVASCRIPT = r"""  function addAgentRow(container, title, details, status='') {
     if (!desktopPolling) { desktopPolling = true; pollDesktopOperator(); }
   });
   document.getElementById('btnDesktopStop').addEventListener('click', async () => {
-    chatControlEpoch++;
     if (typeof resolveActiveConfirm === 'function' && activeConfirmResolver) resolveActiveConfirm(false);
     await window.pywebview.api.desktop_operator_stop();
     if (!desktopPolling) { desktopPolling = true; pollDesktopOperator(); }

@@ -215,7 +215,9 @@ assert.equal(ol.tag,'ol');
 assert.equal(ol.start,5);
 assert.equal(ol.children.length,2);
 assert.equal(ol.children[0].tag,'li');
+assert.equal(ol.children[0].value,5);
 assert.equal(ol.children[1].tag,'li');
+assert.equal(ol.children[1].value,6);
 assert.equal(ol.children[1].textContent,'Altıncı madde');
 const nestedUl=ol.children[0].children.find(c=>c.tag==='ul');
 assert(nestedUl,'nested ul must remain inside first li');
@@ -223,7 +225,14 @@ assert.equal(nestedUl.children.length,2);
 const nestedOl=nestedUl.children[1].children.find(c=>c.tag==='ol');
 assert(nestedOl,'nested ol must remain inside second nested li');
 assert.equal(nestedOl.children.length,1);
+assert.equal(nestedOl.children[0].value,1);
 assert.equal(nestedOl.children[0].textContent,'İç sıralı madde');
+
+const gapBox=node('div');
+appendMessageText(gapBox,['1. Birinci','2. İkinci','5. Beşinci'].join('\n'));
+const gapOl=gapBox.children[0];
+assert.equal(gapOl.tag,'ol');
+assert.deepEqual(gapOl.children.map(li=>li.value),[1,2,5]);
 ''')
 
     def test_code_tokens_glob_math_and_non_http_links_stay_literal(self):
@@ -243,6 +252,23 @@ const links=p.children.filter(c=>c.className==='msg-link');
 assert.equal(links.length,1);
 assert.equal(links[0].textContent,'Resmî Site');
 assert.equal(links[0].title,'https://example.com/a');
+
+const boldPunct=node('div');
+appendMessageText(boldPunct,[
+  '**Sonuç:** testler',
+  '1. **Adım bir:** oku',
+  '**Durum (son)** ve **%100**'
+].join('\n'));
+assert.equal(boldPunct.children.length,3);
+assert.equal(boldPunct.children[0].children[0].tag,'strong');
+assert.equal(boldPunct.children[0].children[0].textContent,'Sonuç:');
+assert.equal(boldPunct.children[0].children[1].textContent,' testler');
+const stepLi=boldPunct.children[1].children[0];
+assert.equal(stepLi.children[0].tag,'strong');
+assert.equal(stepLi.children[0].textContent,'Adım bir:');
+assert.equal(stepLi.children[1].textContent,' oku');
+const strongs=boldPunct.children[2].children.filter(c=>c.tag==='strong');
+assert.deepEqual(strongs.map(s=>s.textContent),['Durum (son)','%100']);
 ''')
 
     def test_user_messages_stay_plain_text(self):
@@ -409,6 +435,68 @@ global.window={__writeConfirmed:false,pywebview:{api:{
   await pendingSend2;
   assert.equal(window.__writeConfirmed,false);
   assert.equal(chatSendCalls,0);
+})().catch(e=>{console.error(e);process.exitCode=1;});
+'''
+        result = _node(code)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_desktop_stop_buttons_close_confirm_modal_without_dropping_in_flight_chat_message(self):
+        desktop_stop_slice = _js(gui._HTML, "  document.getElementById('btnDesktopTaskStop').onclick=async()=>{", "  let coordinationTimer=null;")
+        adv_stop_slice = _js(gui._HTML, "  document.getElementById('btnDesktopStop').addEventListener('click', async () => {", "  function renderProvider(p) {")
+        lifecycle_state = _js(gui._HTML, "  let chatStopReceipt =", "  let chatPollBusy =")
+        send_fn = re.search(r"async function sendAgentMessage\(\)[\s\S]*?\n  \}\n", gui._HTML).group(0)
+        code = r'''
+const assert=require('node:assert/strict');
+let advDesktopStopHandler=null, appendedMessages=[], resolveChatSend=null;
+const selected={value:'read-only'};
+const confirmModal={hidden:true};
+const confirmTitle={textContent:''};
+const confirmMessage={textContent:''};
+const confirmCancel={textContent:'',onclick:null,focus(){document.activeElement=this;}};
+const confirmAccept={textContent:'',onclick:null,classList:{toggle(){}},focus(){document.activeElement=this;}};
+const confirmScrim={onclick:null};
+const btnDesktopTaskStop={onclick:null};
+const btnDesktopStop={addEventListener:(ev,fn)=>{if(ev==='click')advDesktopStopHandler=fn;}};
+global.desktopView={stop_ref:'desk-1'};
+global.desktopPolling=true;
+global.refreshDesktopTaskState=async()=>{};
+global.pollDesktopOperator=async()=>{};
+global.formatMessageLabel=()=>'CODEX';
+global.coordinationRouting=false;global.inputEl={value:'Sohbet mesajı'};
+global.currentConvId='c';global.mainProjectSelect={value:'p'};
+global.codexModelSelect=global.agyModelSelect={value:'model'};
+global.codexEffortSelect=global.agyEffortSelect={value:'low'};
+global.mainAgentSelect={value:'codex'};global.thinking=false;global.inpHistory=[];global.histCursor=0;global.msgCount=0;
+global.thinkingText={textContent:''};global.requestTimer=null;
+global.document={activeElement:null,getElementById:id=>({mainPermissionLevel:selected,confirmModal,confirmTitle,confirmMessage,confirmCancel,confirmAccept,confirmScrim,btnDesktopTaskStop,btnDesktopStop})[id]||{textContent:''}};
+global.chatEl={querySelectorAll:()=>[]};
+global.appendMsg=(kind,label,text)=>{appendedMessages.push([kind,label,text]);return {dataset:{},querySelector:()=>({textContent:''})};};
+global.setThinking=()=>{};global.logLine=()=>{};global.setOrb=()=>{};global.ensureChatPolling=()=>{};
+global.pollAgentTurn=async()=>{};
+global.window={__writeConfirmed:true,pywebview:{api:{
+  coordination_route:async()=>({status:'ok',data:{handled:false,intent:'conversation'}}),
+  desktop_task_stop:async()=>({status:'ok'}),
+  desktop_operator_stop:async()=>({status:'ok'}),
+  chat_send:()=>new Promise(resolve=>{resolveChatSend=resolve;})
+}}};
+''' + lifecycle_state + desktop_stop_slice + adv_stop_slice + send_fn + r'''
+(async()=>{
+  // Desktop stop buttons close an open confirmation modal with false ("vazgeç").
+  const pConfirm=requestUiConfirm('Masaüstü izni?');
+  assert.equal(confirmModal.hidden,false);
+  await btnDesktopTaskStop.onclick();
+  assert.equal(await pConfirm,false);
+  assert.equal(confirmModal.hidden,true);
+
+  // While a chat message is being sent (awaiting chat_send), pressing desktop Stop must NOT drop the chat message.
+  const sending=sendAgentMessage();
+  await new Promise(r=>setImmediate(r));
+  assert.equal(typeof resolveChatSend,'function');
+  await btnDesktopTaskStop.onclick();
+  await advDesktopStopHandler();
+  resolveChatSend({status:'ok',data:{conversation_id:'c',user_message:{id:'u1'},assistant_message:{id:'a1',sender:'codex'}}});
+  await sending;
+  assert.equal(appendedMessages.some(m=>m[0]==='user'&&m[2]==='Sohbet mesajı'),true);
 })().catch(e=>{console.error(e);process.exitCode=1;});
 '''
         result = _node(code)

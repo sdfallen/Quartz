@@ -203,7 +203,7 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
 
   // Fenced ``` blocks become monospace code panels. Text only: no HTML is parsed.
   function appendMessageText(container, text) {
-  const INLINE_RE = /(?<!`)`([^`\n]+)`(?!`)|(?<=^|[\s([{"'«“‘])(?:\[([^\[\]\n]+)\]\((https?:\/\/[^()\s\n]+)\)|\*\*(?=[\p{L}\p{N}`])([^*\n]+)(?<=[\p{L}\p{N}`’.!?])\*\*|__(?=[\p{L}\p{N}`])([^_\n]+)(?<=[\p{L}\p{N}`’.!?])__|\*(?!\*)(?=[\p{L}\p{N}`])([^*\n]+)(?<=[\p{L}\p{N}`’.!?])\*(?!\*)|_(?!_)(?=[\p{L}\p{N}`])([^_\n]+)(?<=[\p{L}\p{N}`’.!?])_(?!_))(?=$|[\s)\]}"'»”’,!?:;]|\.(?=$|[\s)\]}"'»”’]))/u;
+  const INLINE_RE = /(?<!`)`([^`\n]+)`(?!`)|(?<=^|[\s([{"'«“‘])(?:\[([^\[\]\n]+)\]\((https?:\/\/[^()\s\n]+)\)|\*\*(?=[^\s*\n])([^*\n]+)(?<=[^\s*\n])\*\*|__(?=[^\s_\n])([^_\n]+)(?<=[^\s_\n])__|\*(?!\*)(?=[^\s*.\n])([^*\n]+)(?<=[^\s*\n])\*(?!\*)|_(?!_)(?=[^\s_.\n])([^_\n]+)(?<=[^\s_\n])_(?!_))(?=$|[\s)\]}"'»”’,!?:;]|\.(?=$|[\s)\]}"'»”’]))/u;
   function hasMarkdownSyntax(value) {
     const src = String(value ?? '');
     if (/^(?:[ \t]*#{1,6}[ \t]+\S|[ \t]*(?:[-*•]|\d+[.)])[ \t]+\S)/m.test(src)) return true;
@@ -333,6 +333,10 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
           listStack.push(top);
         }
         const li = document.createElement('li');
+        if (itemType === 'ol') {
+          li.value = startNum;
+          if (typeof li.setAttribute === 'function') li.setAttribute('value', String(startNum));
+        }
         appendInlineFormatted(li, itemText);
         top.el.append(li);
         continue;

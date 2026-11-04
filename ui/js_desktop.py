@@ -37,7 +37,6 @@ JAVASCRIPT = r"""  let desktopView={code:'normal',stop_ref:null};
     }
   }
   document.getElementById('btnDesktopTaskStop').onclick=async()=>{
-    chatControlEpoch++;
     if(typeof resolveActiveConfirm==='function'&&activeConfirmResolver)resolveActiveConfirm(false);
     const ref=desktopView.stop_ref;if(!ref)return;
     const r=await window.pywebview.api.desktop_task_stop(ref);
