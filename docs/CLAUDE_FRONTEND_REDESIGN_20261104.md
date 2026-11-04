@@ -45,6 +45,8 @@ isteği için aşağıdakiler de değişti; Codex'in incelemesi gerekir:
 - `scripts/build_brand_assets.py` (yeni). `scripts/import_brand_icon.py` ve kökteki eski görseller duruyor.
 - `tests/test_branding.py`: "kullanıcının verdiği dosyayla birebir aynı" testi, üreteçle eşleşme testine dönüştü.
 - `tests/test_self_diagnostics_ui.py`: logo erişilebilirlik adı.
+- `.gitattributes` (yeni): `quartz-q.svg` satır sonu dönüşümünden muaf. Özeti manifestte kayıtlı; `core.autocrlf`
+  açıkken yeni checkout'ta CRLF'ye dönüşüp `test_committed_assets_match_the_generator` testini bozuyordu.
 - `core/branding.py` ve `assets/branding/README.md` içindeki "logo üretilmez" ifadesi eskidi (README güncellendi).
 
 ## Kanıt seviyeleri

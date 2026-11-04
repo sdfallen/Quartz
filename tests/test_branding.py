@@ -20,6 +20,14 @@ class BrandingTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256((ROOT/'assets/branding'/name).read_bytes()).hexdigest(),manifest[key])
         with tempfile.TemporaryDirectory() as directory:
             self.assertEqual(build(directory),manifest)
+    def test_logo_svg_keeps_its_bytes_in_every_checkout(self):
+        # core.autocrlf would otherwise rewrite the file and break the recorded hash.
+        import subprocess
+        if not (ROOT/'.git').exists():
+            self.skipTest('git checkout gerekli')
+        result=subprocess.run(['git','-C',str(ROOT),'check-attr','text','--','assets/branding/quartz-q.svg'],capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertTrue(result.stdout.strip().endswith('text: unset'),result.stdout)
     def test_small_icon_frames_are_generated_not_downscaled(self):
         from scripts.build_brand_assets import ICO_SIZES,SOLID_TONE
         with Image.open(ROOT/'assets/branding/quartz-q.ico') as icon:
