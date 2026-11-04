@@ -147,9 +147,202 @@ assert.equal(other.children[0].children.length,1);assert.equal(other.children[0]
 ''')
 
     def test_message_text_never_uses_html_parsing(self):
-        source = _js(gui._HTML, "  function appendMessageText(container, text)", "  function appendMsg(")
+        source = _js(gui._HTML, "  function appendMessageText(container, text)", "  let activeTaskSquad =")
         self.assertNotIn("innerHTML", source)
         self.assertNotIn("insertAdjacentHTML", source)
+        self.assertNotIn("window.open", source)
+
+    def test_markdown_headings_lists_bold_italic_inline_code_and_link_text(self):
+        self.run_js(r'''
+const box=node('div');
+appendMessageText(box,[
+  '# Ana Başlık',
+  '### Alt *Başlık*',
+  'Normal **kalın**, *italik*, __ikinci kalın__, _ikinci italik_, `satır içi <kod>` ve [Belgeler](https://example.org/docs) metni.',
+  '- Madde **bir**',
+  '- Madde `iki`',
+  '1. Sıralı bir',
+  '2. Sıralı [bağlantı](https://example.org/item)'
+].join('\n'));
+assert.deepEqual(box.children.map(c=>c.tag),['h1','h3','p','ul','ol']);
+assert.equal(box.children[0].className,'msg-heading msg-h1');
+assert.equal(box.children[0].textContent,'Ana Başlık');
+assert.equal(box.children[1].className,'msg-heading msg-h3');
+assert.equal(box.children[1].children[1].tag,'em');
+assert.equal(box.children[1].children[1].textContent,'Başlık');
+const p=box.children[2];
+assert.equal(p.className,'msg-p');
+const tags=p.children.map(c=>c.tag);
+assert(tags.includes('strong'));
+assert(tags.includes('em'));
+assert(tags.includes('code'));
+const codeNode=p.children.find(c=>c.tag==='code');
+assert.equal(codeNode.className,'msg-inline-code');
+assert.equal(codeNode.textContent,'satır içi <kod>');
+const linkNode=p.children.find(c=>c.className==='msg-link');
+assert.equal(linkNode.tag,'span');
+assert.equal(linkNode.textContent,'Belgeler');
+assert.equal(linkNode.title,'https://example.org/docs');
+assert.equal(linkNode.href,undefined);
+const ul=box.children[3];
+assert.equal(ul.className,'msg-list');
+assert.equal(ul.children.length,2);
+assert.equal(ul.children[0].tag,'li');
+assert.equal(ul.children[0].children[1].tag,'strong');
+assert.equal(ul.children[0].children[1].textContent,'bir');
+const ol=box.children[4];
+assert.equal(ol.className,'msg-list');
+assert.equal(ol.children.length,2);
+assert.equal(ol.children[1].children[1].className,'msg-link');
+assert.equal(ol.children[1].children[1].textContent,'bağlantı');
+''')
+
+
+class ModalAndWindowControlTests(unittest.TestCase):
+    def test_confirm_modal_requires_explicit_accept_and_restores_focus(self):
+        source = _js(gui._HTML, "  let activeConfirmResolver =", "  function chatCleanupUnconfirmed(")
+        code = r'''
+const assert=require('node:assert/strict');
+function makeEl(id){
+  return {
+    id, hidden:id==='confirmModal', textContent:'', onclick:null, isConnected:true,
+    classes:new Set(),
+    classList:{toggle(c,on){if(on)this.classes.add(c);else this.classes.delete(c);}},
+    focus(){document.activeElement=this;}
+  };
+}
+const trigger=makeEl('btnDeleteProjectChats');
+const confirmModal=makeEl('confirmModal');
+const confirmTitle=makeEl('confirmTitle');
+const confirmMessage=makeEl('confirmMessage');
+const confirmCancel=makeEl('confirmCancel');
+const confirmAccept=makeEl('confirmAccept');
+const confirmScrim=makeEl('confirmScrim');
+confirmCancel.classList.classes=confirmCancel.classes;
+confirmAccept.classList.classes=confirmAccept.classes;
+const map={confirmModal,confirmTitle,confirmMessage,confirmCancel,confirmAccept,confirmScrim};
+const document={activeElement:trigger,getElementById:id=>map[id]||null};
+const window={};
+''' + source + r'''
+(async()=>{
+  // Danger confirm focuses Cancel first; clicking Cancel resolves false and restores focus.
+  const p1=requestUiConfirm('Silinsin mi?',{title:'Silme onayı',confirmLabel:'Sil',danger:true});
+  assert.equal(confirmModal.hidden,false);
+  assert.equal(confirmTitle.textContent,'Silme onayı');
+  assert.equal(confirmMessage.textContent,'Silinsin mi?');
+  assert.equal(document.activeElement,confirmCancel);
+  assert.equal(confirmAccept.classes.has('danger'),true);
+  confirmCancel.onclick();
+  assert.equal(await p1,false);
+  assert.equal(confirmModal.hidden,true);
+  assert.equal(document.activeElement,trigger);
+
+  // Clicking Accept resolves true and restores focus.
+  const p2=requestUiConfirm('Yetki verilsin mi?',{title:'Yetki onayı',confirmLabel:'Yetki ver'});
+  assert.equal(confirmModal.hidden,false);
+  assert.equal(document.activeElement,confirmAccept);
+  assert.equal(confirmAccept.classes.has('danger'),false);
+  confirmAccept.onclick();
+  assert.equal(await p2,true);
+  assert.equal(confirmModal.hidden,true);
+  assert.equal(document.activeElement,trigger);
+})().catch(e=>{console.error(e);process.exitCode=1;});
+'''
+        result = _node(code)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_modal_tab_focus_trap_and_overlay_focus_return(self):
+        setup_slice = _js(gui._HTML, "  const modalReturnFocus = new Map();", "  function updateAntigravitySafety(")
+        trap_slice = _js(gui._HTML, "  function isElementVisibleForFocus(el)", "  document.addEventListener('keydown', event => {")
+        code = r'''
+const assert=require('node:assert/strict');
+function makeControl(id){
+  return {
+    id, disabled:false, hidden:false, isConnected:true,
+    getClientRects:()=>[1], closest:()=>null,
+    focus(){document.activeElement=this;}
+  };
+}
+const opener=makeControl('btnAgentCenter');
+const b1=makeControl('firstBtn');
+const b2=makeControl('midInput');
+const b3=makeControl('lastBtn');
+const overlay={
+  id:'agentOverlay', hidden:false,
+  classes:new Set(),
+  classList:{
+    contains(c){return overlay.classes.has(c);},
+    add(c){overlay.classes.add(c);},
+    remove(c){overlay.classes.delete(c);}
+  },
+  getClientRects:()=>overlay.classes.has('show')?[1]:[],
+  contains:el=>[b1,b2,b3].includes(el),
+  querySelector:()=>b1,
+  querySelectorAll:()=>[b1,b2,b3]
+};
+const confirmModal={id:'confirmModal',hidden:true,getClientRects:()=>[]};
+const paletteLayer={id:'paletteLayer',hidden:true,getClientRects:()=>[]};
+const document={
+  activeElement:opener,
+  getElementById:id=>({agentOverlay:overlay,agentPrompt:b2,confirmModal,paletteLayer})[id]||null,
+  querySelectorAll:()=>overlay.classes.has('show')?[overlay]:[]
+};
+''' + setup_slice + trap_slice + r'''
+openModalOverlay(overlay,'agentPrompt');
+assert.equal(overlay.classes.has('show'),true);
+assert.equal(document.activeElement,b2);
+
+// Tab from last element wraps to first element.
+document.activeElement=b3;
+let prevented=false;
+assert.equal(trapModalTabFocus({key:'Tab',shiftKey:false,preventDefault(){prevented=true;}}),true);
+assert.equal(prevented,true);
+assert.equal(document.activeElement,b1);
+
+// Shift+Tab from first element wraps to last element.
+prevented=false;
+assert.equal(trapModalTabFocus({key:'Tab',shiftKey:true,preventDefault(){prevented=true;}}),true);
+assert.equal(prevented,true);
+assert.equal(document.activeElement,b3);
+
+// Closing overlay restores focus to opener.
+closeModalOverlay(overlay);
+assert.equal(overlay.classes.has('show'),false);
+assert.equal(document.activeElement,opener);
+'''
+        result = _node(code)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_window_maximize_button_updates_aria_and_icon(self):
+        source = _js(gui._HTML, "  let windowMaximized = false;", "  if (btnWinMaximize) {")
+        code = r'''
+const assert=require('node:assert/strict');
+const useEl={href:'#i-maximize',setAttribute(k,v){this[k]=v;}};
+const maxBtn={
+  attrs:{}, title:'',
+  setAttribute(k,v){this.attrs[k]=v;},
+  querySelector:()=>useEl
+};
+const bodyClasses=new Set();
+const document={
+  getElementById:id=>id==='btnWinMaximize'?maxBtn:null,
+  body:{classList:{toggle(c,on){if(on)bodyClasses.add(c);else bodyClasses.delete(c);}}}
+};
+''' + source + r'''
+syncWindowMaximizedUi(true);
+assert.equal(maxBtn.attrs['aria-pressed'],'true');
+assert.equal(maxBtn.attrs['aria-label'],'Önceki boyuta döndür');
+assert.equal(useEl.href,'#i-restore');
+assert.equal(bodyClasses.has('maximized'),true);
+
+syncWindowMaximizedUi(false);
+assert.equal(maxBtn.attrs['aria-pressed'],'false');
+assert.equal(maxBtn.attrs['aria-label'],'Büyüt');
+assert.equal(useEl.href,'#i-maximize');
+assert.equal(bodyClasses.has('maximized'),false);
+'''
+        result = _node(code)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

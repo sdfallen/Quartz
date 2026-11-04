@@ -76,6 +76,35 @@ JAVASCRIPT = r"""
   }
   document.getElementById('btnSidebar').addEventListener('click', toggleSidebar);
   document.getElementById('btnWinMinimize').addEventListener('click', () => window.pywebview.api.minimize());
+  let windowMaximized = false;
+  const btnWinMaximize = document.getElementById('btnWinMaximize');
+  function syncWindowMaximizedUi(maximized) {
+    windowMaximized = !!maximized;
+    document.body.classList.toggle('maximized', windowMaximized);
+    if (!btnWinMaximize) return;
+    btnWinMaximize.setAttribute('aria-pressed', String(windowMaximized));
+    const label = windowMaximized ? 'Önceki boyuta döndür' : 'Büyüt';
+    btnWinMaximize.title = label;
+    btnWinMaximize.setAttribute('aria-label', label);
+    const useEl = btnWinMaximize.querySelector('use');
+    if (useEl) useEl.setAttribute('href', windowMaximized ? '#i-restore' : '#i-maximize');
+  }
+  if (btnWinMaximize) {
+    btnWinMaximize.addEventListener('click', async () => {
+      try {
+        const result = await window.pywebview.api.toggle_maximize(!windowMaximized);
+        syncWindowMaximizedUi(result?.maximized);
+        if (result && typeof result.compact === 'boolean') {
+          compactMode = result.compact;
+          document.body.classList.toggle('compact', compactMode);
+          const minBtn = document.getElementById('btnMin');
+          if (minBtn) minBtn.title = compactMode ? 'Tam arayüze dön' : 'Kompakt sohbete geç';
+        }
+      } catch (e) {
+        logLine('Pencere boyutu değiştirilemedi: ' + String(e));
+      }
+    });
+  }
   document.getElementById('btnAddProject').title = 'Windows klasör seçicisiyle proje ekle';
   document.getElementById('btnDeleteProjectChats').addEventListener('click', () =>
     requestChatDeletion(navigationConversations.filter(c=>(c.project_id||'squad-pilot')===mainProjectSelect.value), mainProjectSelect.value));
@@ -143,6 +172,7 @@ JAVASCRIPT = r"""
       ['Görünüm', 'Günlüğü aç', () => openInspector('tabLog')],
       ['Görünüm', 'Kenar çubuğunu aç/kapat', toggleSidebar],
       ['Görünüm', 'Kompakt pencere', () => pressIfUsable('btnMin')],
+      ['Görünüm', 'Pencereyi büyüt / geri al', () => pressIfUsable('btnWinMaximize')],
       ['Görünüm', 'Koyu tema', () => applyUiPreference('theme', 'dark')],
       ['Görünüm', 'Açık tema', () => applyUiPreference('theme', 'light')],
       ['Görünüm', 'Sistem teması', () => applyUiPreference('theme', 'system')],
@@ -228,12 +258,64 @@ JAVASCRIPT = r"""
   document.getElementById('paletteScrim').addEventListener('click', () => closePalette());
   document.getElementById('btnCommand').addEventListener('click', openPalette);
 
+  function isElementVisibleForFocus(el) {
+    if (!el || el.disabled || el.hidden) return false;
+    if (typeof el.closest === 'function' && el.closest('[hidden]')) return false;
+    if (typeof el.getClientRects === 'function') return el.getClientRects().length > 0;
+    return true;
+  }
+  function modalFocusableElements(container) {
+    if (!container || typeof container.querySelectorAll !== 'function') return [];
+    const selector = 'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    return Array.from(container.querySelectorAll(selector)).filter(isElementVisibleForFocus);
+  }
   function blockingOverlay() {
-    return Array.from(document.querySelectorAll('.api-setup.show, .agent-overlay.show')).find(el => el.getClientRects().length > 0) || null;
+    const confirmModalEl = document.getElementById('confirmModal');
+    if (confirmModalEl && !confirmModalEl.hidden && isElementVisibleForFocus(confirmModalEl)) return confirmModalEl;
+    return Array.from(document.querySelectorAll('.api-setup.show, .agent-overlay.show')).find(isElementVisibleForFocus) || null;
+  }
+  function activeModalContainer() {
+    const confirmModalEl = document.getElementById('confirmModal');
+    if (confirmModalEl && !confirmModalEl.hidden && isElementVisibleForFocus(confirmModalEl)) return confirmModalEl;
+    if (paletteLayer && !paletteLayer.hidden && isElementVisibleForFocus(paletteLayer)) return paletteLayer;
+    const overlay = blockingOverlay();
+    if (overlay) return overlay;
+    return null;
+  }
+  function trapModalTabFocus(event) {
+    if (event.key !== 'Tab') return false;
+    const modal = activeModalContainer();
+    if (!modal) return false;
+    const focusables = modalFocusableElements(modal);
+    if (!focusables.length) {
+      event.preventDefault();
+      return true;
+    }
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+    const inside = typeof modal.contains === 'function' ? modal.contains(active) : focusables.includes(active);
+    if (event.shiftKey) {
+      if (!inside || active === first) {
+        event.preventDefault();
+        last.focus();
+        return true;
+      }
+    } else {
+      if (!inside || active === last) {
+        event.preventDefault();
+        first.focus();
+        return true;
+      }
+    }
+    return false;
   }
   document.addEventListener('keydown', event => {
     if (event.isComposing) return;
+    if (event.key === 'Tab' && trapModalTabFocus(event)) return;
     if (event.key === 'Escape') {
+      const confirmModalEl = document.getElementById('confirmModal');
+      if (confirmModalEl && !confirmModalEl.hidden) { event.preventDefault(); resolveActiveConfirm(false); return; }
       if (!paletteLayer.hidden) { event.preventDefault(); closePalette(); return; }
       const overlay = blockingOverlay();
       if (overlay?.id === 'agentOverlay') document.getElementById('btnAgentClose').click();

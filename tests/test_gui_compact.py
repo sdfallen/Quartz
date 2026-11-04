@@ -8,12 +8,20 @@ class FakeWindow:
     def __init__(self):
         self.sizes = []
         self.moves = []
+        self.maximized_calls = 0
+        self.restored_calls = 0
 
     def resize(self, width, height):
         self.sizes.append((width, height))
 
     def move(self, x, y):
         self.moves.append((x, y))
+
+    def maximize(self):
+        self.maximized_calls += 1
+
+    def restore(self):
+        self.restored_calls += 1
 
 
 class CompactWindowTests(unittest.TestCase):
@@ -65,7 +73,30 @@ class CompactWindowTests(unittest.TestCase):
         self.assertIn('id="agentProvider"', gui._HTML)
         self.assertIn('value="antigravity"', gui._HTML)
         self.assertIn('value="collaboration"', gui._HTML)
-        self.assertIn('window.confirm(', gui._HTML)
+        self.assertIn('id="confirmModal"', gui._HTML)
+        self.assertIn('requestUiConfirm(', gui._HTML)
+        self.assertNotIn('window.confirm(', gui._HTML)
+
+    def test_toggle_maximize_and_restore_button(self):
+        self.assertIn('id="btnWinMaximize"', gui._HTML)
+        api = gui.Api.__new__(gui.Api)
+        api._compact = False
+        api._maximized = False
+        window = FakeWindow()
+        with patch.object(gui.webview, "windows", [window]), \
+                patch("core.ui_window.work_area", return_value=(0, 0, 1920, 1040)):
+            self.assertEqual(api.toggle_maximize(), {"maximized": True, "compact": False})
+            self.assertEqual(window.maximized_calls, 1)
+            self.assertEqual(api.toggle_maximize(), {"maximized": False, "compact": False})
+            self.assertEqual(window.restored_calls, 1)
+            # Maximizing from compact mode restores full bounds first and clears compact state.
+            api.set_compact(True)
+            self.assertEqual(api.toggle_maximize(True), {"maximized": True, "compact": False})
+            self.assertEqual(window.maximized_calls, 2)
+            # Entering compact mode from maximized restores window first.
+            self.assertEqual(api.set_compact(True), {"compact": True})
+            self.assertFalse(api._maximized)
+            self.assertEqual(window.restored_calls, 2)
 
     def test_mobile_token_is_sent_to_windows_clipboard(self):
         api = gui.Api()

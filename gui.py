@@ -96,6 +96,8 @@ class Api:
     the authenticated IPC client.
     """
 
+    _maximized = False
+
     def __init__(self, services: ApplicationServices | None = None):
         self._services = services or ApplicationServices()
         self._compact = False
@@ -936,9 +938,40 @@ class Api:
         if webview.windows:
             webview.windows[0].minimize()
 
+    def toggle_maximize(self, enabled: bool | None = None) -> dict:
+        """Toggle or set maximized state on the main window."""
+        current = getattr(self, "_maximized", False)
+        was_compact = getattr(self, "_compact", False)
+        self._maximized = (not current) if enabled is None else bool(enabled)
+        if self._maximized:
+            self._compact = False
+        if webview.windows:
+            window = webview.windows[0]
+            if self._maximized:
+                if was_compact:
+                    width, height, x, y = full_window_rect()
+                    window.resize(width, height)
+                    if x is not None:
+                        window.move(x, y)
+                if hasattr(window, "maximize"):
+                    window.maximize()
+            else:
+                if hasattr(window, "restore"):
+                    window.restore()
+                if was_compact:
+                    width, height, x, y = full_window_rect()
+                    window.resize(width, height)
+                    if x is not None:
+                        window.move(x, y)
+        return {"maximized": self._maximized, "compact": getattr(self, "_compact", False)}
+
     def set_compact(self, enabled: bool) -> dict:
         """Resize the main window into a draggable, chat-only companion."""
         self._compact = bool(enabled)
+        if getattr(self, "_maximized", False):
+            self._maximized = False
+            if webview.windows and hasattr(webview.windows[0], "restore"):
+                webview.windows[0].restore()
         if webview.windows:
             window = webview.windows[0]
             if self._compact:

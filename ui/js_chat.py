@@ -196,7 +196,12 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
         ack.disabled=!inspected || !check.checked;
       };
       ack.onclick=async()=>{
-        if (!inspected || !check.checked || !window.confirm('Eski görev yeniden çalıştırılmayacak; izin verilmeyecek. Harici etkinliği kontrol ettiyseniz yalnız engel kaydını kaldırın.')) return;
+        if (!inspected || !check.checked) return;
+        const confirmed = await requestUiConfirm(
+          'Eski görev yeniden çalıştırılmayacak; izin verilmeyecek. Harici etkinliği kontrol ettiyseniz yalnız engel kaydını kaldırın.',
+          {title: 'Yazıcı engelini kaldır', confirmLabel: 'Engeli kaldır'}
+        );
+        if (!confirmed) return;
         const result=await window.pywebview.api.writer_recovery_acknowledge(claim.id,true,true);
         if (result.status!=='ok') { details.textContent=String(result.data); return; }
         await loadActiveConversation();
@@ -273,6 +278,60 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
   let chatStopReceipt = null;
   let chatSubmissionBusy = false;
   let chatControlEpoch = 0;
+  let activeConfirmResolver = null;
+  let confirmReturnFocus = null;
+  function resolveActiveConfirm(accepted, restoreFocus = true) {
+    const modal = typeof document !== 'undefined' && typeof document.getElementById === 'function'
+      ? document.getElementById('confirmModal')
+      : null;
+    if (modal) modal.hidden = true;
+    const resolver = activeConfirmResolver;
+    activeConfirmResolver = null;
+    const prevFocus = confirmReturnFocus;
+    confirmReturnFocus = null;
+    if (restoreFocus && prevFocus && typeof prevFocus.focus === 'function' && prevFocus.isConnected !== false) {
+      prevFocus.focus();
+    }
+    if (typeof resolver === 'function') resolver(!!accepted);
+  }
+  function requestUiConfirm(message, options = {}) {
+    const promptText = String(message ?? '');
+    const modal = typeof document !== 'undefined' && typeof document.getElementById === 'function'
+      ? document.getElementById('confirmModal')
+      : null;
+    const msgEl = modal && typeof document.getElementById === 'function'
+      ? document.getElementById('confirmMessage')
+      : null;
+    const titleEl = modal && typeof document.getElementById === 'function'
+      ? document.getElementById('confirmTitle')
+      : null;
+    const cancelEl = modal && typeof document.getElementById === 'function'
+      ? document.getElementById('confirmCancel')
+      : null;
+    const acceptEl = modal && typeof document.getElementById === 'function'
+      ? document.getElementById('confirmAccept')
+      : null;
+    if (!modal || !msgEl || !cancelEl || !acceptEl) {
+      return Promise.resolve(false);
+    }
+    if (activeConfirmResolver) resolveActiveConfirm(false, false);
+    confirmReturnFocus = typeof document !== 'undefined' ? document.activeElement : null;
+    if (titleEl) titleEl.textContent = options.title || 'İşlemi onayla';
+    msgEl.textContent = promptText;
+    cancelEl.textContent = options.cancelLabel || 'Vazgeç';
+    acceptEl.textContent = options.confirmLabel || 'Onayla';
+    acceptEl.classList?.toggle('danger', !!options.danger);
+    cancelEl.onclick = () => resolveActiveConfirm(false);
+    acceptEl.onclick = () => resolveActiveConfirm(true);
+    const scrimEl = typeof document.getElementById === 'function' ? document.getElementById('confirmScrim') : null;
+    if (scrimEl) scrimEl.onclick = () => resolveActiveConfirm(false);
+    modal.hidden = false;
+    const initialTarget = options.danger ? cancelEl : acceptEl;
+    if (typeof initialTarget.focus === 'function') initialTarget.focus();
+    return new Promise(resolve => {
+      activeConfirmResolver = resolve;
+    });
+  }
   function chatCleanupUnconfirmed(receipt = chatStopReceipt) {
     return !!receipt && (receipt.status === 'pending' || receipt.status === 'failed');
   }
@@ -499,9 +558,12 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     const confirmWrite = isWrite;
     const agent = submittedAgent;
     if (isWrite && !window.__writeConfirmed) {
-      const ok = window.confirm(permissionLevel === 'full'
-        ? 'Bu görev için TAM sistem erişimi verilsin mi? Ajan proje dışındaki dosyalara da erişebilir. Yazma öncesi proje checkpoint’i alınır; bu tüm bilgisayarın yedeği değildir.'
-        : 'Bu görev için proje dosyalarını değiştirme yetkisi verilsin mi? Önce checkpoint alınır. Birlikte modunda Codex yazar, Antigravity inceleme yapar.');
+      const ok = await requestUiConfirm(
+        permissionLevel === 'full'
+          ? 'Bu görev için TAM sistem erişimi verilsin mi? Ajan proje dışındaki dosyalara da erişebilir. Yazma öncesi proje checkpoint’i alınır; bu tüm bilgisayarın yedeği değildir.'
+          : 'Bu görev için proje dosyalarını değiştirme yetkisi verilsin mi? Önce checkpoint alınır. Birlikte modunda Codex yazar, Antigravity inceleme yapar.',
+        {title: 'Yetki onayı', confirmLabel: 'Yetki ver'}
+      );
       if (!ok) return;
       window.__writeConfirmed = true;
     }
@@ -586,7 +648,11 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     const message = projectId
       ? `“${projectName}” projesinin ${conversations.length} sohbeti silinsin mi?`
       : `“${conversations[0].title || 'Yeni sohbet'}” sohbeti silinsin mi?`;
-    if (!window.confirm(message + '\nProje dosyaları silinmez. Sohbetlerin yerel kurtarma yedeği tutulur.')) return;
+    const confirmed = await requestUiConfirm(
+      message + '\nProje dosyaları silinmez. Sohbetlerin yerel kurtarma yedeği tutulur.',
+      {title: 'Sohbet silme onayı', confirmLabel: 'Sil', danger: true}
+    );
+    if (!confirmed) return;
     deletionPending = true;
     try {
       const result = projectId

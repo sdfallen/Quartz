@@ -34,8 +34,10 @@ MODERN_CSS = r"""
   body:not(.low-spec) .empty-state > :nth-child(4) { animation-delay:120ms; }
   body:not(.low-spec) .api-setup.show,
   body:not(.low-spec) .agent-overlay.show,
+  body:not(.low-spec) .confirm-layer:not([hidden]) .confirm-scrim,
   body:not(.low-spec) .palette-scrim { animation:q-fade var(--t-med) var(--ease) both; }
   body:not(.low-spec) .api-setup.show .api-panel,
+  body:not(.low-spec) .confirm-layer:not([hidden]) .confirm-panel,
   body:not(.low-spec) .agent-overlay.show .agent-panel { animation:q-sheet var(--t-slow) var(--spring) both; }
   body:not(.low-spec) .palette { animation:q-palette var(--t-med) var(--ease) both; }
   body.show-panels:not(.low-spec) .inspector { animation:q-panel-in var(--t-slow) var(--ease) both; }

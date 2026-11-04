@@ -196,14 +196,148 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
 
   // Fenced ``` blocks become monospace code panels. Text only: no HTML is parsed.
   function appendMessageText(container, text) {
+  function hasMarkdownSyntax(value) {
+    const src = String(value ?? '');
+    if (/^(?:\s*#{1,6}\s+\S|\s*(?:[-*•]|\d+[.)])\s+\S)/m.test(src)) return true;
+    return /(?<!`)`[^`\n]+`(?!`)|\[[^\]\n]+\]\([^)\n]+\)|\*\*[^*\n]+?\*\*|__[^_\n]+?__|(?<!\*)\*[^*\s\n][^*\n]*?\*(?!\*)|(?<![\w_])_[^_\s\n][^_\n]*?_(?![\w_])/.test(src);
+  }
+
+  function appendInlineFormatted(parent, text) {
+    const src = String(text ?? '');
+    const tokenRe = /(?<!`)`([^`\n]+)`(?!`)|\[([^\]\n]+)\]\(([^)\n]+)\)|\*\*([^*\n]+?)\*\*|__([^_\n]+?)__|(?<!\*)\*([^*\s\n](?:[^*\n]*?[^*\s\n])?)\*(?!\*)|(?<![\w_])_([^_\s\n](?:[^_\n]*?[^_\s\n])?)_(?![\w_])/g;
+    let lastIndex = 0;
+    let match = null;
+    while ((match = tokenRe.exec(src)) !== null) {
+      if (match.index > lastIndex) {
+        const plain = document.createElement('span');
+        plain.textContent = src.slice(lastIndex, match.index);
+        parent.append(plain);
+      }
+      if (match[1] !== undefined) {
+        const code = document.createElement('code');
+        code.className = 'msg-inline-code';
+        code.textContent = match[1];
+        parent.append(code);
+      } else if (match[2] !== undefined) {
+        const link = document.createElement('span');
+        link.className = 'msg-link';
+        link.textContent = match[2];
+        link.title = match[3].trim();
+        parent.append(link);
+      } else if (match[4] !== undefined || match[5] !== undefined) {
+        const strong = document.createElement('strong');
+        appendInlineFormatted(strong, match[4] ?? match[5]);
+        parent.append(strong);
+      } else if (match[6] !== undefined || match[7] !== undefined) {
+        const em = document.createElement('em');
+        appendInlineFormatted(em, match[6] ?? match[7]);
+        parent.append(em);
+      }
+      lastIndex = tokenRe.lastIndex;
+    }
+    if (lastIndex === 0) {
+      parent.textContent = src;
+      return;
+    }
+    if (lastIndex < src.length) {
+      const tail = document.createElement('span');
+      tail.textContent = src.slice(lastIndex);
+      parent.append(tail);
+    }
+  }
+
+  function appendProseBlocks(target, prose) {
+    const lines = String(prose ?? '').split(/\r?\n/);
+    let listEl = null;
+    let listType = '';
+    let paragraphLines = [];
+    const flushParagraph = () => {
+      if (!paragraphLines.length) return;
+      const p = document.createElement('p');
+      p.className = 'msg-p';
+      appendInlineFormatted(p, paragraphLines.join('\n'));
+      target.append(p);
+      paragraphLines = [];
+    };
+    const flushList = () => {
+      if (!listEl) return;
+      target.append(listEl);
+      listEl = null;
+      listType = '';
+    };
+    for (const rawLine of lines) {
+      const trimmed = rawLine.trim();
+      if (!trimmed) {
+        flushParagraph();
+        flushList();
+        continue;
+      }
+      const headingMatch = /^(#{1,6})\s+(.+?)\s*$/.exec(trimmed);
+      if (headingMatch) {
+        flushParagraph();
+        flushList();
+        const level = Math.min(4, headingMatch[1].length);
+        const heading = document.createElement('h' + level);
+        heading.className = 'msg-heading msg-h' + level;
+        appendInlineFormatted(heading, headingMatch[2]);
+        target.append(heading);
+        continue;
+      }
+      const ulMatch = /^[-*•]\s+(.+?)\s*$/.exec(trimmed);
+      if (ulMatch) {
+        flushParagraph();
+        if (listType !== 'ul') {
+          flushList();
+          listEl = document.createElement('ul');
+          listEl.className = 'msg-list';
+          listType = 'ul';
+        }
+        const li = document.createElement('li');
+        appendInlineFormatted(li, ulMatch[1]);
+        listEl.append(li);
+        continue;
+      }
+      const olMatch = /^\d+[.)]\s+(.+?)\s*$/.exec(trimmed);
+      if (olMatch) {
+        flushParagraph();
+        if (listType !== 'ol') {
+          flushList();
+          listEl = document.createElement('ol');
+          listEl.className = 'msg-list';
+          listType = 'ol';
+        }
+        const li = document.createElement('li');
+        appendInlineFormatted(li, olMatch[1]);
+        listEl.append(li);
+        continue;
+      }
+      flushList();
+      paragraphLines.push(rawLine);
+    }
+    flushParagraph();
+    flushList();
+  }
     const value = String(text ?? '');
-    if (!value.includes('```')) { container.textContent = value; return; }
+    if (!value.includes('```')) {
+      if (!hasMarkdownSyntax(value)) { container.textContent = value; return; }
+      appendProseBlocks(container, value);
+      return;
+    }
     const parts = value.split('```');
     parts.forEach((part, index) => {
       const isCode = index % 2 === 1 && index < parts.length - 1;
       if (!isCode) {
         const prose = (index % 2 === 1 ? '```' + part : part).replace(/^\n+|\n+$/g, '');
-        if (prose) { const segment = document.createElement('div'); segment.textContent = prose; container.append(segment); }
+        if (prose) {
+          const segment = document.createElement('div');
+          if (!hasMarkdownSyntax(prose)) {
+            segment.textContent = prose;
+          } else {
+            segment.className = 'msg-prose';
+            appendProseBlocks(segment, prose);
+          }
+          container.append(segment);
+        }
         return;
       }
       const newline = part.indexOf('\n');
@@ -235,18 +369,43 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       } catch (_) {}
     }
     const seqNum = msgObj && (msgObj.sequence || (msgObj.metadata && msgObj.metadata.sequence));
-    const escapeTag = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const seqHtml = seqNum ? `<span class="msg-seq-tag">#${escapeTag(seqNum)}</span>` : '';
     const modelTagText = formatModelTagText(msgObj);
-    const modelHtml = modelTagText ? `<span class="msg-model-tag">${escapeTag(modelTagText)}</span>` : '';
     if (kind === 'sys') {
-      wrap.innerHTML = '<div class="bubble"></div>';
-      wrap.querySelector('.bubble').textContent = text;
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = text;
+      wrap.append(bubble);
     } else {
-      const tagClass = 'tag-' + cleanSender;
-      const senderHtml = label ? `<span class="msg-sender-tag ${escapeTag(tagClass)}">${escapeTag(label)}</span>` : '';
-      wrap.innerHTML = `<div><div class="msg-meta">${senderHtml}${seqHtml}${modelHtml}<span class="msg-ts">${ts}</span></div><div class="bubble"></div></div>`;
-      renderMessageBody(wrap.querySelector('.bubble'), text, msgObj);
+      const inner = document.createElement('div');
+      const meta = document.createElement('div');
+      meta.className = 'msg-meta';
+      if (label) {
+        const senderTag = document.createElement('span');
+        senderTag.className = `msg-sender-tag tag-${cleanSender}`;
+        senderTag.textContent = label;
+        meta.append(senderTag);
+      }
+      if (seqNum) {
+        const seqTag = document.createElement('span');
+        seqTag.className = 'msg-seq-tag';
+        seqTag.textContent = `#${seqNum}`;
+        meta.append(seqTag);
+      }
+      if (modelTagText) {
+        const modelTag = document.createElement('span');
+        modelTag.className = 'msg-model-tag';
+        modelTag.textContent = modelTagText;
+        meta.append(modelTag);
+      }
+      const tsTag = document.createElement('span');
+      tsTag.className = 'msg-ts';
+      tsTag.textContent = ts;
+      meta.append(tsTag);
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      inner.append(meta, bubble);
+      wrap.append(inner);
+      renderMessageBody(bubble, text, msgObj);
     }
     chatEl.appendChild(wrap);
     if (!skipScroll) {

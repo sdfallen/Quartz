@@ -90,12 +90,12 @@ JAVASCRIPT = r"""  function addAgentRow(container, title, details, status='') {
   }
 
   document.getElementById('btnAgentCenter').addEventListener('click', () => {
-    agentOverlay.classList.add('show');
+    openModalOverlay(agentOverlay, 'agentPrompt');
     const token = ++agentPollToken;
     pollAgentCenter(token);
   });
   document.getElementById('btnAgentClose').addEventListener('click', () => {
-    agentOverlay.classList.remove('show'); agentPollToken++;
+    closeModalOverlay(agentOverlay); agentPollToken++;
   });
   document.getElementById('btnAgentRefresh').addEventListener('click', refreshAgentCenter);
   agentProject.addEventListener('change', refreshAgentCenter);
@@ -122,10 +122,13 @@ JAVASCRIPT = r"""  function addAgentRow(container, title, details, status='') {
     if (provider === 'collaboration' && write) {
       agentError.textContent = 'İki ajanlı iş birliği bu sürümde salt-okunur çalışır.'; return;
     }
-    if ((provider === 'antigravity' || provider === 'collaboration') && !confirmAntigravitySafety()) return;
+    if ((provider === 'antigravity' || provider === 'collaboration') && !(await confirmAntigravitySafety())) return;
     let confirmed = false;
     if (write) {
-      confirmed = window.confirm(`Bu görev seçili proje dosyalarını değiştirebilir. Tek yazıcı kilidiyle ${provider} ajanına yazma yetkisi verilsin mi?`);
+      confirmed = await requestUiConfirm(
+        `Bu görev seçili proje dosyalarını değiştirebilir. Tek yazıcı kilidiyle ${provider} ajanına yazma yetkisi verilsin mi?`,
+        {title: 'Yazma yetkisi onayı', confirmLabel: 'Yetki ver'}
+      );
       if (!confirmed) return;
     }
     const button = document.getElementById('btnAgentDispatch');
@@ -172,8 +175,14 @@ JAVASCRIPT = r"""  function addAgentRow(container, title, details, status='') {
     const prompt = agentPrompt.value.trim();
     if (!handle || !prompt) { desktopStatus.textContent = 'Önce pencere seçin ve görev açıklaması yazın.'; return; }
     const cfg = provider === 'codex' ? {model:codexModelSelect.value,effort:codexEffortSelect.value} : {model:agyModelSelect.value,effort:agyEffortSelect.value};
-    if (provider === 'antigravity' && !window.confirm('Antigravity Windows istemcisi katı dosya/terminal sandbox garantisi vermiyor. Bu köprü pencere girdisini sınırlar; genel CLI dosya erişimini işletim sistemi düzeyinde yalıtmaz. Bu sınırlamayla yalnız bu masaüstü görevi başlatılsın mı?')) return;
-    if (!window.confirm('Bu görev için seçili pencereye ekran okuma ve sınırlı klavye/fare izni verilsin mi? Görüntüler seçili model sağlayıcısına gönderilir. Dosya yazma yetkisi verilmez.')) return;
+    if (provider === 'antigravity' && !(await requestUiConfirm(
+      'Antigravity Windows istemcisi katı dosya/terminal sandbox garantisi vermiyor. Bu köprü pencere girdisini sınırlar; genel CLI dosya erişimini işletim sistemi düzeyinde yalıtmaz. Bu sınırlamayla yalnız bu masaüstü görevi başlatılsın mı?',
+      {title: 'Masaüstü güvenlik uyarısı', confirmLabel: 'Başlat'}
+    ))) return;
+    if (!(await requestUiConfirm(
+      'Bu görev için seçili pencereye ekran okuma ve sınırlı klavye/fare izni verilsin mi? Görüntüler seçili model sağlayıcısına gönderilir. Dosya yazma yetkisi verilmez.',
+      {title: 'Masaüstü kontrol izni', confirmLabel: 'İzin ver'}
+    ))) return;
     const response = await window.pywebview.api.desktop_operator_start(provider, handle, prompt, cfg.model, cfg.effort, true);
     if (response.status !== 'ok') { desktopStatus.textContent = response.data; return; }
     if (!desktopPolling) { desktopPolling = true; pollDesktopOperator(); }
@@ -278,6 +287,7 @@ JAVASCRIPT = r"""  function addAgentRow(container, title, details, status='') {
       const result = await window.pywebview.api.set_compact(compactMode);
       compactMode = !!result.compact;
       document.body.classList.toggle('compact', compactMode);
+      if (compactMode && typeof syncWindowMaximizedUi === 'function') syncWindowMaximizedUi(false);
       button.title = compactMode ? 'Tam arayüze dön' : 'Kompakt sohbete geç';
       inputEl.focus();
     } catch (e) {

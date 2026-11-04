@@ -28,6 +28,8 @@ _SPRITE = """<svg width="0" height="0" style="position:absolute" aria-hidden="tr
 <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></symbol>
 <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M15 4v16"/></symbol>
 <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+<symbol id="i-maximize" viewBox="0 0 24 24"><rect x="4.5" y="4.5" width="15" height="15" rx="2.5"/></symbol>
+<symbol id="i-restore" viewBox="0 0 24 24"><rect x="4" y="8" width="12" height="12" rx="2"/><path d="M8 8V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2"/></symbol>
 <symbol id="i-compact" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2.5"/><rect x="11" y="11" width="6" height="6" rx="1"/></symbol>
 <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
 <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
@@ -110,6 +112,7 @@ SHELL_MARKUP = r"""
       <button type="button" class="icon-btn" id="btnPanels" title="Durum ve araç panelini aç/kapat (Ctrl+I)" aria-label="Durum ve araçlar" aria-keyshortcuts="Control+I">@@i:panel@@</button>
       <div class="win-controls">
         <button type="button" class="win-btn" id="btnWinMinimize" title="Küçült" aria-label="Küçült">@@i:minus:sm@@</button>
+        <button type="button" class="win-btn" id="btnWinMaximize" title="Büyüt" aria-label="Büyüt" aria-pressed="false">@@i:maximize:sm@@</button>
         <button type="button" class="win-btn" id="btnMin" title="Kompakt sohbete geç" aria-label="Kompakt sohbet">@@i:compact:sm@@</button>
         <button type="button" class="win-btn close" id="btnClose" title="Kapat" aria-label="Kapat">@@i:close:sm@@</button>
       </div>
@@ -344,6 +347,18 @@ SHELL_MARKUP = r"""
   </div>
 </div>
 
+<div class="confirm-layer" id="confirmModal" hidden>
+  <div class="confirm-scrim" id="confirmScrim"></div>
+  <div class="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
+    <h2 id="confirmTitle">Onay gerekiyor</h2>
+    <p class="confirm-message" id="confirmMessage"></p>
+    <div class="confirm-actions">
+      <button type="button" class="control-btn" id="confirmCancel">Vazgeç</button>
+      <button type="button" class="api-submit" id="confirmAccept">Onayla</button>
+    </div>
+  </div>
+</div>
+
 <div class="signature-intro" id="signatureIntro" aria-hidden="true">
   @@MARK@@
   <div class="intro-brand">QUARTZ</div>
@@ -450,7 +465,7 @@ SHELL_MARKUP = r"""
 
 SHELL_MARKUP = SHELL_MARKUP.replace("@@SPRITE@@", _SPRITE).replace("@@BRAND_MARK@@", _BRAND_MARK).replace("@@MARK@@", _MARK)
 for _name, _size in (("stop", "sm"), ("plus", "md"), ("search", "md"), ("sidebar", "md"), ("pulse", "md"),
-                     ("panel", "md"), ("minus", "sm"), ("compact", "sm"), ("close", "sm"), ("loop", "sm"),
+                     ("panel", "md"), ("minus", "sm"), ("maximize", "sm"), ("compact", "sm"), ("close", "sm"), ("loop", "sm"),
                      ("mic", "md"), ("send", "md"), ("camera", "md"), ("chip", "md"), ("windows", "md"),
                      ("spark", "md"), ("eye", "md"), ("agents", "md"), ("phone", "md"), ("wave", "md"),
                      ("volume", "md"), ("shield", "md"), ("trash", "md")):
