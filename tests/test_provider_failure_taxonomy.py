@@ -209,7 +209,38 @@ class ProviderFailureTaxonomyTests(unittest.TestCase):
         self.assertEqual(final["cleanup_error"], "tree_discovery_incomplete")
         self.assertIn("Ana süreç durdu; alt süreçlerin kapanışı doğrulanamadı.", final["errors"])
         # Writer lock must NOT be released when child cleanup is unconfirmed
-        self.assertIn( run["id"], codex._writers.values())
+        self.assertIn(run["id"], codex._writers.values())
+
+    def test_6_timeout_stops_process_tree_records_error_and_releases_writer_lock(self):
+        project_key = str(self.root.resolve()).lower()
+
+        # Codex writer run timing out
+        codex = CodexRuntime(self.codex_exe)
+        codex_proc = _TaxonomyFakeProcess("", exit_code=0, delay=500.0)
+        with patch("core.codex_runtime.subprocess.Popen", return_value=codex_proc), \
+             patch("core.codex_runtime.stop_process_tree", side_effect=lambda p, **kw: (p.terminate(), True)[1]) as mock_codex_stop, \
+             patch("core.codex_runtime.owned_cleanup_pending", return_value=False):
+            c_run = codex.start("write file", self.root, sandbox="workspace-write", approval="never", timeout=0.05)
+            c_final = self._wait_terminal(codex, c_run["id"])
+        mock_codex_stop.assert_called_once_with(codex_proc, timeout=5)
+        self.assertEqual(c_final["status"], "failed")
+        self.assertTrue(c_final["process_exit_confirmed"])
+        self.assertTrue(any("Task timed out after" in e for e in c_final["errors"]))
+        self.assertNotIn(project_key, codex._writers)
+
+        # Antigravity writer run timing out
+        agy = AntigravityRuntime(self.agy_exe)
+        agy_proc = _TaxonomyFakeProcess("", exit_code=0, delay=500.0)
+        with patch("core.antigravity_runtime.subprocess.Popen", return_value=agy_proc), \
+             patch("core.antigravity_runtime.stop_process_tree", side_effect=lambda p, **kw: (p.terminate(), True)[1]) as mock_agy_stop, \
+             patch("core.antigravity_runtime.owned_cleanup_pending", return_value=False):
+            a_run = agy.start("write file", self.root, write=True, full_access=True, timeout="1s")
+            a_final = self._wait_terminal(agy, a_run["id"])
+        mock_agy_stop.assert_called_once_with(agy_proc, timeout=5)
+        self.assertEqual(a_final["status"], "failed")
+        self.assertTrue(a_final["process_exit_confirmed"])
+        self.assertTrue(any("Task timed out after" in e for e in a_final["errors"]))
+        self.assertNotIn(project_key, agy._writers)
 
 
 if __name__ == "__main__":
