@@ -1,5 +1,16 @@
 # Quartz paralel görev ve dosya sahipliği
 
+## AKTİF — 6 Kasım geçici devir: Codex'in işleri Claude'da
+
+Kullanıcı kararı (6 Kasım 2026): Codex yaklaşık üç gün yok; bu sürede Codex'in bütün görevleri ve dosya sahipliği
+Claude'dadır. Buna `main`'e birleştirme ve kullanıcı onaylı paket kurulumu dahildir.
+
+- **Bağımsız inceleme Gemini'de.** Claude kendi yazdığı kodu kendisi kabul etmez: Claude'un üretim değişiklikleri
+  Gemini incelemeden `main`'e alınmaz. Yalnız belge değişiklikleri ve daha önce bağımsız incelenmiş dallar beklemeden alınabilir.
+- Gemini'nin dalları Claude incelemesinden sonra Claude tarafından birleştirilir.
+- Codex döndüğünde devir biter; Codex bu süredeki Codex alanı değişikliklerini geriye dönük inceler.
+- Diğer kurallar (ayrı worktree, tek operatör, tek yazıcı, GitHub'a gönderim yok) aynen geçerlidir.
+
 ## AKTİF — 5 Kasım Dalga 0
 
 - Kullanıcının güncel görevi: Codex bağımsız continuity/UI incelemesi, kabul
