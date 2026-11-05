@@ -1,10 +1,14 @@
+import os
 import subprocess
 import sys
+import tempfile
+import time
 import unittest
+from pathlib import Path
 
 import psutil
 
-from core.process_tree import stop_process_tree
+from core.process_tree import bind_kill_on_close_job, stop_process_tree
 
 
 class ProcessTreeTests(unittest.TestCase):
@@ -30,3 +34,62 @@ class ProcessTreeTests(unittest.TestCase):
                 psutil.Process(child_pid).kill()
             parent.wait(timeout=3)
             parent.stdout.close()
+
+    @unittest.skipUnless(os.name == "nt", "Windows Job Object crash cleanup")
+    def test_abrupt_parent_crash_reaps_child_and_grandchild_via_job_object(self):
+        repo_root = str(Path(__file__).resolve().parents[1])
+        with tempfile.TemporaryDirectory(prefix="quartz-job-crash-") as tmp:
+            root = Path(tmp)
+            pid_file = root / "grandchild.pid"
+            child_script = root / "child.py"
+            child_script.write_text(
+                "import subprocess, sys, time, pathlib\n"
+                "gc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+                "pathlib.Path(sys.argv[1]).write_text(str(gc.pid), encoding='utf-8')\n"
+                "time.sleep(60)\n",
+                encoding="utf-8",
+            )
+            parent_code = (
+                f"import subprocess, sys, time; sys.path.insert(0, {repo_root!r}); "
+                "from core.process_tree import bind_kill_on_close_job; "
+                f"p = subprocess.Popen([sys.executable, {str(child_script)!r}, {str(pid_file)!r}]); "
+                "ok = bind_kill_on_close_job(p); "
+                "print(f'{p.pid}:{int(ok)}', flush=True); "
+                "time.sleep(60)"
+            )
+            quartz_sim = subprocess.Popen(
+                [sys.executable, "-c", parent_code],
+                stdout=subprocess.PIPE,
+                text=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            try:
+                line = quartz_sim.stdout.readline().strip()
+                child_pid_str, bound_str = line.split(":")
+                child_pid = int(child_pid_str)
+                self.assertEqual(bound_str, "1")
+                for _ in range(50):
+                    if pid_file.is_file() and pid_file.read_text(encoding="utf-8").strip():
+                        break
+                    time.sleep(0.05)
+                grandchild_pid = int(pid_file.read_text(encoding="utf-8").strip())
+                self.assertTrue(psutil.pid_exists(child_pid))
+                self.assertTrue(psutil.pid_exists(grandchild_pid))
+
+                # Abruptly kill quartz_sim (TerminateProcess) without any Python shutdown/finally running
+                quartz_sim.kill()
+                quartz_sim.wait(timeout=5)
+                for _ in range(40):
+                    if not psutil.pid_exists(child_pid) and not psutil.pid_exists(grandchild_pid):
+                        break
+                    time.sleep(0.05)
+                self.assertFalse(psutil.pid_exists(child_pid))
+                self.assertFalse(psutil.pid_exists(grandchild_pid))
+            finally:
+                if quartz_sim.poll() is None:
+                    quartz_sim.kill()
+                quartz_sim.stdout.close()
+
+
+if __name__ == "__main__":
+    unittest.main()

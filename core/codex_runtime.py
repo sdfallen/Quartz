@@ -11,8 +11,10 @@ import time
 import uuid
 from pathlib import Path
 
-from core.process_tree import (OwnedCleanupUnconfirmed, owned_cleanup_pending,
-                               stop_process_tree, wait_for_owned_cleanup)
+from core.process_tree import (OwnedCleanupUnconfirmed, bind_kill_on_close_job,
+                               close_process_job, owned_cleanup_pending,
+                               stop_process_tree, wait_for_owned_cleanup,
+                               wait_process_with_job_sync)
 
 
 class CodexRuntime:
@@ -317,6 +319,7 @@ class CodexRuntime:
                 encoding="utf-8", errors="replace", creationflags=flags,
                 **process_options,
             )
+            bind_kill_on_close_job(process)
         except Exception:
             with self._lock:
                 record["status"] = "failed"
@@ -625,7 +628,7 @@ class CodexRuntime:
                     record.update(status="cancelling", cleanup_pending=True, process_exit_confirmed=False)
         try:
             try:
-                code = process.wait(timeout=timeout_sec)
+                code = wait_process_with_job_sync(process, timeout=timeout_sec)
                 exit_known = True
             except subprocess.TimeoutExpired:
                 timed_out = True
@@ -732,6 +735,7 @@ class CodexRuntime:
         finally:
             with self._lock:
                 if exit_known:
+                    close_process_job(process)
                     self._processes.pop(run_id, None)
                     if self._writers.get(project_key) == run_id:
                         self._writers.pop(project_key, None)
