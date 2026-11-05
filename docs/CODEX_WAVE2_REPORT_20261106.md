@@ -62,6 +62,12 @@ girmiş etkiler geri alınmış gibi gösterilmez; Stop/inflight receipt ayrıd�
 - Nihai cache fonksiyonları ile ölçülen `99e82d0` AST hash'leri aynı:
   özel `cache-body-provenance.json`. Tüm son kaynak için eski ölçüm iddiası yok.
 
+Sayaç sınırı: özel collector `Popen.__init__` çağrısını constructor tamamlanmadan
+sayar; başarılı spawn ile başarısız başlatma girişimi ayrı kaydedilmedi. Bu
+yüzden 150→22 ve 140→12 kesin olarak **Popen başlatma çağrısı/girişimi** azalmasıdır;
+bağımsız PID census veya garantili başarılı süreç sayısı olarak yorumlanmamalı.
+Ham JSON'daki `actual_subprocess_starts` alan adı bu sınırlamayı değiştirmez.
+
 ## Kontrol komutları ve gerçek çıktılar
 
 Özel kanıt kökü: `%USERPROFILE%\.codex\backups\quartz-wave2-20261105`.

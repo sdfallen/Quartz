@@ -56,3 +56,8 @@ Sonraki oracle/grup düzeltmeleri cache fonksiyonlarını değiştirmez; nihai
 teslimde AST hash eşliği ayrıca kaydedilir. Ölçümü yeni paket kabulüne genelleme.
 
 Ham çıktılar/evidence Git'e eklenmez. BUILT / LIVE GUI yok; dağıtım yapılmadı.
+
+Metrik hassasiyeti: collector Popen constructor girişini sayar; başarılı süreç
+oluşumu ile failed spawn ayrımı yapılmadı. Yukarıdaki “açılış” sayıları tam
+olarak Popen başlatma çağrılarıdır; process identity census veya tümünün başarıyla
+başladığı iddiası değildir. Sayaç/göreli azalma gerçek çağrı yolundan ölçüldü.
