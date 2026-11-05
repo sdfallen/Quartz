@@ -6,6 +6,23 @@ decision never grants access. Active-task continuation is handled by the host.
 import re
 
 
+def turkish_fold(text):
+    """Accept keyboard spellings without changing the user's original text."""
+    return str(text).casefold().translate(str.maketrans('ıöüçşğ', 'ioucsg')).replace('\u0307', '')
+
+
+def request_withdrawn(text):
+    # Unqualified final withdrawal cancels the preceding request. A scoped
+    # exception ("ama geçmişi silmene gerek yok") does not cancel another action.
+    value = turkish_fold(instruction_text(text)).strip()
+    return bool(re.search(r'\b(?:ama|fakat|ancak)\s+(?:(?:artik|simdilik|buna)\s+)?'
+                          r'(?:gerek yok|vazgectim|bos\s*ver|istemiyorum)[.!?\s]*$', value))
+
+
+def _directive_search(pattern, value):
+    return re.search(turkish_fold(pattern), turkish_fold(value))
+
+
 def instruction_text(text):
     """Only current, unquoted prose participates in task routing."""
     value = str(text or '').casefold().replace('\u0307', '')
@@ -24,9 +41,9 @@ def tools_disallowed(text):
 
 def message_intent(text):
     value = instruction_text(text).strip()
-    if tools_disallowed(value):
+    if tools_disallowed(value) or request_withdrawn(value):
         return 'conversation'
-    if re.fullmatch(r'\s*(?:devam et|devam|sürdür|evet|olur|tamam|dur|durdur|görevi durdur|kontrolü durdur|iptal et)[.!]?\s*', value):
+    if re.fullmatch(r'\s*(?:(?:tamam\s+)?(?:devam et|devam|sürdür)|evet|olur|tamam|dur|durdur|görevi durdur|kontrolü durdur|iptal et)[.!]?\s*', value):
         return 'continuation'
     # Explanations can mention an imperative without requesting its execution.
     # Filter individual clauses so "Chrome'u aç; oynat ne işe yarıyor?" still
@@ -37,7 +54,7 @@ def message_intent(text):
                              r'\bset theory\b')
     value = '. '.join(part for part in re.split(r'[.!?;,\n]+',value) if not explanation.search(part))
     # Explanatory questions do not execute the operation being discussed.
-    explicit = re.search(
+    explicit = _directive_search(
         r'\b(?:incele(?:yin|yiniz|yip|yerek)?|düzelt(?:in|iniz)?|derle(?:yin)?|geliştir(?:in)?|'
         r'çalıştır(?:ın|in)?|başlat(?:ın)?|başla(?:yın|yınız)?|aç(?:ın|in|ıp)?|oku(?:yun)?|araştır(?:ın)?|'
         r'tıkla(?:yın)?|yükle(?:yin)?|kaydet|sil|ekle(?:yin)?|oluştur(?:un)?|'
@@ -45,11 +62,11 @@ def message_intent(text):
         r'kaydır(?:ın|ınız)?|göster(?:in|iniz)?|yönet(?:in|iniz)?|kullan(?:ın|ınız)?|ekran görüntüsü al|kontrol(?:ünü|unu)?\s+al|'
         r'yap(?:ın|ınız)?|ayarla(?:yın|yınız)?|düzenle(?:yin|yiniz)?|onar(?:ın)?|indir(?:in)?|kur(?:un)?|kaldır(?:ın)?|'
         r'taşı(?:yın)?|yenile(?:yin)?|sıfırla(?:yın)?|temizle(?:yin)?|kopyala(?:yın)?|yapıştır(?:ın)?|'
-        r'çal(?:ın)?|oynat(?:ın)?|durdur(?:un)?|duraklat(?:ın)?|kıs(?:ın)?|artır(?:ın)?|yükselt(?:in)?|'
+        r'çal(?:ın)?|oynat(?:ın)?|durdur(?:un)?|duraklat(?:ın)?|kıs(?:ın)?|artır(?:ın)?|yükselt(?:in)?|büyüt(?:ün)?|küçült(?:ün)?|'
         r'ara(?:yın)?|izle(?:yin)?|dinle(?:yin)?|uygula(?:yın)?|tamamla(?:yın)?|bitir(?:in)?|harekete\s+geç(?:in)?|'
         r'analiz\s+(?:et|edin|ediniz|yap|yapın)|'
         r'test (?:et|edin|ediniz)|kontrol (?:et|edin|ediniz)|test edip|kontrol edip|debug yap|test yap|bi(?:r)? test bakalım|dene(?:yin)?|bul|tara|yaz|güncelle|değiştir|çöz(?:ün)?|kapat(?:ın)?|öğren(?:in)?|bilgi\s+(?:al|topla))\b', value)
-    polite = re.search(
+    polite = _directive_search(
         r'\b(?:inceleyebilir|inceler|düzeltebilir|düzeltir|açabilir|açar|çalıştırabilir|çalıştırır|'
         r'bakabilir|bakar|test edebilir|test eder|kontrol edebilir|kontrol eder|çözebilir|çözer|'
         r'kapatabilir|kapatır|güncelleyebilir|günceller|araştırabilir|araştırır|derleyebilir|derler|'
