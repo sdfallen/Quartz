@@ -216,7 +216,8 @@ class NaturalTaskTests(unittest.TestCase):
         (self.root / 'extra.log').write_text('fixture', encoding='utf-8')
         self.call('task_read_log', {'path': 'extra.log'}, 'review')
         pending = dict(self.task.pending)
-        grant = dict(self.task.connection)
+        grant = self.task.connection
+        self.assertIsNone(grant)  # A manual card now pauses even the old scope.
         with self.assertRaises(PermissionError):
             self.task.approve(pending['id'], confirmed='true')
         self.assertFalse(self.task.stopped.is_set())
@@ -237,7 +238,7 @@ class NaturalTaskTests(unittest.TestCase):
             self.task.approve(old, confirmed=True)
         self.assertFalse(self.task.stopped.is_set())
         self.assertEqual(self.task.pending['id'], latest)
-        self.assertTrue(self.broker.status()['active'])
+        self.assertFalse(self.broker.status()['active'])
         self.task.approve(latest, confirmed=True)
         self.assertEqual(set(self.task.approved_logs), {'first.log', 'second.log'})
 
@@ -294,6 +295,7 @@ class NaturalTaskTests(unittest.TestCase):
             # real app/process/input. The grant stands in for the new task's.
             self.task.job = {**original, 'id': 'new-generation'}
             self.task.tokens = {'codex': 'new-token'}
+            self.task.connection = self.broker.grant([1], 'codex', confirmed=True)
             return stop(reason, **kwargs)
 
         self.backend.target['pid'] += 1
@@ -480,7 +482,7 @@ class NaturalTaskTests(unittest.TestCase):
             self.assertEqual(task.job["verification"]["status"],"NOT VERIFIED")
         finally:task.stop()
 
-    def test_cli_finishes_just_after_approval_continues_same_task(self):
+    def test_early_approval_waits_for_pause_drain_and_late_old_exit_cannot_complete_new_run(self):
         from tests.test_chat_coordination import MODELS
         class Runtime:
             TERMINAL={"completed","failed","cancelled"}
@@ -503,6 +505,9 @@ class NaturalTaskTests(unittest.TestCase):
                 task.start("Codex test uygulamasını incele. Gemini logları kontrol et.",{"path":str(self.root)},"chat",MODELS)
                 token=task.tokens["codex"]
                 task.call(token,{"name":"desktop_request_access","arguments":{"handles":[1],"reason":"Test penceresi için izin"}})
+                with self.assertRaises(PermissionError):
+                    task.approve(task.pending["id"],confirmed=True)
+                task._drain_pause(task.job)
                 task.approve(task.pending["id"],confirmed=True)
                 codex.states["run1"]["status"]="completed"
                 gemini.states["run1"]["status"]="completed"

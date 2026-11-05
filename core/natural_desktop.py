@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from core.chat_coordination import ApprovedLog
 from core.desktop_broker import CONTINUOUS_LEASE_SECONDS
 from core.atomic_json import atomic_write_json
-from core.task_outcome import cleanup_step, execution_outcome, stop_summary
+from core.task_outcome import cleanup_step, execution_outcome, stop_summary, group_execution_status
 from core.desktop_agents import mcp_command, write_operator_hooks, ensure_antigravity_tool_grants
 from core.squad_adapter import SquadAdapter
 from core.screen_overlay import overlay_manager
@@ -180,6 +180,115 @@ class NaturalDesktopTask:
         self._cleanup_done = threading.Event()
         self._cleanup_done.set()
 
+    def _paused(self):
+        return bool(self.job and self.job.get('pause'))
+
+    def _assert_unpaused(self):
+        if self._paused():
+            raise PermissionError('Görev onay beklerken duraklatıldı; yeni girdi gönderilmez')
+
+    def _persist_pause(self):
+        pause = self.job.get('pause')
+        atomic_write_json(self.evidence / 'task-state.json', {
+            'schema': 1, 'task_id': self.job['id'], 'conversation_id': self.job['conversation_id'],
+            'state': self.job['status'], 'request_id': (self.pending or {}).get('id'),
+            'generation': self.job.get('permission_generation', 0),
+            'expires_at': (self.pending or {}).get('expires_at'),
+            'pause_reason': (pause or {}).get('reason'),
+            'cleanup_confirmed': (pause or {}).get('cleanup_confirmed', False),
+            'saved_at': time.time()})
+
+    def paused_contexts(self):
+        """Historical metadata only; restart never grants/resumes automatically."""
+        rows = []
+        if not self.evidence_root.is_dir(): return rows
+        for folder in list(self.evidence_root.iterdir())[:200]:
+            path = folder / 'task-state.json'
+            try:
+                if folder.is_symlink() or not path.resolve().is_relative_to(self.evidence_root.resolve()): continue
+                if path.stat().st_size > 4096: continue
+                value = json.loads(path.read_text(encoding='utf-8'))
+                if value.get('schema') == 1 and value.get('state') == 'awaiting_approval':
+                    rows.append({k:value.get(k) for k in ('task_id','conversation_id','request_id','generation','pause_reason')})
+            except (OSError, ValueError, TypeError): continue
+        return rows
+
+    def _pause_for_approval(self, reason):
+        # Called under changed. The broker is the sole input authority; revoke
+        # its token/snapshot before publishing the manual card. A log request
+        # does not preserve an older input grant while a human decides.
+        self.connection = self.latest = None
+        self.broker.stop('awaiting explicit scope approval')
+        self.job.setdefault('pause', {'started_at': time.time(), 'cancel_requested': [],
+                                      'cleanup_confirmed': not bool(self.runs)})
+        self.job['pause']['reason'] = reason
+        self.job['status'] = 'awaiting_approval'
+        self.job['outcome'] = execution_outcome('awaiting_approval')
+        self._persist_pause()
+
+    @staticmethod
+    def _run_exit_confirmed(runtime, rid):
+        run = runtime.get(rid)
+        return (run.get('status') in runtime.TERMINAL and not run.get('cleanup_pending')
+                and run.get('process_exit_confirmed') is not False
+                and (not run.get('pid') or run.get('process_exit_confirmed') is True))
+
+    def _drain_pause(self, job):
+        # Cancellation can wait on an owned process; never hold the task lock
+        # while draining it. Pause-owned cancellations are not goal failures.
+        with self.changed:
+            if self.job is not job or not self._paused() or self.stopped.is_set(): return
+            pause = job['pause']; runs = list(self.runs.items())
+        for provider, (runtime, rid) in runs:
+            with self.changed:
+                if self.job is not job or job.get('pause') is not pause or self.stopped.is_set(): return
+                requested = pause['cancel_requested']
+                key = provider + ':' + rid
+                should_cancel = key not in requested and not self._run_exit_confirmed(runtime, rid)
+                if should_cancel: requested.append(key)
+            if should_cancel:
+                try: runtime.cancel(rid)
+                except Exception as exc:
+                    with self.changed: pause['cleanup_error'] = type(exc).__name__
+        with self.changed:
+            if self.job is job and job.get('pause') is pause:
+                ready = all(self._run_exit_confirmed(r, rid) for _, (r, rid) in runs)
+                if ready != pause['cleanup_confirmed']:
+                    pause['cleanup_confirmed'] = ready
+                    self._persist_pause()
+                self.changed.notify_all()
+
+    def _resume_approval(self):
+        pause = self.job.pop('pause', None)
+        if pause and self.job.get('expires_at') is not None:
+            self.job['expires_at'] += max(0, time.time()-pause['started_at'])
+        self.job['status'] = 'running'
+        self.latest = None
+        self.job['outcome'] = execution_outcome('running')
+        self._persist_pause()
+
+    def refresh_permission(self, request_id, conversation_id, *, confirmed=False):
+        """Trusted UI reissue, NOT a permission grant; never exposed to models."""
+        with self.changed:
+            pending = self.pending
+            if (confirmed is not True or self.stopped.is_set() or not self._paused() or not pending
+                    or pending['id'] != request_id or conversation_id != self.job['conversation_id']
+                    or pending['task_id'] != self.job['id'] or pending.get('phase') == 'prompting'):
+                raise PermissionError('Stale task/conversation or Windows prompt already open')
+            for target in pending['targets']:
+                fresh = self.broker.backend.identity(target['handle'])
+                if fresh != target: raise PermissionError('Window changed; select the new identity explicitly')
+                self.broker.backend.validate_target(fresh)
+            old_id = pending['id']; new_id = uuid.uuid4().hex
+            self.job['permission_generation'] = self.job.get('permission_generation', 0) + 1
+            self.pending = {**pending, 'id':new_id, 'generation':self.job['permission_generation'],
+                            'expires_at':time.time()+600, 'expired':False}
+            for mapping in ('elevation_aliases', 'elevation_requests'):
+                for key, value in self.job.get(mapping, {}).items():
+                    if value == old_id: self.job[mapping][key] = new_id
+            self._persist_pause(); self.changed.notify_all()
+            return self.status()
+
     def _controllers(self):
         if self._sys_ctrl is None or self._adv_ctrl is None:
             import system_controller
@@ -277,7 +386,7 @@ class NaturalDesktopTask:
                     self.notes.append({"sender": "quartz", "content": "İkinci ajan bağlı değil; operatör tek başına devam edecek. Yanıtını beklemeyin."})
                     self._event("quartz", "İkinci ajan bağlı değil; görev tek ajanla sürüyor.")
             with self.lock:
-                self.job["status"] = "running"
+                if not self._paused(): self.job["status"] = "running"
                 self._event("quartz", "Görev başladı. Ajanlar gereken araçları seçiyor; uygulama erişimi gerektiğinde burada onay isteyecekler.")
             overlay_manager.show(agent_label=roles["operator"], on_stop=lambda: self.stop("cancelled"))
             self.thread = threading.Thread(target=self._watch, args=(self.job, self.stopped), daemon=True, name="quartz-natural-task")
@@ -369,7 +478,7 @@ class NaturalDesktopTask:
         threading.Thread(target=self.server.serve_forever, daemon=True, name="quartz-task-capability").start()
 
     def _provider(self, token):
-        if self.stopped.is_set() or not self.job or _job_expired(self.job):
+        if self.stopped.is_set() or not self.job or (_job_expired(self.job) and not self._paused()):
             raise PermissionError("Task stopped or expired")
         for provider, secret in self.tokens.items():
             if hmac.compare_digest(str(token), secret): return provider
@@ -456,10 +565,8 @@ class NaturalDesktopTask:
         if (not self.pending and same_targets and logs == set(self.approved_logs)
                 and (not targets or self.broker.status()["active"])):
             return {"status":"already_approved", "next":"desktop_focus once, otherwise desktop_observe"}
-        # A log-only request grants NOTHING until consent, but must not revoke
-        # the operator's unchanged, already-approved input lease. New process
-        # identities/windows still revoke the old lease immediately.
-        preserve_input = bool(same_targets and self.connection and self.broker.status()["active"])
+        automatic = self.job.get('requested_permission_level') == 'full' and not self.warband
+        preserve_input = bool(automatic and same_targets and self.connection and self.broker.status()["active"])
         if not preserve_input:
             self.broker.stop("awaiting explicit scope approval")
             self.connection = None
@@ -469,10 +576,13 @@ class NaturalDesktopTask:
                         "reason": reason, "targets": list(targets.values()), "logs": sorted(logs),
                         "preserve_input": preserve_input,
                         "operator": self.job["roles"]["operator"], "expires_at": _within_job(self.job, 600)}
-        if self.job.get("requested_permission_level") == "full" and not self.warband:
+        self.job['permission_generation'] = self.job.get('permission_generation', 0)+1
+        self.pending['generation'] = self.job['permission_generation']
+        if automatic and not self._paused():
             self.approve(req_id, confirmed=True)
             return {"status": "approved", "request_id": req_id, "targets": list(self.approved_targets.values()),
                     "logs": list(self.approved_logs), "next": "desktop_focus once, otherwise desktop_observe or jarvis_* tools"}
+        self._pause_for_approval('scope')
         self._event(provider, "Uygulama erişimi gerekiyor: " + reason, permission_request=self.pending["id"])
         self.changed.notify_all()
         return {"status": "waiting_for_inline_permission", "request_id": self.pending["id"], "next": "task_wait"}
@@ -485,6 +595,11 @@ class NaturalDesktopTask:
                 pending = self.pending
                 if self.stopped.is_set() or not pending or pending["id"] != request_id or time.time() >= pending["expires_at"]:
                     raise PermissionError("Stale/expired permission card")
+                if (pending['task_id'] != self.job['id'] or pending['conversation_id'] != self.job['conversation_id']
+                        or pending.get('generation', 0) != self.job.get('permission_generation', 0)):
+                    raise PermissionError('Permission belongs to a different task generation')
+                if self._paused() and not all(self._run_exit_confirmed(r, rid) for r, rid in self.runs.values()):
+                    raise PermissionError('Pause-owned runtime cleanup pending; consent has not been consumed')
                 # Invalid/replayed callbacks must not revoke an already active
                 # lease. Fail-closed cleanup applies only after a valid request
                 # begins applying to this specific task generation.
@@ -538,6 +653,7 @@ class NaturalDesktopTask:
                 self.approved_targets = {t["handle"]: t for t in targets}
                 self.approved_logs = logs
                 self.pending = None
+                self._resume_approval()
                 self._learn_approved_applications(targets)
                 # CLI turns can finish while a person is deciding. Consent must
                 # resume the task, not merely grant a capability to a dead run.
@@ -550,7 +666,7 @@ class NaturalDesktopTask:
                 self.changed.notify_all()
                 return self.status()
         except Exception:
-            if approval_job is not None and self.connection:
+            if approval_job is not None:
                 self.stop("failed after permission", expected_job=approval_job)
             raise
 
@@ -612,6 +728,7 @@ class NaturalDesktopTask:
             if request.get('name')=='jarvis_open_app' and alias in job.get('elevation_aliases',{}):
                 return {'status':'blocked_elevation','request_id':job['elevation_aliases'][alias],
                         'message':'Yönetici isteği daha önce kaydedildi. Yeniden başlatmayın; task_context/task_wait kullanın.'}
+            self._assert_unpaused()
             args=request.get('arguments') or {}
             readonly=request.get('name')=='jarvis_system_info' and args.get('action') in {'telemetry','processes','windows','clipboard_get'}
             if not readonly and provider!=job['roles']['operator']:
@@ -640,6 +757,9 @@ class NaturalDesktopTask:
                     'conversation_id':job['conversation_id'],'reason':'Bu uygulama yönetici erişimi istiyor. Yalnız uygulama için Windows UAC istemi açılabilir. UAC onayını siz verirsiniz; Quartz yükseltilmez. Yükseltilmiş pencerenin otomatik kontrolü ayrıca kısıtlı olabilir.',
                     'targets':[],'logs':[],'launch':exc.approval,'operator':job['roles']['operator'],
                     'expires_at':_within_job(job, 600)}
+                job['permission_generation'] = job.get('permission_generation', 0)+1
+                self.pending['generation'] = job['permission_generation']
+                self._pause_for_approval('elevation')
                 job['verification']={'status':'NOT VERIFIED','reason':'Windows elevation required','winerror':740}
                 if exc.approval:
                     self._learn_approved_applications([{'exe':exc.approval['exe']}])
@@ -658,6 +778,8 @@ class NaturalDesktopTask:
             if self.job is not job or self.stopped.is_set() or time.time()>=pending['expires_at']:
                 self._inflight_calls-=1
                 job.setdefault('elevation_outcomes',[]).append({'request_id':pending['id'],'state':'cancelled_before_launch','verified':False})
+                if self.job is job and self.pending and self.pending['id'] == pending['id']:
+                    self.pending.update(phase='awaiting_user', expired=True)
                 self.changed.notify_all();return
         try:
             outcome=request_uac(pending['launch'],cancelled=self.stopped.is_set)
@@ -676,6 +798,7 @@ class NaturalDesktopTask:
             if not self.pending or self.pending['id']!=pending['id']:
                 self.changed.notify_all();return
             self.pending=None
+            self._resume_approval()
             self._event('quartz',{'launch_requested':'Windows başlatma isteğini kabul etti. Uygulamanın açıldığı ve kontrol edilebildiği henüz doğrulanmadı.',
                 'cancelled':'Windows yönetici onayı iptal edildi; uygulama yeniden otomatik başlatılmayacak.',
                 'cancelled_before_launch':'Windows isteği gönderilmeden işlem iptal edildi.',
@@ -693,6 +816,17 @@ class NaturalDesktopTask:
         with self.changed:
             if self.job is not job or self.stopped.is_set() or _job_expired(job):
                 raise PermissionError("Görev durduruldu veya değişti; yeni girdi gönderilmeyecek")
+            self._assert_unpaused()
+
+    def _effect(self, job, operation, *args, **kwargs):
+        """Serialize the actual controller invocation with pause/Stop state.
+
+        An invocation already entered before pause may finish; it is recorded
+        as such, never replayed. New controller invocations cannot cross pause.
+        """
+        with self.changed:
+            self._assert_jarvis_generation(job)
+            return operation(*args, **kwargs)
 
     def _jarvis_target(self, requested):
         windows = self.desktop.windows()
@@ -750,6 +884,7 @@ class NaturalDesktopTask:
     def _execute_jarvis(self, token, request, job):
         with self.changed:
             provider = self._provider(token)
+            self._assert_unpaused()
             tool = request.get("name")
             args = request.get("arguments") or {}
             is_readonly_info = (
@@ -772,15 +907,15 @@ class NaturalDesktopTask:
             self._check_not_protected_target(target)
             mode = args.get("mode") or "smart_open"
             if mode == "url":
-                result_text = adv_ctrl.browser_open_url(target)
+                result_text = self._effect(job, adv_ctrl.browser_open_url, target)
             elif mode == "vscode_folder":
-                result_text = adv_ctrl.vscode_open_folder(target)
+                result_text = self._effect(job, adv_ctrl.vscode_open_folder, target)
             elif mode == "vscode_file":
-                result_text = adv_ctrl.vscode_open_file(target)
+                result_text = self._effect(job, adv_ctrl.vscode_open_file, target)
             elif mode == "steam":
-                result_text = adv_ctrl.steam_open_library()
+                result_text = self._effect(job, adv_ctrl.steam_open_library)
             else:
-                result_text = adv_ctrl.smart_open(target)
+                result_text = self._effect(job, adv_ctrl.smart_open, target)
             time.sleep(0.4)
             try:
                 extra["open_windows"] = self.desktop.windows()
@@ -794,29 +929,29 @@ class NaturalDesktopTask:
             if action == "youtube_play":
                 if not query:
                     raise ValueError("query is required for youtube_play")
-                result_text = adv_ctrl.youtube_play(query)
+                result_text = self._effect(job, adv_ctrl.youtube_play, query)
             elif action == "youtube_search":
                 if not query:
                     raise ValueError("query is required for youtube_search")
-                result_text = adv_ctrl.youtube_search(query)
+                result_text = self._effect(job, adv_ctrl.youtube_search, query)
             elif action == "google_search":
                 if not query:
                     raise ValueError("query is required for google_search")
-                result_text = adv_ctrl.google_search(query)
+                result_text = self._effect(job, adv_ctrl.google_search, query)
             elif action == "spotify_play":
-                result_text = adv_ctrl.spotify_play(query)
+                result_text = self._effect(job, adv_ctrl.spotify_play, query)
             elif action in {"spotify_pause", "spotify_next", "spotify_prev"}:
                 sub = {"spotify_pause": "pause", "spotify_next": "next", "spotify_prev": "prev"}[action]
-                result_text = adv_ctrl.spotify_control(sub)
+                result_text = self._effect(job, adv_ctrl.spotify_control, sub)
             elif action == "set_volume":
                 level = args.get("level")
                 if level is None:
                     raise ValueError("level (0-100) is required for set_volume")
-                result_text = adv_ctrl.set_volume(int(level))
+                result_text = self._effect(job, adv_ctrl.set_volume, int(level))
             elif action == "get_volume":
-                result_text = adv_ctrl.get_volume()
+                result_text = self._effect(job, adv_ctrl.get_volume)
             elif action == "mute_volume":
-                result_text = adv_ctrl.mute_volume()
+                result_text = self._effect(job, adv_ctrl.mute_volume)
             elif action == "quartz_mode":
                 raise ValueError("coding/gaming/study/night/chill profilleri uygulanmış değil; bu araç Windows güç planını değiştirmez")
             else:
@@ -841,10 +976,10 @@ class NaturalDesktopTask:
                 extra["windows"] = wins
                 result_text = f"{len(wins)} açık pencere listelendi."
             elif action == "clipboard_get":
-                result_text = adv_ctrl.clipboard_paste()
+                result_text = self._effect(job, adv_ctrl.clipboard_paste)
             elif action == "clipboard_set":
                 text_val = str(args.get("text") or "")
-                result_text = adv_ctrl.clipboard_copy(text_val)
+                result_text = self._effect(job, adv_ctrl.clipboard_copy, text_val)
             else:
                 raise ValueError(f"Unsupported system_info action: {action}")
 
@@ -863,44 +998,44 @@ class NaturalDesktopTask:
                 hwnd = matched["handle"]
                 user32 = self.broker.backend._user32()
                 if action == "window_focus":
-                    self.broker.backend.focus(matched)
+                    self._effect(job, self.broker.backend.focus, matched)
                     guard()
                     result_text = f"Pencere odaklandı: {matched.get('title')}"
                 elif action == "window_minimize":
-                    user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE
+                    self._effect(job, user32.ShowWindow, hwnd, 6)  # SW_MINIMIZE
                     result_text = f"Pencere küçültüldü: {matched.get('title')}"
                 elif action == "window_maximize":
-                    user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
+                    self._effect(job, user32.ShowWindow, hwnd, 3)  # SW_MAXIMIZE
                     result_text = f"Pencere büyütüldü: {matched.get('title')}"
                 elif action == "window_restore":
-                    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                    self._effect(job, user32.ShowWindow, hwnd, 9)  # SW_RESTORE
                     result_text = f"Pencere geri yüklendi: {matched.get('title')}"
                 elif action == "window_close":
-                    user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
+                    self._effect(job, user32.PostMessageW, hwnd, 0x0010, 0, 0)  # WM_CLOSE
                     result_text = f"Pencere kapatma isteği gönderildi: {matched.get('title')}"
                 extra["window"] = matched
             else:
                 if target_win is not None:
                     if not self.broker.backend.is_foreground(matched):
                         self._jarvis_input_guard(job, matched, foreground=False)
-                        self.broker.backend.focus(matched)
+                        self._effect(job, self.broker.backend.focus, matched)
                         time.sleep(0.15)
                 guard()
                 if action == "type_text":
                     text_val = str(args.get("text") or "")
                     if not text_val:
                         raise ValueError("text is required for type_text")
-                    result_text = adv_ctrl.type_and_enter(text_val, press_enter=bool(args.get("press_enter", False)), input_guard=guard)
+                    result_text = self._effect(job, adv_ctrl.type_and_enter, text_val, press_enter=bool(args.get("press_enter", False)), input_guard=guard)
                 elif action == "hotkey":
                     keys_str = str(args.get("keys") or "").strip()
                     if not keys_str:
                         raise ValueError("keys is required for hotkey")
-                    result_text = adv_ctrl.hotkey(keys_str, input_guard=guard)
+                    result_text = self._effect(job, adv_ctrl.hotkey, keys_str, input_guard=guard)
                 elif action == "press_key":
                     key_str = str(args.get("keys") or "").strip().lower()
                     if not key_str:
                         raise ValueError("keys is required for press_key")
-                    pyautogui.press(key_str)
+                    self._effect(job, pyautogui.press, key_str)
                     result_text = f"Tuşa basıldı: {key_str}"
                 elif action in {"click", "double_click", "right_click"}:
                     x, y = args.get("x"), args.get("y")
@@ -912,23 +1047,23 @@ class NaturalDesktopTask:
                     guard()
                     if x is not None and y is not None:
                         if action == "click":
-                            pyautogui.click(int(x), int(y))
+                            self._effect(job, pyautogui.click, int(x), int(y))
                         elif action == "double_click":
-                            pyautogui.doubleClick(int(x), int(y))
+                            self._effect(job, pyautogui.doubleClick, int(x), int(y))
                         else:
-                            pyautogui.rightClick(int(x), int(y))
+                            self._effect(job, pyautogui.rightClick, int(x), int(y))
                         result_text = f"{action} ({x}, {y}) uygulandı."
                     else:
                         if action == "click":
-                            pyautogui.click()
+                            self._effect(job, pyautogui.click)
                         elif action == "double_click":
-                            pyautogui.doubleClick()
+                            self._effect(job, pyautogui.doubleClick)
                         else:
-                            pyautogui.rightClick()
+                            self._effect(job, pyautogui.rightClick)
                         result_text = f"{action} mevcut konumda uygulandı."
                 elif action == "scroll":
                     amt = int(args.get("scroll_amount") or -300)
-                    pyautogui.scroll(amt)
+                    self._effect(job, pyautogui.scroll, amt)
                     result_text = f"Kaydırma uygulandı: {amt}"
                 else:
                     raise ValueError(f"Unsupported jarvis_input action: {action}")
@@ -1013,6 +1148,7 @@ class NaturalDesktopTask:
                 self.job.setdefault("log_reads", []).append({k: v for k, v in result.items() if k != "text"})
                 return {"untrusted_log": result, "path": path}
             if provider != self.job["roles"]["operator"]: raise PermissionError("Collaborator cannot control or observe the desktop")
+            self._assert_unpaused()
             if not self.connection and self.job.get("requested_permission_level") == "full" and not self.warband:
                 avail = self.desktop.windows()[:12]
                 if avail:
@@ -1110,6 +1246,15 @@ class NaturalDesktopTask:
         try:
             while not stopped.wait(.3):
                 if self.job is not job: return
+                if self._paused():
+                    with self.changed:
+                        if self.pending and time.time() >= self.pending['expires_at'] and not self.pending.get('expired'):
+                            self.pending['expired'] = True
+                            self.job['pause']['reason'] = 'permission_expired'
+                            self._persist_pause()
+                            self._event('quartz', 'Onay süresi doldu; görev duraklatıldı. Devam için yeni onay gerekli.')
+                    self._drain_pause(job)
+                    continue
                 if _job_expired(self.job):
                     self.stop("expired"); break
                 if self.job.get("stalled"):
@@ -1173,6 +1318,11 @@ class NaturalDesktopTask:
                 return self.status()
             if self.stopped.is_set(): return self.status()
             learning = self.application_learning
+            if reason == 'completed' and self.job and self.job.get('models'):
+                participants = {p:self.runs[p][0].get(self.runs[p][1]).get('status','failed')
+                                if p in self.runs else 'failed' for p in self.job['models']}
+                self.job['participant_statuses'] = participants
+                reason = group_execution_status(participants)
             self.stopped.set(); self.tokens.clear(); self.pending = None
             self._cleanup_done.clear()
             self.connection = None
@@ -1216,7 +1366,8 @@ class NaturalDesktopTask:
                 self.agent_ids[self.job["roles"]["operator"]], self.job["task_id"],
                 "Execution " + reason + "; evidence verdict: " + self.job["verification"]["status"]))
             report["status"] = "failed" if any(s["status"] == "failed" for s in report["steps"]) else "completed"
-            self.job["outcome"] = execution_outcome(reason, self.job["verification"], report)
+            self.job["outcome"] = execution_outcome(reason, self.job["verification"], report,
+                participants=self.job.get('participant_statuses'))
             try:
                 atomic_write_json(self.evidence / "result.json", self.job)
             except Exception as exc:

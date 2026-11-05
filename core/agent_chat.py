@@ -1744,8 +1744,9 @@ class AgentChatService:
         agy_r1_text = r1_state["agy_text"]
 
         # ── TUR 2: Squad Üzerinden Karşılıklı Mesaj Okuma ve Birbirlerine Yanıt Verme (1 Değerlendirme Turu) ──
+        evaluation_states = None
         if codex_r1_ok and agy_r1_ok and rounds >= 2:
-            self._run_mutual_evaluation_round(
+            evaluation_states = self._run_mutual_evaluation_round(
                 cid=cid,
                 round_num=2,
                 user_prompt=prompt,
@@ -1764,6 +1765,8 @@ class AgentChatService:
         with self._lock:
             participants = {'codex':'completed' if codex_r1_ok else 'failed',
                             'antigravity':'completed' if agy_r1_ok else 'failed'}
+            if codex_r1_ok and agy_r1_ok and rounds >= 2:
+                participants = evaluation_states or {'codex':'failed', 'antigravity':'failed'}
             self._active_turn['participant_statuses'] = participants
             self._finish_turn(first_msg_id, group_execution_status(participants))
 
@@ -1871,12 +1874,14 @@ class AgentChatService:
             current_msg_id=codex_r2_id,
         )
 
+        states = {'codex':'failed', 'antigravity':'failed'}
         def run_codex_eval():
             try:
                 codex_r2_text = self._execute_codex_bubble(
                     cid, codex_r2_id, codex_r2_prompt, project_id, False, False,
                     use_session=False, squad_task_id=squad_task_id, base_meta=codex_r2_meta,
                 )
+                if codex_r2_text.strip(): states['codex'] = 'completed'
                 if squad_connected and codex_r2_text.strip():
                     self.agent_service.squad_send_message(
                         MultiAgentService.CODEX_ID, MultiAgentService.ANTIGRAVITY_ID,
@@ -1895,6 +1900,7 @@ class AgentChatService:
                     cid, agy_r2_id, agy_r2_prompt, project_id, False, False,
                     use_session=False, squad_task_id=squad_task_id, base_meta=agy_r2_meta,
                 )
+                if agy_r2_text.strip(): states['antigravity'] = 'completed'
                 if squad_connected and agy_r2_text.strip():
                     self.agent_service.squad_send_message(
                         MultiAgentService.ANTIGRAVITY_ID, MultiAgentService.CODEX_ID,
@@ -1913,6 +1919,7 @@ class AgentChatService:
         t_a2.start()
         t_c2.join()
         t_a2.join()
+        return states
 
     def _run_continue_discussion_turn(self, cid: str, first_msg_id: str, round_num: int,
                                       squad_task_id: str | None, project_id: str | None):
@@ -1936,7 +1943,7 @@ class AgentChatService:
             conn_info = self.agent_service.check_squad_connection(project_id)
             squad_connected = bool(conn_info.get("connected")) if isinstance(conn_info, dict) else False
 
-            self._run_mutual_evaluation_round(
+            participants = self._run_mutual_evaluation_round(
                 cid=cid,
                 round_num=round_num,
                 user_prompt=last_user_prompt,
@@ -1951,7 +1958,9 @@ class AgentChatService:
             if self._is_turn_cancelled(first_msg_id):
                 return
             with self._lock:
-                self._finish_turn(first_msg_id, "completed")
+                participants = participants or {'codex':'failed', 'antigravity':'failed'}
+                self._active_turn['participant_statuses'] = participants
+                self._finish_turn(first_msg_id, group_execution_status(participants))
         except Exception as exc:
             if self._is_turn_cancelled(first_msg_id):
                 return

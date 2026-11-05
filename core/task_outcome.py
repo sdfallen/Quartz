@@ -41,6 +41,8 @@ def stop_summary(reason, verification=None):
     if value == 'cancelled': return 'Görev durduruldu; yeni işlem yapılmayacak.'
     if value == 'completed':
         return 'Ajan yürütmesi tamamlandı; bu, tüm hedefin doğrulandığı anlamına gelmez.'
+    if value == 'partial':
+        return 'Görev kısmen yürütüldü; istenen ajanlardan biri tamamlayamadı. Hedef doğrulanmış sayılmadı.'
     if value == 'expired': return 'Görev süresi doldu; kontrol bırakıldı.'
     return 'Görev tamamlanamadı; kontrol bırakıldı. Ayrıntılar hata kaydında.'
 

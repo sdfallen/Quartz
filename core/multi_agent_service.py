@@ -898,7 +898,10 @@ class MultiAgentService:
         squad = self._squad(link["project_id"])
         try:
             if run["status"] == "completed":
-                summary = run["result"].strip() or "Codex task completed"
+                # Squad's task lifecycle completion is not goal acceptance.
+                projected = self._project_goal_outcome(run, self.run_evidence(run_id))
+                summary = ('Execution completed; goal: ' + projected['outcome']['goal_verdict']
+                           + '\nUntrusted agent report:\n' + str(run.get('result') or '').strip())
                 squad.complete_task(link["agent_id"], link["task_id"], summary[:50_000])
                 report_status = "completed"
             else:
