@@ -5,6 +5,7 @@ environment, never a global permission or a token written to a model transcript.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import secrets
@@ -13,6 +14,21 @@ import time
 import uuid
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+# A continuous session lives while its owner renews it, so the bearer still dies
+# soon after the owning task does. Renewal never creates or widens authority.
+CONTINUOUS_LEASE_SECONDS = 1800
+# Same input on an unchanged screen: refuse first, then end the task.
+REPEAT_REFUSE_AFTER = 8
+REPEAT_STOP_AFTER = 11
+
+
+def _screen_fingerprint(data):
+    stable = dict(data) if isinstance(data, dict) else {"data": data}
+    if isinstance(stable.get("ui"), dict):
+        stable["ui"] = {k: v for k, v in stable["ui"].items() if k != "snapshot_id"}
+    return hashlib.sha256(json.dumps(stable, sort_keys=True, default=str).encode()).hexdigest()
 
 
 class DesktopBroker:
@@ -32,7 +48,7 @@ class DesktopBroker:
     def windows(self):
         return self.backend.windows()
 
-    def grant(self, handle, provider, *, confirmed=False, seconds=600, launches=None, expected_targets=None, persistent_control=False):
+    def grant(self, handle, provider, *, confirmed=False, seconds=600, launches=None, expected_targets=None, persistent_control=False, continuous=False):
         if confirmed is not True:
             raise PermissionError("Explicit desktop-control confirmation required")
         if provider not in {"codex", "antigravity", "notion"}:
@@ -70,7 +86,7 @@ class DesktopBroker:
                 "token": secrets.token_urlsafe(32), "expires": self.clock() + min(1800, max(30, int(seconds))),
                 "snapshot": None, "focused": False, "actions": 0,
                 "targets": targets, "launches": launch_scope, "launched": set(),
-                "persistent_control": bool(persistent_control),
+                "persistent_control": bool(persistent_control), "continuous": bool(continuous),
             }
             self.stop_reason = ""
             self.stop_detail = None
@@ -117,6 +133,32 @@ class DesktopBroker:
                     "targets": list(s["targets"].values()) if s else [],
                     "persistent_control": bool(s.get("persistent_control")) if s else False,
                     "stop_reason": self.stop_reason, "stop_detail": self.stop_detail}
+
+    def renew(self):
+        """Owner heartbeat for a continuous session; cannot revive an ended one."""
+        with self._lock:
+            s = self._session
+            if not s or not s.get("continuous") or self.clock() >= s["expires"]:
+                return False
+            s["expires"] = self.clock() + CONTINUOUS_LEASE_SECONDS
+            return True
+
+    def _guard_repeated_input(self, s, args, observation):
+        # Waiting leaves the screen as it is by design, and does not break a streak.
+        if args.get("action") == "wait":
+            return
+        request = {k: v for k, v in args.items() if k != "snapshot_id"}
+        signature = hashlib.sha256((json.dumps(request, sort_keys=True, default=str) +
+                                    _screen_fingerprint(observation["data"])).encode()).hexdigest()
+        if signature != s.get("repeat_signature"):
+            s["repeat_signature"], s["repeat_count"] = signature, 0
+        s["repeat_count"] += 1
+        if s["repeat_count"] > REPEAT_STOP_AFTER:
+            self.stop("stalled: repeated action")
+            raise PermissionError("Same action kept failing to change the screen; task stopped")
+        if s["repeat_count"] > REPEAT_REFUSE_AFTER:
+            raise PermissionError("Bu eylem ekranı değiştirmeden tekrarlandı; girdi gönderilmedi. "
+                                  "Farklı bir yol deneyin veya engeli kullanıcıya bildirin.")
 
     def stop(self, reason="user/owner stopped"):
         had_session = False
@@ -296,7 +338,9 @@ class DesktopBroker:
                     raise PermissionError("Use the latest top-level snapshot_id exactly; observe again")
                 if self.clock() - observation["at"] > 15:
                     raise PermissionError("Stale observation; observe again")
-                if s["actions"] >= 100:
+                if s.get("continuous"):
+                    self._guard_repeated_input(s, args, observation)
+                elif s["actions"] >= 100:
                     self.stop("action budget exhausted")
                     raise PermissionError("Session action budget exhausted")
                 self.audit.append({"at": time.time(), "tool": tool, "attempt": True,

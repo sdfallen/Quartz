@@ -82,6 +82,96 @@ class BrokerTests(unittest.TestCase):
         self.assertFalse(self.broker.status()["active"])
         self.assertTrue(self.backend.leases[0].closed)
 
+    def continuous(self):
+        token = self.broker.grant(1, "codex", confirmed=True, seconds=1800, persistent_control=True, continuous=True)["token"]
+        return token, self.broker.call(token, {"name": "desktop_focus"})
+
+    def press(self, token, snapshot, key):
+        return self.broker.call(token, {"name": "desktop_act", "arguments": {"snapshot_id": snapshot, "action": "key", "key": key}})
+
+    def test_continuous_session_has_no_action_budget(self):
+        token, observed = self.continuous()
+        for number in range(150):
+            observed = self.press(token, observed["snapshot_id"], "k" + str(number))
+        self.assertEqual(len(self.backend.actions), 150)
+        self.assertTrue(self.broker.status()["active"])
+
+    def test_bounded_session_keeps_its_action_budget(self):
+        token, observed = self.focus()
+        for number in range(100):
+            observed = self.press(token, observed["snapshot_id"], "k" + str(number))
+        with self.assertRaises(PermissionError):
+            self.press(token, observed["snapshot_id"], "k")
+        self.assertEqual(len(self.backend.actions), 100)
+        self.assertEqual(self.broker.status()["stop_reason"], "action budget exhausted")
+
+    def test_owner_renewal_outlives_the_lease_and_stops_when_owner_stops(self):
+        token, _ = self.continuous()
+        for _ in range(5):
+            self.now += 1700
+            self.assertTrue(self.broker.renew())
+            self.assertTrue(self.broker.status()["active"])
+        self.now += 1801  # The owner died: nobody renews, so the bearer expires.
+        self.assertFalse(self.broker.renew())
+        self.assertFalse(self.broker.status()["active"])
+        with self.assertRaises(PermissionError):
+            self.broker.call(token, {"name": "desktop_observe"})
+
+    def test_renewal_cannot_extend_a_bounded_session_or_revive_a_stopped_one(self):
+        self.grant()
+        self.assertFalse(self.broker.renew())
+        self.broker.stop()
+        self.assertFalse(self.broker.renew())
+        self.assertFalse(self.broker.status()["active"])
+
+    def test_repeated_input_on_unchanged_screen_is_refused_then_ends_the_task(self):
+        token, observed = self.continuous()
+        for _ in range(8):
+            observed = self.press(token, observed["snapshot_id"], "tab")
+        self.assertEqual(len(self.backend.actions), 8)
+        for _ in range(3):
+            with self.assertRaisesRegex(PermissionError, "tekrarlandı"):
+                self.press(token, observed["snapshot_id"], "tab")
+            observed = self.broker.call(token, {"name": "desktop_observe"})
+        self.assertEqual(len(self.backend.actions), 8)
+        with self.assertRaises(PermissionError):
+            self.press(token, observed["snapshot_id"], "tab")
+        self.assertEqual(len(self.backend.actions), 8)
+        status = self.broker.status()
+        self.assertFalse(status["active"])
+        self.assertIn("stalled", status["stop_reason"])
+
+    def test_a_changing_screen_or_new_action_is_not_a_repeat(self):
+        token, observed = self.continuous()
+        frame = {"n": 0}
+        def changing(_):
+            frame["n"] += 1
+            return {"ui": {"elements": [frame["n"]]}, "image_base64": "cG5n"}
+        self.backend.observe = changing
+        observed = self.broker.call(token, {"name": "desktop_observe"})
+        for _ in range(30):
+            observed = self.press(token, observed["snapshot_id"], "pagedown")
+        self.assertEqual(len(self.backend.actions), 30)
+        self.backend.observe = lambda _: {"ui": {"elements": []}, "image_base64": "cG5n"}
+        observed = self.broker.call(token, {"name": "desktop_observe"})
+        for number in range(30):
+            observed = self.press(token, observed["snapshot_id"], "tab" if number % 2 else "enter")
+        self.assertEqual(len(self.backend.actions), 60)
+
+    def test_waiting_on_an_unchanged_screen_is_not_a_repeat(self):
+        token, observed = self.continuous()
+        for _ in range(30):
+            observed = self.broker.call(token, {"name": "desktop_act", "arguments": {"snapshot_id": observed["snapshot_id"], "action": "wait", "seconds": 1}})
+        self.assertEqual(len(self.backend.actions), 30)
+        self.assertTrue(self.broker.status()["active"])
+
+    def test_stop_still_revokes_a_continuous_session_immediately(self):
+        token, observed = self.continuous()
+        self.broker.stop()
+        with self.assertRaises(PermissionError):
+            self.press(token, observed["snapshot_id"], "tab")
+        self.assertEqual(self.backend.actions, [])
+
     def test_persistent_focus_recovery_refreshes_without_replaying_input(self):
         token = self.broker.grant(1, "codex", confirmed=True, persistent_control=True)["token"]
         first = self.broker.call(token, {"name": "desktop_focus"})
