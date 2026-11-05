@@ -174,6 +174,94 @@ class AntigravityRuntimeTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 runtime.start("second", self.root, full_access=True)
 
+    def test_p0_3_oracle_fields_record_command_exit_codes_file_changes_and_error_events(self):
+        changed = str(self.root / "calc.py").replace("\\", "\\\\")
+        stream = (
+            '{"event":"init","conversation_id":"conv-oracle"}\n'
+            '{"event":"step_update","step_update":{"id":"s1","state":"RUNNING","tool_name":"run_command","tool_info":{"parameters":{"CommandLine":"pytest -q"}}}}\n'
+            '{"event":"step_update","step_update":{"id":"s1","state":"ERROR","tool_name":"run_command","tool_info":{"output":"Command exited with code 1\\n1 failed"}}}\n'
+            '{"event":"step_update","step_update":{"id":"s2","state":"DONE","tool_name":"edit_file","tool_info":{"parameters":{"Path":"' + changed + '"}}}}\n'
+            '{"event":"step_update","step_update":{"id":"s3","state":"DONE","tool_name":"run_command","tool_info":{"parameters":{"CommandLine":"pytest -q"},"exit_code":0,"output":"1 passed"}}}\n'
+            '{"event":"result","result":{"conversation_id":"conv-oracle","status":"SUCCESS","response":"Fixed calc.py"}}\n'
+        )
+        runtime = AntigravityRuntime(self.exe)
+        with patch("core.antigravity_runtime.subprocess.Popen", return_value=FakeProcess(stream)):
+            started = runtime.start("fix", self.root, write=True, full_access=True)
+            for _ in range(100):
+                current = runtime.get(started["id"])
+                if current["status"] in runtime.TERMINAL:
+                    break
+                time.sleep(0.01)
+
+        self.assertEqual(current["status"], "completed")
+        self.assertEqual(current["command_exit_codes"], [1, 0])
+        self.assertEqual(len(current["command_results"]), 2)
+        self.assertEqual(current["command_results"][0]["seq"], 1)
+        self.assertEqual(current["command_results"][0]["command"], "pytest -q")
+        self.assertEqual(current["command_results"][0]["exit_code"], 1)
+        self.assertFalse(current["command_results"][0]["ok"])
+        self.assertEqual(current["command_results"][1]["seq"], 3)
+        self.assertEqual(current["command_results"][1]["exit_code"], 0)
+        self.assertTrue(current["command_results"][1]["ok"])
+        self.assertEqual(current["file_changes"], [{
+            "seq": 2,
+            "path": str(self.root / "calc.py"),
+            "kind": "update",
+            "tool": "edit_file",
+            "state": "DONE",
+        }])
+        self.assertEqual(len(current["error_events"]), 1)
+        self.assertEqual(current["error_events"][0]["seq"], 1)
+        self.assertEqual(current["error_events"][0]["source"], "command")
+        self.assertEqual(current["error_events"][0]["kind"], "nonzero_exit")
+        self.assertEqual(current["error_events"][0]["exit_code"], 1)
+        self.assertEqual(current["errors"], [])
+
+    def test_p1_3_readonly_run_detects_and_fails_unauthorized_file_write(self):
+        changed = str(self.root / "readonly_probe.txt").replace("\\", "\\\\")
+        stream = (
+            '{"event":"init","conversation_id":"conv-ro"}\n'
+            '{"event":"step_update","step_update":{"id":"s1","state":"DONE","step_type":"tool",'
+            '"tool_name":"write_file","tool_info":{"parameters":{"Path":"' + changed + '"}}}}\n'
+            '{"event":"result","result":{"conversation_id":"conv-ro","status":"SUCCESS","response":"Wrote file"}}\n'
+        )
+        runtime = AntigravityRuntime(self.exe)
+        with patch("core.antigravity_runtime.subprocess.Popen", return_value=FakeProcess(stream)):
+            started = runtime.start("inspect only", self.root, write=False, full_access=False)
+            for _ in range(100):
+                current = runtime.get(started["id"])
+                if current["status"] in runtime.TERMINAL:
+                    break
+                time.sleep(0.01)
+
+        self.assertEqual(current["status"], "failed")
+        self.assertTrue(current["unauthorized_write_detected"])
+        self.assertEqual(current["unauthorized_files_changed"], [str(self.root / "readonly_probe.txt")])
+        self.assertTrue(any(e["kind"] == "unauthorized_readonly_write" for e in current["error_events"]))
+        self.assertTrue(any(d.get("reason") == "read_only_violation" for d in current["denied_actions"]))
+
+    def test_p1_3_readonly_run_does_not_blame_reader_for_concurrent_writer_disk_changes(self):
+        stream = (
+            '{"event":"init","conversation_id":"conv-ro-clean"}\n'
+            '{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"Reviewed safely."}}\n'
+            '{"event":"result","result":{"conversation_id":"conv-ro-clean","status":"SUCCESS","response":"Reviewed safely."}}\n'
+        )
+        runtime = AntigravityRuntime(self.exe)
+        with patch("core.antigravity_runtime.subprocess.Popen", return_value=FakeProcess(stream)):
+            # Concurrent writer modifies a file in the project directory during the reader's run
+            (self.root / "writer_owned.txt").write_text("concurrent writer change\n", encoding="utf-8")
+            started = runtime.start("review", self.root, write=False, full_access=False)
+            for _ in range(100):
+                current = runtime.get(started["id"])
+                if current["status"] in runtime.TERMINAL:
+                    break
+                time.sleep(0.01)
+
+        self.assertEqual(current["status"], "completed")
+        self.assertFalse(current["unauthorized_write_detected"])
+        self.assertEqual(current["unauthorized_files_changed"], [])
+
+
 
 if __name__ == "__main__":
     unittest.main()
