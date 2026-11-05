@@ -5,12 +5,15 @@
 - Kullanıcının güncel görevi: Codex bağımsız continuity/UI incelemesi, kabul
   betiği sınıflandırması ve Görev Sınavı koşucusu; Claude görev listesini yazar.
 - Masaüstü broker/native sahibi kullanıcı plan kararıyla Claude; Codex inceler.
-  R1 renewal-owner bulgusu `CODEX_WAVE0_REVIEW_20261105.md` içinde integration request.
+  Tarihsel R1 renewal-owner bulgusu 1a18556 ile düzeltildi ve Codex tarafından
+  SOURCE/TESTED kabul edildi; güncel karar `CODEX_WAVE0_CLOSE_WAVE1_REVIEW_20261105.md`.
 - Gemini gerçek CLI timeout doğrulaması ve kendi ayrı işleri üzerinde çalışır;
   gerçek masaüstünde aynı anda yalnız bir operatör. Bu Codex dilimi desktop/account
   betiği, paket dağıtımı veya uygulama açılışı yapmaz.
-- Kabul tabanı `main` 92751a3. Continuity 643b51f R1 nedeniyle henüz kabul
-  edilmedi. Tek yeni kabul tabanı oluştuğu iddia edilmez. Dalga 0 çıkışı açıktır.
+- Güncel teknik taban `main` 1a18556; kurulu paketin bildirilen kaynak SHA'sıyla
+  aynı. Eski 643b51f ret kanıtı korunur, düzeltme onu geçersiz test sonucu yapmaz.
+  Koşucu yeni main tabanındaki Codex dalında. Uzun gerçek görev ve G1–G8 canlı
+  skor kartı kaynak birleştirmesiyle tamamlanmış sayılmaz.
 - Koşucu/katalog/ilgili test ve repo belgeleri bu kullanıcı atamasıyla Codex'te;
   eski aşağıdaki sahiplik kayıtları tarihsel kapsamlarıyla korunur.
 
