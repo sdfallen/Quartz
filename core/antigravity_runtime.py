@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -26,6 +27,18 @@ class AntigravityRuntime:
     PROBE_TTL = 300.0
     _SHARED_PROBE_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
     _SHARED_MODELS_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
+    _EXIT_CODE_RE = re.compile(r"Command exited with code (-?\d+)")
+    _FILE_CHANGE_TOOLS = {
+        "create_file": "add",
+        "write_to_file": "write",
+        "write_file": "write",
+        "edit_file": "update",
+        "replace": "update",
+        "replace_file_content": "update",
+        "multi_replace_file_content": "update",
+        "notebook_edit": "update",
+        "delete_file": "delete",
+    }
 
     def __init__(self, executable=None):
         self.executable = None
@@ -62,6 +75,26 @@ class AntigravityRuntime:
     def _find_executable(explicit=None) -> str:
         from core.cli_installer import resolve_cli
         return resolve_cli("agy", explicit)
+
+    @staticmethod
+    def _next_oracle_seq(record: dict) -> int:
+        seq = int(record.get("_oracle_seq", 0)) + 1
+        record["_oracle_seq"] = seq
+        return seq
+
+    @classmethod
+    def _extract_command_exit_code(cls, tool_info: dict, tool_state: str, output_text: str) -> int | None:
+        for key in ("exit_code", "returncode", "return_code"):
+            raw = tool_info.get(key)
+            if isinstance(raw, int) and not isinstance(raw, bool):
+                return int(raw)
+        match = cls._EXIT_CODE_RE.search(output_text or "")
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                pass
+        return None
 
     def list_models(self, force: bool = False) -> dict:
         """Discover supported models and efforts directly from `agy models`."""
@@ -228,10 +261,14 @@ class AntigravityRuntime:
                 "result": "",
                 "errors": [], "events": [], "progress_log": [], "usage": None,
                 "denied_actions": [],
-                "commands": [], "files_changed": [],
+                "commands": [], "command_results": [], "command_exit_codes": [],
+                "files_changed": [], "file_changes": [],
+                "error_events": [],
                 "squad_task_id": squad_task_id,
                 "squad_agent_id": squad_agent_id,
                 "cancel_requested": False,
+                "_oracle_seq": 0,
+                "_pending_tool_params": {},
             }
             self._runs[run_id] = record
             if effective_write:
@@ -317,12 +354,16 @@ class AntigravityRuntime:
             if run_id not in self._runs:
                 raise KeyError(f"Unknown Antigravity run: {run_id}")
             record = self._runs[run_id]
-            value = dict(record)
+            value = {k: v for k, v in record.items() if not str(k).startswith("_")}
             value["errors"] = list(record["errors"][-20:])
             value["events"] = list(record["events"][-100:])
             value["progress_log"] = list(record.get("progress_log", [])[-50:])
-            value["commands"] = list(record.get("commands", [])[-30:])
+            value["commands"] = [dict(item) for item in record.get("commands", [])[-30:]]
+            value["command_results"] = [dict(item) for item in record.get("command_results", [])[-50:]]
+            value["command_exit_codes"] = list(record.get("command_exit_codes", [])[-50:])
             value["files_changed"] = list(record.get("files_changed", []))
+            value["file_changes"] = [dict(item) for item in record.get("file_changes", [])[-100:]]
+            value["error_events"] = [dict(item) for item in record.get("error_events", [])[-50:]]
             return value
 
     def list(self, limit=20) -> list[dict]:
@@ -414,24 +455,95 @@ class AntigravityRuntime:
                             record["result"] = (record["result"] or "") + delta
                         tool_name = step.get("tool_name")
                         if tool_name:
-                            tool_state = step.get("state", "RUNNING")
+                            tool_state = str(step.get("state") or "RUNNING").upper()
                             record.setdefault("progress_log", []).append(f"Tool {tool_name}: {tool_state}")
                             tool_info = step.get("tool_info") or {}
-                            params = tool_info.get("parameters") or {}
+                            raw_params = tool_info.get("parameters") or {}
+                            pending_map = record.setdefault("_pending_tool_params", {})
+                            step_key = str(step.get("id") or step.get("step_id") or tool_name)
+                            if tool_state == "RUNNING":
+                                if raw_params:
+                                    pending_map[step_key] = dict(raw_params)
+                                    pending_map[tool_name] = dict(raw_params)
+                            params = dict(pending_map.get(step_key) or pending_map.get(tool_name) or {})
+                            params.update(raw_params)
+                            if tool_state in {"DONE", "ERROR"}:
+                                pending_map.pop(step_key, None)
+                                pending_map.pop(tool_name, None)
+
                             if tool_state in {"DONE", "ERROR"} and tool_name in {"run_command", "run_shell_command"}:
+                                cmd_str = str(params.get("CommandLine") or params.get("command") or "")[:1000]
+                                out_str = str(tool_info.get("output") or tool_info.get("error") or "")[:4000]
+                                err_str = str(tool_info.get("error") or "")[:2000]
+                                exit_code = self._extract_command_exit_code(tool_info, tool_state, out_str)
+                                seq = self._next_oracle_seq(record)
                                 record["commands"].append({
-                                    "command": str(params.get("CommandLine") or params.get("command") or "")[:1000],
-                                    "exit_code": tool_info.get("exit_code"),
-                                    "output": str(tool_info.get("output") or tool_info.get("error") or "")[:4000],
+                                    "command": cmd_str,
+                                    "exit_code": exit_code,
+                                    "output": out_str,
                                 })
-                            if tool_state == "DONE" and tool_name in {
-                                "create_file", "edit_file", "delete_file", "write_to_file", "write_file",
-                                "replace", "replace_file_content", "multi_replace_file_content", "notebook_edit",
-                            }:
+                                record.setdefault("command_exit_codes", []).append(exit_code)
+                                ok = tool_state == "DONE" and exit_code in (0, None)
+                                if exit_code not in (None, 0):
+                                    ok = False
+                                record.setdefault("command_results", []).append({
+                                    "seq": seq,
+                                    "tool": tool_name,
+                                    "command": cmd_str,
+                                    "exit_code": exit_code,
+                                    "ok": ok,
+                                    "state": tool_state,
+                                    "output": out_str,
+                                    "error": err_str if not ok else "",
+                                })
+                                if not ok:
+                                    record.setdefault("error_events", []).append({
+                                        "seq": seq,
+                                        "source": "command",
+                                        "kind": "nonzero_exit" if exit_code not in (None, 0) else "command_error",
+                                        "tool": tool_name,
+                                        "command": cmd_str,
+                                        "exit_code": exit_code,
+                                        "message": err_str or out_str[:1000] or f"Tool {tool_name} failed",
+                                    })
+                            elif tool_state in {"DONE", "ERROR"} and tool_name in self._FILE_CHANGE_TOOLS:
                                 path = str(params.get("Path") or params.get("TargetFile") or
                                            params.get("file_path") or params.get("path") or "")
-                                if path and path not in record["files_changed"]:
+                                change_kind = self._FILE_CHANGE_TOOLS[tool_name]
+                                seq = self._next_oracle_seq(record)
+                                if path:
+                                    record.setdefault("file_changes", []).append({
+                                        "seq": seq,
+                                        "path": path,
+                                        "kind": change_kind,
+                                        "tool": tool_name,
+                                        "state": tool_state,
+                                    })
+                                if tool_state == "DONE" and path and path not in record["files_changed"]:
                                     record["files_changed"].append(path)
+                                elif tool_state == "ERROR":
+                                    err_msg = str(tool_info.get("error") or tool_info.get("output") or f"Tool {tool_name} failed")
+                                    record.setdefault("error_events", []).append({
+                                        "seq": seq,
+                                        "source": "tool",
+                                        "kind": "file_change_error",
+                                        "tool": tool_name,
+                                        "command": None,
+                                        "exit_code": None,
+                                        "message": err_msg[:1000],
+                                    })
+                            elif tool_state == "ERROR":
+                                seq = self._next_oracle_seq(record)
+                                err_msg = str(tool_info.get("error") or tool_info.get("output") or f"Tool {tool_name} failed")
+                                record.setdefault("error_events", []).append({
+                                    "seq": seq,
+                                    "source": "tool",
+                                    "kind": "tool_error",
+                                    "tool": tool_name,
+                                    "command": None,
+                                    "exit_code": None,
+                                    "message": err_msg[:1000],
+                                })
                     elif event_type == "result":
                         result = event.get("result") or {}
                         record["conversation_id"] = result.get("conversation_id") or record["conversation_id"]
@@ -443,18 +555,49 @@ class AntigravityRuntime:
                         record["usage"] = result.get("usage")
                         record["remote_status"] = str(result.get("status") or "")
                         if result.get("error"):
-                            record["errors"].append(str(result["error"]))
+                            err_msg = str(result["error"])
+                            record["errors"].append(err_msg)
+                            seq = self._next_oracle_seq(record)
+                            record.setdefault("error_events", []).append({
+                                "seq": seq,
+                                "source": "result",
+                                "kind": "result_error",
+                                "tool": None,
+                                "command": None,
+                                "exit_code": None,
+                                "message": err_msg,
+                            })
                         if result.get("denied_actions"):
                             record["denied_actions"] = list(result["denied_actions"])
                             denied = ", ".join(
                                 str(item.get("action") or item.get("display_name") or "unknown")
                                 for item in result["denied_actions"]
                             )
-                            record["errors"].append(
-                                f"Antigravity permission policy denied: {denied}"
-                            )
+                            deny_msg = f"Antigravity permission policy denied: {denied}"
+                            record["errors"].append(deny_msg)
+                            seq = self._next_oracle_seq(record)
+                            record.setdefault("error_events", []).append({
+                                "seq": seq,
+                                "source": "permission",
+                                "kind": "permission_denied",
+                                "tool": None,
+                                "command": None,
+                                "exit_code": None,
+                                "message": deny_msg,
+                            })
                         if result.get("status") == "SUCCESS" and not record["result"]:
-                            record["errors"].append("Antigravity returned SUCCESS without a response")
+                            empty_msg = "Antigravity returned SUCCESS without a response"
+                            record["errors"].append(empty_msg)
+                            seq = self._next_oracle_seq(record)
+                            record.setdefault("error_events", []).append({
+                                "seq": seq,
+                                "source": "result",
+                                "kind": "empty_output",
+                                "tool": None,
+                                "command": None,
+                                "exit_code": None,
+                                "message": empty_msg,
+                            })
         except (OSError, ValueError):
             pass
 
@@ -469,6 +612,16 @@ class AntigravityRuntime:
                         record = self._runs.get(run_id)
                         if record:
                             record["errors"].append(line)
+                            seq = self._next_oracle_seq(record)
+                            record.setdefault("error_events", []).append({
+                                "seq": seq,
+                                "source": "stderr",
+                                "kind": "stderr_line",
+                                "tool": None,
+                                "command": None,
+                                "exit_code": None,
+                                "message": line,
+                            })
         except (OSError, ValueError):
             pass
 
@@ -526,7 +679,18 @@ class AntigravityRuntime:
                     record["exit_code"] = code
                     record["finished_at"] = time.time()
                     if timed_out:
-                        record["errors"].append(f"Task timed out after {timeout_sec:g}s")
+                        msg = f"Task timed out after {timeout_sec:g}s"
+                        record["errors"].append(msg)
+                        seq = self._next_oracle_seq(record)
+                        record.setdefault("error_events", []).append({
+                            "seq": seq,
+                            "source": "process",
+                            "kind": "timeout",
+                            "tool": None,
+                            "command": None,
+                            "exit_code": code,
+                            "message": msg,
+                        })
                     if record.get("cancel_requested"):
                         record["status"] = "cancelled"
                     elif (not timed_out and code == 0 and record.get("remote_status") in self.SUCCESS
@@ -535,7 +699,18 @@ class AntigravityRuntime:
                     else:
                         record["status"] = "failed"
                         if code != 0 and not record["errors"]:
-                            record["errors"].append(f"Process exited with code {code}")
+                            msg = f"Process exited with code {code}"
+                            record["errors"].append(msg)
+                            seq = self._next_oracle_seq(record)
+                            record.setdefault("error_events", []).append({
+                                "seq": seq,
+                                "source": "process",
+                                "kind": "process_exit",
+                                "tool": None,
+                                "command": None,
+                                "exit_code": code,
+                                "message": msg,
+                            })
         except Exception as exc:
             with self._lock:
                 record = self._runs.get(run_id)
@@ -548,9 +723,31 @@ class AntigravityRuntime:
                     if isinstance(exc, OwnedCleanupUnconfirmed):
                         record.update(root_exit_confirmed=True, exit_code=exc.root_returncode,
                                       cleanup_error='tree_discovery_incomplete')
-                        record["errors"].append("Ana süreç durdu; alt süreçlerin kapanışı doğrulanamadı.")
+                        msg = "Ana süreç durdu; alt süreçlerin kapanışı doğrulanamadı."
+                        record["errors"].append(msg)
+                        seq = self._next_oracle_seq(record)
+                        record.setdefault("error_events", []).append({
+                            "seq": seq,
+                            "source": "process",
+                            "kind": "cleanup_unconfirmed",
+                            "tool": None,
+                            "command": None,
+                            "exit_code": exc.root_returncode,
+                            "message": msg,
+                        })
                     else:
-                        record["errors"].append("Process watcher failed; inspect cleanup status")
+                        msg = "Process watcher failed; inspect cleanup status"
+                        record["errors"].append(msg)
+                        seq = self._next_oracle_seq(record)
+                        record.setdefault("error_events", []).append({
+                            "seq": seq,
+                            "source": "process",
+                            "kind": "watcher_error",
+                            "tool": None,
+                            "command": None,
+                            "exit_code": None,
+                            "message": msg,
+                        })
         finally:
             with self._lock:
                 if exit_known:

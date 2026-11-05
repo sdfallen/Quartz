@@ -139,6 +139,49 @@ class CodexRuntimeTests(unittest.TestCase):
         self.assertEqual(Path(built[0]).name.lower(), Path(os.environ.get("COMSPEC", "cmd.exe")).name.lower())
         self.assertIn("/c", [part.lower() for part in built])
 
+    def test_p0_3_oracle_fields_record_command_exit_codes_file_changes_and_error_events(self):
+        stream = (
+            '{"type":"thread.started","thread_id":"th-oracle"}\n'
+            '{"type":"item.completed","item":{"type":"command_execution","command":"pytest -q","exit_code":1,"aggregated_output":"1 failed"}}\n'
+            '{"type":"item.completed","item":{"type":"file_change","changes":[{"path":"calc.py","kind":"update"}]}}\n'
+            '{"type":"item.completed","item":{"type":"command_execution","command":"pytest -q","exit_code":0,"aggregated_output":"1 passed"}}\n'
+            '{"type":"item.completed","item":{"type":"agent_message","text":"Fixed calc.py and tests pass."}}\n'
+            '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}\n'
+        )
+        runtime = CodexRuntime(self.exe)
+        with patch("core.codex_runtime.subprocess.Popen", return_value=FakeProcess(stream)):
+            started = runtime.start("fix bug", self.root, sandbox="workspace-write", approval="on-request")
+            for _ in range(100):
+                current = runtime.get(started["id"])
+                if current["status"] in runtime.TERMINAL:
+                    break
+                time.sleep(0.01)
+
+        self.assertEqual(current["status"], "completed")
+        self.assertEqual(current["command_exit_codes"], [1, 0])
+        self.assertEqual(len(current["command_results"]), 2)
+        self.assertEqual(current["command_results"][0]["seq"], 1)
+        self.assertFalse(current["command_results"][0]["ok"])
+        self.assertEqual(current["command_results"][0]["exit_code"], 1)
+        self.assertEqual(current["command_results"][1]["seq"], 3)
+        self.assertTrue(current["command_results"][1]["ok"])
+        self.assertEqual(current["command_results"][1]["exit_code"], 0)
+        self.assertEqual(current["file_changes"], [{
+            "seq": 2,
+            "path": "calc.py",
+            "kind": "update",
+            "tool": "file_change",
+            "state": "DONE",
+        }])
+        self.assertEqual(current["files_changed"], ["calc.py"])
+        self.assertEqual(len(current["error_events"]), 1)
+        self.assertEqual(current["error_events"][0]["seq"], 1)
+        self.assertEqual(current["error_events"][0]["source"], "command")
+        self.assertEqual(current["error_events"][0]["kind"], "nonzero_exit")
+        self.assertEqual(current["error_events"][0]["exit_code"], 1)
+        # Internal command failure must not pollute top-level runtime errors list when repaired
+        self.assertEqual(current["errors"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
