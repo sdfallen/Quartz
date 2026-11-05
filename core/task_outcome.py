@@ -15,6 +15,8 @@ def stop_summary(reason, verification=None):
     value = str(reason).lower()
     if 'foreground' in value or 'user takeover' in value:
         return 'Pencere odağı değiştiği (odak değişti / kullanıcı müdahalesi) için bilgisayar kontrolü güvenle durduruldu.'
+    if 'stalled' in value:
+        return 'Ajan aynı işlemi sonuçsuz tekrarladığı için görev durduruldu; hedef tamamlanmış sayılmadı.'
     if 'permission' in value:
         return 'İzin reddedildi veya süresi doldu; görev durduruldu.'
     if value == 'cancelled': return 'Görev durduruldu; yeni işlem yapılmayacak.'

@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 
 from core.natural_desktop import NaturalDesktopTask, task_roles
 from core.desktop_broker import DesktopBroker
+from core.task_outcome import stop_summary
 from core.desktop_task_ui import desktop_intent
 from core.desktop_mcp import handle
 from tests.test_desktop_broker import FakeBackend
@@ -49,6 +50,89 @@ class NaturalTaskTests(unittest.TestCase):
     def approve(self):
         self.request()
         self.task.approve(self.task.pending["id"],confirmed=True)
+
+    def test_task_without_deadline_stays_callable_and_gets_a_continuous_session(self):
+        self.task.job["expires_at"] = None
+        self.assertEqual(self.task._provider("op"), "codex")
+        self.request()
+        self.assertGreater(self.task.pending["expires_at"], time.time())
+        self.task.approve(self.task.pending["id"], confirmed=True)
+        self.assertTrue(self.broker._session["continuous"])
+        self.assertTrue(self.broker._session["persistent_control"])
+
+    def test_legacy_game_window_keeps_the_bounded_session(self):
+        self.task.job["expires_at"] = None
+        self.task.warband = Mock()
+        self.backend.target["exe"] = "mb_warband.exe"
+        self.request()
+        self.task.approve(self.task.pending["id"], confirmed=True)
+        self.assertFalse(self.broker._session["continuous"])
+        self.assertFalse(self.broker._session["persistent_control"])
+        self.task.warband = None
+
+    def test_running_task_outlives_every_old_limit_until_stop(self):
+        now = [0]
+        self.broker.clock = lambda: now[0]
+        self.task.job["expires_at"] = None
+        self.request()
+        self.task.approve(self.task.pending["id"], confirmed=True)
+        runtime = SimpleNamespace(TERMINAL={"completed", "failed"}, get=lambda _: {"status": "running"}, cancel=lambda _: None)
+        self.task.runs = {"codex": (runtime, "r1")}
+        watcher = threading.Thread(target=self.task._watch, args=(self.task.job, self.task.stopped), daemon=True)
+        self.task.thread = watcher
+        watcher.start()
+        for _ in range(4):  # Far past the old 15 and 30 minute limits.
+            time.sleep(.5)
+            now[0] += 1200
+        time.sleep(.5)
+        self.assertTrue(watcher.is_alive())
+        self.assertEqual(self.task.job["status"], "running")
+        self.assertTrue(self.broker.status()["active"])
+        self.assertEqual(self.broker._session["token"], self.task.connection["token"])
+        self.task.stop("cancelled")
+        self.assertEqual(self.task.job["status"], "cancelled")
+        self.assertFalse(self.broker.status()["active"])
+
+    def test_provider_turn_is_not_cut_at_fifteen_minutes(self):
+        started = {}
+        class Runtime:
+            backend = "gemini"
+            TERMINAL = {"completed"}
+            def start(self, _prompt, _workspace, **options):
+                started.update(options)
+                return {"id": "r"}
+        self.task.factories = {"antigravity": Runtime}
+        self.task.job.update(models={"antigravity": {"model": "auto", "effort": "medium"}},
+                             roles={"operator": "antigravity", "observer": "codex", "assignments": {"antigravity": "", "codex": ""}})
+        self.task.server = SimpleNamespace(server_port=1, shutdown=lambda: None, server_close=lambda: None)
+        self.task.tokens["antigravity"] = "op"
+        self.task._launch_provider("antigravity")
+        self.assertEqual(started["timeout"], "1440m")
+        self.task.runs = {}
+
+    def test_identical_jarvis_input_is_refused_then_marks_the_task_stalled(self):
+        job = self.task.job
+        for _ in range(40):
+            self.task._note_jarvis_input(job, "jarvis_input", {"action": "click"})
+        for _ in range(4):
+            with self.assertRaises(PermissionError):
+                self.task._note_jarvis_input(job, "jarvis_input", {"action": "click"})
+        self.assertNotIn("stalled", job)
+        with self.assertRaises(PermissionError):
+            self.task._note_jarvis_input(job, "jarvis_input", {"action": "click"})
+        self.assertTrue(job["stalled"])
+
+    def test_varied_jarvis_input_is_never_a_repeat_and_text_is_not_stored(self):
+        job = self.task.job
+        for number in range(200):
+            self.task._note_jarvis_input(job, "jarvis_input", {"action": "type", "text": "gizli" + str(number % 2)})
+        self.assertNotIn("stalled", job)
+        self.assertNotIn("gizli", json.dumps(job["input_repeat"]))
+
+    def test_stall_has_its_own_honest_summary(self):
+        summary = stop_summary("blocked: stalled: repeated action", {"status": "NOT VERIFIED"})
+        self.assertIn("tekrarladığı", summary)
+        self.assertIn("tamamlanmış sayılmadı", summary)
 
     def test_plain_acceptance_and_real_chrome_request_route(self):
         for text in ("Codex, açık test uygulamasındaki sorunu incele ve düzelt. Gemini, test loglarını kontrol et.",
