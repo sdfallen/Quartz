@@ -3,6 +3,7 @@ import ast
 import copy
 import sys
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -25,6 +26,29 @@ def controller_functions(mouse, clipboard):
 
 
 class JarvisRegressionTests(unittest.TestCase):
+    def test_slow_composite_does_not_hold_stop_or_publish_a_manual_card_mid_effect(self):
+        entered=threading.Event(); release=threading.Event(); errors=[]
+        def slow(_): entered.set(); release.wait(2); return 'old controller result'
+        self.adv.smart_open=slow
+        def invoke():
+            try:self.task.call('token-op',{'name':'jarvis_open_app','arguments':{'target':'notepad'}})
+            except Exception as exc:errors.append(exc)
+        worker=threading.Thread(target=invoke);worker.start()
+        self.addCleanup(lambda:(release.set(),worker.join(3)))
+        self.assertTrue(entered.wait(1))
+        self.task.job['requested_permission_level'] = 'project'
+        with self.assertRaisesRegex(RuntimeError, 'Henüz kart açılmadı'):
+            self.task.call('token-op', {'name':'desktop_request_access',
+                'arguments':{'handles':[1], 'reason':'Yeni kapsam için insan onayı'}})
+        self.assertIsNone(self.task.pending)
+        # Stop must return before releasing an arbitrarily blocked controller.
+        stopped=threading.Event()
+        stopper=threading.Thread(target=lambda:(self.task.stop('cancelled'),stopped.set()))
+        stopper.start()
+        self.assertTrue(stopped.wait(1),'Stop blocked on a long controller call')
+        release.set();worker.join(2);stopper.join(2)
+        self.assertTrue(self.task.stopped.is_set());self.assertFalse(self.fixture.broker.status()['active'])
+
     def setUp(self):
         self.fixture=lifecycle.NaturalTaskLifecycleReliabilityTests('test_stop_idempotency')
         self.fixture.setUp();self.fixture._setup_active_approved_task()

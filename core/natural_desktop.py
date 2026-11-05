@@ -177,6 +177,7 @@ class NaturalDesktopTask:
         self._sys_ctrl = None
         self._adv_ctrl = None
         self._inflight_calls = 0
+        self._control_inflight = 0
         self._cleanup_done = threading.Event()
         self._cleanup_done.set()
 
@@ -545,6 +546,9 @@ class NaturalDesktopTask:
         if not isinstance(paths, list) or len(paths) > 4 or not all(isinstance(p, str) for p in paths):
             raise ValueError("At most four project log paths")
         if not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 600: raise ValueError("Short reason required")
+        automatic = self.job.get('requested_permission_level') == 'full' and not self.warband
+        if not automatic and self._control_inflight:
+            raise RuntimeError('Kontrol çağrısı sürüyor; task_wait sonrası izin isteğini yineleyin. Henüz kart açılmadı.')
         targets = dict(self.approved_targets)
         if self.pending:
             targets.update({w["handle"]: w for w in self.pending["targets"]})
@@ -735,6 +739,9 @@ class NaturalDesktopTask:
             if not readonly and provider!=job['roles']['operator']:
                 raise PermissionError('Only the assigned operator may execute Jarvis control actions')
             if not readonly:
+                if self._control_inflight:
+                    raise PermissionError('Başka kontrol çağrısı sürüyor; task_wait kullanın')
+                self._control_inflight += 1
                 self.latest=None
                 job['verification']={'status':'NOT VERIFIED','reason':'New control attempt requires fresh evidence, including on failure'}
             self._inflight_calls += 1
@@ -771,6 +778,7 @@ class NaturalDesktopTask:
         finally:
             with self.changed:
                 self._inflight_calls -= 1
+                if not readonly: self._control_inflight -= 1
                 self.changed.notify_all()
 
     def _elevation_worker(self, job, pending, evidence=None):
@@ -828,6 +836,14 @@ class NaturalDesktopTask:
         with self.changed:
             self._assert_jarvis_generation(job)
             return operation(*args, **kwargs)
+
+    def _controller(self, job, operation, *args, **kwargs):
+        # Composite functions may do network resolution or wait on a process.
+        # They must not hold the Stop lock. Their single admitted control call
+        # excludes new manual cards and other controls until it has drained.
+        with self.changed:
+            self._assert_jarvis_generation(job)
+        return operation(*args, **kwargs)
 
     def _jarvis_target(self, requested):
         windows = self.desktop.windows()
@@ -908,15 +924,15 @@ class NaturalDesktopTask:
             self._check_not_protected_target(target)
             mode = args.get("mode") or "smart_open"
             if mode == "url":
-                result_text = self._effect(job, adv_ctrl.browser_open_url, target)
+                result_text = self._controller(job, adv_ctrl.browser_open_url, target)
             elif mode == "vscode_folder":
-                result_text = self._effect(job, adv_ctrl.vscode_open_folder, target)
+                result_text = self._controller(job, adv_ctrl.vscode_open_folder, target)
             elif mode == "vscode_file":
-                result_text = self._effect(job, adv_ctrl.vscode_open_file, target)
+                result_text = self._controller(job, adv_ctrl.vscode_open_file, target)
             elif mode == "steam":
-                result_text = self._effect(job, adv_ctrl.steam_open_library)
+                result_text = self._controller(job, adv_ctrl.steam_open_library)
             else:
-                result_text = self._effect(job, adv_ctrl.smart_open, target)
+                result_text = self._controller(job, adv_ctrl.smart_open, target)
             time.sleep(0.4)
             try:
                 extra["open_windows"] = self.desktop.windows()
@@ -930,29 +946,29 @@ class NaturalDesktopTask:
             if action == "youtube_play":
                 if not query:
                     raise ValueError("query is required for youtube_play")
-                result_text = self._effect(job, adv_ctrl.youtube_play, query)
+                result_text = self._controller(job, adv_ctrl.youtube_play, query)
             elif action == "youtube_search":
                 if not query:
                     raise ValueError("query is required for youtube_search")
-                result_text = self._effect(job, adv_ctrl.youtube_search, query)
+                result_text = self._controller(job, adv_ctrl.youtube_search, query)
             elif action == "google_search":
                 if not query:
                     raise ValueError("query is required for google_search")
-                result_text = self._effect(job, adv_ctrl.google_search, query)
+                result_text = self._controller(job, adv_ctrl.google_search, query)
             elif action == "spotify_play":
-                result_text = self._effect(job, adv_ctrl.spotify_play, query)
+                result_text = self._controller(job, adv_ctrl.spotify_play, query)
             elif action in {"spotify_pause", "spotify_next", "spotify_prev"}:
                 sub = {"spotify_pause": "pause", "spotify_next": "next", "spotify_prev": "prev"}[action]
-                result_text = self._effect(job, adv_ctrl.spotify_control, sub)
+                result_text = self._controller(job, adv_ctrl.spotify_control, sub)
             elif action == "set_volume":
                 level = args.get("level")
                 if level is None:
                     raise ValueError("level (0-100) is required for set_volume")
-                result_text = self._effect(job, adv_ctrl.set_volume, int(level))
+                result_text = self._controller(job, adv_ctrl.set_volume, int(level))
             elif action == "get_volume":
-                result_text = self._effect(job, adv_ctrl.get_volume)
+                result_text = self._controller(job, adv_ctrl.get_volume)
             elif action == "mute_volume":
-                result_text = self._effect(job, adv_ctrl.mute_volume)
+                result_text = self._controller(job, adv_ctrl.mute_volume)
             elif action == "quartz_mode":
                 raise ValueError("coding/gaming/study/night/chill profilleri uygulanmış değil; bu araç Windows güç planını değiştirmez")
             else:
@@ -977,10 +993,10 @@ class NaturalDesktopTask:
                 extra["windows"] = wins
                 result_text = f"{len(wins)} açık pencere listelendi."
             elif action == "clipboard_get":
-                result_text = self._effect(job, adv_ctrl.clipboard_paste)
+                result_text = self._controller(job, adv_ctrl.clipboard_paste)
             elif action == "clipboard_set":
                 text_val = str(args.get("text") or "")
-                result_text = self._effect(job, adv_ctrl.clipboard_copy, text_val)
+                result_text = self._controller(job, adv_ctrl.clipboard_copy, text_val)
             else:
                 raise ValueError(f"Unsupported system_info action: {action}")
 
@@ -1026,12 +1042,12 @@ class NaturalDesktopTask:
                     text_val = str(args.get("text") or "")
                     if not text_val:
                         raise ValueError("text is required for type_text")
-                    result_text = self._effect(job, adv_ctrl.type_and_enter, text_val, press_enter=bool(args.get("press_enter", False)), input_guard=guard)
+                    result_text = self._controller(job, adv_ctrl.type_and_enter, text_val, press_enter=bool(args.get("press_enter", False)), input_guard=guard)
                 elif action == "hotkey":
                     keys_str = str(args.get("keys") or "").strip()
                     if not keys_str:
                         raise ValueError("keys is required for hotkey")
-                    result_text = self._effect(job, adv_ctrl.hotkey, keys_str, input_guard=guard)
+                    result_text = self._controller(job, adv_ctrl.hotkey, keys_str, input_guard=guard)
                 elif action == "press_key":
                     key_str = str(args.get("keys") or "").strip().lower()
                     if not key_str:
@@ -1150,6 +1166,7 @@ class NaturalDesktopTask:
                 return {"untrusted_log": result, "path": path}
             if provider != self.job["roles"]["operator"]: raise PermissionError("Collaborator cannot control or observe the desktop")
             self._assert_unpaused()
+            if self._control_inflight: raise PermissionError('Kontrol çağrısı sürüyor; task_wait kullanın')
             if not self.connection and self.job.get("requested_permission_level") == "full" and not self.warband:
                 avail = self.desktop.windows()[:12]
                 if avail:

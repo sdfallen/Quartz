@@ -21,10 +21,15 @@ başlangıç tasarımıdır; bu not uygulanmış backend kapsamını açıklar.
 - Duraklamada yalnız context/wait/mesaj ve önceden izinli log okuması açık;
   refocus yapan observe dahil desktop ve Jarvis girdi yolları kapalı. Bilinen
   UAC isteğine tekrar launch çağrısı yalnız mevcut isteğin durumunu döndürebilir.
-- Kontrol çağrısı `_effect` ile pause/Stop sınırında serileştirilir. Sınırdan
-  önce başlamış bir native çağrı geri alınmış sayılmaz ve tekrar oynatılmaz.
-  Controller süresince kilit tutulabilir; gerçek GUI Stop gecikmesi burada
-  ölçülmedi, canlı kabul gerekir. Yeni uzun bekleme/loop eklenmedi.
+- Kısa native girişler `_effect` ile sınırda serileştirilir. Ağ/uygulama araması
+  yapabilen composite controller çağrısı `_controller` ile Stop kilidini tutmaz.
+  Aynı anda yalnız bir kontrol çağrısı kabul edilir; o çağrı sürerken yeni
+  manuel scope kartı açılmaz, task_wait ile tekrar istenir. Böylece eski uzun
+  çağrının yeni kart beklerken devam etmesi önlenir. UAC exception yolunda normal
+  launch zaten sonuçlanmıştır; yalnız kullanıcı kartı açılır.
+  Sınırdan önce kabul edilmiş native etki geri alınmış sayılmaz ve tekrar
+  oynatılmaz. Stop bu çağrının sonucunu doğrulanmış saymaz; inflight receipt
+  ayrı kalır. Gerçek GUI Stop gecikmesi henüz ölçülmedi.
 - UAC otomasyonu yok. Kullanıcının tek launch onayı Windows yanıtını bekler;
   otomatik yönetici kontrolü sağlamaz. Erken expiry yeni kartı engellemez.
 - `task-state.json` atomik, yalnız küçük kimlik/durum metadata'sı; token,
@@ -69,6 +74,14 @@ tests.test_group_partial_outcome tests.test_approval_pause tests.test_natural_de
 tests.test_permission_continuation_ui tests.test_elevation tests.test_jarvis_regressions
 tests.test_agent_chat tests.test_multi_agent_service`: 97 test, 0 skip, PASS.
 Son küçük summary/UAC-expiry değişiklikleri final tam suite'te yeniden koşulacak.
+
+Son bağımsız test uzun controller'ın görev kilidini tuttuğunda Stop'un
+beklediğini üretti (tek test FAIL). Yukarıdaki composite/primitive ayrımıyla
+70 testlik ilgili suite PASS oldu; son tam suite bunu yeniden kapsar. Claude'un
+canlı kabulünde ağ bekleyen bir controller sırasında Stop ve manuel scope
+isteği de denenmeli. Mevcut controller içindeki önceden kabul edilmiş etkiler
+iptal edilmiş gibi gösterilmez; yeni native callback gerekiyorsa input_guard
+mevcut broker/Native sınırına bağlanır, yeni bir permission otoritesi kurulmaz.
 
 P0-2 ek kontrolünde ikinci grup turunun ve “devam” turunun ajan hataları da
 partial'a bağlandı; NaturalDesktop seçilen ama kullanılamayan ajanı partial
