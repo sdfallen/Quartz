@@ -88,6 +88,7 @@ class NaturalTaskTests(unittest.TestCase):
         self.assertTrue(watcher.is_alive())
         self.assertEqual(self.task.job["status"], "running")
         self.assertTrue(self.broker.status()["active"])
+        self.assertEqual(self.broker._session["token"], self.task.connection["token"])
         self.task.stop("cancelled")
         self.assertEqual(self.task.job["status"], "cancelled")
         self.assertFalse(self.broker.status()["active"])

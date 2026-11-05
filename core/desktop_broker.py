@@ -134,11 +134,15 @@ class DesktopBroker:
                     "persistent_control": bool(s.get("persistent_control")) if s else False,
                     "stop_reason": self.stop_reason, "stop_detail": self.stop_detail}
 
-    def renew(self):
-        """Owner heartbeat for a continuous session; cannot revive an ended one."""
+    def renew(self, token):
+        """Owner heartbeat for its own continuous session; cannot revive an ended one.
+
+        A stale owner holding an earlier bearer must not extend a later session.
+        """
         with self._lock:
             s = self._session
-            if not s or not s.get("continuous") or self.clock() >= s["expires"]:
+            if (not s or not s.get("continuous") or self.clock() >= s["expires"]
+                    or not hmac.compare_digest(str(token), s["token"])):
                 return False
             s["expires"] = self.clock() + CONTINUOUS_LEASE_SECONDS
             return True

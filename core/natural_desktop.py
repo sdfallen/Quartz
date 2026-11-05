@@ -1116,7 +1116,7 @@ class NaturalDesktopTask:
                     self.stop("blocked: stalled: repeated action"); break
                 with self.changed:
                     if self.connection:
-                        self.broker.renew()
+                        self.broker.renew(self.connection["token"])
                     if self.pending and time.time() >= self.pending["expires_at"]:
                         self.stop("permission expired"); break
                     if self.connection and not self.broker.status()["active"]:

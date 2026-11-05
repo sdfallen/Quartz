@@ -109,20 +109,35 @@ class BrokerTests(unittest.TestCase):
         token, _ = self.continuous()
         for _ in range(5):
             self.now += 1700
-            self.assertTrue(self.broker.renew())
+            self.assertTrue(self.broker.renew(token))
             self.assertTrue(self.broker.status()["active"])
         self.now += 1801  # The owner died: nobody renews, so the bearer expires.
-        self.assertFalse(self.broker.renew())
+        self.assertFalse(self.broker.renew(token))
         self.assertFalse(self.broker.status()["active"])
         with self.assertRaises(PermissionError):
             self.broker.call(token, {"name": "desktop_observe"})
 
     def test_renewal_cannot_extend_a_bounded_session_or_revive_a_stopped_one(self):
-        self.grant()
-        self.assertFalse(self.broker.renew())
+        token = self.grant()
+        self.assertFalse(self.broker.renew(token))
         self.broker.stop()
-        self.assertFalse(self.broker.renew())
+        self.assertFalse(self.broker.renew(token))
         self.assertFalse(self.broker.status()["active"])
+        continuous, _ = self.continuous()
+        self.broker.stop()
+        self.assertFalse(self.broker.renew(continuous))
+
+    def test_stale_owner_cannot_renew_the_next_operators_session(self):
+        first = self.broker.grant(1, "codex", confirmed=True, seconds=30, persistent_control=True, continuous=True)["token"]
+        self.now += 31  # The first session expires.
+        self.assertFalse(self.broker.status()["active"])
+        second = self.broker.grant(1, "antigravity", confirmed=True, seconds=30, persistent_control=True, continuous=True)["token"]
+        before = self.broker._session["expires"]
+        self.assertFalse(self.broker.renew(first))
+        self.assertFalse(self.broker.renew(None))
+        self.assertEqual(self.broker._session["expires"], before)
+        self.assertTrue(self.broker.renew(second))
+        self.assertGreater(self.broker._session["expires"], before)
 
     def test_repeated_input_on_unchanged_screen_is_refused_then_ends_the_task(self):
         token, observed = self.continuous()

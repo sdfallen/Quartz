@@ -19,6 +19,15 @@ Kullanıcı isteği: ana sohbetteki görev, kullanıcı Durdur'a basana kadar s�
   başlangıcından değil, oturum izninden sayılır.
 - Kullanıcının süre seçtiği onaylı pencere/log görevi (`chat_coordination`, 30–900 saniye) değişmedi.
 
+## R1 düzeltmesi (Codex Dalga 0 incelemesi)
+
+Codex `643b51f`'i reddetti: `renew()` hangi oturum için çağrıldığını almıyordu; süresi dolmuş A sahibinin
+heartbeat'i, sonradan izin alan B'nin kiralamasını uzatabiliyordu (`CODEX_WAVE0_REVIEW_20261105.md`, R1).
+Düzeltme: `renew(token)` yalnız mevcut oturumun bearer'ıyla eşleşirse yeniler; eşleşmezse süreyi değiştirmeden
+`False` döner. `NaturalDesktopTask._watch` kendi `connection["token"]` değerini geçirir. Yeni test: süresi dolan A,
+B'nin oturumunu yenileyemez; B kendi oturumunu yenileyebilir; Durdur sonrası ve sınırlı oturumda yenileme yok.
+`natural_desktop.py` değişikliği bu tek çağrıdır (Codex dosyası; Codex'in yeniden incelemesi gerekir).
+
 ## Yeni takılma denetimi
 
 - `desktop_act`: aynı eylem aynı ekranda 8 kez çalışır, sonraki 3 deneme girdi göndermeden reddedilir,
