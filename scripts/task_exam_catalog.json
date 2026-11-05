@@ -143,7 +143,7 @@
     "requires": [],
     "adapter": "process-benchmark",
     "source_syntax_valid": true,
-    "execution": "NOT TESTED",
+    "execution": "TESTED: synthetic owned-process fixture only; not live provider/UI",
     "summary": "Measure full owned process-tree CPU and RAM for Quartz pyramid runtimes."
   },
   "scripts/multiwindow_acceptance.py": {

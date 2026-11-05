@@ -15,7 +15,7 @@ Seviye: SOURCE/STATIC. Sözdizimi derlenebilir olması, betiğin gerçek ortamda
 | `scripts/desktop_native_acceptance.py` | REQUIRES_DESKTOP_AND_ACCOUNT | NOT TESTED | Product acceptance of the real CLI -> MCP -> native backend path. |
 | `scripts/live_verify_agent_center.py` | REQUIRES_ACCOUNT | NOT TESTED | Harmless live verification for Quartz -> Squad -> Codex -> Squad. |
 | `scripts/live_verify_dual_agents.py` | REQUIRES_ACCOUNT | NOT TESTED | Live, read-only Codex + Antigravity + Squad bridge verification. |
-| `scripts/measure_runtime_efficiency_pyramid.py` | OFFLINE_MEASUREMENT | NOT TESTED | Measure full owned process-tree CPU and RAM for Quartz pyramid runtimes. |
+| `scripts/measure_runtime_efficiency_pyramid.py` | OFFLINE_MEASUREMENT | TESTED (sentetik süreç) | Measure full owned process-tree CPU and RAM for Quartz pyramid runtimes. |
 | `scripts/multiwindow_acceptance.py` | REQUIRES_DESKTOP_AND_ACCOUNT | NOT TESTED | Real native broker + actual CLI/Squad multiwindow product self-test. |
 | `scripts/multiwindow_safety_acceptance.py` | REQUIRES_DESKTOP | NOT TESTED | Owned real Windows lifecycle/launch acceptance through the packaged MCP. |
 | `scripts/natural_desktop_e2e_acceptance.py` | REQUIRES_DESKTOP_AND_ACCOUNT | NOT TESTED | End-to-end natural desktop task acceptance verification. |
