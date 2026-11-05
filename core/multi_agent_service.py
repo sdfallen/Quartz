@@ -8,6 +8,8 @@ import uuid
 import os
 import re
 import tempfile
+import copy
+from pathlib import Path
 
 from core.antigravity_runtime import AntigravityRuntime
 from core.codex_runtime import CodexRuntime
@@ -66,6 +68,8 @@ class MultiAgentService:
         self._probe_cache = (0.0, None)
         self._antigravity_probe_cache = (0.0, None)
         self._squad_conn_cache: dict[str, tuple[float, dict]] = {}
+        self._squad_snapshot_cache = {}
+        self._squad_snapshot_lock = threading.RLock()
         self._collaborations = {}
         self._writers: dict[str, dict] = {}
         self._writer_threads = {}
@@ -243,13 +247,7 @@ class MultiAgentService:
             agents, tasks, history = [], [], []
             error = squad_status.get("error", "")
         else:
-            squad_status = squad.status()
-            try:
-                agents = squad.agents(include_archived=False)
-                tasks = squad.tasks()
-                history = squad.history()[-30:]
-            except Exception as exc:
-                agents, tasks, history, error = [], [], [], str(exc)
+            squad_status, agents, tasks, history, error = self._squad_snapshot(project, squad)
         return {
             "projects": self.projects.list(), "project": project,
             "squad": squad_status, "codex": codex_status,
@@ -265,6 +263,56 @@ class MultiAgentService:
                 "message": "Bireysel Gemini CLI erişimi sona erdi; Antigravity kullanılıyor.",
             },
         }
+
+    @staticmethod
+    def _squad_signature(project):
+        """SQLite WAL writes need not change messages.db's mtime. No DB reads."""
+        root = Path(project['path']) / '.squad'
+        try:
+            if not (root / 'messages.db').is_file(): return None
+            values = []
+            for name in ('messages.db', 'messages.db-wal'):
+                path = root / name
+                try:
+                    st = path.stat()
+                    values.append((name, st.st_ino, st.st_size, st.st_mtime_ns))
+                except FileNotFoundError:
+                    values.append((name, None))
+            return tuple(values)
+        except OSError:
+            return None
+
+    def _squad_snapshot(self, project, squad):
+        # UI display cache only. Dispatch, permission, writer and connection
+        # decisions still read their authoritative stores, never this snapshot.
+        key = canonical_key(project['path'])
+        with self._lock:
+            active = any(link.get('project_id') == project['id'] and not link.get('reported', False)
+                         for link in self._links.values()) or any(
+                item.get('project_id') == project['id'] and item.get('status') not in
+                {'completed', 'failed', 'cancelled'} for item in self._collaborations.values())
+        with self._squad_snapshot_lock:
+            signature = self._squad_signature(project)
+            now = time.monotonic()
+            cached = self._squad_snapshot_cache.get(key)
+            if not active and signature is not None and cached and cached[1] == signature and now-cached[0] < 300:
+                return copy.deepcopy(cached[2])
+            # Never reuse an old snapshot after an active job, failed query or
+            # concurrent external write; completion times anchor the TTL.
+            self._squad_snapshot_cache.pop(key, None)
+            squad_status = squad.status()
+            try:
+                agents = squad.agents(include_archived=False)
+                tasks = squad.tasks()
+                history = squad.history()[-30:]
+                error = ''
+            except Exception as exc:
+                agents, tasks, history, error = [], [], [], str(exc)
+            result = (squad_status, agents, tasks, history, error)
+            after = self._squad_signature(project)
+            if not active and signature is not None and signature == after and not error and not squad_status.get('error'):
+                self._squad_snapshot_cache[key] = (time.monotonic(), after, copy.deepcopy(result))
+            return result
 
     def dispatch(self, provider, prompt, **kwargs) -> dict:
         provider = str(provider or "codex").strip().lower()
