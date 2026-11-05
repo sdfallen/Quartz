@@ -52,8 +52,10 @@ class AsyncSnapshot:
             value, error = None, str(exc)
         with self.lock:
             if not self.closed and generation == self.generation:
+                now = self.clock()
+                self.attempted = now
                 if value is not None:
-                    self.value, self.updated = deepcopy(value), self.clock()
+                    self.value, self.updated = deepcopy(value), now
                 self.error = error
             self.worker = None
 
