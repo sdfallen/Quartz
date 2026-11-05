@@ -1,7 +1,7 @@
 """Shared vocabulary, not another task engine or a source of authority."""
 
 
-def execution_outcome(status, verification=None, cleanup=None, *, source_validation=None, participants=None):
+def execution_outcome(status, verification=None, cleanup=None, *, source_validation=None, participants=None, goal_evaluation=None):
     verification = dict(verification or {'status': 'NOT VERIFIED'})
     # A UI text match is a scoped observation, NEVER whole-task acceptance.
     goal = 'PARTIAL' if status == 'partial' else 'NOT VERIFIED'
@@ -9,9 +9,14 @@ def execution_outcome(status, verification=None, cleanup=None, *, source_validat
         goal = 'FAILED'
     if participants and any(s != 'completed' for s in participants.values()):
         goal = 'PARTIAL' if any(s == 'completed' for s in participants.values()) else 'FAILED'
+    from core.task_oracle import trusted_evaluation
+    host_goal = trusted_evaluation(goal_evaluation)
+    if host_goal and status == 'completed' and goal == 'NOT VERIFIED':
+        goal = goal_evaluation.verdict
     return {'execution_status': str(status), 'evidence_status': verification.get('status', 'NOT VERIFIED'),
             'evidence_scope': verification.get('scope', ''), 'goal_accepted': False,
-            'goal_verdict':goal, 'completion_kind':'execution_only',
+            'goal_verdict':goal, 'completion_kind':'goal_verified' if goal == 'VERIFIED' else 'execution_only',
+            'goal_evidence':goal_evaluation.summary() if host_goal else None,
             'participants':dict(participants or {}),
             'acceptance_basis': 'Separate explicit acceptance required; model/process completion is insufficient',
             'cleanup_status': (cleanup or {}).get('status', 'not_started')}

@@ -773,7 +773,9 @@ class AgentChatService:
                 if isinstance(evidence, dict) and evidence:
                     meta['host_evidence'] = evidence
             meta['outcome'] = execution_outcome(item.get('status') or meta.get('status','unknown'),
-                source_validation=(meta.get('host_evidence') or {}).get('source_validation'))
+                source_validation=(meta.get('host_evidence') or {}).get('source_validation'),
+                goal_evaluation=self.agent_service.goal_evaluation(run_id)
+                    if run_id and hasattr(self.agent_service, 'goal_evaluation') else None)
 
     def _is_turn_cancelled(self, initial_msg_id: str | None = None) -> bool:
         with self._lock:

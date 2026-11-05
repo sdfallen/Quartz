@@ -19,6 +19,7 @@ from core.workspace_checkpoint import create_checkpoint, snapshot_workspace_file
 from core.source_verification import verify_changed_python
 from core.run_evidence_store import RunEvidenceStore
 from core.task_outcome import execution_outcome
+from core.task_oracle import TaskOracle
 from core.writer_journal import WriterJournal
 from core.path_identity import canonical_key
 
@@ -81,6 +82,35 @@ class MultiAgentService:
             journal_store = Path(project_store).parent / '.quartz' / 'writer_claims.json'
         self._writer_journal = WriterJournal(journal_store)
         self._text_workspaces = {}
+        self._goal_oracle = TaskOracle()
+
+    def register_goal_oracle(self, run_id, checks):
+        """Trusted host adapter only; intentionally absent from GUI/MCP tools.
+
+        Must be installed while the owned run is still running, not retrofitted
+        from a provider's final message. Free-form goals have no implicit oracle.
+        """
+        with self._lock: link = dict(self._links.get(run_id, {}))
+        if not link.get('task_id') or not link.get('project_id'):
+            raise PermissionError('Owned project task required')
+        runtime = self.antigravity if link.get('provider') == 'antigravity' else self.codex
+        if runtime.get(run_id).get('status') != 'running':
+            raise PermissionError('Declare the goal before execution completes')
+        self._goal_oracle.register(link['task_id'], run_id, self.projects.resolve(link['project_id']), checks)
+
+    def goal_evaluation(self, run_id):
+        with self._lock: link = dict(self._links.get(run_id, {}))
+        if not link.get('task_id'): return None
+        runtime = self.antigravity if link.get('provider') == 'antigravity' else self.codex
+        if runtime is None or runtime.get(run_id).get('status') != 'completed': return None
+        return self._goal_oracle.evaluate(link['task_id'], run_id)
+
+    def _project_goal_outcome(self, run, evidence):
+        run = self._with_file_evidence(run, evidence)
+        evaluation = self.goal_evaluation(run.get('id'))
+        run['outcome'] = execution_outcome(run.get('status', 'unknown'),
+            source_validation=evidence.get('source_validation'), goal_evaluation=evaluation)
+        return run
 
     def _start_writer(self, provider: str, project: dict, start, *args, **kwargs) -> dict:
         from pathlib import Path
@@ -731,13 +761,13 @@ class MultiAgentService:
             return self.notion.get(run_id)
         if provider == "antigravity" and self.antigravity:
             run = self.antigravity.get(run_id)
-            return self._with_file_evidence(run, evidence)
+            return self._project_goal_outcome(run, evidence)
         if self.codex:
             try:
-                return self._with_file_evidence(self.codex.get(run_id), evidence)
+                return self._project_goal_outcome(self.codex.get(run_id), evidence)
             except KeyError:
                 if self.antigravity:
-                    return self._with_file_evidence(self.antigravity.get(run_id), evidence)
+                    return self._project_goal_outcome(self.antigravity.get(run_id), evidence)
                 raise
 
     @staticmethod
@@ -895,7 +925,7 @@ class MultiAgentService:
             links = {key: dict(value) for key, value in self._links.items()}
             evidence = {key: dict(value) for key, value in self._file_changes.items()}
         for run in runs:
-            self._with_file_evidence(run, evidence.get(run["id"], {}))
+            self._project_goal_outcome(run, evidence.get(run["id"], {}))
             link = links.get(run["id"], {})
             run["coordination_status"] = link.get("coordination_status", "not_linked")
             run["coordination_error"] = link.get("coordination_error", "")
