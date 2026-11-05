@@ -1,5 +1,19 @@
 # Quartz paralel görev ve dosya sahipliği
 
+## AKTİF — 5 Kasım Dalga 0
+
+- Kullanıcının güncel görevi: Codex bağımsız continuity/UI incelemesi, kabul
+  betiği sınıflandırması ve Görev Sınavı koşucusu; Claude görev listesini yazar.
+- Masaüstü broker/native sahibi kullanıcı plan kararıyla Claude; Codex inceler.
+  R1 renewal-owner bulgusu `CODEX_WAVE0_REVIEW_20261105.md` içinde integration request.
+- Gemini gerçek CLI timeout doğrulaması ve kendi ayrı işleri üzerinde çalışır;
+  gerçek masaüstünde aynı anda yalnız bir operatör. Bu Codex dilimi desktop/account
+  betiği, paket dağıtımı veya uygulama açılışı yapmaz.
+- Kabul tabanı `main` 92751a3. Continuity 643b51f R1 nedeniyle henüz kabul
+  edilmedi. Tek yeni kabul tabanı oluştuğu iddia edilmez. Dalga 0 çıkışı açıktır.
+- Koşucu/katalog/ilgili test ve repo belgeleri bu kullanıcı atamasıyla Codex'te;
+  eski aşağıdaki sahiplik kayıtları tarihsel kapsamlarıyla korunur.
+
 ## AKTİF — 1 Kasım sistem piramidi
 
 Güncel sözleşme: [architecture/PYRAMID.md](architecture/PYRAMID.md) ve

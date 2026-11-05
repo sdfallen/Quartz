@@ -1,0 +1,297 @@
+{
+  "scripts/accept_cli_clean_install.py": {
+    "path": "scripts/accept_cli_clean_install.py",
+    "sha256": "1926b76899182138fa6a5fa64df2de91c6391c11c09edcb66df41ef8e284f18a",
+    "classification": "REQUIRES_NETWORK_INSTALL",
+    "requires": [
+      "network"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Real isolated install acceptance; no credentials, user config or Desktop apps."
+  },
+  "scripts/accept_desktop_cancellation.py": {
+    "path": "scripts/accept_desktop_cancellation.py",
+    "sha256": "f65e1b9c64bba246b99446f65ac323b590e130e5b1fef98f22256df3090d589d",
+    "classification": "REQUIRES_ACCOUNT",
+    "requires": [
+      "account"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Source integration: real CLI cancellation with an in-memory window fixture."
+  },
+  "scripts/accept_diagnostics_expansion.py": {
+    "path": "scripts/accept_diagnostics_expansion.py",
+    "sha256": "397ab3545aca708345fdef8fc70e9d332dc4171ccc386bd7fe24dcc4abad3943",
+    "classification": "REQUIRES_REVIEWED_FIXTURE",
+    "requires": [
+      "approved-fixture",
+      "network"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Real file/service acceptance on disposable copies; NOT packaged chat acceptance."
+  },
+  "scripts/accept_response_style.py": {
+    "path": "scripts/accept_response_style.py",
+    "sha256": "22a6faf8fe5a365f876301657babdf7b2d3b5a92da975e93864e0dc7ed60ea65",
+    "classification": "REQUIRES_ACCOUNT",
+    "requires": [
+      "account"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Read-only live chat/Squad acceptance in a new disposable project."
+  },
+  "scripts/accept_self_diagnostics.py": {
+    "path": "scripts/accept_self_diagnostics.py",
+    "sha256": "1bde57b55aa86294f1cb33f79c5d51672ec42df8b69740dea1bd18923e5e08eb",
+    "classification": "REQUIRES_REVIEWED_FIXTURE",
+    "requires": [
+      "approved-fixture",
+      "network"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Real local IPC + optional REA acceptance on an explicitly selected package."
+  },
+  "scripts/coordination_acceptance.py": {
+    "path": "scripts/coordination_acceptance.py",
+    "sha256": "6e4d41e3ae2a4c36c88a86b5f59be4e38a5706cc969cb7374274e62118766d2f",
+    "classification": "REQUIRES_DESKTOP_AND_ACCOUNT",
+    "requires": [
+      "desktop",
+      "account"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Real provider/Squad/native-window coordination, isolated from user projects."
+  },
+  "scripts/desktop_chat_acceptance.py": {
+    "path": "scripts/desktop_chat_acceptance.py",
+    "sha256": "c8e01c559b5635a0b51d8e37f2ec93d32da1f56de9c7a00f5c15123147ba1dcb",
+    "classification": "REQUIRES_DESKTOP_AND_ACCOUNT",
+    "requires": [
+      "desktop",
+      "account"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Real desktop + CLI/Squad through GUI-local prepare/status/stop APIs."
+  },
+  "scripts/desktop_mcp_acceptance.py": {
+    "path": "scripts/desktop_mcp_acceptance.py",
+    "sha256": "dacdc5cd9ce4fcfc4442a94ee24914ba2cb24a0b0e38e907a382d08d650af617",
+    "classification": "REQUIRES_ACCOUNT",
+    "requires": [
+      "account"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Live provider/tool-transport acceptance, with NO native desktop actions."
+  },
+  "scripts/desktop_native_acceptance.py": {
+    "path": "scripts/desktop_native_acceptance.py",
+    "sha256": "2fca109bbe92e7e13150747ff0de5e71d602172c2d3f364c4a6dc8da256699d4",
+    "classification": "REQUIRES_DESKTOP_AND_ACCOUNT",
+    "requires": [
+      "desktop",
+      "account"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Product acceptance of the real CLI -> MCP -> native backend path."
+  },
+  "scripts/live_verify_agent_center.py": {
+    "path": "scripts/live_verify_agent_center.py",
+    "sha256": "2b71460bb873d739dee95924f9294b368a8361a42d47f3f57bbde7c10cfaa0a0",
+    "classification": "REQUIRES_ACCOUNT",
+    "requires": [
+      "account"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Harmless live verification for Quartz -> Squad -> Codex -> Squad."
+  },
+  "scripts/live_verify_dual_agents.py": {
+    "path": "scripts/live_verify_dual_agents.py",
+    "sha256": "406736b7362897d64f1a69321706931ab473e7d719a78ae351ed769e0dea3cac",
+    "classification": "REQUIRES_ACCOUNT",
+    "requires": [
+      "account"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Live, read-only Codex + Antigravity + Squad bridge verification."
+  },
+  "scripts/measure_runtime_efficiency_pyramid.py": {
+    "path": "scripts/measure_runtime_efficiency_pyramid.py",
+    "sha256": "95c3f805d66b0e11d28847aff73aa86196ce574d492fb2eec65ea5aa67780ff6",
+    "classification": "OFFLINE_MEASUREMENT",
+    "requires": [],
+    "adapter": "process-benchmark",
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Measure full owned process-tree CPU and RAM for Quartz pyramid runtimes."
+  },
+  "scripts/multiwindow_acceptance.py": {
+    "path": "scripts/multiwindow_acceptance.py",
+    "sha256": "8cb539ab4bde5736ae645ced44397877ccb2e4e3335818b8ffa3c6662fc1ea2e",
+    "classification": "REQUIRES_DESKTOP_AND_ACCOUNT",
+    "requires": [
+      "desktop",
+      "account"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Real native broker + actual CLI/Squad multiwindow product self-test."
+  },
+  "scripts/multiwindow_safety_acceptance.py": {
+    "path": "scripts/multiwindow_safety_acceptance.py",
+    "sha256": "68fec06ab5a302f2e0da947a884e9f4d59fba0637823ff88ac6ab3205a3ae789",
+    "classification": "REQUIRES_DESKTOP",
+    "requires": [
+      "desktop"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Owned real Windows lifecycle/launch acceptance through the packaged MCP."
+  },
+  "scripts/natural_desktop_e2e_acceptance.py": {
+    "path": "scripts/natural_desktop_e2e_acceptance.py",
+    "sha256": "918dca233b0e5d383d766b3a6fca92c6931413c96b46719d467f6a28957b2c42",
+    "classification": "REQUIRES_DESKTOP_AND_ACCOUNT",
+    "requires": [
+      "desktop",
+      "account"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "End-to-end natural desktop task acceptance verification."
+  },
+  "scripts/natural_gateway_acceptance.py": {
+    "path": "scripts/natural_gateway_acceptance.py",
+    "sha256": "122436756714c407a4add1f335d73c285e4c7bd4aa86a8a76a32059b4ad7136c",
+    "classification": "REQUIRES_ACCOUNT",
+    "requires": [
+      "account"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Real CLI/MCP/Squad transport check WITHOUT any native input or permission."
+  },
+  "scripts/notion_worker_acceptance.py": {
+    "path": "scripts/notion_worker_acceptance.py",
+    "sha256": "f36d126944404bfacb2713e88c1ded70db4a8042bb42528a430d040776dd1d96",
+    "classification": "LEGACY",
+    "requires": [
+      "excluded-scope"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Explicit, disposable read-only Worker acceptance. No normal-chat tools enabled."
+  },
+  "scripts/observer_guard_acceptance.py": {
+    "path": "scripts/observer_guard_acceptance.py",
+    "sha256": "e36e44104d85089ff99f27b86d96a95542d48395282e37684884053e8f3872e0",
+    "classification": "REQUIRES_ACCOUNT",
+    "requires": [
+      "account"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Real AGY pre-tool deny acceptance in an isolated disposable workspace."
+  },
+  "scripts/rea_validation/workbench_acceptance.py": {
+    "path": "scripts/rea_validation/workbench_acceptance.py",
+    "sha256": "cf05ce66194a474f220afcce4535dc06eef22368ecf087ed0fa01f85e0122b1a",
+    "classification": "REQUIRES_REVIEWED_FIXTURE",
+    "requires": [
+      "approved-fixture",
+      "network"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Explicit live acceptance: one pinned official tool, one generated local file."
+  },
+  "scripts/text_chat_acceptance.py": {
+    "path": "scripts/text_chat_acceptance.py",
+    "sha256": "7e429f2da08bf9b0aa11c7ab7078511c4005e091e909e0a5801ca478c174f78c",
+    "classification": "REQUIRES_ACCOUNT",
+    "requires": [
+      "account"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Real CLI text-only smoke; no game, project edits, GUI or user history."
+  },
+  "scripts/warband_adapter_acceptance.py": {
+    "path": "scripts/warband_adapter_acceptance.py",
+    "sha256": "415e9c419a0d7fde94644880551906ce0bf037782e89156bb1dab5f8375d7113",
+    "classification": "LEGACY",
+    "requires": [
+      "excluded-scope"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Real project, read-only UM preparation/contracts/preservation acceptance."
+  },
+  "scripts/warband_agent_acceptance.py": {
+    "path": "scripts/warband_agent_acceptance.py",
+    "sha256": "84a725f2efd08efd8581f552468656dc3465721c2715018ae7e8afbdc7ec2029",
+    "classification": "LEGACY",
+    "requires": [
+      "excluded-scope"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Real CLI/Squad + UM-owned game smoke. Host grants this explicit test scope."
+  },
+  "scripts/warband_squad_status_acceptance.py": {
+    "path": "scripts/warband_squad_status_acceptance.py",
+    "sha256": "8986ef014614e33fd7f50cd2aad5b6316cc1511f561d011e704d29480d080c9c",
+    "classification": "LEGACY",
+    "requires": [
+      "excluded-scope"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Actual isolated Squad task handshake; no model, game or ASTER write."
+  },
+  "scripts/workflow_acceptance.py": {
+    "path": "scripts/workflow_acceptance.py",
+    "sha256": "dd7d4875b077ce602519809ac64bad5ca9f4fc67f305a467b3d034dccb149307",
+    "classification": "REQUIRES_DESKTOP_AND_ACCOUNT",
+    "requires": [
+      "desktop",
+      "account"
+    ],
+    "adapter": null,
+    "source_syntax_valid": true,
+    "execution": "NOT TESTED",
+    "summary": "Owned real-UI A -> B -> A workflow; not packaged main-chat consent acceptance."
+  }
+}
