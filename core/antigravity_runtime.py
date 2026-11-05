@@ -265,6 +265,7 @@ class AntigravityRuntime:
                 "denied_actions": [],
                 "commands": [], "command_results": [], "command_exit_codes": [],
                 "files_changed": [], "file_changes": [],
+                "unauthorized_write_detected": False, "unauthorized_files_changed": [],
                 "error_events": [],
                 "squad_task_id": squad_task_id,
                 "squad_agent_id": squad_agent_id,
@@ -366,6 +367,7 @@ class AntigravityRuntime:
             value["command_exit_codes"] = list(record.get("command_exit_codes", [])[-50:])
             value["files_changed"] = list(record.get("files_changed", []))
             value["file_changes"] = [dict(item) for item in record.get("file_changes", [])[-100:]]
+            value["unauthorized_files_changed"] = list(record.get("unauthorized_files_changed", []))
             value["error_events"] = [dict(item) for item in record.get("error_events", [])[-50:]]
             return value
 
@@ -524,6 +526,28 @@ class AntigravityRuntime:
                                     })
                                 if tool_state == "DONE" and path and path not in record["files_changed"]:
                                     record["files_changed"].append(path)
+                                if tool_state == "DONE" and record.get("sandbox") == "sandbox":
+                                    record["unauthorized_write_detected"] = True
+                                    unauth_list = record.setdefault("unauthorized_files_changed", [])
+                                    if path and path not in unauth_list:
+                                        unauth_list.append(path)
+                                    violation_msg = f"Read-only Antigravity run modified file without write permission: {path or tool_name}"
+                                    record["errors"].append(violation_msg)
+                                    record.setdefault("denied_actions", []).append({
+                                        "action": "write",
+                                        "display_name": tool_name,
+                                        "path": path,
+                                        "reason": "read_only_violation",
+                                    })
+                                    record.setdefault("error_events", []).append({
+                                        "seq": seq,
+                                        "source": "sandbox_guard",
+                                        "kind": "unauthorized_readonly_write",
+                                        "tool": tool_name,
+                                        "command": None,
+                                        "exit_code": None,
+                                        "message": violation_msg,
+                                    })
                                 elif tool_state == "ERROR":
                                     err_msg = str(tool_info.get("error") or tool_info.get("output") or f"Tool {tool_name} failed")
                                     record.setdefault("error_events", []).append({
@@ -697,7 +721,8 @@ class AntigravityRuntime:
                     if record.get("cancel_requested"):
                         record["status"] = "cancelled"
                     elif (not timed_out and code == 0 and record.get("remote_status") in self.SUCCESS
-                          and record["result"] and not record["denied_actions"]):
+                          and record["result"] and not record["denied_actions"]
+                          and not record.get("unauthorized_write_detected")):
                         record["status"] = "completed"
                     else:
                         record["status"] = "failed"

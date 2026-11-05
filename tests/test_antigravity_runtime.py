@@ -217,6 +217,51 @@ class AntigravityRuntimeTests(unittest.TestCase):
         self.assertEqual(current["error_events"][0]["exit_code"], 1)
         self.assertEqual(current["errors"], [])
 
+    def test_p1_3_readonly_run_detects_and_fails_unauthorized_file_write(self):
+        changed = str(self.root / "readonly_probe.txt").replace("\\", "\\\\")
+        stream = (
+            '{"event":"init","conversation_id":"conv-ro"}\n'
+            '{"event":"step_update","step_update":{"id":"s1","state":"DONE","step_type":"tool",'
+            '"tool_name":"write_file","tool_info":{"parameters":{"Path":"' + changed + '"}}}}\n'
+            '{"event":"result","result":{"conversation_id":"conv-ro","status":"SUCCESS","response":"Wrote file"}}\n'
+        )
+        runtime = AntigravityRuntime(self.exe)
+        with patch("core.antigravity_runtime.subprocess.Popen", return_value=FakeProcess(stream)):
+            started = runtime.start("inspect only", self.root, write=False, full_access=False)
+            for _ in range(100):
+                current = runtime.get(started["id"])
+                if current["status"] in runtime.TERMINAL:
+                    break
+                time.sleep(0.01)
+
+        self.assertEqual(current["status"], "failed")
+        self.assertTrue(current["unauthorized_write_detected"])
+        self.assertEqual(current["unauthorized_files_changed"], [str(self.root / "readonly_probe.txt")])
+        self.assertTrue(any(e["kind"] == "unauthorized_readonly_write" for e in current["error_events"]))
+        self.assertTrue(any(d.get("reason") == "read_only_violation" for d in current["denied_actions"]))
+
+    def test_p1_3_readonly_run_does_not_blame_reader_for_concurrent_writer_disk_changes(self):
+        stream = (
+            '{"event":"init","conversation_id":"conv-ro-clean"}\n'
+            '{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"Reviewed safely."}}\n'
+            '{"event":"result","result":{"conversation_id":"conv-ro-clean","status":"SUCCESS","response":"Reviewed safely."}}\n'
+        )
+        runtime = AntigravityRuntime(self.exe)
+        with patch("core.antigravity_runtime.subprocess.Popen", return_value=FakeProcess(stream)):
+            # Concurrent writer modifies a file in the project directory during the reader's run
+            (self.root / "writer_owned.txt").write_text("concurrent writer change\n", encoding="utf-8")
+            started = runtime.start("review", self.root, write=False, full_access=False)
+            for _ in range(100):
+                current = runtime.get(started["id"])
+                if current["status"] in runtime.TERMINAL:
+                    break
+                time.sleep(0.01)
+
+        self.assertEqual(current["status"], "completed")
+        self.assertFalse(current["unauthorized_write_detected"])
+        self.assertEqual(current["unauthorized_files_changed"], [])
+
+
 
 if __name__ == "__main__":
     unittest.main()

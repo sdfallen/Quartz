@@ -182,6 +182,48 @@ class CodexRuntimeTests(unittest.TestCase):
         # Internal command failure must not pollute top-level runtime errors list when repaired
         self.assertEqual(current["errors"], [])
 
+    def test_p1_3_readonly_run_detects_and_fails_unauthorized_file_write(self):
+        stream = (
+            '{"type":"thread.started","thread_id":"th-ro"}\n'
+            '{"type":"item.completed","item":{"type":"file_change","changes":[{"path":"leaked.py","kind":"add"}]}}\n'
+            '{"type":"item.completed","item":{"type":"agent_message","text":"Created leaked.py"}}\n'
+            '{"type":"turn.completed","usage":{"input_tokens":4,"output_tokens":2}}\n'
+        )
+        runtime = CodexRuntime(self.exe)
+        with patch("core.codex_runtime.subprocess.Popen", return_value=FakeProcess(stream)):
+            started = runtime.start("inspect", self.root, sandbox="read-only")
+            for _ in range(100):
+                current = runtime.get(started["id"])
+                if current["status"] in runtime.TERMINAL:
+                    break
+                time.sleep(0.01)
+
+        self.assertEqual(current["status"], "failed")
+        self.assertTrue(current["unauthorized_write_detected"])
+        self.assertEqual(current["unauthorized_files_changed"], ["leaked.py"])
+        self.assertTrue(any(e["kind"] == "unauthorized_readonly_write" for e in current["error_events"]))
+
+    def test_p1_3_readonly_run_does_not_blame_reader_for_concurrent_writer_disk_changes(self):
+        stream = (
+            '{"type":"thread.started","thread_id":"th-ro-clean"}\n'
+            '{"type":"item.completed","item":{"type":"agent_message","text":"Read-only check ok"}}\n'
+            '{"type":"turn.completed","usage":{"input_tokens":4,"output_tokens":2}}\n'
+        )
+        runtime = CodexRuntime(self.exe)
+        with patch("core.codex_runtime.subprocess.Popen", return_value=FakeProcess(stream)):
+            (self.root / "writer_owned.txt").write_text("concurrent writer change\n", encoding="utf-8")
+            started = runtime.start("inspect", self.root, sandbox="read-only")
+            for _ in range(100):
+                current = runtime.get(started["id"])
+                if current["status"] in runtime.TERMINAL:
+                    break
+                time.sleep(0.01)
+
+        self.assertEqual(current["status"], "completed")
+        self.assertFalse(current["unauthorized_write_detected"])
+        self.assertEqual(current["unauthorized_files_changed"], [])
+
+
 
 if __name__ == "__main__":
     unittest.main()

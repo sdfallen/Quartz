@@ -246,6 +246,7 @@ class CodexRuntime:
                 "result": "", "errors": [], "events": [], "usage": None,
                 "commands": [], "command_results": [], "command_exit_codes": [],
                 "files_changed": [], "file_changes": [],
+                "unauthorized_write_detected": False, "unauthorized_files_changed": [],
                 "error_events": [],
                 "squad_task_id": squad_task_id,
                 "squad_agent_id": squad_agent_id,
@@ -389,6 +390,7 @@ class CodexRuntime:
             value["command_exit_codes"] = list(record.get("command_exit_codes", [])[-50:])
             value["files_changed"] = list(record.get("files_changed", []))
             value["file_changes"] = [dict(item) for item in record.get("file_changes", [])[-100:]]
+            value["unauthorized_files_changed"] = list(record.get("unauthorized_files_changed", []))
             value["error_events"] = [dict(item) for item in record.get("error_events", [])[-50:]]
             return value
 
@@ -550,6 +552,22 @@ class CodexRuntime:
                                     })
                                     if state_str == "DONE" and path not in record["files_changed"]:
                                         record["files_changed"].append(path)
+                                    if state_str == "DONE" and record.get("sandbox") == "read-only":
+                                        record["unauthorized_write_detected"] = True
+                                        unauth_list = record.setdefault("unauthorized_files_changed", [])
+                                        if path not in unauth_list:
+                                            unauth_list.append(path)
+                                        violation_msg = f"Read-only Codex run modified file without write permission: {path}"
+                                        record["errors"].append(violation_msg)
+                                        record.setdefault("error_events", []).append({
+                                            "seq": seq,
+                                            "source": "sandbox_guard",
+                                            "kind": "unauthorized_readonly_write",
+                                            "tool": "file_change",
+                                            "command": None,
+                                            "exit_code": None,
+                                            "message": violation_msg,
+                                        })
                                     elif state_str == "ERROR":
                                         record.setdefault("error_events", []).append({
                                             "seq": seq,
@@ -665,7 +683,7 @@ class CodexRuntime:
                         })
                     if record.get("cancel_requested"):
                         record["status"] = "cancelled"
-                    elif not timed_out and code == 0 and record.get("result"):
+                    elif not timed_out and code == 0 and record.get("result") and not record.get("unauthorized_write_detected"):
                         record["status"] = "completed"
                     else:
                         record["status"] = "failed"
