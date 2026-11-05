@@ -32,7 +32,7 @@ class TaskExamTests(unittest.TestCase):
         self.assertEqual(verdict('unittest','Ran 4 tests in 1s\n\nOK',1)[0],'FAILED')
 
     def test_test_counts_and_skips_are_measured(self):
-        self.assertEqual(verdict('unittest','Ran 14 tests in 2s\n\nOK (skipped=2)',0),
+        self.assertEqual(verdict('unittest','',0,'Ran 14 tests in 2s\n\nOK (skipped=2)'),
                          ('VERIFIED',{'tests':14,'skipped':2}))
 
     def test_benchmark_false_or_missing_cleanup_is_not_success(self):
@@ -57,15 +57,20 @@ class TaskExamTests(unittest.TestCase):
 
     def test_interrupt_cleans_owned_process_and_marks_stop(self):
         process=Mock(); process.wait.side_effect=KeyboardInterrupt()
+        owner=Mock(); owner.launch.return_value=process; owner.cleanup.return_value=False; owner.interrupted=False
         with tempfile.TemporaryDirectory() as directory, \
              patch('scripts.task_exam_runner.command_for',return_value=(['fixture'],'unittest')), \
-             patch('scripts.task_exam_runner.subprocess.Popen',return_value=process), \
-             patch('scripts.task_exam_runner.stop_process_tree',return_value=False) as stop:
+             patch('scripts.task_exam_runner.ExamProcess',return_value=owner):
             row=run_task({'id':'cancel'},Path(directory)/'evidence',{},execute=True)
-            stop.assert_called_once_with(process,timeout=3)
+            owner.cleanup.assert_called_once_with(force=True)
             self.assertEqual(row['status'],'BLOCKED')
             self.assertTrue(row['interrupted'])
             self.assertFalse(row['cleanup_confirmed'])
+
+    def test_empty_all_skipped_and_stdout_spoof_are_not_verified(self):
+        for text in ('Ran 0 tests in 0.000s\n\nOK','Ran 2 tests in 1s\n\nOK (skipped=2)'):
+            self.assertEqual(verdict('unittest','',0,text)[0],'NOT VERIFIED')
+        self.assertEqual(verdict('unittest','Ran 3 tests in 1s\n\nOK',0)[0],'NOT VERIFIED')
 
     def test_unknown_fields_and_changed_script_are_rejected(self):
         with self.assertRaises(ValueError):

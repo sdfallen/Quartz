@@ -17,7 +17,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from core.process_tree import stop_process_tree
+from scripts.exam_process import ExamProcess
 
 
 def digest(path):
@@ -67,12 +67,13 @@ def command_for(task, catalog, permissions):
     return [sys.executable, '-X', 'utf8', '-B', str(source), '--json'], entry['adapter']
 
 
-def verdict(adapter, stdout, code):
+def verdict(adapter, stdout, code, stderr=''):
     if code != 0: return 'FAILED', None
     if adapter == 'unittest':
         # unittest reports to stderr; execution completion is tested, not GUI acceptance.
-        match = re.search(r'Ran (\d+) tests? in .*\n\s*OK(?: \(skipped=(\d+)\))?', stdout)
+        match = re.search(r'^Ran (\d+) tests? in [^\n]+\n\s*OK(?: \(skipped=(\d+)\))?\s*$', stderr, re.MULTILINE)
         if not match: return 'NOT VERIFIED', None
+        if int(match[1]) <= int(match[2] or 0): return 'NOT VERIFIED', None
         return 'VERIFIED', {'tests': int(match[1]), 'skipped': int(match[2] or 0)}
     if adapter == 'process-benchmark':
         try:
@@ -99,21 +100,32 @@ def run_task(task, directory, catalog, permissions=(), execute=False):
         env.pop('QUARTZ_LIVE_TOOL_TESTS', None)
         env.update(PYTHONDONTWRITEBYTECODE='1', PYTHONUTF8='1', QUARTZ_TASK_EXAM_DIR=str(directory))
         with (directory/'stdout.log').open('wb') as out, (directory/'stderr.log').open('wb') as err:
-            process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=out, stderr=err,
-                                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-            result['runner_processes'] = 1
-            try: code = process.wait(timeout=timeout)
+            owner = ExamProcess()
+            try:
+                process = owner.launch(command, cwd=ROOT, env=env, stdout=out, stderr=err,
+                                       stdin=subprocess.DEVNULL)
+                result['runner_processes'] = 1
+                code = process.wait(timeout=timeout)
             except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
-                clean = stop_process_tree(process, timeout=3)
+                clean = owner.cleanup(force=True)
                 result.update(status='FAILED' if clean else 'BLOCKED',
                               reason='test interrupted or timed out', cleanup_confirmed=clean,
                               interrupted=isinstance(exc, KeyboardInterrupt))
+                return result
+            finally:
+                if not result.get('interrupted') and 'cleanup_confirmed' not in result:
+                    result['cleanup_confirmed'] = owner.cleanup()
+            if owner.interrupted:
+                result.update(interrupted=True, status='FAILED', reason='Interrupted during cleanup')
+                return result
+            if not result['cleanup_confirmed']:
+                result.update(status='BLOCKED', reason='Descendants remained or tree cleanup was unconfirmed')
                 return result
         result.update(exit_code=code, level='TESTED')
         # Private logs may contain sensitive data; never copy them to repository reports.
         logs = (directory/'stdout.log').read_text(encoding='utf-8', errors='replace')
         stderr = (directory/'stderr.log').read_text(encoding='utf-8', errors='replace')
-        result['status'], counts = verdict(adapter, logs+'\n'+stderr if adapter=='unittest' else logs, code)
+        result['status'], counts = verdict(adapter, logs, code, stderr)
         if counts: result.update(counts)
         metrics = directory/'steps.json'
         if metrics.is_file():
