@@ -356,6 +356,15 @@ class Api:
             return {"status":"ok", "data":self._natural.approve(request_id, confirmed=confirmed is True)}
         except Exception as exc: return {"status":"error", "data":str(exc)}
 
+    @_application_action
+    def natural_refresh_permission(self, request_id, conversation_id, confirmed=False):
+        """Reissue an expired card from a trusted UI click; this never approves it."""
+        try:
+            if self._natural is None: raise PermissionError("Bekleyen görev yok")
+            return {"status":"ok", "data":self._natural.refresh_permission(
+                request_id, conversation_id, confirmed=confirmed is True)}
+        except Exception as exc: return {"status":"error", "data":str(exc)}
+
     def natural_deny(self, request_id):
         try:
             if self._natural is None: raise PermissionError("Bekleyen görev yok")

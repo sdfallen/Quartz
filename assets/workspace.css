@@ -413,3 +413,4 @@ body.compact .empty-state h1 { font-size: 19px; }
 .diag-connection-warning { padding: 8px 10px; background: var(--danger-soft); border-radius: var(--r-md); font-size: var(--text-xs); }
 @media (prefers-reduced-motion: reduce) { .diagnostics-card, .diag-progress-fill, .diag-badge { transition: none !important; animation: none !important; } }
 body.low-spec .diagnostics-card, body.low-spec .diag-progress-fill, body.ui-idle .diagnostics-card, body.ui-idle .diag-progress-fill { transition: none !important; animation: none !important; }
+.coordination-card .pause-note { color: var(--warn); font-weight: 600; }
