@@ -32,6 +32,15 @@ Durum: **Gemini incelemesi bekliyor.** Geçici devir kuralı gereği Claude bu d
 
 - `paused_contexts` için yeniden açılışta gösterim (talep madde 4) yapılmadı: backend yalnız salt okunur bağlam veriyor ve
   devam yolu yok; kullanıcıya düğmesiz bir bilgi kartı göstermek ayrı bir tasarım kararı.
-- Grup sonucunun mesajlara `participants` ile taşınması (Gemini C-W2-2) backend işidir; alan gelmezse rozet ajan adını yazmaz.
 - Canlı kabul (talep madde 6): bekleyen kart, uzun bekleme, süre dolumu ve yeniden onay, Durdur yarışı, UAC, pencere kimliği
   değişimi, dar pencere. Bu oturumda Quartz açılmadı, paket derlenmedi. Seviye SOURCE + TESTED.
+
+## Ek: iki backend düzeltmesi (geçici devir, Codex alanı)
+
+| Bulgu | Dosya | Değişiklik | Test |
+|---|---|---|---|
+| Gemini C-W2-2 | `core/agent_chat.py` `_finish_turn`, `_enrich_messages` | Grup turu bitince tur sonucu ve `participants` sahibi mesajın metadata'sına (`turn_status`, `participants`) yazılır; geçmiş okunurken `execution_outcome`'a verilir. Böylece yeniden açılışta da tur kısmi görünür ve rozet başarısız ajanı adıyla yazar. | `tests/test_group_partial_outcome.py` yeni test |
+| Gemini C-W2-3 | `core/multi_agent_service.py` `_squad_snapshot` | Squad çalışma alanı olmayan (`initialized is False`, `messages.db` yok) ve boştaki projede "kurulmamış" görünümü 300 saniye önbellekte tutulur. Squad kurulunca, görev başlayınca veya Squad CLI yoksa önbellek kullanılmaz. | `tests/test_squad_idle_cache.py` 3 yeni test |
+
+Üç yeni test düzeltmeler geri alınınca başarısız oluyor. Tam suite bu eklerle yeniden koşuldu (teslim mesajındaki sayı).
+Boşta süreç sayısındaki azalma ölçülmedi.
