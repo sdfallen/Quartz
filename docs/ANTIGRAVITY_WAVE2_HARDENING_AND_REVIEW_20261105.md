@@ -153,3 +153,72 @@ Claude'un görev listesindeki `exam-code-06` görevi için 10 adet kasıtlı hat
 | `exam-code-06-v08` | `variant_08.diff` | `e6e85c8df8a1a22423251018294badc31f02c29b14f22b6362906fa0cc504539` |
 | `exam-code-06-v09` | `variant_09.diff` | `d66b5e76b356a1e1a3b12cb2a193f0e47392d337a36665e6535f4bb1097571c5` |
 | `exam-code-06-v10` | `variant_10.diff` | `16533265784d174ca68a803c81e39e12bd7384052527dae164efebe7a4fe26a7` |
+
+---
+
+## 5. Codex Dalga 2 Değişikliklerinin Bağımsız İncelemesi
+
+İncelenen Codex commit'leri (`C:\Users\LENAVO\.codex\worktrees\quartz-wave2-20261105`):
+- `577c264` (`codex/wave2-step1-20261105`): `fix(exam): reject empty or spoofed runs and contain normal-exit descendants`
+- `e6cc681` (`codex/wave2-step2-20261105`): `fix(outcomes): distinguish execution evidence and partial group results`
+- `8aa5278` (`codex/wave2-step3-20261105`): `fix(intent): honor withdrawals and general Turkish desktop directives`
+- `99e82d0` (`codex/wave2-step4-20261105`): `perf(squad): cache idle display snapshots with WAL invalidation`
+- `7ea2ac4` (`codex/wave2-step5-20261105`): `feat(oracle): verify host-declared task postconditions independently`
+
+### 5.1 Bağımsız Test Çalıştırma Çıktısı
+
+Komut:
+```text
+python -X utf8 -B scripts/run_safe_tests.py tests.test_exam_process tests.test_task_exam_runner tests.test_wave2_outcomes tests.test_wave2_intent_corpus tests.test_squad_idle_cache tests.test_task_oracle
+```
+
+Gerçek çıktı:
+```text
+...........................................................
+----------------------------------------------------------------------
+Ran 59 tests in 5.437s
+
+OK
+```
+
+### 5.2 Doğrulanan İyileştirmeler
+
+1. **Dalga 1 Bulgularının Kapatılması (`577c264`):**
+   - `scripts/task_exam_runner.py:70-76`: `verdict('unittest', ...)` artık `stdout` yerine `stderr` özetini satır sonu çapasıyla (`^Ran (\d+) tests? in [^\n]+\n\s*OK(?: \(skipped=(\d+)\))?\s*$`) kontrol ediyor ve `int(match[1]) <= int(match[2] or 0)` olduğunda `NOT VERIFIED` döndürüyor (Dalga 1 Bulgu B1 kapandı).
+   - `scripts/exam_process.py:25-79` ve `scripts/task_exam_runner.py:100-155`: Görev süreçleri `CREATE_SUSPENDED` (`0x4`) ile başlatılıp `_WindowsJob`'a atanıyor; normal çıkışta (`exit_code == 0`) bile `self.job.empty()` kontrol edilerek arkada torun süreç kaldıysa `status = 'BLOCKED'` işaretleniyor (Dalga 1 Bulgu B3 kapandı).
+2. **Sonuç Sözleşmesi ve Bağımsız Oracle (`e6cc681`, `7ea2ac4`):**
+   - `core/task_outcome.py:4-24` ve `core/task_oracle.py:18-108`: Modelin metin çıktısı veya `exit_code == 0` tek başına `goal_verdict = 'VERIFIED'` üretemiyor; yalnızca `_SEAL` ile mühürlenmiş host `GoalEvaluation` nesnesi (`HOST POSTCONDITION`) `status == 'completed'` ve `source_validation != 'FAILED'` iken `goal_verdict = 'VERIFIED'` yapabiliyor.
+   - `core/task_oracle.py:36-50`: Symlink ve Windows junction/reparse point (`st_file_attributes & 0x400`) kaçışları reddediliyor; okuma öncesi ve sonrası `(st_ino, st_size, st_mtime_ns)` karşılaştırılarak eşzamanlı değişen dosyalar reddediliyor.
+3. **Squad Boşta Önbellekleme (`99e82d0`):**
+   - `core/multi_agent_service.py:267-315`: Başlatılmış (`.squad/messages.db` mevcut) projelerde boşta durumda `messages.db` ve `messages.db-wal` `(st_ino, st_size, st_mtime_ns)` imzası değişmedikçe 300 saniye boyunca Squad görüntüsü derin kopya (`copy.deepcopy`) ile önbellekten dönüyor; aktif görev varken önbellek devre dışı bırakılıyor.
+
+### 5.3 Tespit Edilen Bulgular (`dosya:satır`)
+
+#### Bulgu C-W2-1 (Yüksek — "Doğrulanmamış iş başarı görünmeyecek" boşluğu): Grup sohbeti 2. tur (`_run_mutual_evaluation_round`) ve tartışmaya devam (`_run_continue_discussion_turn`) hataları yutup turu `completed` bitiriyor
+- **Konum:** `core/agent_chat.py:1747-1768`, `core/agent_chat.py:1874-1915`, `core/agent_chat.py:1939-1954`
+- **Kanıt (SOURCE):**
+  - `_run_mutual_evaluation_round` (`core/agent_chat.py:1874-1915`) içinde `run_codex_eval()` ve `run_agy_eval()` alt iş parçacıkları `except Exception as exc:` bloğunda balon durumunu `"failed"` olarak güncelliyor (`codex_r2_meta.update({"status": "failed", ...})`), ancak çağıran fonksiyona hiçbir başarı/başarısızlık durumu döndürmüyor (`return None`).
+  - Bunun sonucunda:
+    1. `_run_collaboration_turn` (`core/agent_chat.py:1747-1768`) içinde `rounds >= 2` olduğunda 1. tur başarılı (`codex_r1_ok=True, agy_r1_ok=True`) geçip 2. turda ajanlardan biri veya her ikisi hata verse bile, 1765–1768. satırlar yalnızca 1. turun değişkenlerine (`codex_r1_ok`, `agy_r1_ok`) bakarak `participants = {'codex': 'completed', 'antigravity': 'completed'}` yazıyor ve turu **`"completed"`** olarak kapatıyor.
+    2. `_run_continue_discussion_turn` (`core/agent_chat.py:1939-1954`) ise `_run_mutual_evaluation_round(...)` çağrısından hemen sonra 1954. satırda koşulsuz olarak `self._finish_turn(first_msg_id, "completed")` çağırıyor; 2. turda her iki ajan da kota veya bağlantı hatasıyla çökmüş olsa bile tur durumu `"completed"` oluyor.
+- **Öneri:** `_run_mutual_evaluation_round` fonksiyonu `{"codex": "completed" | "failed", "antigravity": "completed" | "failed"}` sözlüğü döndürmeli; `_run_collaboration_turn` ve `_run_continue_discussion_turn` son tur durumunu `group_execution_status(...)` ile birleştirerek `"completed"`, `"partial"` veya `"failed"` kararına bağlamalıdır.
+
+#### Bulgu C-W2-2 (Orta — Mesaj projeksiyonunda `participants` kaybı): `_enrich_messages` kısmi grup sonucunu mesajların `outcome` alanına taşımıyor
+- **Konum:** `core/agent_chat.py:766-776` ve `core/agent_chat.py:856-860`
+- **Kanıt (SOURCE):**
+  - `poll_turn()` (`core/agent_chat.py:741-742`) aktif/son tur için `execution_outcome(turn.get('status','unknown'), participants=turn.get('participant_statuses'))` hesaplıyor.
+  - Ancak `_finalize_assistant_message` (`core/agent_chat.py:857`) ve `_enrich_messages` (`core/agent_chat.py:772-776`) `execution_outcome(...)` çağrısına `participants` parametresini geçirmiyor. Birlikte modunda Codex başarılı, Antigravity başarısız olduğunda, Codex mesaj balonunun kendi `status` alanı `"completed"` olduğu için `_enrich_messages` bu mesajın `metadata['outcome']` alanında `execution_status: "completed"` ve `participants: {}` üretiyor.
+
+#### Bulgu C-W2-3 (Orta — Squad önbellekleme kenar durumu): `.squad/messages.db` henüz oluşmamış (başlatılmamış) projelerde boşta `squad.exe --version` alt süreci çalışmaya devam ediyor
+- **Konum:** `core/multi_agent_service.py:268-315` ve `core/squad_adapter.py:70-89`
+- **Kanıt (SOURCE):**
+  - `_squad_signature(project)` (`core/multi_agent_service.py:272`) `.squad/messages.db` dosyası yoksa `None` döndürüyor.
+  - `_squad_snapshot(self, project, squad)` (`core/multi_agent_service.py:297, 312`) yalnızca `signature is not None and not error` olduğunda önbellek okuyor ve yazıyor.
+  - `.squad/messages.db` olmayan bir projede her `status()` çağrısında `squad.status()` (`squad.exe --version` alt süreci) çalıştırılıyor, ardından `squad.agents()` `SquadCommandError("Squad workspace is not initialized...")` fırlattığı için `error` dolu kalıyor ve sonuç önbelleğe alınmıyor. Dolayısıyla Squad başlatılmamış projelerde her 15 saniyede bir `squad.exe --version` (10 dakikada ~40 alt süreç) açılmaya devam ediyor.
+- **Öneri:** `not squad.initialized` durumunda `squad.agents()`/`tasks()`/`history()` hiç çağrılmamalı ve `('.squad_uninitialized', (root / 'messages.db').exists())` imzasıyla boşta önbelleğe alınmalıdır.
+
+#### Bulgu C-W2-4 (Düşük/Orta — `TaskOracle` Windows CRLF duyarlılığı ve kayıt yarış penceresi)
+- **Konum:** `core/task_oracle.py:102-104` ve `core/multi_agent_service.py:90-99`
+- **Kanıt (SOURCE):**
+  - `core/task_oracle.py:104`: `mode == 'text'` kontrolü `data == expected.encode('utf-8')` ile ham bayt eşitliği yapıyor. Windows'ta ajan veya standart Python metin yazımı `\r\n` ürettiğinde, çok satırlı `expected` metni `\n` içeriyorsa içerik birebir doğru olduğu halde `FAILED` döner (`sha256` tam bayt içindir, `text` modunda `\r\n` -> `\n` normalizasyonu veya açık seçenek güvenli olur).
+  - `core/multi_agent_service.py:97`: `register_goal_oracle` `runtime.get(run_id).get('status') != 'running'` kontrolü yapıyor; `dispatch_*` arka plan iş parçacığını başlattıktan sonra döndüğü için çok hızlı tamamlanan koşularda `register_goal_oracle` çağrılmadan önce durum `'completed'` olabilir. Oracle planının doğrudan `dispatch(..., goal_checks=...)` içinde süreç başlamadan önce kaydedilmesi bu yarış penceresini kapatır.
