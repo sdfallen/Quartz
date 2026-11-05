@@ -16,6 +16,7 @@ from core.squad_adapter import SquadAdapter
 from core.workspace_checkpoint import create_checkpoint, snapshot_workspace_files, changed_workspace_files
 from core.source_verification import verify_changed_python
 from core.run_evidence_store import RunEvidenceStore
+from core.task_outcome import execution_outcome
 from core.writer_journal import WriterJournal
 from core.path_identity import canonical_key
 
@@ -698,6 +699,8 @@ class MultiAgentService:
                                           set(evidence.get("files_changed", [])))
             run["evidence_warning"] = evidence.get("evidence_warning", "")
             run["source_validation"] = evidence.get("source_validation", {})
+        run['outcome'] = execution_outcome(run.get('status','unknown'),
+            source_validation=evidence.get('source_validation'))
         return run
 
     def pending_writer_runs(self, run_ids):

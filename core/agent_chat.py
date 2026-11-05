@@ -14,6 +14,7 @@ from core.conversation_store import ConversationStore
 from core.multi_agent_service import MultiAgentService, WriterDispatchError
 from core.response_style import communication_instruction, DETAIL_MARKER
 from core.async_snapshot import AsyncSnapshot
+from core.task_outcome import execution_outcome, group_execution_status
 
 log = logging.getLogger(__name__)
 
@@ -740,6 +741,8 @@ class AgentChatService:
             return {
                 "active": turn.get("status") == "running",
                 "status": turn.get("status"),
+                "outcome": execution_outcome(turn.get('status','unknown'),
+                    participants=turn.get('participant_statuses')),
                 "task_id": turn.get("turn_id"),
                 "queued_instructions": len(turn.get("instructions", [])),
                 "stop_receipt": turn.get("stop_receipt"),
@@ -763,11 +766,14 @@ class AgentChatService:
         # project tests. An absent receipt is never treated as a passed check.
         for item in messages[-200:]:
             meta = item.get('metadata') or {}
+            item['metadata'] = meta
             run_id = meta.get('run_id')
             if run_id and hasattr(self.agent_service, 'run_evidence'):
                 evidence = self.agent_service.run_evidence(run_id)
                 if isinstance(evidence, dict) and evidence:
                     meta['host_evidence'] = evidence
+            meta['outcome'] = execution_outcome(item.get('status') or meta.get('status','unknown'),
+                source_validation=(meta.get('host_evidence') or {}).get('source_validation'))
 
     def _is_turn_cancelled(self, initial_msg_id: str | None = None) -> bool:
         with self._lock:
@@ -815,7 +821,7 @@ class AgentChatService:
 
     def _finish_turn(self, owner_msg_id, status):
         """Only this generation's live owner can make its terminal transition."""
-        if status not in {"completed", "failed"}:
+        if status not in {"completed", "failed", "partial"}:
             raise ValueError("Invalid worker terminal state")
         with self._lock:
             if not self._active_turn or self._active_turn.get("status") != "running" or self._is_turn_cancelled(owner_msg_id):
@@ -850,6 +856,7 @@ class AgentChatService:
             if metadata is not None:
                 metadata = {**metadata, "task_id":self._active_turn.get("turn_id"),
                             "conversation_id":cid,"project_id":self._active_turn.get("project_id")}
+                metadata['outcome'] = execution_outcome(metadata.get('status','unknown'))
                 self.store.update_message_content(cid, msg_id, content, metadata=metadata)
                 agent = metadata.get('agent') or provider
                 progress = self._active_turn.setdefault('agent_progress', {})
@@ -945,6 +952,7 @@ class AgentChatService:
                             turn["progress_step"] = "Önceki adımın dosya denetimi tamamlanıyor..."
                         else:
                             turn.pop("step_status", None)
+                            turn.pop('participant_statuses', None)
                             item = turn["instructions"].pop(0)
                             msg_id, prompt = item["message_id"], item["text"]
                             turn.update(message_id=msg_id, message_ids=[msg_id], user_message_id=item["user_message_id"],
@@ -1752,8 +1760,10 @@ class AgentChatService:
             return
 
         with self._lock:
-            successful = (codex_r1_ok and agy_r1_ok) if write else (codex_r1_ok or agy_r1_ok)
-            self._finish_turn(first_msg_id, "completed" if successful else "failed")
+            participants = {'codex':'completed' if codex_r1_ok else 'failed',
+                            'antigravity':'completed' if agy_r1_ok else 'failed'}
+            self._active_turn['participant_statuses'] = participants
+            self._finish_turn(first_msg_id, group_execution_status(participants))
 
     def _run_mutual_evaluation_round(
         self,

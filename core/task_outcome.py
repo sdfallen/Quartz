@@ -1,13 +1,27 @@
 """Shared vocabulary, not another task engine or a source of authority."""
 
 
-def execution_outcome(status, verification=None, cleanup=None):
+def execution_outcome(status, verification=None, cleanup=None, *, source_validation=None, participants=None):
     verification = dict(verification or {'status': 'NOT VERIFIED'})
     # A UI text match is a scoped observation, NEVER whole-task acceptance.
+    goal = 'PARTIAL' if status == 'partial' else 'NOT VERIFIED'
+    if status in {'failed','cancelled','blocked'} or (source_validation or {}).get('status') == 'FAILED':
+        goal = 'FAILED'
+    if participants and any(s != 'completed' for s in participants.values()):
+        goal = 'PARTIAL' if any(s == 'completed' for s in participants.values()) else 'FAILED'
     return {'execution_status': str(status), 'evidence_status': verification.get('status', 'NOT VERIFIED'),
             'evidence_scope': verification.get('scope', ''), 'goal_accepted': False,
+            'goal_verdict':goal, 'completion_kind':'execution_only',
+            'participants':dict(participants or {}),
             'acceptance_basis': 'Separate explicit acceptance required; model/process completion is insufficient',
             'cleanup_status': (cleanup or {}).get('status', 'not_started')}
+
+
+def group_execution_status(states):
+    """All requested agents must finish; a surviving response is partial, not verified."""
+    values = list(states.values())
+    if values and all(v == 'completed' for v in values): return 'completed'
+    return 'partial' if any(v == 'completed' for v in values) else 'failed'
 
 
 def stop_summary(reason, verification=None):
