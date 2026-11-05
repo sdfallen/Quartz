@@ -228,7 +228,8 @@ class NaturalDesktopTask:
 
     @staticmethod
     def _run_exit_confirmed(runtime, rid):
-        run = runtime.get(rid)
+        try: run = runtime.get(rid)
+        except Exception: return False
         return (run.get('status') in runtime.TERMINAL and not run.get('cleanup_pending')
                 and run.get('process_exit_confirmed') is not False
                 and (not run.get('pid') or run.get('process_exit_confirmed') is True))
@@ -1319,8 +1320,13 @@ class NaturalDesktopTask:
             if self.stopped.is_set(): return self.status()
             learning = self.application_learning
             if reason == 'completed' and self.job and self.job.get('models'):
-                participants = {p:self.runs[p][0].get(self.runs[p][1]).get('status','failed')
-                                if p in self.runs else 'failed' for p in self.job['models']}
+                participants = {}
+                for provider in self.job['models']:
+                    try:
+                        runtime, rid = self.runs[provider]
+                        participants[provider] = runtime.get(rid).get('status','failed')
+                    except Exception:
+                        participants[provider] = 'failed'
                 self.job['participant_statuses'] = participants
                 reason = group_execution_status(participants)
             self.stopped.set(); self.tokens.clear(); self.pending = None
@@ -1333,6 +1339,8 @@ class NaturalDesktopTask:
         # Authority is revoked above. External release operations must not hold
         # the task lock or prevent independent resources from being released.
         report = self.job["cleanup"] if self.job else {"status":"running", "steps":[]}
+        if self.job and self.job.get('pause'):
+            cleanup_step(report, 'pause-checkpoint', self._persist_pause)
         if learning:
             outcome_code = 'completed' if reason == 'completed' else ('blocked' if str(reason).startswith('blocked') else ('cancelled' if reason == 'cancelled' else 'failed'))
             def finalize_learning():

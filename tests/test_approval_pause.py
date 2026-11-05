@@ -98,6 +98,7 @@ class ApprovalPauseTests(unittest.TestCase):
         with self.assertRaises(PermissionError): self.task.refresh_permission(old,'chat',confirmed=True)
         self.assertEqual(self.task.tokens,{})
         self.assertFalse(self.broker.status()['active'])
+        self.assertEqual(self.task.paused_contexts(), [])
 
     def test_checkpoint_is_context_only_and_full_automatic_scope_is_not_paused(self):
         self.request()

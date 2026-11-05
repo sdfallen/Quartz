@@ -128,7 +128,7 @@ class TurnOwnershipTests(unittest.TestCase):
 
 
 class IndependentPermissionTests(unittest.TestCase):
-    def test_log_only_consent_does_not_revoke_or_extend_existing_input(self):
+    def test_manual_log_consent_revokes_existing_input_until_new_approval(self):
         from tests.test_natural_desktop import NaturalTaskTests
         fixture = NaturalTaskTests('test_metadata_and_model_request_never_grant_input')
         fixture.setUp(); self.addCleanup(fixture.tearDown)
@@ -138,11 +138,11 @@ class IndependentPermissionTests(unittest.TestCase):
         (fixture.root/'extra.log').write_text('real fixture bytes', encoding='utf-8')
         result = fixture.call('task_read_log', {'path':'extra.log'}, 'review')
         self.assertEqual(result['status'], 'waiting_for_inline_permission')
-        self.assertTrue(fixture.broker.status()['active'])
-        self.assertEqual(fixture.task.connection, connection)
+        self.assertFalse(fixture.broker.status()['active'])
+        self.assertIsNone(fixture.task.connection)
         fixture.task.approve(fixture.task.pending['id'], confirmed=True)
-        self.assertEqual(fixture.broker.status()['id'], session_id)
-        self.assertEqual(fixture.task.connection, connection)
+        self.assertNotEqual(fixture.broker.status()['id'], session_id)
+        self.assertNotEqual(fixture.task.connection, connection)
         self.assertIn('real fixture bytes', fixture.call('task_read_log', {'path':'extra.log'}, 'review')['untrusted_log']['text'])
 
 

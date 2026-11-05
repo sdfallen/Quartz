@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from core.task_oracle import TaskOracle, GoalEvaluation
 from core.task_outcome import execution_outcome
-from tests.test_multi_agent_service import MultiAgentServiceTests
+from tests import test_multi_agent_service as fixtures
 
 
 class TaskOracleTests(unittest.TestCase):
@@ -57,7 +57,7 @@ class TaskOracleTests(unittest.TestCase):
         self.assertEqual(execution_outcome('completed',source_validation={'status':'FAILED'},goal_evaluation=proof)['goal_verdict'],'FAILED')
 
     def test_service_consumers_use_host_binding_and_recheck_actual_files(self):
-        service, runtime, _ = MultiAgentServiceTests().make_service()
+        service, runtime, _ = fixtures.MultiAgentServiceTests().make_service()
         service._links['r'] = {'task_id':'t','project_id':'test','provider':'codex'}
         runtime.get.return_value={'id':'r','status':'running','result':'VERIFIED'}
         with patch.object(service.projects,'resolve',return_value=self.root):

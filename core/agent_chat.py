@@ -1690,6 +1690,7 @@ class AgentChatService:
                 if self._is_turn_cancelled(first_msg_id):
                     return
                 err_msg = self._format_error("codex", exc)
+                r1_state['codex_ok'] = False
                 codex_r1_meta.update({"status": "failed", "error": str(exc)})
                 self._publish_run_update(cid, first_msg_id, err_msg, codex_r1_meta)
 
@@ -1719,6 +1720,7 @@ class AgentChatService:
                 if self._is_turn_cancelled(first_msg_id):
                     return
                 err_msg = self._format_error("antigravity", exc)
+                r1_state['agy_ok'] = False
                 agy_r1_meta.update({"status": "failed", "error": str(exc)})
                 self._publish_run_update(cid, agy_r1_id, err_msg, agy_r1_meta)
 
@@ -1891,6 +1893,7 @@ class AgentChatService:
                 if self._is_turn_cancelled(owner_msg_id):
                     return
                 err_msg = self._format_error("codex", exc)
+                states['codex'] = 'failed'
                 codex_r2_meta.update({"status": "failed", "error": str(exc)})
                 self._publish_run_update(cid, codex_r2_id, err_msg, codex_r2_meta)
 
@@ -1910,6 +1913,7 @@ class AgentChatService:
                 if self._is_turn_cancelled(owner_msg_id):
                     return
                 err_msg = self._format_error("antigravity", exc)
+                states['antigravity'] = 'failed'
                 agy_r2_meta.update({"status": "failed", "error": str(exc)})
                 self._publish_run_update(cid, agy_r2_id, err_msg, agy_r2_meta)
 

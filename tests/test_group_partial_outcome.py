@@ -7,6 +7,27 @@ from core.agent_chat import AgentChatService
 
 
 class GroupPartialOutcomeTests(unittest.TestCase):
+    def test_failed_second_round_squad_delivery_is_not_a_completed_group(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = MagicMock(); service.check_squad_connection.return_value = {'connected':True}
+            service.squad_create_group_task.return_value = {'id':'test-squad'}
+            service.squad_receive_messages.return_value = []
+            codex_sends = [0]
+            def send(sender, *args, **kwargs):
+                if sender == 'quartz-codex':
+                    codex_sends[0] += 1
+                    if codex_sends[0] == 2: raise RuntimeError('Squad delivery failed')
+            service.squad_send_message.side_effect = send
+            chat=AgentChatService(service,Path(directory)/'conversations.json')
+            with patch.object(chat,'_execute_codex_bubble',return_value='response'), \
+                 patch.object(chat,'_execute_antigravity_bubble',return_value='response'):
+                chat.send_message('İkiniz bu yaklaşımı değerlendirin',agent='collaboration')
+                deadline=time.monotonic()+3
+                while chat._active_turn.get('status') == 'running' and time.monotonic()<deadline: time.sleep(.02)
+            self.assertEqual(codex_sends[0],2)
+            self.assertEqual(chat._active_turn['status'],'partial')
+            chat._diagnostics.close()
+
     def test_second_round_failure_is_not_hidden_by_first_round_success(self):
         with tempfile.TemporaryDirectory() as directory:
             service = MagicMock(); service.check_squad_connection.return_value = {'connected':False}

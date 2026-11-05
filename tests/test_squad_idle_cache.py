@@ -2,7 +2,7 @@ import tempfile
 from pathlib import Path
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
-from tests.test_multi_agent_service import MultiAgentServiceTests
+from tests import test_multi_agent_service as fixtures
 
 
 class SquadIdleCacheTests(TestCase):
@@ -13,7 +13,7 @@ class SquadIdleCacheTests(TestCase):
         (self.root / '.squad').mkdir()
         (self.root / '.squad/messages.db').write_bytes(b'fixture')
         self.project = {'id':'test', 'path':str(self.root)}
-        self.service, _, _ = MultiAgentServiceTests().make_service()
+        self.service, _, _ = fixtures.MultiAgentServiceTests().make_service()
         self.squad = MagicMock()
         self.squad.status.return_value = {'installed':True, 'error':''}
         self.squad.agents.return_value = [{'id':'a'}]

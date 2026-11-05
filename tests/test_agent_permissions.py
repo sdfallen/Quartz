@@ -255,7 +255,7 @@ class AgentPermissionTests(unittest.TestCase):
         user = chat.store.append_message(cid,'user','test',sender='user')
         first = chat.store.append_message(cid,'assistant','',sender='codex')
         chat._active_turn={'status':'running','message_ids':[first['id']], 'user_message_id':user['id']}
-        chat._run_mutual_evaluation_round = MagicMock()
+        chat._run_mutual_evaluation_round = MagicMock(return_value={'codex':'completed', 'antigravity':'completed'})
         order=[]
         def writer(*args, **kwargs):
             order.append('write')
@@ -282,7 +282,8 @@ class AgentPermissionTests(unittest.TestCase):
         chat._execute_antigravity_bubble=MagicMock(return_value='review')
         chat._run_mutual_evaluation_round=MagicMock()
         chat._run_collaboration_turn(cid,first['id'],'test','test',write=True,confirm_write=True)
-        self.assertEqual(chat._active_turn['status'],'failed')
+        self.assertEqual(chat._active_turn['status'],'partial')
+        self.assertEqual(chat._active_turn['participant_statuses']['codex'],'failed')
 
 
 class ChatPermissionIPCTests(unittest.TestCase):
