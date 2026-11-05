@@ -222,3 +222,43 @@ OK
 - **Kanıt (SOURCE):**
   - `core/task_oracle.py:104`: `mode == 'text'` kontrolü `data == expected.encode('utf-8')` ile ham bayt eşitliği yapıyor. Windows'ta ajan veya standart Python metin yazımı `\r\n` ürettiğinde, çok satırlı `expected` metni `\n` içeriyorsa içerik birebir doğru olduğu halde `FAILED` döner (`sha256` tam bayt içindir, `text` modunda `\r\n` -> `\n` normalizasyonu veya açık seçenek güvenli olur).
   - `core/multi_agent_service.py:97`: `register_goal_oracle` `runtime.get(run_id).get('status') != 'running'` kontrolü yapıyor; `dispatch_*` arka plan iş parçacığını başlattıktan sonra döndüğü için çok hızlı tamamlanan koşularda `register_goal_oracle` çağrılmadan önce durum `'completed'` olabilir. Oracle planının doğrudan `dispatch(..., goal_checks=...)` içinde süreç başlamadan önce kaydedilmesi bu yarış penceresini kapatır.
+
+---
+
+## 6. Claude'un Görev Sınavı Listesine (`CLAUDE_TASK_EXAM_TASKS_20261105.md`) Eleştiri
+
+İncelenen kaynaklar (`claude/task-exam-tasks-20261105` dalı, `b65a626`):
+- `docs/CLAUDE_TASK_EXAM_TASKS_20261105.md`
+- `docs/task_exam/tasks_20261105.json`
+- `docs/task_exam/intent_corpus_20261105.json`
+
+### 6.1 Eksik Hata Modları (Missing Failure Modes)
+
+1. **Birlikte (Together) Modunda Kısmi Başarısızlık (`P0-2` / `F4`):**
+   - `exam-code-03` ve `exam-code-06` yalnızca her iki ajanın da çalıştığı mutlu yolu ölçüyor. Birlikte modunda ajanlardan biri kota bitmesi (`429`), zaman aşımı veya süreç çökmesiyle başarısız olduğunda turun kesinlikle `completed` / `VERIFIED` sayılmadığını (`partial` kaldığını) doğrulayan bir sınav görevi listede yok.
+2. **İç Komut Başarısızlığına Rağmen Modelin "Tamamladım" Demesi (`P0-3` / `F1`):**
+   - `exam-code-01` ve `exam-code-02` başarı durumunda `command_passes` kontrol ediyor; ancak ajanın içeride çalıştırdığı test komutu `exit_code != 0` döndürdüğü halde modelin "düzeltildi" yanıtı verdiği negatif senaryoyu (veya salt okunur incelemede `P1-3` yetkisiz `write_file`/`edit_file` yan etkisinin yakalanmasını) doğrudan sınayan bir görev yok.
+3. **Yanıtsız İzin Kartında Duraklama (`Karar 4` / `P1-1`):**
+   - `exam-desk-08` ve `exam-desk-10` izin kartının *reddedilmesini* (`Deny the permission card`) ölçüyor. Planın 7. bölümündeki **Karar 4** ("Yanıtsız izin kartı: 10 dakikada görevi bitirmek yerine görev duraklar; ajan girdi göndermeden bekler") için izin kartına yanıt verilmediğinde görevin `expired`/`failed` olmak yerine `paused`/`waiting` durumunda kaldığını ve hiçbir girdi üretmediğini ölçen bir görev eksik.
+4. **Sağlayıcı Hata Taksonomisi (Kota Bitmesi, Bayat Oturum, Kesik Akış):**
+   - Görev listesinde sağlayıcı kotası dolduğunda modelin sessizce değiştirilmemesi (`no_model_fallback`), bayat `thread_id`/`conversation_id` durumunda yalnızca salt okunur görevde tek seferlik temiz oturum denemesi ve yazma görevinde otomatik tekrar yapılmaması gibi temel çalışma zamanı güvenlik kurallarını ölçen görev bulunmuyor.
+
+### 6.2 Ölçülemeyen veya Belirsiz Koşullar (Unmeasurable / Ambiguous Conditions)
+
+1. **Otomatik Doğrulayıcısı Olmayan Serbest Metin (`reply_states_*`) Koşulları:**
+   - `exam-code-05` (`reply_states_file_missing`), `exam-desk-10` (`reply_states_denied`), `exam-desk-12` (`reply_states_window_closed`) ve `exam-desk-13` (`reply_does_not_claim_success`) koşulları doğal dil yorumu gerektiriyor. Claude belgede bunların otomatik `VERIFIED` sayılamayacağını belirtmiş olsa da JSON şemasında bu koşullar yapılandırılmış çalışma zamanı alanlarına (`error_events`, `denied_actions`, `outcome.goal_verdict`, `stop_receipt`) bağlanmamış. Örneğin `exam-desk-10` için `reply_states_denied` yerine doğrudan `denied_actions` / `permission_decision == "denied"` ve `outcome.goal_verdict == "FAILED"` kontrol edilmelidir.
+2. **`exam-code-06` (`finding_matches_seed`) Satır Numarası Eşleştirmesi Belirsizliği:**
+   - `exam-code-06` başarı koşulu `"requires": "file and line within 3 lines of the seeded bug"` diyor; ancak serbest Türkçe inceleme metninden dosya adı ve satır numarasının nasıl ayrıştırılacağı belirsizdir (model diff hunk başlığındaki satır numarasını veya eski/yeni satır numarasını yazabilir). İnceleme görevinde modelden sabit bir yapı (örn. `BULGU: <dosya>:<satır>`) istenmeli veya hem eski hem yeni hunk satır aralığı kabul edilmelidir.
+3. **`exam-cost-01` İçinde Sayısal Olmayan Eşik Değerleri (`"set after the first measurement"`):**
+   - `tasks_20261105.json` satır 165'te `process_spawns_at_most` ve `cpu_percent_at_most` alanlarında sayı yerine `"threshold": "set after the first measurement"` metni duruyor. Dalga 1 ve Dalga 2 ölçümlerimiz tamamlandığına göre bu alanlar somut sayısal eşiklerle (örn. 10 dakikada boşta `model_calls_equals: 0`, `process_spawns_at_most: 2`) değiştirilmelidir.
+4. **`exam-desk-03` Pencere Başlığı Yerelleştirme Kırılganlığı (`"window": "Hesap Makinesi"`):**
+   - `exam-desk-03` (`tasks_20261105.json` satır 81) `{"check": "uia_text_contains", "window": "Hesap Makinesi", "text": "69104"}` koşulunu kullanıyor. Windows dil ayarına göre pencere başlığı `"Calculator"` veya `"Hesap Makinesi"` olabildiğinden yalnız Türkçe başlık eşleşmesi İngilizce Windows bileşenlerinde yanlış negatif üretir (`["Hesap Makinesi", "Calculator"]` veya süreç/UIA `AutomationId="CalculatorResults"` kullanılmalıdır).
+
+### 6.3 Çok Kolay veya Deterministik Olmayan Görevler (Overly Easy / Non-Deterministic Tasks)
+
+1. **`exam-code-04` (Sözdizimi Hatası Yakalama Görevi Hatayı Tetiklemiyor):**
+   - `exam-code-04` (`"parser.py'deki parse fonksiyonunu daha okunur hale getir"`) G2 kapısını ("sözdizimi hatası olduğunda sohbet `completed` göstermez") ölçmek için tasarlanmış, ancak `"The adapter injects nothing; it only checks the result"` diyor. Modern modeller basit bir okunurluk düzenlemesinde `%99+` olasılıkla geçerli Python kodu üreteceği için `if_compile_fails_status_not_success` dalı canlı koşuda neredeyse hiç tetiklenmez ve G2 yanlış-başarı koruması gerçekte sınanmamış olur. Bu görevin deterministik olması için ya fixture içindeki doğrulayıcı/kanca ile sentetik derleme hatası enjekte edilmeli ya da bozuk sözdizimli bir dosya üzerinde salt doğrulama akışı koşulmalıdır.
+2. **`exam-long-03` (Süreklilik Görevi Olarak Çok Kolay):**
+   - `exam-long-03` yalnızca önceki mesajda `"Benim test numaram 4471."` yazılmış bir sohbette uygulama kapatılıp açıldıktan sonra `"Benim test numaram neydi?"` sorusuna `"4471"` yanıtı verilmesini ölçüyor. Bu yalnızca SQLite `ConversationStore` geçmişinin prompt'a eklendiğini doğrular; gerçek görev sürekliliğini (kesilen bir görevin durumunun, yazıcı kilidinin, `thread_id`/`conversation_id` bilgisinin ve kontrol noktasının yeniden açılışta korunup devam ettirilmesini) ölçmez.
+3. **`intent_corpus_20261105.json` Boyut ve Çapraz Cümle Zorluğu:**
+   - Mevcut 78 cümlelik set tekil ve temiz cümlelerden oluşuyor (ve Codex'in `8aa5278` commit'i ile 78/78 geçiyor). Planın hedeflediği 300+ cümlelik G5 kabulü için çok cümleli karmaşık yapılara (örn. *"Log dosyasını incele ama bilgisayar kontrolünü açma"*, *"Not defterini açma, sadece projedeki config.py dosyasını düzenle"*, *"Chrome'u kapatıp testleri çalıştır"* gibi hem kod hem masaüstü veya kısmi ret içeren birleşik cümlelere) ihtiyaç vardır.
