@@ -412,6 +412,29 @@ class NaturalTaskTests(unittest.TestCase):
         self.assertEqual(self.task.job["verification"]["status"],"NOT VERIFIED")
         self.assertNotIn("host_verification",observed)
 
+    def test_text_typed_through_jarvis_input_counts_as_input_for_the_host_check(self):
+        # Live 7 Nov (task 6dd2de4f): jarvis_input typed 'deneme', the broker counted no action,
+        # and the host check wrongly treated the text as already present before input.
+        from core.natural_desktop import requested_literals, HOST_TEXT_SOURCE
+        self.task.job["requested_text"]=requested_literals("Not Defteri'ne 'deneme' yaz")
+        self.approve(); self.notepad("")
+        self.call("desktop_focus")
+        self.task.job.setdefault("jarvis_actions",[]).append({"tool":"jarvis_input","arguments":{"action":"type_text"}})
+        self.notepad("deneme")
+        observed=self.call("desktop_observe")
+        self.assertEqual(self.task.job["verification"].get("source"),HOST_TEXT_SOURCE)
+        self.assertIn("host_verification",observed)
+        self.assertFalse(self.task.job.get("requested_text_before_input"))
+
+    def test_read_only_jarvis_calls_are_not_input(self):
+        from core.natural_desktop import requested_literals
+        self.task.job["requested_text"]=requested_literals("Not Defteri'ne 'deneme' yaz")
+        self.approve(); self.notepad("deneme")
+        self.task.job.setdefault("jarvis_actions",[]).append({"tool":"jarvis_system_info","arguments":{"action":"windows"}})
+        observed=self.call("desktop_focus")
+        self.assertTrue(self.task.job["requested_text_before_input"])
+        self.assertNotIn("host_verification",observed)
+
     def test_model_chosen_text_never_becomes_a_host_check(self):
         self.task.job["requested_text"]=[]  # The user quoted nothing.
         self.approve(); self.notepad("")
