@@ -1230,7 +1230,10 @@ class NaturalDesktopTask:
         names = [str(e.get("name", "")) for e in visible]
         values = [e["value"] for e in visible if isinstance(e.get("value"), str)]
         present = all(text in names or any(text in value for value in values) for text in literals)
-        if not record.get("actions"):
+        # jarvis_input types through its own guarded path, outside the broker's
+        # action count (live 7 Nov, task 6dd2de4f): it is still input of this task.
+        jarvis_inputs = sum(1 for a in self.job.get("jarvis_actions", []) if a.get("tool") == "jarvis_input")
+        if not record.get("actions") and not jarvis_inputs:
             if present: self.job["requested_text_before_input"] = True
             return
         if present and not self.job.get("requested_text_before_input"):
