@@ -20,9 +20,13 @@ class ExamProcessTests(unittest.TestCase):
             try:
                 p=owner.launch([sys.executable,'-c',parent],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
                 until=time.monotonic()+8
-                while not pidfile.exists() and time.monotonic()<until:time.sleep(.02)
-                self.assertTrue(pidfile.exists())
-                identity=psutil.Process(int(pidfile.read_text()))
+                # The parent may have created the file but not written the PID yet.
+                pid=''
+                while not pid and time.monotonic()<until:
+                    pid=pidfile.read_text().strip() if pidfile.exists() else ''
+                    if not pid:time.sleep(.02)
+                self.assertTrue(pid.isdigit(),pid)
+                identity=psutil.Process(int(pid))
                 p.wait(timeout=8)
                 self.assertFalse(owner.cleanup())
                 self.assertFalse(owner.cleanup())  # Closing the job cannot turn uncertainty into success.
