@@ -363,6 +363,23 @@ class NaturalTaskTests(unittest.TestCase):
         self.task.latest["at"]-=16
         with self.assertRaises(PermissionError):self.call("desktop_verify",args)
 
+    def test_typed_text_is_verified_from_the_edit_value_not_only_names(self):
+        # Live 6 Nov: Notepad's Edit is named "Metin Düzenleyici"; "deneme" exists only as its value.
+        self.approve()
+        image=base64.b64encode(b"fixture-image").decode()
+        self.backend.observe=lambda _: {"ui":{"elements":[{"name":"Metin Düzenleyici","type":"Edit","visible":True,"value":"deneme"}]},"image_base64":image}
+        observed=self.call("desktop_focus")
+        args={"snapshot_id":observed["snapshot_id"],"expected_text":"deneme"}
+        self.assertEqual(self.call("desktop_verify",args)["status"],"NOT VERIFIED")  # No input yet.
+        observed=self.call("desktop_act",{"snapshot_id":observed["snapshot_id"],"action":"text","text":"deneme"})
+        args["snapshot_id"]=observed["snapshot_id"]
+        self.assertEqual(self.call("desktop_verify",args)["status"],"OBSERVED UI CRITERION VERIFIED")
+        args["expected_text"]="başka metin"
+        self.assertEqual(self.call("desktop_verify",args)["status"],"NOT VERIFIED")
+        self.backend.observe=lambda _: {"ui":{"elements":[{"name":"Metin Düzenleyici","type":"Edit","visible":False,"value":"deneme"}]},"image_base64":image}
+        observed=self.call("desktop_observe")
+        self.assertEqual(self.call("desktop_verify",{"snapshot_id":observed["snapshot_id"],"expected_text":"deneme"})["status"],"NOT VERIFIED")
+
     def test_mcp_returns_image_not_only_a_file_path(self):
         self.approve()
         result=handle({"method":"tools/call","params":{"name":"desktop_focus","arguments":{}}},transport=lambda p:self.task.call("op",p))

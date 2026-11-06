@@ -27,6 +27,27 @@ SENSITIVE = re.compile(r"password|parola|şifre|sign.in|oturum aç|authenticatio
                        r"user account control|kullanıcı hesabı denetimi|windows security", re.I)
 CRITICAL = re.compile(r"\b(delete|remove|overwrite|purchase|buy|pay|send|upload|save|sil|"
                       r"kaydet|üzerine yaz|satın al|öde|gönder|yükle|izin ver|allow|install)\b", re.I)
+# Text inside an ordinary edit box is what a typing task changes. The control name
+# ("Metin Düzenleyici") never shows it, so without the value such a task can never
+# be verified. Bounded; password controls are refused before this is read.
+VALUE_TYPES = {"Edit", "Document"}
+VALUE_LIMIT = 1000
+VALUE_CONTROLS = 10
+
+
+def _control_value(control):
+    readers = (lambda: control.iface_value.CurrentValue, lambda: control.get_value(),
+               lambda: control.window_text())
+    for read in readers:
+        try:
+            value = read()
+        except Exception:
+            continue
+        if isinstance(value, str):
+            return value[:VALUE_LIMIT]
+    return None
+
+
 SAFE_KEYS = {
     "enter", "tab", "escape", "esc", "up", "down", "left", "right", "space",
     "backspace", "delete", "insert", "home", "end", "pageup", "pagedown",
@@ -274,6 +295,7 @@ class NativeDesktopBackend:
             elements, references = [], {}
             snapshot_id = uuid.uuid4().hex[:12]
             focused_item = None
+            values_read = 0
             for control in self.controller._get_descendants(win):
                 try:
                     item = self.controller._describe(control)
@@ -288,6 +310,11 @@ class NativeDesktopBackend:
                         references[ref] = item.copy()
                         public = {k: v for k, v in item.items() if k not in {"runtime_id", "password"}}
                         public["ref"] = ref
+                        if item["type"] in VALUE_TYPES and values_read < VALUE_CONTROLS:
+                            value = _control_value(control)
+                            if value is not None:
+                                public["value"] = value
+                                values_read += 1
                         elements.append(public)
                 except PermissionError:
                     raise
