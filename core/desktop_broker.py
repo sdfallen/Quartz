@@ -22,6 +22,17 @@ CONTINUOUS_LEASE_SECONDS = 1800
 # Same input on an unchanged screen: refuse first, then end the task.
 REPEAT_REFUSE_AFTER = 8
 REPEAT_STOP_AFTER = 11
+# Live models send common synonyms despite the schema enum (Gemini sent "type",
+# then "input", and gave up). Map them to the one guarded action they mean;
+# the backend still applies every check of that action.
+ACT_ALIASES = {"type": "text", "input": "text", "type_text": "text", "write": "text",
+               "press": "key", "key_press": "key", "keypress": "key"}
+
+
+def _canonical_act(args):
+    action = args.get("action")
+    canonical = ACT_ALIASES.get(action.strip().lower()) if isinstance(action, str) else None
+    return dict(args, action=canonical) if canonical else args
 
 
 def _screen_fingerprint(data):
@@ -342,6 +353,7 @@ class DesktopBroker:
                     raise PermissionError("Use the latest top-level snapshot_id exactly; observe again")
                 if self.clock() - observation["at"] > 15:
                     raise PermissionError("Stale observation; observe again")
+                args = _canonical_act(args)
                 if s.get("continuous"):
                     self._guard_repeated_input(s, args, observation)
                 elif s["actions"] >= 100:

@@ -89,6 +89,26 @@ class BrokerTests(unittest.TestCase):
     def press(self, token, snapshot, key):
         return self.broker.call(token, {"name": "desktop_act", "arguments": {"snapshot_id": snapshot, "action": "key", "key": key}})
 
+    def test_common_typing_synonyms_reach_the_guarded_text_action(self):
+        # Live Gemini run 6 Nov: "type" and "input" were refused and the task stalled.
+        token, observed = self.continuous()
+        for alias in ("type", "input", "Type_Text"):
+            observed = self.broker.call(token, {"name": "desktop_act", "arguments": {
+                "snapshot_id": observed["snapshot_id"], "action": alias, "text": "deneme-" + alias}})
+        self.assertEqual([a["action"] for a in self.backend.actions], ["text"] * 3)
+        attempts = [e for e in self.broker.audit if e.get("attempt")]
+        self.assertEqual([e["arguments"]["action"] for e in attempts], ["text"] * 3)
+
+    def test_unknown_action_is_passed_on_unchanged_and_still_needs_a_fresh_snapshot(self):
+        token, observed = self.continuous()
+        self.broker.call(token, {"name": "desktop_act", "arguments": {
+            "snapshot_id": observed["snapshot_id"], "action": "drag", "text": None}})
+        self.assertEqual(self.backend.actions[-1]["action"], "drag")
+        with self.assertRaises(PermissionError):  # An alias never skips the snapshot check.
+            self.broker.call(token, {"name": "desktop_act", "arguments": {
+                "snapshot_id": observed["snapshot_id"], "action": "type", "text": "x"}})
+        self.assertEqual(len(self.backend.actions), 1)
+
     def test_continuous_session_has_no_action_budget(self):
         token, observed = self.continuous()
         for number in range(150):

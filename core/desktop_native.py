@@ -449,4 +449,5 @@ class NativeDesktopBackend:
                         time.sleep(.02)
                 finally: pyautogui.keyUp(key)
         else:
-            raise ValueError("Unsupported action")
+            raise ValueError(f"Unsupported action {str(action)[:40]!r}; use click, text, key, hold or ui. "
+                             "To type, focus the edit control, observe, then send action='text' with text")
