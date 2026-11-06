@@ -1453,6 +1453,10 @@ class NaturalDesktopTask:
             cleanup_step(report, "squad-close", lambda: self.squad.complete_task(
                 self.agent_ids[self.job["roles"]["operator"]], self.job["task_id"],
                 "Execution " + reason + "; evidence verdict: " + self.job["verification"]["status"]))
+            if self.evidence and (self.evidence / "task-state.json").exists():
+                # A task paused once leaves this file; never let it keep saying
+                # "running" or "awaiting_approval" after the task has ended.
+                cleanup_step(report, "task-state", self._persist_pause)
             report["status"] = "failed" if any(s["status"] == "failed" for s in report["steps"]) else "completed"
             self.job["outcome"] = execution_outcome(reason, self.job["verification"], report,
                 participants=self.job.get('participant_statuses'))
