@@ -104,22 +104,32 @@ class BrokerTests(unittest.TestCase):
             self.broker.call(token, {"name": "desktop_act", "arguments": {"snapshot_id": observed["snapshot_id"], "action": "key", "key": "tab"}})
         self.assertEqual(self.backend.actions, [])
 
-    def test_missing_snapshot_id_keeps_the_unused_observation_but_a_wrong_one_consumes_it(self):
+    def test_continuous_session_binds_a_missing_snapshot_id_to_the_latest_fresh_observation(self):
+        # Live 7 Nov: Gemini Flash omitted snapshot_id in 4 of 5 runs.
         token, observed = self.continuous()
+        bare = {"name": "desktop_act", "arguments": {"action": "key", "key": "tab"}}
+        self.broker.call(token, bare)
+        self.assertEqual(len(self.backend.actions), 1)
+        self.assertTrue(any(e.get("implicit_snapshot") for e in self.broker.audit))
+        with self.assertRaises(PermissionError):  # Single use: the act consumed its observation.
+            self.press(token, observed["snapshot_id"], "tab")
+        self.broker.call(token, {"name": "desktop_observe"})
+        with self.assertRaises(PermissionError):
+            self.press(token, "wrong", "tab")
+        with self.assertRaises(PermissionError):  # A wrong id consumed it; a missing id cannot revive it.
+            self.broker.call(token, bare)
+        self.broker.call(token, {"name": "desktop_observe"})
+        self.now += 16
+        with self.assertRaisesRegex(PermissionError, "Stale"):  # Binding never extends freshness.
+            self.broker.call(token, bare)
+        self.assertEqual(len(self.backend.actions), 1)
+
+    def test_bounded_session_still_requires_the_snapshot_id_and_keeps_the_observation(self):
+        token, observed = self.focus()
         with self.assertRaisesRegex(PermissionError, "snapshot_id is missing"):
             self.broker.call(token, {"name": "desktop_act", "arguments": {"action": "key", "key": "tab"}})
         self.assertEqual(self.backend.actions, [])
-        observed = self.press(token, observed["snapshot_id"], "tab")  # Same observation, now with its id.
-        self.assertEqual(len(self.backend.actions), 1)
-        with self.assertRaises(PermissionError):
-            self.press(token, "wrong", "tab")
-        with self.assertRaises(PermissionError):  # The wrong id consumed it.
-            self.press(token, observed["snapshot_id"], "tab")
-        self.now += 16
-        fresh = self.broker.call(token, {"name": "desktop_observe"})
-        self.now += 16
-        with self.assertRaisesRegex(PermissionError, "Stale"):  # Keeping it never extends freshness.
-            self.broker.call(token, {"name": "desktop_act", "arguments": {"snapshot_id": fresh["snapshot_id"], "action": "key", "key": "tab"}})
+        self.act(token, observed["snapshot_id"])
         self.assertEqual(len(self.backend.actions), 1)
 
     def test_common_typing_synonyms_reach_the_guarded_text_action(self):

@@ -349,10 +349,19 @@ class DesktopBroker:
             elif tool == "desktop_act":
                 observation = s["snapshot"]
                 if s["focused"] and observation and args.get("snapshot_id") in (None, ""):
-                    # Nothing was attempted, so the unused observation stays valid
-                    # (still single-use and 15 s fresh). A wrong id still consumes it.
-                    raise PermissionError("snapshot_id is missing: copy the top-level snapshot_id of your latest "
-                                          "observation into desktop_act and send it again")
+                    if s.get("continuous"):
+                        # Live 7 Nov: Gemini Flash omitted snapshot_id in 4 of 5 runs and
+                        # fell back to clipboard typing. In a single-operator continuous
+                        # session the only observation is the one this bearer just got;
+                        # bind to it. It stays single-use and 15 s fresh; a wrong id is
+                        # still refused and consumes the observation.
+                        args = dict(args, snapshot_id=observation["id"])
+                        self.audit.append({"at": time.time(), "tool": tool, "implicit_snapshot": True,
+                                           "age_seconds": self.clock() - observation["at"]})
+                    else:
+                        # Nothing was attempted, so the unused observation stays valid.
+                        raise PermissionError("snapshot_id is missing: copy the top-level snapshot_id of your latest "
+                                              "observation into desktop_act and send it again")
                 s["snapshot"] = None  # consume even on a rejected/failed action
                 if not s["focused"] or not observation:
                     raise PermissionError("Focus then observe before acting")
