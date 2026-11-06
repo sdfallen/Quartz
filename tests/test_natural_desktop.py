@@ -151,6 +151,23 @@ class NaturalTaskTests(unittest.TestCase):
         self.assertEqual(self.backend.actions,[])
         with self.assertRaises(PermissionError):self.call("desktop_focus")
 
+    def test_context_names_both_task_ids_and_delivers_only_this_tasks_messages(self):
+        # Live 6 Nov: Codex saw task_id from task_context and another id in message
+        # receipts and concluded routing was broken.
+        self.task.squad.receive.return_value=[{"task_id":"squad-task","content":"operator report"},
+                                              {"task_id":"other-task","content":"stale"}]
+        context=self.call("task_context",token="review")
+        self.assertEqual((context["task_id"],context["squad_task_id"]),("test","squad-task"))
+        self.assertEqual([m["content"] for m in context["colleague_messages"]],["operator report"])
+        self.task.squad.receive.assert_called_with("g-task")
+        self.call("task_message",{"text":"Not Defteri'ne yazdım; gözlemde 'deneme' görünüyor."})
+        self.task.squad.send.assert_called_with("c-task","g-task","Not Defteri'ne yazdım; gözlemde 'deneme' görünüyor.",task_id="squad-task")
+
+    def test_operator_is_asked_to_report_its_step_to_the_collaborator(self):
+        from core.natural_desktop import INSTRUCTIONS
+        self.assertIn("send one short task_message with what you did",INSTRUCTIONS)
+        self.assertIn("squad_task_id",INSTRUCTIONS)
+
     def test_no_chat_string_or_truthy_value_is_approval(self):
         self.request()
         for confirmed in (False,None,1,"true"):

@@ -118,6 +118,8 @@ The other agent works concurrently on its assigned analysis, not a fixed log rol
 task_read_log reads approved project logs. Send useful findings through task_message; receive them through task_context/task_wait/observations.
 Collaborator: send initial findings promptly, then task_wait for the operator's final report/status, read any approved log's new events and report your independent verdict.
 Operator: do not wait for the collaborator to terminate; use its findings, verify your result and finish.
+Operator: after your input step and before finishing, send one short task_message with what you did and what you observed, so the collaborator can review it.
+task_context.task_id is the Quartz task; task_context.squad_task_id is the Squad task your task_message replies carry. They are the same task.
 After approval for bounded window control: desktop_focus once; interpret the actual IMAGE and UIA together.
 Prefer fresh UIA refs for ordinary controls, or use jarvis_input / desktop_act as appropriate.
 A focus change or the user working on the computer never ends this task: keep working until the user presses Stop.
@@ -530,7 +532,8 @@ class NaturalDesktopTask:
         if knowledge and all(k['state'] not in {'queued','running'} for k in knowledge):
             self._learning_seen.add(provider)
         messages = [m for m in self.squad.receive(self.agent_ids[provider]) if m.get("task_id") == self.job["task_id"]]
-        return {"task_id": self.job["id"], "role": "operator" if provider == self.job["roles"]["operator"] else "collaborator",
+        return {"task_id": self.job["id"], "squad_task_id": self.job["task_id"],
+                "role": "operator" if provider == self.job["roles"]["operator"] else "collaborator",
                 "requested_file_mode":self.job.get('requested_permission_level','read-only'),
                 "capability_mode":"scoped-mcp", "runtime_filesystem":"read-only",
                 "windows_metadata_only": self.desktop.windows() if provider == self.job["roles"]["operator"] else [],
