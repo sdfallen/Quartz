@@ -89,6 +89,39 @@ class BrokerTests(unittest.TestCase):
     def press(self, token, snapshot, key):
         return self.broker.call(token, {"name": "desktop_act", "arguments": {"snapshot_id": snapshot, "action": "key", "key": key}})
 
+    def test_first_observation_of_a_continuous_session_acquires_the_window(self):
+        # Live 7 Nov: observe-then-act without desktop_focus was refused and cost a turn.
+        token = self.broker.grant(1, "codex", confirmed=True, seconds=1800, persistent_control=True, continuous=True)["token"]
+        self.backend.foreground = True  # Already in front (just opened), so no focus recovery runs.
+        observed = self.broker.call(token, {"name": "desktop_observe"})
+        self.press(token, observed["snapshot_id"], "tab")
+        self.assertEqual(len(self.backend.actions), 1)
+
+    def test_bounded_session_still_needs_an_explicit_focus(self):
+        token = self.grant()
+        observed = self.broker.call(token, {"name": "desktop_observe"})
+        with self.assertRaisesRegex(PermissionError, "Focus then observe"):
+            self.broker.call(token, {"name": "desktop_act", "arguments": {"snapshot_id": observed["snapshot_id"], "action": "key", "key": "tab"}})
+        self.assertEqual(self.backend.actions, [])
+
+    def test_missing_snapshot_id_keeps_the_unused_observation_but_a_wrong_one_consumes_it(self):
+        token, observed = self.continuous()
+        with self.assertRaisesRegex(PermissionError, "snapshot_id is missing"):
+            self.broker.call(token, {"name": "desktop_act", "arguments": {"action": "key", "key": "tab"}})
+        self.assertEqual(self.backend.actions, [])
+        observed = self.press(token, observed["snapshot_id"], "tab")  # Same observation, now with its id.
+        self.assertEqual(len(self.backend.actions), 1)
+        with self.assertRaises(PermissionError):
+            self.press(token, "wrong", "tab")
+        with self.assertRaises(PermissionError):  # The wrong id consumed it.
+            self.press(token, observed["snapshot_id"], "tab")
+        self.now += 16
+        fresh = self.broker.call(token, {"name": "desktop_observe"})
+        self.now += 16
+        with self.assertRaisesRegex(PermissionError, "Stale"):  # Keeping it never extends freshness.
+            self.broker.call(token, {"name": "desktop_act", "arguments": {"snapshot_id": fresh["snapshot_id"], "action": "key", "key": "tab"}})
+        self.assertEqual(len(self.backend.actions), 1)
+
     def test_common_typing_synonyms_reach_the_guarded_text_action(self):
         # Live Gemini run 6 Nov: "type" and "input" were refused and the task stalled.
         token, observed = self.continuous()

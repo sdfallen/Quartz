@@ -280,6 +280,11 @@ class DesktopBroker:
             refresh_only = recovered and tool == "desktop_act"
             if refresh_only:
                 tool = "desktop_observe"
+            if tool == "desktop_observe" and not s["focused"] and s.get("persistent_control"):
+                # Live 7 Nov: Gemini observed before focusing and its first action
+                # was refused. The first observation acquires the approved window
+                # through the same focus checks.
+                tool = "desktop_focus"
             if tool == "desktop_windows":
                 available = []
                 for approved in s["targets"].values():
@@ -343,6 +348,11 @@ class DesktopBroker:
                 pass
             elif tool == "desktop_act":
                 observation = s["snapshot"]
+                if s["focused"] and observation and args.get("snapshot_id") in (None, ""):
+                    # Nothing was attempted, so the unused observation stays valid
+                    # (still single-use and 15 s fresh). A wrong id still consumes it.
+                    raise PermissionError("snapshot_id is missing: copy the top-level snapshot_id of your latest "
+                                          "observation into desktop_act and send it again")
                 s["snapshot"] = None  # consume even on a rejected/failed action
                 if not s["focused"] or not observation:
                     raise PermissionError("Focus then observe before acting")
