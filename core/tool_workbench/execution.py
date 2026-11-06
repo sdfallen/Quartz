@@ -56,7 +56,9 @@ class ToolExecutor:
 
     def _sanitize_environment(self, workspace_dir: Path) -> Dict[str, str]:
         """Produce an isolated environment stripping all secrets, keys, and credentials."""
-        safe_keys = {"SYSTEMROOT", "COMSPEC", "PATHEXT", "WINDIR", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE"}
+        # SYSTEMDRIVE is required: without it Windows expands %SystemDrive% in shell
+        # cache paths relative to the cwd and writes cversions.2.db into the run folder.
+        safe_keys = {"SYSTEMROOT", "SYSTEMDRIVE", "COMSPEC", "PATHEXT", "WINDIR", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE"}
         env: Dict[str, str] = {}
 
         for k, v in os.environ.items():
@@ -65,6 +67,9 @@ class ToolExecutor:
                 continue
             if k_upper in safe_keys:
                 env[k] = v
+        if os.name == "nt" and not any(k.upper() == "SYSTEMDRIVE" for k in env):
+            root = next((v for k, v in env.items() if k.upper() in ("SYSTEMROOT", "WINDIR")), "")
+            env["SYSTEMDRIVE"] = Path(root).drive or "C:"
 
         # Set isolated temporary and user profile directories
         tmp_dir = workspace_dir / "tmp"

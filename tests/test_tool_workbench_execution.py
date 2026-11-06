@@ -19,6 +19,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from core.tool_workbench.contracts import Target, ToolManifest, ToolRequest
 from core.tool_workbench.errors import SchemaValidationError
@@ -142,6 +143,20 @@ elif op in {"spawn-child", "--spawn-child"}:
         self.assertEqual(receipt.exit_code, 0)
         self.assertIn(b"OUTPUT_ECHO:hello_quartz", receipt.stdout)
         self.assertTrue(receipt.cleanup_receipt["process_exited"])
+        # Windows must not drop shell cache files into the run folder (IR-AGY-TOOL-CLEANUP-02).
+        self.assertFalse(any("%SystemDrive%" in a["path"] for a in receipt.artifacts))
+        self.assertEqual(list(self.workspace_root.rglob("%SystemDrive%")), [])
+
+    @unittest.skipUnless(os.name == "nt", "Windows environment contract")
+    def test_sanitized_environment_keeps_system_drive(self):
+        with patch.dict(os.environ, {"SYSTEMDRIVE": "D:", "SYSTEMROOT": r"D:\Windows"}):
+            env = self.executor._sanitize_environment(self.workspace_root / "env-a")
+        self.assertEqual({k.upper(): v for k, v in env.items()}["SYSTEMDRIVE"], "D:")
+        with patch.dict(os.environ, {"SYSTEMROOT": r"E:\Windows"}):
+            for key in [k for k in os.environ if k.upper() == "SYSTEMDRIVE"]:
+                del os.environ[key]
+            env = self.executor._sanitize_environment(self.workspace_root / "env-b")
+        self.assertEqual({k.upper(): v for k, v in env.items()}["SYSTEMDRIVE"], "E:")
 
     def test_argv_schema_validation_rejects_unknown_option(self):
         """Passing an unrecognized option raises SchemaValidationError."""
