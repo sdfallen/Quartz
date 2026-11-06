@@ -425,6 +425,22 @@ class NativePolicyTests(unittest.TestCase):
             with self.assertRaisesRegex(PermissionError, "changed during capture"):
                 backend.observe(target)
 
+    def test_edit_value_reader_is_bounded_and_falls_back(self):
+        from core.desktop_native import VALUE_LIMIT, _control_value
+        control = MagicMock()
+        control.iface_value.CurrentValue = "x" * (VALUE_LIMIT + 50)
+        self.assertEqual(len(_control_value(control)), VALUE_LIMIT)
+        control = MagicMock()
+        type(control).iface_value = property(lambda _: (_ for _ in ()).throw(RuntimeError("no ValuePattern")))
+        control.get_value.side_effect = RuntimeError("no value")
+        control.window_text.return_value = "deneme"
+        self.assertEqual(_control_value(control), "deneme")
+        control = MagicMock()
+        type(control).iface_value = property(lambda _: (_ for _ in ()).throw(RuntimeError("none")))
+        control.get_value.side_effect = RuntimeError("none")
+        control.window_text.side_effect = RuntimeError("none")
+        self.assertIsNone(_control_value(control))
+
     def run_mock_click(self, *, name="TEST BUTTON", password=False, covered=False, lost=False):
         backend = NativeDesktopBackend()
         desktop = MagicMock()
