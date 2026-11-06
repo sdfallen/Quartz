@@ -62,6 +62,9 @@ JARVIS_REPEAT_REFUSE_AFTER = 40
 JARVIS_REPEAT_STOP_AFTER = 44
 
 
+# CLAUDE.md: ASTER/Warband is officially shelved; Quartz must not start game or
+# Universal Modder work. The adapter code stays for a deliberate future revival.
+ASTER_SHELVED = True
 HOST_TEXT_SOURCE = "host_request_text"
 _QUOTE_CLOSE = {"'": "'", '"': '"', "‘": "’", "“": "”", "«": "»"}
 # An opening quote must start a word, so Turkish suffix apostrophes
@@ -115,6 +118,8 @@ The other agent works concurrently on its assigned analysis, not a fixed log rol
 task_read_log reads approved project logs. Send useful findings through task_message; receive them through task_context/task_wait/observations.
 Collaborator: send initial findings promptly, then task_wait for the operator's final report/status, read any approved log's new events and report your independent verdict.
 Operator: do not wait for the collaborator to terminate; use its findings, verify your result and finish.
+Operator: after your input step and before finishing, send one short task_message with what you did and what you observed, so the collaborator can review it.
+task_context.task_id is the Quartz task; task_context.squad_task_id is the Squad task your task_message replies carry. They are the same task.
 After approval for bounded window control: desktop_focus once; interpret the actual IMAGE and UIA together.
 Prefer fresh UIA refs for ordinary controls, or use jarvis_input / desktop_act as appropriate.
 A focus change or the user working on the computer never ends this task: keep working until the user presses Stop.
@@ -326,9 +331,12 @@ class NaturalDesktopTask:
             raise ValueError("1–8000 karakterlik görev gerekli")
         root = Path(project["path"]).resolve(strict=True)
         from core.warband_workspace import PROJECT
-        warband_profile = root == PROJECT.resolve(strict=False) and project.get("workflow") == "warband"
-        if not warband_profile and any(p.lower() in {"warbandisland", "ai_island_test", "aster"} for p in root.parts):
+        warband_project = root == PROJECT.resolve(strict=False) and project.get("workflow") == "warband"
+        if not warband_project and any(p.lower() in {"warbandisland", "ai_island_test", "aster"} for p in root.parts):
             raise PermissionError("ASTER için kayıtlı Universal Modder proje profilini seçin")
+        # ASTER/Warband is shelved: a chat filed under that project still gets an
+        # ordinary desktop task, isolated from the ASTER tree, never the UM profile.
+        warband_profile = warband_project and not ASTER_SHELVED
         with self.lock:
             if self.stopped.is_set() and not self.broker.status()["active"]:
                 if (self._inflight_calls or not self._cleanup_done.is_set()
@@ -352,11 +360,12 @@ class NaturalDesktopTask:
                 raise RuntimeError("Önceki görevi kapatmadan yeni operatör başlatılamaz")
             roles = task_roles(text)
             task_id = uuid.uuid4().hex
-            if warband_profile:
+            if warband_project:
                 self.evidence = self.evidence_root / task_id
                 self.evidence.mkdir(parents=True, exist_ok=False)
-                from core.warband_workspace import WarbandWorkspace
-                self.warband = (self.warband_factory or WarbandWorkspace)(self.evidence)
+                if warband_profile:
+                    from core.warband_workspace import WarbandWorkspace
+                    self.warband = (self.warband_factory or WarbandWorkspace)(self.evidence)
                 self.squad = self.squad_factory(str(self.evidence))
                 if not self.squad.initialized: self.squad.initialize()
             else:
@@ -378,7 +387,7 @@ class NaturalDesktopTask:
                 self.squad_info = {"connected": bool(connection.get("installed") and connection.get("initialized")),
                     "database": connection.get("database", ""), "workspace": connection.get("workspace", ""),
                     "version": connection.get("version", ""), "error": connection.get("error", ""),
-                    "mode": "task-isolated" if warband_profile else "project"}
+                    "mode": "task-isolated" if warband_project else "project"}
             self.job = {"id": task_id, "scope": text, "conversation_id": cid, "project": dict(project),
                         "requested_permission_level":requested_permission_level,
                         "capability_mode":"scoped-mcp", "runtime_sandbox":"read-only",
@@ -388,7 +397,7 @@ class NaturalDesktopTask:
                         "verification": {"status": "NOT VERIFIED"}, "evidence": str(self.evidence_root / task_id),
                         "requested_text": requested_literals(text), "requested_text_before_input": False}
             self.evidence = self.evidence_root / task_id
-            self.evidence.mkdir(parents=True, exist_ok=warband_profile)
+            self.evidence.mkdir(parents=True, exist_ok=warband_project)
             self.tokens = {p: secrets.token_urlsafe(32) for p in selected}
             self._cleanup_done.clear()
             self._serve()
@@ -523,7 +532,8 @@ class NaturalDesktopTask:
         if knowledge and all(k['state'] not in {'queued','running'} for k in knowledge):
             self._learning_seen.add(provider)
         messages = [m for m in self.squad.receive(self.agent_ids[provider]) if m.get("task_id") == self.job["task_id"]]
-        return {"task_id": self.job["id"], "role": "operator" if provider == self.job["roles"]["operator"] else "collaborator",
+        return {"task_id": self.job["id"], "squad_task_id": self.job["task_id"],
+                "role": "operator" if provider == self.job["roles"]["operator"] else "collaborator",
                 "requested_file_mode":self.job.get('requested_permission_level','read-only'),
                 "capability_mode":"scoped-mcp", "runtime_filesystem":"read-only",
                 "windows_metadata_only": self.desktop.windows() if provider == self.job["roles"]["operator"] else [],
@@ -1443,6 +1453,10 @@ class NaturalDesktopTask:
             cleanup_step(report, "squad-close", lambda: self.squad.complete_task(
                 self.agent_ids[self.job["roles"]["operator"]], self.job["task_id"],
                 "Execution " + reason + "; evidence verdict: " + self.job["verification"]["status"]))
+            if self.evidence and (self.evidence / "task-state.json").exists():
+                # A task paused once leaves this file; never let it keep saying
+                # "running" or "awaiting_approval" after the task has ended.
+                cleanup_step(report, "task-state", self._persist_pause)
             report["status"] = "failed" if any(s["status"] == "failed" for s in report["steps"]) else "completed"
             self.job["outcome"] = execution_outcome(reason, self.job["verification"], report,
                 participants=self.job.get('participant_statuses'))

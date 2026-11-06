@@ -100,6 +100,20 @@ class ApprovalPauseTests(unittest.TestCase):
         self.assertFalse(self.broker.status()['active'])
         self.assertEqual(self.task.paused_contexts(), [])
 
+    def test_task_state_file_records_the_final_state_after_a_pause(self):
+        # Live 6 Nov (task b873df4c): task-state.json still said "running" after Stop.
+        self.request(); self.task.approve(self.task.pending['id'],confirmed=True)
+        self.assertEqual(json.loads((self.task.evidence/'task-state.json').read_text())['state'],'running')
+        self.task.stop()
+        state=json.loads((self.task.evidence/'task-state.json').read_text())
+        self.assertEqual(state['state'],'cancelled')
+        self.assertIsNone(state['request_id'])
+        self.assertEqual(self.task.paused_contexts(), [])
+
+    def test_task_that_never_paused_leaves_no_task_state_file(self):
+        self.task.stop()
+        self.assertFalse((self.task.evidence/'task-state.json').exists())
+
     def test_checkpoint_is_context_only_and_full_automatic_scope_is_not_paused(self):
         self.request()
         state=json.loads((self.task.evidence/'task-state.json').read_text())

@@ -13,6 +13,7 @@ from copy import deepcopy
 from core.conversation_store import ConversationStore
 from core.multi_agent_service import MultiAgentService, WriterDispatchError
 from core.response_style import communication_instruction, DETAIL_MARKER
+from core.agent_character import character_instruction
 from core.async_snapshot import AsyncSnapshot
 from core.task_outcome import execution_outcome, group_execution_status
 
@@ -1661,6 +1662,7 @@ class AgentChatService:
         )
         codex_r1_prompt = (
             "Quartz çok katılımcılı grup sohbetindesin. Katılımcılar: Kullanıcı, sen (Codex) ve Antigravity.\n"
+            f"{character_instruction('codex')}"
             "- Kullanıcının mesajına kendi bağımsız değerlendirmenle, doğal ve net biçimde yanıt ver.\n"
             "- Antigravity de eş zamanlı olarak kendi ayrı mesajını yazıyor; gerekirse ona da doğrudan bir soru sorabilir veya fikrini isteyebilirsin.\n"
             "- Kendi kabuğundan 'squad' komutu çalıştırma ve dahili görev kimliklerinden bahsetme.\n"
@@ -1670,6 +1672,7 @@ class AgentChatService:
         )
         agy_r1_prompt = (
             "Quartz çok katılımcılı grup sohbetindesin. Katılımcılar: Kullanıcı, Codex ve sen (Antigravity).\n"
+            f"{character_instruction('antigravity')}"
             "- Kullanıcının mesajına kendi bağımsız bakış açınla, doğal ve net biçimde yanıt ver.\n"
             "- Codex de eş zamanlı olarak kendi ayrı mesajını yazıyor; gerekirse ona da bir soru/değerlendirme yöneltebilirsin.\n"
             "- Dahili görev kimliklerinden veya köprü adlarından bahsetme.\n"
@@ -1862,22 +1865,27 @@ class AgentChatService:
 
         codex_r2_prompt = (
             f"Quartz grup sohbetinin {round_num}. turundasın (Ajanlar arası karşılıklı değerlendirme turu).\n"
+            f"{character_instruction('codex')}"
             f"Kullanıcının konusu/mesajı: {user_prompt}\n\n"
             f"Senin (Codex) önceki yanıtın:\n{codex_prev_text}\n\n"
             f"Antigravity'nin Squad üzerinden sana iletilen yanıtı:\n{squad_agy_payload}\n\n"
-            "Görev: Antigravity'nin yanıtını doğrudan değerlendir. Katıldığın veya itiraz ettiğin noktaları belirt, "
-            "varsa eksik/farklı gördüğün bir detayı ekle veya Antigravity'ye kısa bir soru/yorum yönelt. "
+            "Görev: Antigravity'nin yanıtını eleştirel biçimde değerlendir. En zayıf gördüğün noktayı gerekçesiyle söyle; "
+            "katıldığın yerde nedenini ve yeni bir katkı ekle. Kendi görüşün değiştiyse bunu açıkça belirt. "
+            "Antigravity'ye kısa bir soru/yorum yönelt. "
             "Doğrudan Antigravity'ye ve kullanıcıya hitap eden doğal, özlü bir grup sohbeti mesajı yaz. "
             "Kabuk komutu çalıştırma ve dahili görev kimliklerinden bahsetme."
         )
 
         agy_r2_prompt = (
             f"Quartz grup sohbetinin {round_num}. turundasın (Ajanlar arası karşılıklı değerlendirme turu).\n"
+            f"{character_instruction('antigravity')}"
             f"Kullanıcının konusu/mesajı: {user_prompt}\n\n"
             f"Senin (Antigravity) önceki yanıtın:\n{agy_prev_text}\n\n"
             f"Codex'in Squad üzerinden sana iletilen yanıtı:\n{squad_codex_payload}\n\n"
-            "Görev: Codex'in değerlendirmesine, sorusuna veya yaklaşımına doğrudan yanıt ver; "
-            "katıldığın veya farklı düşündüğün noktaları belirt ve mesajın sonunda kullanıcı için kısa bir [ORTAK KARAR / EYLEM ÖZETİ] bölümüyle ortak sentezi vurgula. "
+            "Görev: Codex'in değerlendirmesine, sorusuna veya yaklaşımına doğrudan ve eleştirel biçimde yanıt ver; "
+            "farklı düşündüğün noktayı gerekçesiyle savun, ikna olduğun noktayı nedeniyle kabul et. "
+            "Mesajın sonunda kullanıcı için kısa bir [DURUM] bölümü yaz: 'Uzlaşılan:' ve 'Açık kalan anlaşmazlık:' "
+            "satırları; anlaşmazlık yoksa 'yok' yaz, olmayan bir uzlaşmayı varmış gibi gösterme. "
             "Doğal ve özlü bir grup sohbeti mesajı yaz. Hiçbir araç (tool/command) çağırma ve dahili görev kimliklerinden bahsetme."
         )
 
