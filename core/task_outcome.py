@@ -40,6 +40,11 @@ def stop_summary(reason, verification=None):
         return 'İzin reddedildi veya süresi doldu; görev durduruldu.'
     if value == 'cancelled': return 'Görev durduruldu; yeni işlem yapılmayacak.'
     if value == 'completed':
+        check = verification or {}
+        if check.get('source') == 'host_request_text' and check.get('status') == 'OBSERVED UI CRITERION VERIFIED':
+            texts = ', '.join(f"'{t}'" for t in check.get('expected_text') or [])
+            return (f'Görev tamamlandı; istediğin {texts} metni Quartz\'ın kendi gözleminde ekranda görüldü. '
+                    'Diğer istekler ve kullanıcı kabulü ayrı.')
         return 'Ajan yürütmesi tamamlandı; bu, tüm hedefin doğrulandığı anlamına gelmez.'
     if value == 'partial':
         return 'Görev kısmen yürütüldü; istenen ajanlardan biri tamamlayamadı. Hedef doğrulanmış sayılmadı.'

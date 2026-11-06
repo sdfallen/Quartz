@@ -60,6 +60,17 @@ assert.equal(view('completed',{natural_task:'job'}),'Yürütme bitti, hedef hen�
 assert.match(view('completed',{permission_level:'project'}),/kanıtı yok/);
 ''')
 
+    def test_quartz_text_check_has_its_own_scoped_label(self):
+        self.view(r'''
+const ok={status:'OBSERVED UI CRITERION VERIFIED',expected_text:['deneme']};
+assert.equal(view('completed',{natural_task:'job',host_check:ok}),'İstenen metin Quartz gözlemiyle ekranda görüldü; kullanıcı kabulü ayrı.');
+for (const fake of [{status:'VERIFIED',expected_text:['x']},{status:'OBSERVED UI CRITERION VERIFIED',expected_text:[]},{status:'OBSERVED UI CRITERION VERIFIED'}]) {
+  assert.equal(view('completed',{natural_task:'job',host_check:fake}),'Yürütme bitti, hedef henüz doğrulanmadı.');
+}
+assert.equal(view('cancelled',{natural_task:'job',host_check:ok}),'Durduruldu');
+assert.equal(view('completed',{host_check:ok}),'');  // Not a desktop task message.
+''')
+
     def test_blocked_and_paused_have_their_own_meaning(self):
         self.view(r'''
 assert.equal(view('blocked',{}),'Engellendi; nedeni ayrıntılarda');
