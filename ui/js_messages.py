@@ -158,13 +158,16 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
           : check?.status === 'VERIFIED' ? 'Python sözdizimi doğrulandı; çalışma/test başarısı doğrulanmış değil.'
           : 'Ajan yanıtı tamamlandı; bağımsız çalışma/test kanıtı yok.';
         if (meta.host_evidence?.historical) state = 'Önceki oturumun kaynak kanıtı: ' + state;
+      } else if (meta.natural_task && meta.host_check?.status === 'OBSERVED UI CRITERION VERIFIED'
+                 && Array.isArray(meta.host_check.expected_text) && meta.host_check.expected_text.length) {
+        state = 'İstenen metin Quartz gözlemiyle ekranda görüldü; kullanıcı kabulü ayrı.';
       } else if (meta.review_scope || meta.natural_task) {
         state = 'Yürütme bitti, hedef henüz doğrulanmadı.';
       }
     }
     if (state === PARTIAL && missing.length) state += ': ' + missing.join(', ');
     const evidence = {};
-    for (const key of ['error','run_id','squad_task_id','checkpoint','files_changed','performance','permission_level','review_scope','host_evidence','outcome']) {
+    for (const key of ['error','run_id','squad_task_id','checkpoint','files_changed','performance','permission_level','review_scope','host_evidence','host_check','outcome']) {
       if (meta[key] != null && meta[key] !== '') evidence[key] = meta[key];
     }
     if (Object.keys(evidence).length) details += (details ? '\n\n' : '') + JSON.stringify(evidence, null, 2);

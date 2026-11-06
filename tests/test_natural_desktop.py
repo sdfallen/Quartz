@@ -363,6 +363,48 @@ class NaturalTaskTests(unittest.TestCase):
         self.task.latest["at"]-=16
         with self.assertRaises(PermissionError):self.call("desktop_verify",args)
 
+    def notepad(self, value):
+        image=base64.b64encode(b"fixture-image").decode()
+        self.backend.observe=lambda _: {"ui":{"elements":[{"name":"Metin Düzenleyici","type":"Edit","visible":True,"value":value}]},"image_base64":image}
+
+    def test_quoted_text_from_the_user_is_checked_by_quartz_after_input(self):
+        # Live 6 Nov: Gemini typed 'deneme' but never called desktop_verify; 217 s were spent afterwards.
+        from core.natural_desktop import requested_literals, HOST_TEXT_SOURCE
+        self.task.job["requested_text"]=requested_literals("Gemini, Not Defteri’ni aç ve ‘deneme’ yaz")
+        self.assertEqual(self.task.job["requested_text"],["deneme"])
+        self.approve(); self.notepad("")
+        observed=self.call("desktop_focus")
+        self.assertNotIn("host_verification",observed)
+        self.notepad("deneme")
+        observed=self.call("desktop_act",{"snapshot_id":observed["snapshot_id"],"action":"text","text":"deneme"})
+        self.assertEqual(self.task.job["verification"]["source"],HOST_TEXT_SOURCE)
+        self.assertEqual(self.task.job["verification"]["status"],"OBSERVED UI CRITERION VERIFIED")
+        self.assertIn("end your turn",observed["host_verification"]["next"])
+        self.assertIn("'deneme'",stop_summary("completed",self.task.job["verification"]))
+        self.notepad("başka")  # A later observation without the text withdraws the check.
+        observed=self.call("desktop_observe")
+        self.assertEqual(self.task.job["verification"]["status"],"NOT VERIFIED")
+        self.assertNotIn("host_verification",observed)
+
+    def test_host_check_ignores_text_that_was_visible_before_any_input(self):
+        from core.natural_desktop import requested_literals
+        self.task.job["requested_text"]=requested_literals("Not Defteri'ne 'deneme' yaz")
+        self.approve(); self.notepad("deneme")
+        observed=self.call("desktop_focus")
+        observed=self.call("desktop_act",{"snapshot_id":observed["snapshot_id"],"action":"key","key":"end"})
+        self.assertEqual(self.task.job["verification"]["status"],"NOT VERIFIED")
+        self.assertNotIn("host_verification",observed)
+
+    def test_model_chosen_text_never_becomes_a_host_check(self):
+        self.task.job["requested_text"]=[]  # The user quoted nothing.
+        self.approve(); self.notepad("")
+        observed=self.call("desktop_focus")
+        self.notepad("Metin Düzenleyici deneme")
+        observed=self.call("desktop_act",{"snapshot_id":observed["snapshot_id"],"action":"text","text":"deneme"})
+        self.assertNotIn("source",self.task.job["verification"])
+        self.assertNotIn("host_verification",observed)
+        self.assertIn("tüm hedefin doğrulandığı anlamına gelmez",stop_summary("completed",self.task.job["verification"]))
+
     def test_typed_text_is_verified_from_the_edit_value_not_only_names(self):
         # Live 6 Nov: Notepad's Edit is named "Metin Düzenleyici"; "deneme" exists only as its value.
         self.approve()

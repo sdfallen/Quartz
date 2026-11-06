@@ -62,6 +62,24 @@ JARVIS_REPEAT_REFUSE_AFTER = 40
 JARVIS_REPEAT_STOP_AFTER = 44
 
 
+HOST_TEXT_SOURCE = "host_request_text"
+_QUOTE_CLOSE = {"'": "'", '"': '"', "‘": "’", "“": "”", "«": "»"}
+# An opening quote must start a word, so Turkish suffix apostrophes
+# ("Not Defteri'ni") are not read as quotes.
+_QUOTED = re.compile("(?:^|(?<=[\\s(\\[:,]))(['\"‘“«])"
+                     "([^'\"‘’“”«»\\n]{2,300}?)(['\"’”»])")
+
+
+def requested_literals(text):
+    """Exact text the user quoted in their own request, e.g. 'deneme'."""
+    found = []
+    for match in _QUOTED.finditer(str(text or "")):
+        value = match.group(2).strip()
+        if _QUOTE_CLOSE[match.group(1)] == match.group(3) and len(value) >= 2 and value not in found:
+            found.append(value)
+    return found[:5]
+
+
 def _job_expired(job):
     deadline = job.get("expires_at")
     return deadline is not None and time.time() >= deadline
@@ -367,7 +385,8 @@ class NaturalDesktopTask:
                         "conversation_context":str(conversation_context)[-10000:],
                         "roles": roles, "models": selected, "status": "starting", "started_at": time.time(),
                         "expires_at": None, "task_id": task["id"], "events": [],
-                        "verification": {"status": "NOT VERIFIED"}, "evidence": str(self.evidence_root / task_id)}
+                        "verification": {"status": "NOT VERIFIED"}, "evidence": str(self.evidence_root / task_id),
+                        "requested_text": requested_literals(text), "requested_text_before_input": False}
             self.evidence = self.evidence_root / task_id
             self.evidence.mkdir(parents=True, exist_ok=warband_profile)
             self.tokens = {p: secrets.token_urlsafe(32) for p in selected}
@@ -1184,7 +1203,33 @@ class NaturalDesktopTask:
             result = self.broker.call(self.connection["token"], request)
             if "observation" in result:
                 self._capture(tool, result)
+                if self.job["verification"].get("source") == HOST_TEXT_SOURCE:
+                    result = dict(result, host_verification={
+                        "status": self.job["verification"]["status"],
+                        "expected_text": self.job["verification"]["expected_text"],
+                        "next": "Quartz verified the text quoted in the user's request in its own observation. "
+                                "Do not call more tools: reply to the user in one short Turkish sentence and end your turn."})
             return result
+
+    def _host_text_check(self, record):
+        # The expected text comes only from the user's own message, never from a
+        # model; text already visible before any input proves nothing.
+        literals = self.job.get("requested_text") or []
+        if not literals or not record.get("image_sha256"): return
+        visible = [e for e in record["observation"].get("ui", {}).get("elements", []) if e.get("visible", True)]
+        names = [str(e.get("name", "")) for e in visible]
+        values = [e["value"] for e in visible if isinstance(e.get("value"), str)]
+        present = all(text in names or any(text in value for value in values) for text in literals)
+        if not record.get("actions"):
+            if present: self.job["requested_text_before_input"] = True
+            return
+        if present and not self.job.get("requested_text_before_input"):
+            self.job["verification"] = {
+                "status": "OBSERVED UI CRITERION VERIFIED", "source": HOST_TEXT_SOURCE,
+                "expected_text": list(literals), "snapshot_id": record["snapshot_id"],
+                "image_sha256": record["image_sha256"], "at": time.time(),
+                "scope": "Quartz found the text quoted in the user's request in its own post-input observation; "
+                         "not proof of all user requirements"}
 
     def _warband_call(self,token,request):
         with self.changed:
@@ -1239,6 +1284,7 @@ class NaturalDesktopTask:
         if self.application_learning and target_exe:
             self.application_learning.note_operation(target_exe, focus_verified=(tool in {"desktop_focus", "desktop_switch"}), observation_verified=bool(image_hash))
         if tool == "desktop_act": self.job["verification"] = {"status": "NOT VERIFIED", "reason": "new action requires verification"}
+        self._host_text_check(record)
 
     def _verify(self, args):
         # A model cannot self-certify completion merely by writing 'success'.
@@ -1391,7 +1437,9 @@ class NaturalDesktopTask:
             cleanup_step(report, "chat-event", lambda: self._event("quartz",
                 summary_text +
                 "\n\n---TEKNIK_AYRINTILAR---\nDurum: " + summary_text + "; kanıt: " + self.job["verification"]["status"] +
-                "\nKanıt klasörü: " + str(self.evidence)))
+                "\nKanıt klasörü: " + str(self.evidence),
+                **({"host_check": {k: self.job["verification"][k] for k in ("status", "expected_text", "snapshot_id", "scope")}}
+                   if reason == "completed" and self.job["verification"].get("source") == HOST_TEXT_SOURCE else {})))
             cleanup_step(report, "squad-close", lambda: self.squad.complete_task(
                 self.agent_ids[self.job["roles"]["operator"]], self.job["task_id"],
                 "Execution " + reason + "; evidence verdict: " + self.job["verification"]["status"]))
