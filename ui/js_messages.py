@@ -137,17 +137,34 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     const match = marker.exec(text);
     const summary = match ? text.slice(0, match.index).trimEnd() : text;
     let details = match ? text.slice(match.index + match[0].length) : '';
-    let state = ({failed:'Başarısız', cancelled:'Durduruldu', interrupted:'Önceki oturum kesildi; otomatik sürdürülmedi', blocked:'Henüz doğrulanmadı',
-      awaiting_approval:'Kullanıcı onayı bekleniyor'})[msg?.status || meta.status] || '';
-    if ((msg?.status || meta.status) === 'completed' && ['project','full'].includes(meta.permission_level)) {
-      const check = meta.host_evidence?.source_validation;
-      state = check?.status === 'FAILED' ? 'Ajan bitti; kaynak sözdizimi kontrolü başarısız.'
-        : check?.status === 'VERIFIED' ? 'Python sözdizimi doğrulandı; çalışma/test başarısı doğrulanmış değil.'
-        : 'Ajan yanıtı tamamlandı; bağımsız çalışma/test kanıtı yok.';
-      if (meta.host_evidence?.historical) state = 'Önceki oturumun kaynak kanıtı: ' + state;
+    // Execution, evidence and goal are separate host fields; model text never earns a badge.
+    const status = msg?.status || meta.status;
+    const outcome = meta.outcome || {};
+    const PARTIAL = 'Kısmi — istenen ajanlardan biri tamamlayamadı';
+    let state = ({failed:'Başarısız', cancelled:'Durduruldu', interrupted:'Önceki oturum kesildi; otomatik sürdürülmedi',
+      blocked:'Engellendi; nedeni ayrıntılarda', awaiting_approval:'Onay bekleniyor — görev duraklatıldı',
+      partial:PARTIAL})[status] || '';
+    const missing = Object.entries(outcome.participants || {}).filter(([, s]) => s !== 'completed')
+      .map(([agent]) => agent === 'codex' ? 'Codex' : agent === 'antigravity' ? 'Gemini' : String(agent));
+    if (status === 'completed') {
+      const checks = outcome.goal_evidence?.checks;
+      if (outcome.goal_verdict === 'VERIFIED' && outcome.goal_evidence?.level === 'HOST POSTCONDITION' && Array.isArray(checks) && checks.length) {
+        state = `Önceden bildirilen ${checks.length} hedef koşulu dosyadan doğrulandı; kullanıcı kabulü ayrı.`;
+      } else if (outcome.goal_verdict === 'PARTIAL') {
+        state = PARTIAL;
+      } else if (['project','full'].includes(meta.permission_level)) {
+        const check = meta.host_evidence?.source_validation;
+        state = check?.status === 'FAILED' ? 'Ajan bitti; kaynak sözdizimi kontrolü başarısız.'
+          : check?.status === 'VERIFIED' ? 'Python sözdizimi doğrulandı; çalışma/test başarısı doğrulanmış değil.'
+          : 'Ajan yanıtı tamamlandı; bağımsız çalışma/test kanıtı yok.';
+        if (meta.host_evidence?.historical) state = 'Önceki oturumun kaynak kanıtı: ' + state;
+      } else if (meta.review_scope || meta.natural_task) {
+        state = 'Yürütme bitti, hedef henüz doğrulanmadı.';
+      }
     }
+    if (state === PARTIAL && missing.length) state += ': ' + missing.join(', ');
     const evidence = {};
-    for (const key of ['error','run_id','squad_task_id','checkpoint','files_changed','performance','permission_level','review_scope','host_evidence']) {
+    for (const key of ['error','run_id','squad_task_id','checkpoint','files_changed','performance','permission_level','review_scope','host_evidence','outcome']) {
       if (meta[key] != null && meta[key] !== '') evidence[key] = meta[key];
     }
     if (Object.keys(evidence).length) details += (details ? '\n\n' : '') + JSON.stringify(evidence, null, 2);
@@ -615,9 +632,11 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       const row = document.createElement('div'); row.className = 'task-row';
       const done = task.steps.filter(s => s.status === 'completed').length;
       const title = document.createElement('div');
-      title.textContent = `${task.status === 'completed' ? '✓ ' : ''}${task.title}`;
+      title.textContent = task.title;
       const meta = document.createElement('div');
-      meta.textContent = `${done}/${task.steps.length} adım · ${task.status}`;
+      const label = ({completed:'tamamlandı', failed:'başarısız', cancelled:'iptal edildi', running:'çalışıyor',
+        pending:'bekliyor', queued:'sırada'})[task.status] || 'durum bilinmiyor';
+      meta.textContent = `${done}/${task.steps.length} adım · ${label}`;
       meta.className = 'task-meta';
       row.append(title, meta);
       if (!['completed','failed','cancelled'].includes(task.status)) {

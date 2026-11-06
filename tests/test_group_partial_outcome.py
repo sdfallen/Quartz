@@ -28,6 +28,28 @@ class GroupPartialOutcomeTests(unittest.TestCase):
             self.assertEqual(chat._active_turn['status'],'partial')
             chat._diagnostics.close()
 
+    def test_partial_turn_is_recorded_on_the_owner_message_for_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = MagicMock(); service.check_squad_connection.return_value = {'connected':False}
+            chat = AgentChatService(service, Path(directory)/'conversations.json')
+            with patch.object(chat, '_execute_codex_bubble', return_value='Codex response'), \
+                 patch.object(chat, '_execute_antigravity_bubble', side_effect=['first response', RuntimeError('second round timeout')]):
+                chat.send_message('İkiniz bu yaklaşımı değerlendirin', agent='collaboration')
+                deadline = time.monotonic()+3
+                while chat._active_turn.get('status') == 'running' and time.monotonic() < deadline: time.sleep(.02)
+            cid = chat._active_turn['conversation_id']
+            messages = chat.store.get(cid)['messages']
+            owners = [m for m in messages if (m.get('metadata') or {}).get('turn_status')]
+            self.assertEqual(len(owners), 1)
+            self.assertEqual(owners[0]['metadata']['turn_status'], 'partial')
+            self.assertEqual(owners[0]['metadata']['participants']['antigravity'], 'failed')
+            enriched = [dict(m, metadata=dict(m.get('metadata') or {})) for m in messages]
+            chat._enrich_messages(enriched)
+            outcome = next(m for m in enriched if m['id'] == owners[0]['id'])['metadata']['outcome']
+            self.assertEqual(outcome['goal_verdict'], 'PARTIAL')
+            self.assertEqual(outcome['participants']['antigravity'], 'failed')
+            chat._diagnostics.close()
+
     def test_second_round_failure_is_not_hidden_by_first_round_success(self):
         with tempfile.TemporaryDirectory() as directory:
             service = MagicMock(); service.check_squad_connection.return_value = {'connected':False}

@@ -55,6 +55,40 @@ class SquadIdleCacheTests(TestCase):
         self.read(); self.read()
         self.assertEqual(self.squad.tasks.call_count, 6)
 
+    def test_uninitialized_project_is_not_queried_again_while_idle(self):
+        (self.root / '.squad/messages.db').unlink()
+        self.squad.initialized = False
+        self.squad.agents.side_effect = RuntimeError('Squad workspace is not initialized')
+        with patch('core.multi_agent_service.time.monotonic', return_value=100):
+            first = self.read()
+            for _ in range(20): self.assertEqual(self.read(), first)
+        self.assertEqual(self.squad.status.call_count, 1)
+        self.assertIn('not initialized', first[-1])
+        with patch('core.multi_agent_service.time.monotonic', return_value=401): self.read()
+        self.assertEqual(self.squad.status.call_count, 2)
+
+    def test_uninitialized_cache_ends_when_squad_appears_or_work_starts(self):
+        (self.root / '.squad/messages.db').unlink()
+        self.squad.initialized = False
+        self.squad.agents.side_effect = RuntimeError('Squad workspace is not initialized')
+        self.read(); self.read()
+        self.assertEqual(self.squad.status.call_count, 1)
+        self.service._links['r'] = {'project_id':'test', 'reported':False}
+        self.read()
+        self.assertEqual(self.squad.status.call_count, 2)
+        self.service._links['r']['reported'] = True
+        self.squad.initialized = True
+        self.squad.agents.side_effect = None
+        self.read(); self.read()
+        self.assertEqual(self.squad.status.call_count, 4)
+
+    def test_missing_squad_cli_is_not_cached(self):
+        (self.root / '.squad/messages.db').unlink()
+        self.squad.initialized = False
+        self.squad.status.return_value = {'installed':False, 'error':'squad not found'}
+        self.read(); self.read()
+        self.assertEqual(self.squad.status.call_count, 2)
+
     def test_project_keys_are_isolated(self):
         self.read()
         other = self.root / 'other'; (other / '.squad').mkdir(parents=True)

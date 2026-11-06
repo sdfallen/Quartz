@@ -772,7 +772,9 @@ class AgentChatService:
                 evidence = self.agent_service.run_evidence(run_id)
                 if isinstance(evidence, dict) and evidence:
                     meta['host_evidence'] = evidence
+            participants = meta.get('participants') if meta.get('turn_status') and isinstance(meta.get('participants'), dict) else None
             meta['outcome'] = execution_outcome(item.get('status') or meta.get('status','unknown'),
+                participants=participants,
                 source_validation=(meta.get('host_evidence') or {}).get('source_validation'),
                 goal_evaluation=self.agent_service.goal_evaluation(run_id)
                     if run_id and hasattr(self.agent_service, 'goal_evaluation') else None)
@@ -831,6 +833,14 @@ class AgentChatService:
             self._active_turn["step_status"] = status
             cid = self._active_turn.get("conversation_id")
             user_mid = self._active_turn.get("user_message_id")
+            participants = self._active_turn.get("participant_statuses")
+            if cid and owner_msg_id and isinstance(participants, dict) and participants:
+                # The group verdict belongs to the turn; record it on the owner
+                # message so history shows a partial turn, not one agent's success.
+                owner = next((m for m in self.store.get(cid).get("messages", []) if m["id"] == owner_msg_id), None)
+                if owner:
+                    self.store.update_message_content(cid, owner_msg_id, owner["content"],
+                        metadata={"turn_status": status, "participants": dict(participants)})
             if cid and user_mid:
                 user = next((m for m in self.store.get(cid).get("messages", []) if m["id"] == user_mid), None)
                 if user and (user.get("metadata") or {}).get("instruction_state") == "running":

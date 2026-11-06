@@ -187,6 +187,43 @@ class BrokerTests(unittest.TestCase):
             self.press(token, observed["snapshot_id"], "tab")
         self.assertEqual(self.backend.actions, [])
 
+    def test_pause_revokes_the_old_bearer_snapshot_and_lease(self):
+        token, observed = self.continuous()
+        self.broker.stop("awaiting explicit scope approval")
+        status = self.broker.status()
+        self.assertFalse(status["active"])
+        self.assertEqual(status["stop_reason"], "awaiting explicit scope approval")
+        self.assertTrue(self.backend.leases[-1].closed)
+        with self.assertRaises(PermissionError):
+            self.press(token, observed["snapshot_id"], "tab")
+        with self.assertRaises(PermissionError):
+            self.broker.call(token, {"name": "desktop_observe"})
+        self.assertFalse(self.broker.renew(token))
+        self.assertEqual(self.backend.actions, [])
+
+    def test_resume_needs_a_fresh_identity_and_a_new_observation(self):
+        old, observed = self.continuous()
+        approved = [dict(self.backend.target)]
+        self.broker.stop("awaiting explicit scope approval")
+        self.backend.target["pid"] = 99  # The window now belongs to another process.
+        with self.assertRaisesRegex(PermissionError, "identity"):
+            self.broker.grant(1, "codex", confirmed=True, seconds=1800, expected_targets=approved,
+                              persistent_control=True, continuous=True)
+        self.assertFalse(self.broker.status()["active"])
+        self.backend.target["pid"] = approved[0]["pid"]
+        new = self.broker.grant(1, "codex", confirmed=True, seconds=1800, expected_targets=approved,
+                                persistent_control=True, continuous=True)["token"]
+        self.assertNotEqual(new, old)
+        with self.assertRaises(PermissionError):  # Old bearer and snapshot stay dead after resume.
+            self.press(old, observed["snapshot_id"], "tab")
+        with self.assertRaises(PermissionError):  # The new session must focus and observe first.
+            self.press(new, observed["snapshot_id"], "tab")
+        fresh = self.broker.call(new, {"name": "desktop_focus"})
+        self.press(new, fresh["snapshot_id"], "tab")
+        self.assertEqual(len(self.backend.actions), 1)
+        self.assertFalse(self.broker.renew(old))
+        self.assertTrue(self.broker.renew(new))
+
     def test_persistent_focus_recovery_refreshes_without_replaying_input(self):
         token = self.broker.grant(1, "codex", confirmed=True, persistent_control=True)["token"]
         first = self.broker.call(token, {"name": "desktop_focus"})

@@ -52,11 +52,17 @@ JAVASCRIPT = r"""  let desktopView={code:'normal',stop_ref:null};
     activeTaskSquad = state.active && state.squad && state.job?.conversation_id === currentConvId
       ? {...state.squad, conversation_id:state.job.conversation_id} : null;
     if (activeTaskSquad) updateSquadBadge(activeTaskSquad);
+    // A paused card re-renders when expiry or runtime cleanup changes; approval
+    // stays disabled until the backend confirms the previous turn has exited.
+    const pause=state.job?.pause||null;
+    const cleanupReady=!pause||pause.cleanup_confirmed!==false;
+    const cardKey=pending?`${pending.id}|${pending.expired?1:0}|${cleanupReady?1:0}`:'';
     for(const card of document.querySelectorAll('[data-natural-permission]')) {
-      if(!pending||card.dataset.naturalPermission!==pending.id||pending.conversation_id!==currentConvId)card.remove();
+      if(!pending||card.dataset.naturalPermission!==pending.id||card.dataset.cardKey!==cardKey||pending.conversation_id!==currentConvId)card.remove();
     }
     if(!pending||pending.conversation_id!==currentConvId||document.querySelector(`[data-natural-permission="${pending.id}"]`))return;
-    if(document.getElementById('mainPermissionLevel')?.value==='full' && !['warband','elevation'].includes(pending.kind)) {
+    pending.approvalBlocked=!cleanupReady||Boolean(pending.expired);
+    if(!pending.approvalBlocked && document.getElementById('mainPermissionLevel')?.value==='full' && !['warband','elevation'].includes(pending.kind)) {
       try {
         const autoReply=await window.pywebview.api.natural_approve(pending.id,true);
         if(autoReply.status==='ok'){
@@ -66,7 +72,7 @@ JAVASCRIPT = r"""  let desktopView={code:'normal',stop_ref:null};
         }
       } catch(_) {}
     }
-    const panel=document.createElement('section');panel.className='coordination-card';panel.dataset.naturalPermission=pending.id;
+    const panel=document.createElement('section');panel.className='coordination-card';panel.dataset.naturalPermission=pending.id;panel.dataset.cardKey=cardKey;
     panel.setAttribute('aria-label','Görev için uygulama izni');
     const title=document.createElement('strong');title.textContent=pending.kind==='warband'?'Warband görev izni gerekiyor':'Uygulama izni gerekiyor';
     const reason=document.createElement('p');reason.textContent=pending.reason;
@@ -93,6 +99,33 @@ JAVASCRIPT = r"""  let desktopView={code:'normal',stop_ref:null};
       approve.disabled=pending.phase==='prompting'||!pending.launch;
       if(pending.phase==='prompting')status.textContent='Windows yanıtı bekleniyor. Açılmış UAC istemini iptal etmek için Windows ekranında Hayır seçin.';
     }
+    const pauseNote=document.createElement('p');pauseNote.className='pause-note';pauseNote.setAttribute('role','status');
+    if(state.job?.status==='awaiting_approval')
+      pauseNote.textContent='Görev duraklatıldı. Onay verene kadar ajan bilgisayarda işlem yapmaz; Durdur her zaman kullanılabilir.';
+    if(!cleanupReady){
+      approve.disabled=true;
+      status.textContent='Önceki ajan turu kapatılıyor; onay, temizlik doğrulanınca açılacak.';
+    }
+    let refresh=null;
+    if(pending.expired){
+      title.textContent='İzin süresi doldu';
+      approve.disabled=true;approve.hidden=true;
+      status.textContent='Devam için yeni onay gerekli. Bu kart artık izin vermez.';
+      refresh=document.createElement('button');refresh.textContent='Yeniden onay hazırla';
+      // Reissue is NOT approval: it returns a new request the user approves separately.
+      refresh.onclick=async()=>{
+        refresh.disabled=true;
+        try {
+          const reply=await window.pywebview.api.natural_refresh_permission(pending.id,currentConvId,true);
+          if(!reply||reply.status!=='ok')throw new Error(reply?.data||'Yeni onay hazırlanamadı');
+          panel.remove();
+          await pollNaturalTask();
+        } catch(error) {
+          status.textContent='Yeni onay hazırlanamadı: '+String(error.message||error);
+          refresh.disabled=false;
+        }
+      };
+    }
     const decide=async(accept)=>{
       approve.disabled=true;deny.disabled=true;
       let resolved=false;
@@ -105,11 +138,12 @@ JAVASCRIPT = r"""  let desktopView={code:'normal',stop_ref:null};
       } catch(error) {
         status.textContent='İzin işlemi doğrulanamadı: '+String(error.message||error)+'. Güncel görev durumu yeniden okunmalı.';
       } finally {
-        if(!resolved){approve.disabled=false;deny.disabled=false;}
+        if(!resolved){approve.disabled=pending.approvalBlocked===true;deny.disabled=false;}
       }
     };
     approve.onclick=()=>decide(true);deny.onclick=()=>decide(false);
-    panel.append(title,reason,summary,details,approve,deny,status);chatEl.append(panel);scrollToBottom(true);
+    panel.append(title,...(pauseNote.textContent?[pauseNote]:[]),reason,summary,details,approve,deny,...(refresh?[refresh]:[]),status);
+    chatEl.append(panel);scrollToBottom(true);
   }
   async function pollCoordination() {
     await refreshDesktopTaskState();

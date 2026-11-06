@@ -327,6 +327,14 @@ class MultiAgentService:
             cached = self._squad_snapshot_cache.get(key)
             if not active and signature is not None and cached and cached[1] == signature and now-cached[0] < 300:
                 return copy.deepcopy(cached[2])
+            # A project without a Squad workspace has nothing to change in the
+            # background: reuse its 'not initialized' view until Squad appears.
+            uninitialized = not active and signature is None and squad.initialized is False
+            empty_key = ('uninitialized', key)
+            empty = self._squad_snapshot_cache.get(empty_key)
+            if uninitialized and empty and now-empty[0] < 300:
+                return copy.deepcopy(empty[1])
+            self._squad_snapshot_cache.pop(empty_key, None)
             # Never reuse an old snapshot after an active job, failed query or
             # concurrent external write; completion times anchor the TTL.
             self._squad_snapshot_cache.pop(key, None)
@@ -342,6 +350,9 @@ class MultiAgentService:
             after = self._squad_signature(project)
             if not active and signature is not None and signature == after and not error and not squad_status.get('error'):
                 self._squad_snapshot_cache[key] = (time.monotonic(), after, copy.deepcopy(result))
+            elif (uninitialized and after is None and squad.initialized is False
+                  and squad_status.get('installed') and not squad_status.get('error')):
+                self._squad_snapshot_cache[empty_key] = (time.monotonic(), copy.deepcopy(result))
             return result
 
     def dispatch(self, provider, prompt, **kwargs) -> dict:
