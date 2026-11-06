@@ -10,6 +10,8 @@ Claude'dadır. Buna `main`'e birleştirme ve kullanıcı onaylı paket kurulumu 
 - Gemini'nin dalları Claude incelemesinden sonra Claude tarafından birleştirilir.
 - Codex döndüğünde devir biter; Codex bu süredeki Codex alanı değişikliklerini geriye dönük inceler.
 - Diğer kurallar (ayrı worktree, tek operatör, tek yazıcı, GitHub'a gönderim yok) aynen geçerlidir.
+- 6–7 Kasım'da kullanıcının açık sözlü yetkisiyle bazı Claude değişiklikleri öz incelemeyle alındı; liste ve
+  geriye dönük inceleme kuyruğu: [CLAUDE_HANDOVER_TO_CODEX_20261107.md](CLAUDE_HANDOVER_TO_CODEX_20261107.md).
 
 ## AKTİF — 5 Kasım Dalga 0
 
