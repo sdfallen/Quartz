@@ -9,7 +9,7 @@ the code that already owns them. Destructive actions are left out of the palette
 JAVASCRIPT = r"""
   // ── Workspace shell ─────────────────────────────────────
   const uiRoot = document.documentElement;
-  const UI_DEFAULTS = {theme: 'dark', crystal: 'rose'};
+  const UI_DEFAULTS = {theme: 'dark', crystal: 'citrine'};
   function markPrefButtons() {
     document.querySelectorAll('#prefTheme button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.value === uiRoot.dataset.theme)));
     document.querySelectorAll('#prefCrystal button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.value === uiRoot.dataset.crystal)));
@@ -200,7 +200,7 @@ JAVASCRIPT = r"""
       ['Görünüm', 'Kristal: pembe kuvars', () => applyUiPreference('crystal', 'rose')],
       ['Görünüm', 'Kristal: sitrin', () => applyUiPreference('crystal', 'citrine')],
       ['Görünüm', 'Kristal: ametist', () => applyUiPreference('crystal', 'amethyst')],
-      ['Görünüm', 'Kristal: dumanlı kuvars', () => applyUiPreference('crystal', 'smoky')],
+      ['Görünüm', 'Kristal: kaya kristali', () => applyUiPreference('crystal', 'smoky')],
     ];
     if (desktopView.stop_ref) commands.unshift(['Görev', 'Masaüstü görevini durdur', () => pressIfUsable('btnDesktopTaskStop')]);
     if (thinking) commands.unshift(['Görev', 'Etkin görevi durdur', () => pressIfUsable('btnCancel')]);

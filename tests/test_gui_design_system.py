@@ -32,7 +32,7 @@ def _tokens(css):
     return dict(re.findall(r"--([\w-]+):\s*(#[0-9a-fA-F]{6})\b", css))
 
 
-DARK = _tokens(BASE_CSS[:BASE_CSS.index('[data-crystal="citrine"]')])
+DARK = _tokens(BASE_CSS[:BASE_CSS.index('[data-crystal="rose"]')])
 LIGHT = {**DARK, **_tokens(_LIGHT_TOKENS)}
 
 
@@ -54,8 +54,8 @@ class ContrastTests(unittest.TestCase):
     def test_every_crystal_keeps_accent_text_readable(self):
         dark_rules = re.findall(r':root\[data-crystal="(\w+)"\] \{ --accent:(#\w+);.*?--on-accent:(#\w+);', BASE_CSS)
         light_rules = re.findall(r'\[data-crystal="(\w+)"\] \{\{ --accent:(#\w+);.*?--on-accent:(#\w+);', _LIGHT_CRYSTALS)
-        self.assertEqual({r[0] for r in dark_rules}, {"citrine", "amethyst", "smoky"})
-        self.assertEqual({r[0] for r in light_rules}, {"citrine", "amethyst", "smoky"})
+        self.assertEqual({r[0] for r in dark_rules}, {"rose", "citrine", "amethyst", "smoky"})
+        self.assertEqual({r[0] for r in light_rules}, {"rose", "citrine", "amethyst", "smoky"})
         for rules, surface in ((dark_rules, DARK["surface-1"]), (light_rules, LIGHT["surface-1"])):
             for name, accent, on_accent in rules:
                 self.assertGreaterEqual(_contrast(on_accent, accent), 4.5, name)
@@ -93,7 +93,7 @@ class PreferenceTests(unittest.TestCase):
         self.assertEqual(ui_preferences.load_ui_preferences(self.path), {"theme": "light", "crystal": "amethyst"})
         html = ui_preferences.apply_to_document(gui._HTML, self.path)
         self.assertIn('<html lang="tr" data-theme="light" data-crystal="amethyst">', html)
-        self.assertEqual(ui_preferences.window_background(self.path), "#f7f5f2")
+        self.assertEqual(ui_preferences.window_background(self.path), "#f7f3fd")
 
     def test_simultaneous_saves_keep_both_values(self):
         import threading

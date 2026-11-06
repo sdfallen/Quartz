@@ -23,6 +23,9 @@ MODERN_CSS = r"""
 @keyframes q-dot { 0%,100% { opacity:.3; transform:none; } 40% { opacity:1; transform:translateY(-2px); } }
 @keyframes q-intro-out { to { opacity:0; transform:scale(1.015); } }
 @keyframes q-hud-pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+@keyframes q-caret { 0%,45% { opacity:1; } 55%,100% { opacity:.2; } }
+@keyframes q-live-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+@keyframes q-gem { 0%,100% { opacity:1; transform:rotate(45deg) scale(1); } 50% { opacity:.55; transform:rotate(45deg) scale(.78); } }
 
 @media (prefers-reduced-motion: no-preference) {
   body:not(.low-spec) .chat > .msg:nth-last-child(-n+8),
@@ -68,6 +71,10 @@ MODERN_CSS = r"""
   body:not(.low-spec):not(.ui-idle) .bubble.pending > div:first-child::before { animation:q-dot 1100ms ease-in-out infinite; }
   body:not(.low-spec):not(.ui-idle) .bubble.pending > div:first-child::after { animation:q-dot 1100ms ease-in-out 200ms infinite; }
   body:not(.low-spec) .hud-dot { animation:q-hud-pulse 1600ms ease-in-out infinite; }
+  /* A message being written and an agent at work: the only motion while waiting. */
+  body:not(.low-spec):not(.ui-idle) .reveal-caret { animation:q-caret 900ms steps(1,end) infinite; }
+  body:not(.low-spec) .agent-live-now span { animation:q-live-in var(--t-med) var(--ease) both; }
+  body:not(.low-spec):not(.ui-idle) .agent-live-gem { animation:q-gem 1400ms ease-in-out infinite; }
 }
 /* Orb state still reads without motion. */
 #orbCore[data-state="error"] .f { fill:var(--danger); }

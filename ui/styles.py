@@ -5,65 +5,79 @@ and motion (``ui/theme.py``) read tokens only. Dark is the default; light and
 the four crystal accents are selected by attributes on ``<html>``.
 """
 
+# Quartz palette (7 Nov 2026): the three faces of quartz instead of black and
+# white. Amethyst is the ground, clear rock crystal the text, citrine the light.
+# Codex speaks in citrine, Gemini in amethyst, Quartz itself in crystal white.
 _LIGHT_TOKENS = """
     color-scheme: light;
-    --bg: #f7f5f2;
-    --surface-1: #fdfcfa;
-    --surface-2: #f0ede9;
-    --surface-3: #e6e2dd;
-    --line: rgba(40,30,20,.1);
-    --line-strong: rgba(40,30,20,.2);
-    --text: #1f1d1b;
-    --text-2: #5c5752;
-    --text-3: #6f6a64;
-    --accent: #a84c38;
-    --accent-soft: rgba(168,76,56,.1);
+    --bg: #f7f3fd;
+    --surface-1: #fdfbff;
+    --surface-2: #efe8fb;
+    --surface-3: #e3d9f6;
+    --line: rgba(60,30,110,.11);
+    --line-strong: rgba(60,30,110,.21);
+    --text: #1c1330;
+    --text-2: #4a3c66;
+    --text-3: #5f5279;
+    --accent: #855a00;
+    --accent-soft: rgba(133,90,0,.11);
     --on-accent: #ffffff;
-    --ok: #24724a;
-    --warn: #85590b;
-    --danger: #b5372a;
-    --danger-soft: rgba(181,55,42,.09);
-    --agent-codex: #2f6db0;
-    --agent-agy: #7d4fb5;
-    --shadow-1: 0 1px 2px rgba(50,35,25,.08);
-    --shadow-2: 0 10px 30px rgba(50,35,25,.12), 0 2px 6px rgba(50,35,25,.06);
-    --shadow-3: 0 24px 70px rgba(50,35,25,.2), 0 4px 14px rgba(50,35,25,.08);
-    --scrim: rgba(40,32,26,.32);
+    --ok: #1d7446;
+    --warn: #8a4f00;
+    --danger: #b0263d;
+    --danger-soft: rgba(176,38,61,.09);
+    --agent-codex: #855a00;
+    --agent-agy: #6a3fc9;
+    --agent-quartz: #1c1330;
+    --amethyst: #6a3fc9;
+    --amethyst-soft: rgba(106,63,201,.12);
+    --aurora-1: rgba(106,63,201,.11);
+    --aurora-2: rgba(204,150,20,.10);
+    --shadow-1: 0 1px 2px rgba(50,20,90,.08);
+    --shadow-2: 0 10px 30px rgba(50,20,90,.12), 0 2px 6px rgba(50,20,90,.06);
+    --shadow-3: 0 24px 70px rgba(50,20,90,.2), 0 4px 14px rgba(50,20,90,.08);
+    --scrim: rgba(30,16,52,.32);
 """
 
-_LIGHT_CRYSTALS = """{selector}[data-crystal="citrine"] {{ --accent:#855d06; --accent-soft:rgba(133,93,6,.1); --on-accent:#ffffff; }}
-{selector}[data-crystal="amethyst"] {{ --accent:#6d43ab; --accent-soft:rgba(109,67,171,.09); --on-accent:#ffffff; }}
-{selector}[data-crystal="smoky"] {{ --accent:#57504a; --accent-soft:rgba(87,80,74,.1); --on-accent:#ffffff; }}
+_LIGHT_CRYSTALS = """{selector}[data-crystal="rose"] {{ --accent:#a8325f; --accent-soft:rgba(168,50,95,.1); --on-accent:#ffffff; }}
+{selector}[data-crystal="citrine"] {{ --accent:#855a00; --accent-soft:rgba(133,90,0,.11); --on-accent:#ffffff; }}
+{selector}[data-crystal="amethyst"] {{ --accent:#6a3fc9; --accent-soft:rgba(106,63,201,.1); --on-accent:#ffffff; }}
+{selector}[data-crystal="smoky"] {{ --accent:#4f4763; --accent-soft:rgba(79,71,99,.1); --on-accent:#ffffff; }}
 """
 
 BASE_CSS = r"""
 :root {
   color-scheme: dark;
-  --bg: #141312;
-  --surface-1: #1b1a18;
-  --surface-2: #232220;
-  --surface-3: #2d2b29;
-  --line: rgba(255,244,235,.08);
-  --line-strong: rgba(255,244,235,.15);
-  --text: #eeebe7;
-  --text-2: #aca69f;
-  --text-3: #918b84;
-  --accent: #e9a797;
-  --accent-soft: rgba(233,167,151,.14);
-  --on-accent: #2a1410;
-  --ok: #86cba0;
-  --warn: #e5bb6e;
-  --danger: #f08a7d;
-  --danger-soft: rgba(240,138,125,.13);
+  --bg: #130e1f;
+  --surface-1: #1a1428;
+  --surface-2: #231b36;
+  --surface-3: #2f2546;
+  --line: rgba(222,204,255,.09);
+  --line-strong: rgba(222,204,255,.17);
+  --text: #f7f3ff;
+  --text-2: #cfc4e6;
+  --text-3: #ab9dca;
+  --accent: #f5c85a;
+  --accent-soft: rgba(245,200,90,.14);
+  --on-accent: #2a1d00;
+  --ok: #8fdcaa;
+  --warn: #ffb870;
+  --danger: #ff8fa1;
+  --danger-soft: rgba(255,143,161,.13);
   --stop: #c4352a;
   --stop-hover: #d8443a;
   --on-stop: #ffffff;
-  --agent-codex: #93bbe9;
-  --agent-agy: #c9abec;
-  --shadow-1: 0 1px 2px rgba(0,0,0,.28);
-  --shadow-2: 0 10px 30px rgba(0,0,0,.34), 0 2px 6px rgba(0,0,0,.22);
-  --shadow-3: 0 24px 70px rgba(0,0,0,.5), 0 4px 14px rgba(0,0,0,.28);
-  --scrim: rgba(10,9,8,.62);
+  --agent-codex: #f5c85a;
+  --agent-agy: #c6a6ff;
+  --agent-quartz: #f7f3ff;
+  --amethyst: #9d6cff;
+  --amethyst-soft: rgba(157,108,255,.18);
+  --aurora-1: rgba(157,108,255,.24);
+  --aurora-2: rgba(245,200,90,.09);
+  --shadow-1: 0 1px 2px rgba(6,0,16,.36);
+  --shadow-2: 0 10px 30px rgba(6,0,16,.42), 0 2px 6px rgba(6,0,16,.26);
+  --shadow-3: 0 24px 70px rgba(6,0,16,.58), 0 4px 14px rgba(6,0,16,.32);
+  --scrim: rgba(10,5,22,.64);
 
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
@@ -92,9 +106,10 @@ BASE_CSS = r"""
   --bg-void: var(--bg);
   --txt-faint: var(--text-3);
 }
-:root[data-crystal="citrine"] { --accent:#e6c06a; --accent-soft:rgba(230,192,106,.14); --on-accent:#2a2006; }
-:root[data-crystal="amethyst"] { --accent:#c3a6ee; --accent-soft:rgba(195,166,238,.15); --on-accent:#1f1233; }
-:root[data-crystal="smoky"] { --accent:#c9c2b8; --accent-soft:rgba(201,194,184,.14); --on-accent:#1f1c18; }
+:root[data-crystal="rose"] { --accent:#f4a9c6; --accent-soft:rgba(244,169,198,.14); --on-accent:#2c0f1c; }
+:root[data-crystal="citrine"] { --accent:#f5c85a; --accent-soft:rgba(245,200,90,.14); --on-accent:#2a1d00; }
+:root[data-crystal="amethyst"] { --accent:#c6a6ff; --accent-soft:rgba(198,166,255,.16); --on-accent:#1f1036; }
+:root[data-crystal="smoky"] { --accent:#ebe5f5; --accent-soft:rgba(235,229,245,.13); --on-accent:#1f1a2a; }
 """ + ':root[data-theme="light"] {' + _LIGHT_TOKENS + "}\n" + _LIGHT_CRYSTALS.format(selector=':root[data-theme="light"]') + """
 @media (prefers-color-scheme: light) {
 :root[data-theme="system"] {""" + _LIGHT_TOKENS + "}\n" + _LIGHT_CRYSTALS.format(selector=':root[data-theme="system"]') + r"""}
@@ -102,7 +117,11 @@ BASE_CSS = r"""
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; overflow: hidden; }
 body {
-  background: var(--bg);
+  /* Still light, no motion: an amethyst glow above, a citrine one below. */
+  background:
+    radial-gradient(1100px 620px at 88% -12%, var(--aurora-1), transparent 62%),
+    radial-gradient(900px 520px at -8% 112%, var(--aurora-2), transparent 60%),
+    var(--bg);
   color: var(--text);
   font: 400 var(--text-md)/1.55 var(--font);
   -webkit-font-smoothing: antialiased;
