@@ -86,12 +86,6 @@ def resume_process(process: subprocess.Popen | None) -> bool:
     if getattr(process, "_quartz_resumed", False):
         return True
     proc_handle = getattr(process, "_handle", None)
-    if proc_handle is None and not isinstance(process, _POPEN_TYPE):
-        try:
-            process._quartz_resumed = True
-        except Exception:
-            pass
-        return True
     if isinstance(process, _POPEN_TYPE):
         try:
             import psutil
@@ -113,6 +107,19 @@ def resume_process(process: subprocess.Popen | None) -> bool:
     return False
 
 
+def _resume_or_stop(process: subprocess.Popen, error_sink=None) -> bool:
+    if resume_process(process):
+        return True
+    _record_job_error(
+        process,
+        "Failed to resume suspended process; terminating process",
+        error_sink,
+    )
+    _stop_owned_root(process, timeout=1)
+    close_process_job(process)
+    return False
+
+
 def bind_kill_on_close_job(
     process: subprocess.Popen | None,
     *,
@@ -127,80 +134,80 @@ def bind_kill_on_close_job(
         if isinstance(process, _POPEN_TYPE):
             _record_job_error(process, "Process handle is missing for Job Object assignment", error_sink)
             if resume:
-                resume_process(process)
-        elif resume:
-            resume_process(process)
+                _resume_or_stop(process, error_sink)
         return False
     with _state_lock(process):
+        assigned = False
         try:
             if getattr(process, "_quartz_job_handle", None):
                 sync_process_job(process)
-                return True
-            try:
-                k32 = ctypes.windll.kernel32
-                k32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
-                k32.CreateJobObjectW.restype = wintypes.HANDLE
-                k32.SetInformationJobObject.argtypes = [
-                    wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD
-                ]
-                k32.SetInformationJobObject.restype = wintypes.BOOL
-                k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
-                k32.AssignProcessToJobObject.restype = wintypes.BOOL
-                k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-                k32.OpenProcess.restype = wintypes.HANDLE
-                k32.CloseHandle.argtypes = [wintypes.HANDLE]
-                k32.CloseHandle.restype = wintypes.BOOL
+                assigned = True
+            else:
+                try:
+                    k32 = ctypes.windll.kernel32
+                    k32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+                    k32.CreateJobObjectW.restype = wintypes.HANDLE
+                    k32.SetInformationJobObject.argtypes = [
+                        wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD
+                    ]
+                    k32.SetInformationJobObject.restype = wintypes.BOOL
+                    k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+                    k32.AssignProcessToJobObject.restype = wintypes.BOOL
+                    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+                    k32.OpenProcess.restype = wintypes.HANDLE
+                    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+                    k32.CloseHandle.restype = wintypes.BOOL
 
-                job = k32.CreateJobObjectW(None, None)
-                if not job:
+                    job = k32.CreateJobObjectW(None, None)
+                    if not job:
+                        _record_job_error(
+                            process,
+                            f"CreateJobObjectW failed (winerr={ctypes.GetLastError()})",
+                            error_sink,
+                        )
+                    else:
+                        info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+                        info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                        ok_set = k32.SetInformationJobObject(
+                            job,
+                            _JOB_OBJECT_EXTENDED_LIMIT_INFO_CLASS,
+                            ctypes.byref(info),
+                            ctypes.sizeof(info),
+                        )
+                        if not ok_set:
+                            err_code = ctypes.GetLastError()
+                            k32.CloseHandle(job)
+                            _record_job_error(
+                                process,
+                                f"SetInformationJobObject failed (winerr={err_code})",
+                                error_sink,
+                            )
+                        else:
+                            ok_assign = k32.AssignProcessToJobObject(job, wintypes.HANDLE(proc_handle))
+                            if not ok_assign:
+                                err_code = ctypes.GetLastError()
+                                k32.CloseHandle(job)
+                                _record_job_error(
+                                    process,
+                                    f"AssignProcessToJobObject failed (winerr={err_code})",
+                                    error_sink,
+                                )
+                            else:
+                                process._quartz_job_handle = int(job)
+                                process._quartz_job_assigned_pids = {int(process.pid)}
+                                process._quartz_job_error = ""
+                                sync_process_job(process)
+                                assigned = True
+                except Exception as exc:
                     _record_job_error(
                         process,
-                        f"CreateJobObjectW failed (winerr={ctypes.GetLastError()})",
+                        f"Job Object assignment exception: {type(exc).__name__}: {exc}",
                         error_sink,
                     )
-                    return False
-                info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
-                info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-                ok_set = k32.SetInformationJobObject(
-                    job,
-                    _JOB_OBJECT_EXTENDED_LIMIT_INFO_CLASS,
-                    ctypes.byref(info),
-                    ctypes.sizeof(info),
-                )
-                if not ok_set:
-                    err_code = ctypes.GetLastError()
-                    k32.CloseHandle(job)
-                    _record_job_error(
-                        process,
-                        f"SetInformationJobObject failed (winerr={err_code})",
-                        error_sink,
-                    )
-                    return False
-                ok_assign = k32.AssignProcessToJobObject(job, wintypes.HANDLE(proc_handle))
-                if not ok_assign:
-                    err_code = ctypes.GetLastError()
-                    k32.CloseHandle(job)
-                    _record_job_error(
-                        process,
-                        f"AssignProcessToJobObject failed (winerr={err_code})",
-                        error_sink,
-                    )
-                    return False
-                process._quartz_job_handle = int(job)
-                process._quartz_job_assigned_pids = {int(process.pid)}
-                process._quartz_job_error = ""
-                sync_process_job(process)
-                return True
-            except Exception as exc:
-                _record_job_error(
-                    process,
-                    f"Job Object assignment exception: {type(exc).__name__}: {exc}",
-                    error_sink,
-                )
-                return False
         finally:
-            if resume:
-                resume_process(process)
+            if resume and not _resume_or_stop(process, error_sink):
+                assigned = False
+        return assigned
 
 
 def sync_process_job(process: subprocess.Popen | None) -> None:

@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import psutil
 
-from core.process_tree import CREATE_SUSPENDED, bind_kill_on_close_job, stop_process_tree
+from core.process_tree import CREATE_SUSPENDED, bind_kill_on_close_job, resume_process, stop_process_tree
 
 
 class ProcessTreeTests(unittest.TestCase):
@@ -116,6 +116,47 @@ class ProcessTreeTests(unittest.TestCase):
             out, _ = proc.communicate(timeout=5)
             self.assertEqual(out.strip(), "resumed-ok")
             self.assertEqual(proc.returncode, 0)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=3)
+            if proc.stdout:
+                proc.stdout.close()
+            if proc.stderr:
+                proc.stderr.close()
+
+    @unittest.skipUnless(os.name == "nt", "Windows resume failure handling")
+    def test_p2b_p3_resume_failure_records_error_and_stops_process_and_rejects_non_popen_stub(self):
+        class _FakeNonPopen:
+            pid = 999999
+
+        # P3: non-Popen object without a valid OS handle is not treated as resumed in production code
+        fake_stub = _FakeNonPopen()
+        self.assertFalse(resume_process(fake_stub))
+        self.assertFalse(getattr(fake_stub, "_quartz_resumed", False))
+
+        # P2b: if resume_process fails after CREATE_SUSPENDED, bind_kill_on_close_job logs to error_sink and stops the process
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) | CREATE_SUSPENDED,
+        )
+        errors: list[str] = []
+        try:
+            with patch("core.process_tree.resume_process", return_value=False):
+                with self.assertLogs("core.process_tree", level="WARNING") as captured_logs:
+                    ok = bind_kill_on_close_job(proc, resume=True, error_sink=errors.append)
+            self.assertFalse(ok)
+            self.assertTrue(any("Failed to resume suspended process; terminating process" in e for e in errors))
+            self.assertIn(
+                "Failed to resume suspended process; terminating process",
+                getattr(proc, "_quartz_job_error", ""),
+            )
+            self.assertTrue(any("Failed to resume suspended process" in m for m in captured_logs.output))
+            self.assertIsNotNone(proc.poll())
+            self.assertIsNone(getattr(proc, "_quartz_job_handle", None))
         finally:
             if proc.poll() is None:
                 proc.kill()

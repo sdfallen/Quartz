@@ -111,51 +111,21 @@ class AntigravityRuntime:
             return False
         try:
             proj = Path(project_path).resolve()
-        except OSError:
-            proj = Path(project_path)
-        proj_is_scratch = any(
-            part.lower().startswith(cls._SCRATCH_WORKSPACE_PREFIXES)
-            for part in proj.parts
-        )
+            temp_root = Path(tempfile.gettempdir()).resolve()
+        except (OSError, ValueError):
+            return False
+        if proj.parent != temp_root or not proj.name.lower().startswith(cls._SCRATCH_WORKSPACE_PREFIXES):
+            return False
         raw = str(file_path or "").strip()
         if not raw:
-            return proj_is_scratch
+            return True
         try:
             candidate = Path(raw)
             target = (candidate if candidate.is_absolute() else (proj / candidate)).resolve()
-        except OSError:
-            return False
-        target_in_scratch_dir = any(
-            part.lower().startswith(cls._SCRATCH_WORKSPACE_PREFIXES)
-            for part in target.parts
-        )
-        if proj_is_scratch:
-            try:
-                target.relative_to(proj)
-                return True
-            except ValueError:
-                return target_in_scratch_dir
-        if target_in_scratch_dir:
-            return True
-        try:
             target.relative_to(proj)
+            return True
+        except (OSError, ValueError):
             return False
-        except ValueError:
-            pass
-        try:
-            temp_root = Path(tempfile.gettempdir()).resolve()
-            proj_in_temp = False
-            try:
-                proj.relative_to(temp_root)
-                proj_in_temp = True
-            except ValueError:
-                pass
-            if not proj_in_temp:
-                target.relative_to(temp_root)
-                return True
-        except OSError:
-            pass
-        return False
 
     def list_models(self, force: bool = False) -> dict:
         """Discover supported models and efforts directly from `agy models`."""

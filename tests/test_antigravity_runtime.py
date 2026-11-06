@@ -336,6 +336,91 @@ class AntigravityRuntimeTests(unittest.TestCase):
         self.assertEqual(current["job_assignment_error"], "Simulated AssignProcessToJobObject failure")
         self.assertTrue(any(e["kind"] == "job_assignment_failed" for e in current["error_events"]))
 
+    def test_p1_readonly_write_outside_project_and_outside_temp_sets_unauthorized_write_detected(self):
+        runtime = AntigravityRuntime(self.exe)
+        isolated_temp = self.root / "isolated_temp"
+        user_project = self.root / "user_project"
+        outside_docs = self.root / "outside_docs"
+        isolated_temp.mkdir(parents=True, exist_ok=True)
+        user_project.mkdir(parents=True, exist_ok=True)
+        outside_docs.mkdir(parents=True, exist_ok=True)
+        leak_file = outside_docs / "leak.txt"
+        leak_str = str(leak_file).replace("\\", "\\\\")
+        stream = (
+            '{"event":"init","conversation_id":"conv-p1"}\n'
+            '{"event":"step_update","step_update":{"id":"s1","state":"DONE","step_type":"tool",'
+            '"tool_name":"write_file","tool_info":{"parameters":{"Path":"' + leak_str + '"}}}}\n'
+            '{"event":"result","result":{"conversation_id":"conv-p1","status":"SUCCESS","response":"Wrote outside"}}\n'
+        )
+        with patch("core.antigravity_runtime.tempfile.gettempdir", return_value=str(isolated_temp)), \
+             patch("core.antigravity_runtime.subprocess.Popen", return_value=FakeProcess(stream)):
+            started = runtime.start("inspect", user_project, write=False, full_access=False)
+            for _ in range(100):
+                current = runtime.get(started["id"])
+                if current["status"] in runtime.TERMINAL:
+                    break
+                time.sleep(0.01)
+
+        self.assertEqual(current["status"], "failed")
+        self.assertTrue(current["unauthorized_write_detected"])
+        self.assertEqual(current["unauthorized_files_changed"], [str(leak_file)])
+        self.assertEqual(current["scratch_files_changed"], [])
+        self.assertTrue(any("modified file without write permission" in err for err in current["errors"]))
+
+    def test_p2a_user_project_does_not_exempt_temp_files_or_quartz_chat_tool_subfolders(self):
+        runtime = AntigravityRuntime(self.exe)
+        isolated_temp = self.root / "isolated_temp"
+        user_project = self.root / "user_project"
+        subfolder = user_project / "quartz-chat-tool-sub"
+        isolated_temp.mkdir(parents=True, exist_ok=True)
+        subfolder.mkdir(parents=True, exist_ok=True)
+
+        # 1) User project writing to a file in TEMP is NOT exempt
+        temp_file = isolated_temp / "random_temp.txt"
+        temp_str = str(temp_file).replace("\\", "\\\\")
+        stream_temp = (
+            '{"event":"init","conversation_id":"conv-p2a-temp"}\n'
+            '{"event":"step_update","step_update":{"id":"s1","state":"DONE","step_type":"tool",'
+            '"tool_name":"write_file","tool_info":{"parameters":{"Path":"' + temp_str + '"}}}}\n'
+            '{"event":"result","result":{"conversation_id":"conv-p2a-temp","status":"SUCCESS","response":"Wrote temp"}}\n'
+        )
+        with patch("core.antigravity_runtime.tempfile.gettempdir", return_value=str(isolated_temp)), \
+             patch("core.antigravity_runtime.subprocess.Popen", return_value=FakeProcess(stream_temp)):
+            started1 = runtime.start("inspect", user_project, write=False, full_access=False)
+            for _ in range(100):
+                current1 = runtime.get(started1["id"])
+                if current1["status"] in runtime.TERMINAL:
+                    break
+                time.sleep(0.01)
+
+        self.assertEqual(current1["status"], "failed")
+        self.assertTrue(current1["unauthorized_write_detected"])
+        self.assertEqual(current1["unauthorized_files_changed"], [str(temp_file)])
+        self.assertEqual(current1["scratch_files_changed"], [])
+
+        # 2) User project writing to a "quartz-chat-tool-*" subfolder inside the project is NOT exempt
+        sub_file = subfolder / "a.py"
+        sub_str = str(sub_file).replace("\\", "\\\\")
+        stream_sub = (
+            '{"event":"init","conversation_id":"conv-p2a-sub"}\n'
+            '{"event":"step_update","step_update":{"id":"s1","state":"DONE","step_type":"tool",'
+            '"tool_name":"write_file","tool_info":{"parameters":{"Path":"' + sub_str + '"}}}}\n'
+            '{"event":"result","result":{"conversation_id":"conv-p2a-sub","status":"SUCCESS","response":"Wrote sub"}}\n'
+        )
+        with patch("core.antigravity_runtime.tempfile.gettempdir", return_value=str(isolated_temp)), \
+             patch("core.antigravity_runtime.subprocess.Popen", return_value=FakeProcess(stream_sub)):
+            started2 = runtime.start("inspect", user_project, write=False, full_access=False)
+            for _ in range(100):
+                current2 = runtime.get(started2["id"])
+                if current2["status"] in runtime.TERMINAL:
+                    break
+                time.sleep(0.01)
+
+        self.assertEqual(current2["status"], "failed")
+        self.assertTrue(current2["unauthorized_write_detected"])
+        self.assertEqual(current2["unauthorized_files_changed"], [str(sub_file)])
+        self.assertEqual(current2["scratch_files_changed"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -127,4 +127,34 @@ include_sysdrive=True  -> created=['cache', 'tmp']
 
 - **Hedef Dosya:** `core/tool_workbench/execution.py:59`
 - **Değişiklik:** `safe_keys` kümesine `"SYSTEMDRIVE"` eklenmesi (veya `os.name == "nt"` iken `env.setdefault("SYSTEMDRIVE", os.environ.get("SYSTEMDRIVE") or str(Path(os.environ.get("SYSTEMROOT", "C:\\Windows")).drive or "C:"))`).
-- **Önerilen Negatif Regresyon Testi (`tests/test_tool_workbench_execution.py`):** `test_execute_echo_success` sonunda `self.assertFalse(any("%SystemDrive%" in p for p in receipt.artifacts))` kontrolünün eklenmesi.
+- **Önerilen Negresyon Testi (`tests/test_tool_workbench_execution.py`):** `test_execute_echo_success` sonunda `self.assertFalse(any("%SystemDrive%" in p for p in receipt.artifacts))` kontrolünün eklenmesi.
+
+---
+
+## 4. `docs/CLAUDE_REVIEW_GEMINI_R2_R3_20261106.md` (`P1`, `P2a`, `P2b`, `P3`) Düzeltmeleri ve `claude/systemdrive-fix-20261106` (`c249300`) İncelemesi
+
+### 4.1 `P1`, `P2a`, `P2b`, `P3` Düzeltmeleri (`main = 87d0106` Üzerine)
+
+| Bulgu | Çözüm (`dosya:satır`) | Eklenen Birim Testleri |
+|---|---|---|
+| **P1:** `target.relative_to(temp_root)` `ValueError` fırlattığında yalnız `OSError` yakalandığı için proje ve `TEMP` dışına yazmalarda ihlal kaydının düşmesi | `core/codex_runtime.py:213-233` ve `core/antigravity_runtime.py:108-128`: `_is_scratch_workspace_path` içindeki tüm yol çözümleme ve `relative_to` blokları `(OSError, ValueError)` yakalayacak şekilde güncellendi; proje ve `TEMP` dışı yazmalar istisna fırlatmadan `False` döner ve `unauthorized_write_detected = True` olarak kaydedilir. | `tests/test_codex_runtime.py`: `test_p1_readonly_write_outside_project_and_outside_temp_sets_unauthorized_write_detected`<br>`tests/test_antigravity_runtime.py`: `test_p1_readonly_write_outside_project_and_outside_temp_sets_unauthorized_write_detected` |
+| **P2a:** Muafiyetin yalnız çalışma klasörünün kendisi Quartz geçici klasörüyse ve hedef onun içindeyse geçerli olacak şekilde daraltılması | `core/codex_runtime.py:222-233` ve `core/antigravity_runtime.py:117-128`: Muafiyet yalnız `proj.parent == temp_root` **ve** `proj.name.lower().startswith(cls._SCRATCH_WORKSPACE_PREFIXES)` koşulu sağlandığında ve `target.relative_to(proj)` başarılı olduğunda `True` döner. Kullanıcı projesinde çalışırken `TEMP` altındaki herhangi bir dosyaya veya proje içindeki `quartz-chat-tool-*` alt klasörüne yazmak artık muaf değildir (`False` döner ve ihlal sayılır). | `tests/test_codex_runtime.py`: `test_p2a_user_project_does_not_exempt_temp_files_or_quartz_chat_tool_subfolders`<br>`tests/test_antigravity_runtime.py`: `test_p2a_user_project_does_not_exempt_temp_files_or_quartz_chat_tool_subfolders` |
+| **P2b:** `core/process_tree.py` içinde `resume_process` başarısız olursa `error_sink`'e yazılması ve sürecin durdurulması | `core/process_tree.py:110-120, 196-198`: `_resume_or_stop(process, error_sink)` eklendi. `resume_process(process)` `False` dönerse `_record_job_error(process, "Failed to resume suspended process; terminating process", error_sink)` çağrılır, `_stop_owned_root(process, timeout=1)` ve `close_process_job(process)` ile askıdaki süreç sonlandırılır ve `bind_kill_on_close_job` `False` döner. | `tests/test_process_tree.py`: `test_p2b_p3_resume_failure_records_error_and_stops_process_and_rejects_non_popen_stub` |
+| **P3:** `resume_process` içindeki `Popen` olmayan nesne dalının üretim kodundan çıkarılması | `core/process_tree.py:82-107`: `if proc_handle is None and not isinstance(process, _POPEN_TYPE):` test kısayolu üretim kodundan kaldırıldı; `resume_process` sahte/handle'sız nesneler için doğrudan `False` döner. | `tests/test_process_tree.py`: `test_p2b_p3_resume_failure_records_error_and_stops_process_and_rejects_non_popen_stub` |
+
+### 4.2 Bağımsız İnceleme: `claude/systemdrive-fix-20261106` (`c249300`)
+
+- **Karar: `ACCEPT` (SOURCE + TESTED)** *(kural gereği `main`'e tarafımızdan birleştirilmedi; Claude alabilir)*.
+- **İncelenen Dosyalar (`c249300`):**
+  1. `core/tool_workbench/execution.py:59-72`: `safe_keys` kümesine `"SYSTEMDRIVE"` eklenmiş; ayrıca Windows'ta (`os.name == "nt"`) üst ortamda `SYSTEMDRIVE` bulunmasa bile `SYSTEMROOT` / `WINDIR` sürücüsünden (`Path(root).drive or "C:"`) güvenli yedekleme yapılmıştır. Gizli anahtar sızıntısı koruması (`SECRET`, `TOKEN`, `KEY`, `PASSWORD`, `CREDENTIAL`, `AUTH` filtreleri) korunmuştur.
+  2. `tests/test_tool_workbench_execution.py:146-159`: `test_execute_echo_success` içine `receipt.artifacts` ve `self.workspace_root.rglob("%SystemDrive%")` negatif regresyon kontrolleri eklenmiş; `test_sanitized_environment_keeps_system_drive` ile hem açık `SYSTEMDRIVE="D:"` hem de `SYSTEMDRIVE` silindiğinde `SYSTEMROOT="E:\\Windows"` üzerinden `"E:"` türetimi doğrulanmıştır.
+- **Gerçek Test Çıktısı (`C:\Users\LENAVO\.codex\worktrees\quartz-systemdrive-20261106` @ `c249300`):**
+
+```text
+$ python -X utf8 -B scripts/check_python_syntax.py
+Published Python syntax: 326 files OK
+
+$ python -X utf8 -B scripts/run_safe_tests.py tests.test_tool_workbench_execution tests.test_tool_workbench_execution_safety
+Ran 26 tests in 8.251s
+OK
+```
