@@ -177,6 +177,102 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     return {summary, details, state, open:detailLevel === 'technical'};
   }
 
+  // Typing reveal for agent text that arrives while Quartz is open. History
+  // (first load, conversation switch) appears at once; a growing streamed
+  // message continues from what is already visible. Off under reduced motion
+  // and low-spec; the full text is always in the DOM model it is rebuilt from.
+  const revealedLength = new Map();
+  let liveRevealArmed = false;
+  let revealSuppressed = false;
+  function revealMotionAllowed() {
+    if (typeof window === 'undefined' || !document.body) return false;
+    if (document.body.classList?.contains('low-spec')) return false;
+    return !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+  function revealMessage(bubble, body, msgId) {
+    if (!msgId || typeof document.createTreeWalker !== 'function') return;
+    const nodes = [];
+    const walker = document.createTreeWalker(body, 4);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) nodes.push([n, n.nodeValue]);
+    const total = nodes.reduce((sum, item) => sum + item[1].length, 0);
+    const previous = revealedLength.get(msgId);
+    if (!liveRevealArmed || revealSuppressed || !revealMotionAllowed()) { revealedLength.set(msgId, total); return; }
+    let shown = previous === undefined ? 0 : Math.min(previous, total);
+    revealedLength.set(msgId, shown);
+    if (shown >= total) return;
+    const token = {};
+    bubble.__reveal = token;
+    const caret = document.createElement('span');
+    caret.className = 'reveal-caret';
+    caret.setAttribute('aria-hidden', 'true');
+    const rate = Math.max(90, (total - shown) / 1.4);  // chars/s; long answers finish in about 1.4 s
+    // Blocks not reached yet stay out of the layout, so no empty bullet or box shows early.
+    const blocks = Array.from(body.querySelectorAll ? body.querySelectorAll('li, .msg-p, .msg-heading, .msg-code') : []);
+    const paint = () => {
+      let budget = shown, anchor = null;
+      for (const [node, value] of nodes) {
+        if (budget >= value.length) { if (node.nodeValue !== value) node.nodeValue = value; budget -= value.length; anchor = node; }
+        else if (budget > 0) { node.nodeValue = value.slice(0, budget); budget = 0; anchor = node; }
+        else if (node.nodeValue !== '') node.nodeValue = '';
+      }
+      for (const block of blocks) block.classList.toggle('reveal-pending', !block.textContent);
+      const target = anchor || nodes[0][0];
+      if (target.parentNode) target.parentNode.insertBefore(caret, target.nextSibling);
+    };
+    const finish = () => { caret.remove(); for (const block of blocks) block.classList.remove('reveal-pending'); };
+    let last = performance.now();
+    const step = (now) => {
+      if (bubble.__reveal !== token || !body.isConnected) { finish(); return; }
+      shown = Math.min(total, shown + Math.max(1, Math.round(rate * (now - last) / 1000)));
+      last = now;
+      revealedLength.set(msgId, shown);
+      paint();
+      if (userPinnedToBottom) scrollToBottom(true);
+      if (shown < total) requestAnimationFrame(step);
+      else { finish(); bubble.__reveal = null; }
+    };
+    paint();
+    requestAnimationFrame(step);
+  }
+
+  // What each agent is doing right now, under its own working bubble. The
+  // line comes from chat_poll agent_progress (memory only, never evidence).
+  function renderAgentLive(progress) {
+    const keep = new Set();
+    for (const [agent, entry] of Object.entries(progress || {})) {
+      if (!['codex', 'antigravity'].includes(agent) || !entry || entry.status !== 'running') continue;
+      if (!entry.activity || !/^[\w-]{1,80}$/.test(String(entry.message_id || ''))) continue;
+      const bubble = chatEl.querySelector(`.msg[data-msg-id="${entry.message_id}"] .bubble`);
+      if (!bubble || !bubble.parentNode) continue;
+      let live = bubble.parentNode.querySelector(':scope > .agent-live');
+      if (!live) {
+        live = document.createElement('div');
+        live.className = 'agent-live';
+        const now = document.createElement('div'); now.className = 'agent-live-now';
+        const gem = document.createElement('i'); gem.className = 'agent-live-gem'; gem.setAttribute('aria-hidden', 'true');
+        const trail = document.createElement('div'); trail.className = 'agent-live-trail';
+        now.append(gem); live.append(now, trail);
+        bubble.after(live);
+      }
+      live.dataset.agent = agent;
+      keep.add(live);
+      const now = live.querySelector('.agent-live-now');
+      const current = now.querySelector('span');
+      if (!current || current.textContent !== entry.activity) {
+        const text = document.createElement('span'); text.textContent = String(entry.activity).slice(0, 160);
+        if (current) current.replaceWith(text); else now.append(text);
+      }
+      const history = (Array.isArray(entry.activity_trail) ? entry.activity_trail : [])
+        .filter(t => t !== entry.activity).slice(-3).map(t => String(t).slice(0, 160));
+      const trail = live.querySelector('.agent-live-trail');
+      if (trail.dataset.key !== JSON.stringify(history)) {
+        trail.dataset.key = JSON.stringify(history);
+        trail.replaceChildren(...history.map(t => { const s = document.createElement('span'); s.textContent = t; return s; }));
+      }
+    }
+    chatEl.querySelectorAll('.agent-live').forEach(el => { if (!keep.has(el)) el.remove(); });
+  }
+
   function renderMessageBody(bubble, text, msg) {
     const level = document.getElementById('responseDetail')?.value || 'short';
     const view = agentMessageView(text, msg, level);
@@ -197,6 +293,7 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       appendMessageText(body, view.summary);
     }
     bubble.append(body);
+    if (!isUserMessage && view.summary !== '...' && typeof revealMessage === 'function') revealMessage(bubble, body, msg?.id);
     if (msg?.status === 'interrupted' && msg.id) {
       const resume = document.createElement('button'); resume.className = 'control-btn';
       resume.textContent = 'Yeni görev taslağı hazırla';
@@ -500,6 +597,7 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
 
   function syncConversationMessages(messages, replaceAll=false) {
     if (!Array.isArray(messages)) return;
+    revealSuppressed = replaceAll;  // history appears at once; later arrivals are written out
     if (replaceAll) {
       chatEl.innerHTML = '';
       userPinnedToBottom = true;
@@ -566,6 +664,8 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       }
     }
 
+    revealSuppressed = false;
+    liveRevealArmed = true;
     if (replaceAll || userPinnedToBottom) {
       scrollToBottom(true);
     } else {

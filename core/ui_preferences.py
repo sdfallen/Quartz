@@ -5,7 +5,7 @@ from pathlib import Path
 
 from core.atomic_json import atomic_write_json, load_json
 
-DEFAULTS = {"theme": "dark", "crystal": "rose"}
+DEFAULTS = {"theme": "dark", "crystal": "citrine"}
 _SAVE_LOCK = threading.Lock()  # pywebview runs each API call on its own thread.
 ALLOWED = {"theme": ("dark", "light", "system"), "crystal": ("rose", "citrine", "amethyst", "smoky")}
 
@@ -40,4 +40,4 @@ def apply_to_document(html: str, path=None) -> str:
 
 
 def window_background(path=None) -> str:
-    return "#f7f5f2" if load_ui_preferences(path)["theme"] == "light" else "#141312"
+    return "#f7f3fd" if load_ui_preferences(path)["theme"] == "light" else "#130e1f"

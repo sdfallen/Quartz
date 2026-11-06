@@ -214,7 +214,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     const names={codex:'Codex',antigravity:'Antigravity'};
     const states={running:'çalışıyor',completed:'tamamlandı',failed:'başarısız',cancelling:'durduruluyor',cancelled:'durduruldu'};
     return Object.entries(progress || {}).filter(([key])=>key in names)
-      .map(([key,value])=>`${names[key]}: ${states[value.status] || 'hazırlanıyor'}${value.status==='running' && value.step ? ' — '+value.step : ''}`).join(' | ');
+      .map(([key,value])=>`${names[key]}: ${states[value.status] || 'hazırlanıyor'}${value.status==='running' && (value.activity || value.step) ? ' — '+(value.activity || value.step) : ''}`).join(' | ');
   }
 
   async function loadActiveConversation() {
@@ -374,6 +374,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
         else chatEl.scrollTop = prevScrollTop;
       }
 
+      if (typeof renderAgentLive === 'function') renderAgentLive(data.active ? data.agent_progress : null);
       if (data.metadata) {
         if (Object.keys(data.agent_progress || {}).length) {
           thinkingText.textContent = agentProgressText(data.agent_progress);

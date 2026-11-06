@@ -287,7 +287,7 @@ SHELL_MARKUP = r"""
             <button type="button" data-value="rose" title="Pembe kuvars" aria-label="Pembe kuvars"></button>
             <button type="button" data-value="citrine" title="Sitrin" aria-label="Sitrin"></button>
             <button type="button" data-value="amethyst" title="Ametist" aria-label="Ametist"></button>
-            <button type="button" data-value="smoky" title="Dumanlı kuvars" aria-label="Dumanlı kuvars"></button>
+            <button type="button" data-value="smoky" title="Kaya kristali" aria-label="Kaya kristali"></button>
           </div>
         </div>
         <div class="pref-notice" id="prefNotice" role="status" hidden></div>

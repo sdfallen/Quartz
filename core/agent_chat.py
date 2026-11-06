@@ -14,6 +14,7 @@ from core.conversation_store import ConversationStore
 from core.multi_agent_service import MultiAgentService, WriterDispatchError
 from core.response_style import communication_instruction, DETAIL_MARKER
 from core.agent_character import character_instruction
+from core.agent_activity import describe_activity
 from core.async_snapshot import AsyncSnapshot
 from core.task_outcome import execution_outcome, group_execution_status
 
@@ -879,6 +880,21 @@ class AgentChatService:
                                        'run_id':metadata.get('run_id'), 'updated_at':time.time()}
             return True
 
+    def _note_activity(self, msg_id, agent, run):
+        """Memory-only live activity for the chat bubble; never persisted or used as evidence."""
+        text = describe_activity(agent, run)
+        if not text:
+            return
+        with self._lock:
+            turn = getattr(self, '_active_turn', None)
+            if not turn or turn.get('status') != 'running' or self._is_turn_cancelled(msg_id):
+                return
+            entry = turn.setdefault('agent_progress', {}).get(agent)
+            if not entry or entry.get('message_id') != msg_id or entry.get('activity') == text:
+                return
+            trail = [t for t in entry.get('activity_trail', []) if t != text][-3:]
+            entry.update(activity=text, activity_trail=trail + [text], activity_at=time.time())
+
     def _launch_worker(self, target, args, task_id, name):
         worker = threading.Thread(target=target, args=args, name=name, daemon=True)
         with self._lock:
@@ -1307,6 +1323,7 @@ class AgentChatService:
             if not self._publish_run_update(cid, msg_id, content, step_meta, provider='antigravity', session=session):
                 self.agent_service.cancel(run_id)
                 return run, "cancelled"
+            self._note_activity(msg_id, 'antigravity', run)
             last_content, last_status = content, status
             if session: last_session_saved = session
 
@@ -1453,6 +1470,7 @@ class AgentChatService:
             if not self._publish_run_update(cid, msg_id, content, step_meta, provider='codex', session=session):
                 self.agent_service.cancel(run_id)
                 return run, "cancelled"
+            self._note_activity(msg_id, 'codex', run)
             last_content, last_status = content, status
             if session: last_thread_saved = session
 

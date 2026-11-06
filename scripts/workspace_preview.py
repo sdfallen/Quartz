@@ -2,7 +2,7 @@
 
 For visual/DOM QA only. It cannot prove real agents or packaged-window behavior.
 """
-from http.server import BaseHTTPRequestHandler,HTTPServer
+from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer as HTTPServer
 from pathlib import Path
 import sys
 
@@ -17,7 +17,25 @@ const sampleConversation={id:'preview',title:'Quartz çalışma alanı',agent:'c
 {id:'one',role:'user',sender:'user',content:'Codex test penceresini kontrol etsin; Gemini gerçek logları incelesin.',metadata:{}},
 {id:'two',role:'assistant',sender:'quartz',content:'Önce pencere, kapsam ve süre için onay isteyeceğim. Aynı anda yalnız bir ajan klavye ve fareyi kullanabilir.',metadata:{status:'completed'}},
 {id:'three',role:'assistant',sender:'codex',content:'Test sonucunu gerçek pencere ve log kanıtıyla değerlendireceğim.\\n\\n---TEKNIK_AYRINTILAR---\\nBu sayfa yalnız görsel test verisidir; gerçek görevi başlatmaz.',metadata:{status:'completed'}}]};
+// Synthetic live turn (preview only): activity lines change, then the answer streams in.
+let liveTurn=null;
+const LIVE_STEPS=['Düşünüyor…','Dosya okuyor: agent_chat.py','Kodda arıyor: describe_activity','Komut çalıştırıyor: python -m unittest tests.test_ag…','Sonucu doğruluyor','Yanıt yazıyor…'];
+const LIVE_ANSWER='Bence **önce ölçelim**. Etkinlik satırı Codex ve Gemini\\'nin gerçek olaylarından geliyor; model metni değil.\\n\\n- Komutlar kısaltılıyor, dosya yolunun yalnız son kısmı görünüyor.\\n- Satır yalnız bellekte; kanıt sayılmıyor.\\n\\nAçık soru: bu hız düşük donanımda yeterli mi? `low-spec` modunda animasyon kapanıyor.';
+function liveState(){
+ if(!liveTurn)return null;
+ const e=(Date.now()-liveTurn.t0)/1000, step=Math.min(LIVE_STEPS.length-1,Math.floor(e/1.6));
+ const streaming=e>8, done=e>13;
+ const content=streaming?LIVE_ANSWER.slice(0,Math.floor((e-8)/4*LIVE_ANSWER.length)):'';
+ const msg={id:'live-a',role:'assistant',sender:'antigravity',content:done?LIVE_ANSWER:content,status:done?'completed':'running',metadata:{status:done?'completed':'running',model:'gemini-3.8-flash-high',effort:'high'}};
+ return {done,msg,progress:{antigravity:{message_id:'live-a',status:done?'completed':'running',activity:LIVE_STEPS[step],activity_trail:LIVE_STEPS.slice(0,step+1)}}};
+}
 window.pywebview={api:new Proxy({},{get:(_,name)=>async(...args)=>{
+if(name==='chat_send'){liveTurn={t0:Date.now()};sampleConversation.messages.push({id:'live-u',role:'user',sender:'user',content:String(args[0]||''),metadata:{}});
+ return {status:'ok',data:{conversation_id:'preview',user_message:{id:'live-u'},assistant_message:{id:'live-a',sender:'antigravity',metadata:{status:'starting'}}}};}
+if(name==='chat_poll'){const s=liveState();if(!s)return {status:'ok',data:{active:false,messages:[]}};
+ const msgs=sampleConversation.messages.filter(m=>m.id!=='live-a').concat([s.msg]);if(s.done){sampleConversation.messages=msgs;liveTurn=null;}
+ return {status:'ok',data:{active:!s.done,messages:msgs,metadata:s.msg.metadata,agent_progress:s.progress,single_writer:{}}};}
+if(name==='coordination_route'&&!/erişim|yetki|pencere|masaüstü/i.test(String(args[0]||'')))return {status:'ok',data:{handled:false,intent:'conversation'}};
 if(name==='chat_status')return {status:'ok',data:{preferences:{response_detail:'short'},active_conversation:sampleConversation,conversations:[sampleConversation,{id:'older',title:'Önceki test notları'}],projects:[{id:'preview-project',name:'Geçici test projesi',path:'Preview only'}],agents:{},models:{},single_writer:{}}};
 if(name==='ping')return {status:'ok',data:'Preview only'};
 if(name==='get_stats')return {cpu:0,mem:0,disk:0};
@@ -35,6 +53,11 @@ if(name==='coordination_approve')return {status:'error',data:'PREVIEW ONLY: no r
 return {status:'ok',data:[]};
 }})};
 window.addEventListener('DOMContentLoaded',()=>window.dispatchEvent(new Event('pywebviewready')));
+// #light / #live (headless QA): pick the light theme, or run one live turn without clicks.
+window.addEventListener('load',()=>{if(location.hash.includes('light'))setTimeout(()=>{document.documentElement.dataset.theme='light';},300);});
+window.addEventListener('load',()=>{if(!location.hash.includes('live'))return;setTimeout(()=>{
+ const input=document.getElementById('msgInput');if(!input)return;input.value='Bu etkinlik satırı fikrini değerlendir';
+ document.getElementById('btnSend')?.click();},900);});
 </script>"""
 
 
