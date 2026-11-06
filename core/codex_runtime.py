@@ -6,14 +6,16 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
 from pathlib import Path
 
-from core.process_tree import (OwnedCleanupUnconfirmed, bind_kill_on_close_job,
-                               close_process_job, owned_cleanup_pending,
-                               stop_process_tree, wait_for_owned_cleanup,
+from core.process_tree import (CREATE_SUSPENDED, OwnedCleanupUnconfirmed,
+                               bind_kill_on_close_job, close_process_job,
+                               owned_cleanup_pending, stop_process_tree,
+                               wait_for_owned_cleanup,
                                wait_process_with_job_sync)
 
 
@@ -22,6 +24,11 @@ class CodexRuntime:
     SUPPORTED_EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"]
     PROBE_TTL = 300.0
     _SHARED_PROBE_CACHE: dict[str, tuple[float, dict]] = {}
+    _SCRATCH_WORKSPACE_PREFIXES = (
+        "quartz-chat-tool-",
+        "quartz-desktop-task-",
+        "quartz-rea-readonly-",
+    )
 
     def __init__(self, executable=None):
         self.executable = None
@@ -203,6 +210,58 @@ class CodexRuntime:
         record["_oracle_seq"] = seq
         return seq
 
+    @classmethod
+    def _is_scratch_workspace_path(cls, project_path: str | Path, file_path: str, *, tool_guard: bool = False) -> bool:
+        if tool_guard:
+            return False
+        try:
+            proj = Path(project_path).resolve()
+        except OSError:
+            proj = Path(project_path)
+        proj_is_scratch = any(
+            part.lower().startswith(cls._SCRATCH_WORKSPACE_PREFIXES)
+            for part in proj.parts
+        )
+        raw = str(file_path or "").strip()
+        if not raw:
+            return proj_is_scratch
+        try:
+            candidate = Path(raw)
+            target = (candidate if candidate.is_absolute() else (proj / candidate)).resolve()
+        except OSError:
+            return False
+        target_in_scratch_dir = any(
+            part.lower().startswith(cls._SCRATCH_WORKSPACE_PREFIXES)
+            for part in target.parts
+        )
+        if proj_is_scratch:
+            try:
+                target.relative_to(proj)
+                return True
+            except ValueError:
+                return target_in_scratch_dir
+        if target_in_scratch_dir:
+            return True
+        try:
+            target.relative_to(proj)
+            return False
+        except ValueError:
+            pass
+        try:
+            temp_root = Path(tempfile.gettempdir()).resolve()
+            proj_in_temp = False
+            try:
+                proj.relative_to(temp_root)
+                proj_in_temp = True
+            except ValueError:
+                pass
+            if not proj_in_temp:
+                target.relative_to(temp_root)
+                return True
+        except OSError:
+            pass
+        return False
+
     def start(self, prompt, project_path, *, sandbox="read-only", approval="never",
               squad_task_id=None, squad_agent_id=None, resume_thread_id=None,
               timeout=None, model: str | None = None, effort: str | None = None,
@@ -245,13 +304,15 @@ class CodexRuntime:
                 "model": clean_model, "effort": clean_effort,
                 "result": "", "errors": [], "events": [], "usage": None,
                 "commands": [], "command_results": [], "command_exit_codes": [],
-                "files_changed": [], "file_changes": [],
+                "files_changed": [], "scratch_files_changed": [], "file_changes": [],
                 "unauthorized_write_detected": False, "unauthorized_files_changed": [],
                 "error_events": [],
+                "job_bound": False, "job_assignment_error": "",
                 "squad_task_id": squad_task_id,
                 "squad_agent_id": squad_agent_id,
                 "cancel_requested": False,
                 "_oracle_seq": 0,
+                "_tool_guard": bool(tool_guard),
             }
             self._runs[run_id] = record
             if is_writer:
@@ -310,7 +371,8 @@ class CodexRuntime:
         else:
             args = common + ["--json", "--skip-git-repo-check", "-"]
         command = self._command(args)
-        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | CREATE_SUSPENDED
+        job_errors: list[str] = []
         try:
             from core.cli_installer import cli_environment
             process_options = {"env": desktop_env if desktop_env is not None else cli_environment()}
@@ -320,7 +382,7 @@ class CodexRuntime:
                 encoding="utf-8", errors="replace", creationflags=flags,
                 **process_options,
             )
-            bind_kill_on_close_job(process)
+            job_bound = bind_kill_on_close_job(process, resume=True, error_sink=job_errors.append)
         except Exception:
             with self._lock:
                 record["status"] = "failed"
@@ -341,6 +403,19 @@ class CodexRuntime:
 
         with self._lock:
             record["pid"] = process.pid
+            record["job_bound"] = bool(job_bound)
+            if job_errors:
+                record["job_assignment_error"] = job_errors[-1]
+                seq = self._next_oracle_seq(record)
+                record.setdefault("error_events", []).append({
+                    "seq": seq,
+                    "source": "job_object",
+                    "kind": "job_assignment_failed",
+                    "tool": None,
+                    "command": None,
+                    "exit_code": None,
+                    "message": job_errors[-1],
+                })
             record["status"] = "running"
             self._processes[run_id] = process
         stdout_thread = threading.Thread(
@@ -389,6 +464,7 @@ class CodexRuntime:
             value["command_results"] = [dict(item) for item in record.get("command_results", [])[-50:]]
             value["command_exit_codes"] = list(record.get("command_exit_codes", [])[-50:])
             value["files_changed"] = list(record.get("files_changed", []))
+            value["scratch_files_changed"] = list(record.get("scratch_files_changed", []))
             value["file_changes"] = [dict(item) for item in record.get("file_changes", [])[-100:]]
             value["unauthorized_files_changed"] = list(record.get("unauthorized_files_changed", []))
             value["error_events"] = [dict(item) for item in record.get("error_events", [])[-50:]]
@@ -543,6 +619,11 @@ class CodexRuntime:
                                 change_kind = str(change.get("kind") or "update").lower()
                                 if path:
                                     seq = self._next_oracle_seq(record)
+                                    is_scratch = self._is_scratch_workspace_path(
+                                        record.get("project", ""),
+                                        path,
+                                        tool_guard=bool(record.get("_tool_guard")),
+                                    )
                                     record.setdefault("file_changes", []).append({
                                         "seq": seq,
                                         "path": path,
@@ -550,24 +631,30 @@ class CodexRuntime:
                                         "tool": "file_change",
                                         "state": state_str,
                                     })
-                                    if state_str == "DONE" and path not in record["files_changed"]:
-                                        record["files_changed"].append(path)
-                                    if state_str == "DONE" and record.get("sandbox") == "read-only":
-                                        record["unauthorized_write_detected"] = True
-                                        unauth_list = record.setdefault("unauthorized_files_changed", [])
-                                        if path not in unauth_list:
-                                            unauth_list.append(path)
-                                        violation_msg = f"Read-only Codex run modified file without write permission: {path}"
-                                        record["errors"].append(violation_msg)
-                                        record.setdefault("error_events", []).append({
-                                            "seq": seq,
-                                            "source": "sandbox_guard",
-                                            "kind": "unauthorized_readonly_write",
-                                            "tool": "file_change",
-                                            "command": None,
-                                            "exit_code": None,
-                                            "message": violation_msg,
-                                        })
+                                    if state_str == "DONE":
+                                        if is_scratch:
+                                            scratch_list = record.setdefault("scratch_files_changed", [])
+                                            if path not in scratch_list:
+                                                scratch_list.append(path)
+                                        else:
+                                            if path not in record["files_changed"]:
+                                                record["files_changed"].append(path)
+                                            if record.get("sandbox") == "read-only":
+                                                record["unauthorized_write_detected"] = True
+                                                unauth_list = record.setdefault("unauthorized_files_changed", [])
+                                                if path not in unauth_list:
+                                                    unauth_list.append(path)
+                                                violation_msg = f"Read-only Codex run modified file without write permission: {path}"
+                                                record["errors"].append(violation_msg)
+                                                record.setdefault("error_events", []).append({
+                                                    "seq": seq,
+                                                    "source": "sandbox_guard",
+                                                    "kind": "unauthorized_readonly_write",
+                                                    "tool": "file_change",
+                                                    "command": None,
+                                                    "exit_code": None,
+                                                    "message": violation_msg,
+                                                })
                                     elif state_str == "ERROR":
                                         record.setdefault("error_events", []).append({
                                             "seq": seq,

@@ -7,14 +7,16 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
 from pathlib import Path
 
-from core.process_tree import (OwnedCleanupUnconfirmed, bind_kill_on_close_job,
-                               close_process_job, owned_cleanup_pending,
-                               stop_process_tree, wait_for_owned_cleanup,
+from core.process_tree import (CREATE_SUSPENDED, OwnedCleanupUnconfirmed,
+                               bind_kill_on_close_job, close_process_job,
+                               owned_cleanup_pending, stop_process_tree,
+                               wait_for_owned_cleanup,
                                wait_process_with_job_sync)
 
 
@@ -41,6 +43,11 @@ class AntigravityRuntime:
         "notebook_edit": "update",
         "delete_file": "delete",
     }
+    _SCRATCH_WORKSPACE_PREFIXES = (
+        "quartz-chat-tool-",
+        "quartz-desktop-task-",
+        "quartz-rea-readonly-",
+    )
 
     def __init__(self, executable=None):
         self.executable = None
@@ -97,6 +104,58 @@ class AntigravityRuntime:
             except ValueError:
                 pass
         return None
+
+    @classmethod
+    def _is_scratch_workspace_path(cls, project_path: str | Path, file_path: str, *, tool_guard: bool = False) -> bool:
+        if tool_guard:
+            return False
+        try:
+            proj = Path(project_path).resolve()
+        except OSError:
+            proj = Path(project_path)
+        proj_is_scratch = any(
+            part.lower().startswith(cls._SCRATCH_WORKSPACE_PREFIXES)
+            for part in proj.parts
+        )
+        raw = str(file_path or "").strip()
+        if not raw:
+            return proj_is_scratch
+        try:
+            candidate = Path(raw)
+            target = (candidate if candidate.is_absolute() else (proj / candidate)).resolve()
+        except OSError:
+            return False
+        target_in_scratch_dir = any(
+            part.lower().startswith(cls._SCRATCH_WORKSPACE_PREFIXES)
+            for part in target.parts
+        )
+        if proj_is_scratch:
+            try:
+                target.relative_to(proj)
+                return True
+            except ValueError:
+                return target_in_scratch_dir
+        if target_in_scratch_dir:
+            return True
+        try:
+            target.relative_to(proj)
+            return False
+        except ValueError:
+            pass
+        try:
+            temp_root = Path(tempfile.gettempdir()).resolve()
+            proj_in_temp = False
+            try:
+                proj.relative_to(temp_root)
+                proj_in_temp = True
+            except ValueError:
+                pass
+            if not proj_in_temp:
+                target.relative_to(temp_root)
+                return True
+        except OSError:
+            pass
+        return False
 
     def list_models(self, force: bool = False) -> dict:
         """Discover supported models and efforts directly from `agy models`."""
@@ -264,14 +323,16 @@ class AntigravityRuntime:
                 "errors": [], "events": [], "progress_log": [], "usage": None,
                 "denied_actions": [],
                 "commands": [], "command_results": [], "command_exit_codes": [],
-                "files_changed": [], "file_changes": [],
+                "files_changed": [], "scratch_files_changed": [], "file_changes": [],
                 "unauthorized_write_detected": False, "unauthorized_files_changed": [],
                 "error_events": [],
+                "job_bound": False, "job_assignment_error": "",
                 "squad_task_id": squad_task_id,
                 "squad_agent_id": squad_agent_id,
                 "cancel_requested": False,
                 "_oracle_seq": 0,
                 "_pending_tool_params": {},
+                "_tool_guard": bool(tool_guard),
             }
             self._runs[run_id] = record
             if effective_write:
@@ -293,12 +354,13 @@ class AntigravityRuntime:
             home_dir = str(Path.home())
             if os.path.isdir(home_dir):
                 args += ["--add-dir", home_dir]
-        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | CREATE_SUSPENDED
         process_options = {}
         if desktop_connection is not None:
             from core.desktop_agents import connection_environment
             process_options["env"] = connection_environment(desktop_connection)
         process_options = self._process_options(process_options, project, desktop_connection, tool_guard)
+        job_errors: list[str] = []
         try:
             process = subprocess.Popen(
                 self._command(args), cwd=str(project), stdin=subprocess.DEVNULL,
@@ -306,7 +368,7 @@ class AntigravityRuntime:
                 encoding="utf-8", errors="replace", creationflags=flags,
                 **process_options,
             )
-            bind_kill_on_close_job(process)
+            job_bound = bind_kill_on_close_job(process, resume=True, error_sink=job_errors.append)
         except Exception:
             with self._lock:
                 record["status"] = "failed"
@@ -316,6 +378,19 @@ class AntigravityRuntime:
 
         with self._lock:
             record["pid"] = process.pid
+            record["job_bound"] = bool(job_bound)
+            if job_errors:
+                record["job_assignment_error"] = job_errors[-1]
+                seq = self._next_oracle_seq(record)
+                record.setdefault("error_events", []).append({
+                    "seq": seq,
+                    "source": "job_object",
+                    "kind": "job_assignment_failed",
+                    "tool": None,
+                    "command": None,
+                    "exit_code": None,
+                    "message": job_errors[-1],
+                })
             record["status"] = "running"
             self._processes[run_id] = process
         stdout_thread = threading.Thread(
@@ -366,6 +441,7 @@ class AntigravityRuntime:
             value["command_results"] = [dict(item) for item in record.get("command_results", [])[-50:]]
             value["command_exit_codes"] = list(record.get("command_exit_codes", [])[-50:])
             value["files_changed"] = list(record.get("files_changed", []))
+            value["scratch_files_changed"] = list(record.get("scratch_files_changed", []))
             value["file_changes"] = [dict(item) for item in record.get("file_changes", [])[-100:]]
             value["unauthorized_files_changed"] = list(record.get("unauthorized_files_changed", []))
             value["error_events"] = [dict(item) for item in record.get("error_events", [])[-50:]]
@@ -516,6 +592,11 @@ class AntigravityRuntime:
                                            params.get("file_path") or params.get("path") or "")
                                 change_kind = self._FILE_CHANGE_TOOLS[tool_name]
                                 seq = self._next_oracle_seq(record)
+                                is_scratch = self._is_scratch_workspace_path(
+                                    record.get("project", ""),
+                                    path,
+                                    tool_guard=bool(record.get("_tool_guard")),
+                                )
                                 if path:
                                     record.setdefault("file_changes", []).append({
                                         "seq": seq,
@@ -524,30 +605,37 @@ class AntigravityRuntime:
                                         "tool": tool_name,
                                         "state": tool_state,
                                     })
-                                if tool_state == "DONE" and path and path not in record["files_changed"]:
-                                    record["files_changed"].append(path)
-                                if tool_state == "DONE" and record.get("sandbox") == "sandbox":
-                                    record["unauthorized_write_detected"] = True
-                                    unauth_list = record.setdefault("unauthorized_files_changed", [])
-                                    if path and path not in unauth_list:
-                                        unauth_list.append(path)
-                                    violation_msg = f"Read-only Antigravity run modified file without write permission: {path or tool_name}"
-                                    record["errors"].append(violation_msg)
-                                    record.setdefault("denied_actions", []).append({
-                                        "action": "write",
-                                        "display_name": tool_name,
-                                        "path": path,
-                                        "reason": "read_only_violation",
-                                    })
-                                    record.setdefault("error_events", []).append({
-                                        "seq": seq,
-                                        "source": "sandbox_guard",
-                                        "kind": "unauthorized_readonly_write",
-                                        "tool": tool_name,
-                                        "command": None,
-                                        "exit_code": None,
-                                        "message": violation_msg,
-                                    })
+                                if tool_state == "DONE":
+                                    if is_scratch:
+                                        if path:
+                                            scratch_list = record.setdefault("scratch_files_changed", [])
+                                            if path not in scratch_list:
+                                                scratch_list.append(path)
+                                    else:
+                                        if path and path not in record["files_changed"]:
+                                            record["files_changed"].append(path)
+                                        if record.get("sandbox") == "sandbox":
+                                            record["unauthorized_write_detected"] = True
+                                            unauth_list = record.setdefault("unauthorized_files_changed", [])
+                                            if path and path not in unauth_list:
+                                                unauth_list.append(path)
+                                            violation_msg = f"Read-only Antigravity run modified file without write permission: {path or tool_name}"
+                                            record["errors"].append(violation_msg)
+                                            record.setdefault("denied_actions", []).append({
+                                                "action": "write",
+                                                "display_name": tool_name,
+                                                "path": path,
+                                                "reason": "read_only_violation",
+                                            })
+                                            record.setdefault("error_events", []).append({
+                                                "seq": seq,
+                                                "source": "sandbox_guard",
+                                                "kind": "unauthorized_readonly_write",
+                                                "tool": tool_name,
+                                                "command": None,
+                                                "exit_code": None,
+                                                "message": violation_msg,
+                                            })
                                 elif tool_state == "ERROR":
                                     err_msg = str(tool_info.get("error") or tool_info.get("output") or f"Tool {tool_name} failed")
                                     record.setdefault("error_events", []).append({
