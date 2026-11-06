@@ -110,7 +110,10 @@ class ConversationStore:
                         recovery_reason='Application restarted before a terminal result',
                         automatic_replay=False, permissions_restored=False)
                     if meta.get('instruction_state') in {'queued', 'running'}: meta['instruction_state'] = 'interrupted'
-                    if abandoned_task: meta['task_status'] = 'interrupted'
+                    if abandoned_task:
+                        # Say that a pending permission card died with the old session.
+                        if meta.get('task_status') == 'awaiting_approval': meta['interrupted_while'] = 'awaiting_approval'
+                        meta['task_status'] = 'interrupted'
                     msg['status'] = 'interrupted'
                     if not msg.get('content', '').strip():
                         msg['content'] = 'Önceki oturum kesildi. Görev otomatik sürdürülmedi; devam etmeden önce durumu kontrol edin.'

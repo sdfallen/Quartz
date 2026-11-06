@@ -60,6 +60,13 @@ assert.equal(view('completed',{natural_task:'job'}),'Yürütme bitti, hedef hen�
 assert.match(view('completed',{permission_level:'project'}),/kanıtı yok/);
 ''')
 
+    def test_restart_while_awaiting_approval_says_the_old_permission_is_void(self):
+        self.view(r'''
+assert.equal(view('interrupted',{interrupted_while:'awaiting_approval'}),
+  'Önceki oturum onay beklerken kesildi; eski izin geçersiz. Devam için görevi yeniden yaz.');
+assert.equal(view('interrupted',{}),'Önceki oturum kesildi; otomatik sürdürülmedi');
+''')
+
     def test_quartz_text_check_has_its_own_scoped_label(self):
         self.view(r'''
 const ok={status:'OBSERVED UI CRITERION VERIFIED',expected_text:['deneme']};

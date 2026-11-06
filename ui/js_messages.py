@@ -144,6 +144,9 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     let state = ({failed:'Başarısız', cancelled:'Durduruldu', interrupted:'Önceki oturum kesildi; otomatik sürdürülmedi',
       blocked:'Engellendi; nedeni ayrıntılarda', awaiting_approval:'Onay bekleniyor — görev duraklatıldı',
       partial:PARTIAL})[status] || '';
+    if (status === 'interrupted' && meta.interrupted_while === 'awaiting_approval') {
+      state = 'Önceki oturum onay beklerken kesildi; eski izin geçersiz. Devam için görevi yeniden yaz.';
+    }
     const missing = Object.entries(outcome.participants || {}).filter(([, s]) => s !== 'completed')
       .map(([agent]) => agent === 'codex' ? 'Codex' : agent === 'antigravity' ? 'Gemini' : String(agent));
     if (status === 'completed') {
