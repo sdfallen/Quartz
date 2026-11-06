@@ -62,6 +62,9 @@ JARVIS_REPEAT_REFUSE_AFTER = 40
 JARVIS_REPEAT_STOP_AFTER = 44
 
 
+# CLAUDE.md: ASTER/Warband is officially shelved; Quartz must not start game or
+# Universal Modder work. The adapter code stays for a deliberate future revival.
+ASTER_SHELVED = True
 HOST_TEXT_SOURCE = "host_request_text"
 _QUOTE_CLOSE = {"'": "'", '"': '"', "‘": "’", "“": "”", "«": "»"}
 # An opening quote must start a word, so Turkish suffix apostrophes
@@ -326,9 +329,12 @@ class NaturalDesktopTask:
             raise ValueError("1–8000 karakterlik görev gerekli")
         root = Path(project["path"]).resolve(strict=True)
         from core.warband_workspace import PROJECT
-        warband_profile = root == PROJECT.resolve(strict=False) and project.get("workflow") == "warband"
-        if not warband_profile and any(p.lower() in {"warbandisland", "ai_island_test", "aster"} for p in root.parts):
+        warband_project = root == PROJECT.resolve(strict=False) and project.get("workflow") == "warband"
+        if not warband_project and any(p.lower() in {"warbandisland", "ai_island_test", "aster"} for p in root.parts):
             raise PermissionError("ASTER için kayıtlı Universal Modder proje profilini seçin")
+        # ASTER/Warband is shelved: a chat filed under that project still gets an
+        # ordinary desktop task, isolated from the ASTER tree, never the UM profile.
+        warband_profile = warband_project and not ASTER_SHELVED
         with self.lock:
             if self.stopped.is_set() and not self.broker.status()["active"]:
                 if (self._inflight_calls or not self._cleanup_done.is_set()
@@ -352,11 +358,12 @@ class NaturalDesktopTask:
                 raise RuntimeError("Önceki görevi kapatmadan yeni operatör başlatılamaz")
             roles = task_roles(text)
             task_id = uuid.uuid4().hex
-            if warband_profile:
+            if warband_project:
                 self.evidence = self.evidence_root / task_id
                 self.evidence.mkdir(parents=True, exist_ok=False)
-                from core.warband_workspace import WarbandWorkspace
-                self.warband = (self.warband_factory or WarbandWorkspace)(self.evidence)
+                if warband_profile:
+                    from core.warband_workspace import WarbandWorkspace
+                    self.warband = (self.warband_factory or WarbandWorkspace)(self.evidence)
                 self.squad = self.squad_factory(str(self.evidence))
                 if not self.squad.initialized: self.squad.initialize()
             else:
@@ -378,7 +385,7 @@ class NaturalDesktopTask:
                 self.squad_info = {"connected": bool(connection.get("installed") and connection.get("initialized")),
                     "database": connection.get("database", ""), "workspace": connection.get("workspace", ""),
                     "version": connection.get("version", ""), "error": connection.get("error", ""),
-                    "mode": "task-isolated" if warband_profile else "project"}
+                    "mode": "task-isolated" if warband_project else "project"}
             self.job = {"id": task_id, "scope": text, "conversation_id": cid, "project": dict(project),
                         "requested_permission_level":requested_permission_level,
                         "capability_mode":"scoped-mcp", "runtime_sandbox":"read-only",
@@ -388,7 +395,7 @@ class NaturalDesktopTask:
                         "verification": {"status": "NOT VERIFIED"}, "evidence": str(self.evidence_root / task_id),
                         "requested_text": requested_literals(text), "requested_text_before_input": False}
             self.evidence = self.evidence_root / task_id
-            self.evidence.mkdir(parents=True, exist_ok=warband_profile)
+            self.evidence.mkdir(parents=True, exist_ok=warband_project)
             self.tokens = {p: secrets.token_urlsafe(32) for p in selected}
             self._cleanup_done.clear()
             self._serve()

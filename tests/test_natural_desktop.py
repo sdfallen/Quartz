@@ -541,6 +541,43 @@ class NaturalTaskTests(unittest.TestCase):
             self.assertEqual(task.job["verification"]["status"],"NOT VERIFIED")
         finally:task.stop()
 
+    def test_shelved_aster_project_gets_an_ordinary_isolated_desktop_task(self):
+        # Live 4-7 Nov: every desktop task in the ASTER chat ran the Universal Modder profile.
+        from tests.test_chat_coordination import MODELS
+        class Runtime:
+            TERMINAL={"completed","failed","cancelled"}
+            executable="test-runtime.exe"
+            def __init__(self):self.started=[]
+            def start(self,prompt,workspace,**opts):
+                self.started.append(prompt);return {"id":"run"+str(len(self.started)),"status":"running"}
+            def get(self,rid):return {"id":rid,"status":"running"}
+            def cancel(self,rid):pass
+        aster=self.root/"WarbandIsland";aster.mkdir()
+        codex,gemini=Runtime(),Runtime()
+        squad=Mock();squad.initialized=True;squad.create_task.return_value={"id":"task"};squad.receive.return_value=[]
+        squad.status.return_value={"installed":True,"initialized":True}
+        roots=[]
+        def squad_factory(path):roots.append(path);return squad
+        warband=Mock()
+        task=NaturalDesktopTask(self.desktop,lambda *a:None,factories={"codex":lambda:codex,"antigravity":lambda:gemini},
+            squad_factory=squad_factory,evidence_root=self.root/"aster-evidence",warband_factory=warband)
+        try:
+            with patch("core.warband_workspace.PROJECT",aster), \
+                 patch("core.natural_desktop.subprocess.run",return_value=SimpleNamespace(returncode=0)), \
+                 patch("core.natural_desktop.ensure_antigravity_tool_grants"),patch("core.natural_desktop.write_operator_hooks"):
+                task.start("Gemini, Not Defteri'ni aç ve 'deneme' yaz",{"id":"aster-warband","path":str(aster),"workflow":"warband"},"chat",MODELS)
+            warband.assert_not_called()
+            self.assertIsNone(task.warband)
+            self.assertEqual(roots,[str(task.evidence)])  # Squad lives in the task folder, not in the ASTER tree.
+            self.assertFalse((aster/".squad").exists())
+            self.assertEqual(task.squad_info["mode"],"task-isolated")
+            self.assertTrue(all("Universal Modder workspace" not in prompt for prompt in codex.started+gemini.started))
+            with self.assertRaises(PermissionError):  # Other ASTER paths stay refused.
+                other=aster/"Modules";other.mkdir()
+                NaturalDesktopTask(self.desktop,lambda *a:None,factories={},evidence_root=self.root/"x").start(
+                    "x",{"path":str(other)},"chat",MODELS)
+        finally:task.stop()
+
     def test_early_approval_waits_for_pause_drain_and_late_old_exit_cannot_complete_new_run(self):
         from tests.test_chat_coordination import MODELS
         class Runtime:
