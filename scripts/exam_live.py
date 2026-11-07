@@ -36,6 +36,7 @@ EXAM_ROOT = Path(os.environ.get("QUARTZ_EXAM_ROOT", Path(tempfile.gettempdir()) 
 QUARTZ_DIR = Path(os.environ.get("QUARTZ_INSTALL_DIR", r"C:\Users\LENAVO\Desktop\Jarvis config\dist\Quartz"))
 EVIDENCE = Path(os.environ.get("LOCALAPPDATA", "")) / "Quartz" / "task-evidence"
 FIXTURE_APP = "Quartz Sinav Test Uygulamasi"
+QUARTZ_OWNED = (".squad/",)
 
 CALC = "def total(items):\n    result = 0\n    for index in range(1, len(items)):\n        result += items[index]\n    return result\n"
 CALC_TEST = ("import unittest\nfrom calc import total\n\n\nclass CalcTest(unittest.TestCase):\n"
@@ -228,7 +229,10 @@ def grade(host_dir):
     reply = "\n".join(m.get("content") or "" for m in messages
                       if m.get("role") == "assistant" and float(m.get("timestamp") or 0) >= asked)
     mtimes = {p.relative_to(fixture).as_posix(): p.stat().st_mtime for p in fixture.rglob("*") if p.is_file()}
-    context = exam_oracle.Context(fixture, baseline=meta["baseline"], state=state, events=state.get("events"),
+    # Quartz's own Squad coordination store lives in the project; it is not the agents' work.
+    own = lambda tree: {p: h for p, h in tree.items() if not p.startswith(QUARTZ_OWNED)}
+    context = exam_oracle.Context(fixture, baseline=own(meta["baseline"]), after=own(exam_oracle.snapshot(fixture)),
+                                  state=state, events=state.get("events"),
                                   reply=reply, outcome=(runs[-1].get("outcome") if runs else {}), runs=runs,
                                   messages=messages, claims=claims, commands=_commands(meta, checks),
                                   uia=_uia(checks), mtimes=mtimes, approved=meta["approved"], marks=marks)
@@ -246,6 +250,18 @@ def grade(host_dir):
     return 0 if report["verdict"] == "VERIFIED" else 2
 
 
+def rebaseline(host_dir):
+    """Quartz writes its own instruction files (AGENTS.md, CLAUDE.md, GEMINI.md,
+    .gitignore) into a folder when it becomes a project; take the baseline again
+    after that and before the message, so they are not counted as the agent's work."""
+    path = Path(host_dir) / "meta.json"
+    meta = json.loads(path.read_text(encoding="utf-8"))
+    meta["baseline"] = exam_oracle.snapshot(Path(meta["fixture"]))
+    meta["started_at"] = time.time()
+    path.write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
+    print("baseline", len(meta["baseline"]), "files")
+
+
 def mark(host_dir, name):
     path = Path(host_dir) / "marks.json"
     marks = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
@@ -259,6 +275,7 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("prepare").add_argument("task")
     sub.add_parser("grade").add_argument("host")
+    sub.add_parser("rebaseline").add_argument("host")
     marker = sub.add_parser("mark")
     marker.add_argument("host")
     marker.add_argument("name")
@@ -267,6 +284,8 @@ def main(argv=None):
         prepare(args.task)
     elif args.command == "mark":
         mark(args.host, args.name)
+    elif args.command == "rebaseline":
+        rebaseline(args.host)
     else:
         return grade(args.host)
     return 0
