@@ -164,8 +164,15 @@ def _uia(c, check):
 
 
 def _after_stop(c, check):
+    # The fixture's own input log is the ground truth when the task has one; the
+    # broker writes its audit entry when an action completes (after its follow-up
+    # observation), seconds after the input itself landed (live exam 8 Nov).
     stop = c.marks.get("stop_at")
-    return stop is not None and not any(e["at"] > stop for e in c.inputs())
+    if stop is None:
+        return False
+    if isinstance(c.state.get("inputs"), list):
+        return not any(float(i.get("at") or 0) > stop for i in c.state["inputs"])
+    return not any(e["at"] > stop for e in c.inputs())
 
 
 def _inactive_within(c, check):
@@ -196,6 +203,8 @@ LIVE_CHECKS = {
     "desktop_session_inactive_within_seconds": _inactive_within,
     "overlay_hidden": lambda c, k: _cleanup_step(c, "overlay"),
     "no_input_events": lambda c, k: not c.inputs(),
+    # A Quartz checkpoint ref the host saw appear in the project's Git store during the run.
+    "checkpoint_exists": lambda c, k: bool(c.marks.get("new_checkpoints")),
 }
 
 

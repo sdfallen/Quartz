@@ -136,6 +136,10 @@ class LiveCheckTests(OracleTests):
         late = _run(inputs=((9.0, "Fixture App"), (10.2, "Fixture App")), finished=12.0)
         self.assertEqual([r["passed"] for r in self.run_checks(stop, runs=[late], marks={"stop_at": 10.0})[0]], [False, False, True])
         self.assertEqual(self.run_checks(stop, runs=[good])[1], "FAILED")  # no host stop mark
+        # With a fixture input log, the fixture decides (the broker logs on completion).
+        check = [{"check": "no_input_events_after_stop"}]
+        self.assertTrue(self.run_checks(check, runs=[late], marks={"stop_at": 10.0}, state={"inputs": [{"at": 9.5}]})[0][0]["passed"])
+        self.assertFalse(self.run_checks(check, runs=[good], marks={"stop_at": 10.0}, state={"inputs": [{"at": 10.4}]})[0][0]["passed"])
 
     def test_uia_commands_and_completion(self):
         uia = {"check": "uia_text_contains", "process": "CalculatorApp.exe", "automation_id": "CalculatorResults",

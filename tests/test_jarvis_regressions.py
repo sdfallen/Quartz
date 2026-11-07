@@ -64,6 +64,19 @@ class JarvisRegressionTests(unittest.TestCase):
     def call(self,action,**args):
         return self.task.call('token-op',{'name':'jarvis_input','arguments':{'action':action,**args}})
 
+    def test_open_app_waits_for_a_late_window_and_says_when_none_came(self):
+        # Live exam 8 Nov: Calculator's window appeared after the old 0.4 s snapshot.
+        self.adv.smart_open=lambda target:'Attempted to open: calc'
+        old=dict(self.backend.target); late={**old,'handle':77,'title':'Hesap Makinesi'}
+        answers=[[old],[old],[old],[old,late]]
+        with patch.object(self.task.desktop,'windows',side_effect=lambda:answers.pop(0) if len(answers)>1 else answers[0]), \
+             patch('core.natural_desktop.OPEN_WINDOW_WAIT',5):
+            result=self.task.call('token-op',{'name':'jarvis_open_app','arguments':{'target':'calc'}})
+        self.assertEqual([w['handle'] for w in result['new_windows']],[77])
+        with patch.object(self.task.desktop,'windows',return_value=[old]), patch('core.natural_desktop.OPEN_WINDOW_WAIT',0.5):
+            result=self.task.call('token-op',{'name':'jarvis_open_app','arguments':{'target':'calc'}})
+        self.assertEqual(result['new_windows'],[]); self.assertIn('No new window',result['note'])
+
     def test_missing_or_ambiguous_target_never_clicks_or_focuses(self):
         with self.assertRaises(ValueError):self.call('click',target_window='ABSENT',x=5,y=5)
         self.mouse.click.assert_not_called()

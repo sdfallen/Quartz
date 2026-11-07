@@ -189,8 +189,12 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     }
     return {state, text: text.slice(0, 140)};
   }
+  let crewTrailConversation = null;
   function renderCrew() {
     if (!crewEl) return;
+    // Steps belong to the conversation they came from (live exam 8 Nov: a code
+    // task's steps stayed in the columns of the next, unrelated conversation).
+    if (crewTrailConversation !== currentConvId) { crewTrail = {}; crewTrailConversation = currentConvId; }
     const focus = ['codex', 'antigravity', 'collaboration'].find(a => crewSeg(a)?.classList.contains('active')) || 'antigravity';
     const control = document.body.classList.contains('screen-control-active');
     const flow = [];
