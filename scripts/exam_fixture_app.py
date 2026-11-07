@@ -68,7 +68,8 @@ def main():
     args = parser.parse_args()
     state = Path(args.state).resolve()
     state.parent.mkdir(parents=True, exist_ok=True)
-    webview.create_window(TITLE, html=HTML, js_api=Api(state), width=760, height=440)
+    # Lower right, so it does not cover Quartz's rail or composer during a live run.
+    webview.create_window(TITLE, html=HTML, js_api=Api(state), width=620, height=400, x=720, y=300)
     webview.start()
 
 

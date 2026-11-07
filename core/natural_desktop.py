@@ -1488,7 +1488,11 @@ class NaturalDesktopTask:
             cleanup_step(report, "tool-server-close", server.server_close)
             self.server = None
         if self.job:
-            self.job["broker_audit"] = list(self.broker.audit)
+            # The broker outlives one task; this task's record holds only its own entries
+            # (live exam 7 Nov: the previous task's inputs were mixed into the evidence).
+            started = float(self.job.get("started_at") or 0)
+            self.job["broker_audit"] = [entry for entry in self.broker.audit
+                                        if not isinstance(entry, dict) or float(entry.get("at") or 0) >= started]
             summary_text = stop_summary(reason, self.job["verification"])
             cleanup_step(report, "chat-event", lambda: self._event("quartz",
                 summary_text +

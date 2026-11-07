@@ -91,6 +91,8 @@ SETUPS = {
     "exam-code-02": {"files": {"text_utils.py": TEXT, "tests/__init__.py": "", "tests/test_text_utils.py": TEXT_TEST},
                      "git": True, "host_tests": ["tests/test_text_utils.py"], "project": True},
     "exam-code-10": {"files": {"stats.py": REVIEW, "README.md": "# Küçük istatistik aracı\n"}, "git": True, "project": True},
+    # Seed message first ("Test kodum: <nonce>"), then restart Quartz, then the task message.
+    "exam-long-03": {"seed": "Test kodum: {nonce}. Şimdilik sadece aklında tut, başka bir şey yapma."},
     "exam-desk-01": {"approved": ["notepad.exe"], "message_text": "nonce"},
     "exam-desk-02": {"app": True, "approved": [FIXTURE_APP]},
     "exam-desk-03": {"approved": ["Hesap Makinesi", "Calculator", "CalculatorApp.exe", "ApplicationFrameHost.exe"]},
@@ -128,17 +130,21 @@ def prepare(task_id):
         message = message.replace("'bir', 'iki', 'üç'", ", ".join(f"'{values[f'<nonce{i}>']}'" for i in (1, 2, 3)))
     checks = _fill(task["success"], nonce, fixture)
     processes = []
+    # Detached from this tool's console and pipes, so a caller reading the output is not held open.
+    detached = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    creationflags=getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
     if setup.get("app"):
         processes.append(subprocess.Popen([sys.executable, "-B", str(REPO / "scripts" / "exam_fixture_app.py"),
-                                           "--state", str(host / "fixture-state.json")]).pid)
+                                           "--state", str(host / "fixture-state.json")], **detached).pid)
     for rel in setup.get("notepad", []):
-        processes.append(subprocess.Popen(["notepad.exe", str(fixture / rel)]).pid)
+        processes.append(subprocess.Popen(["notepad.exe", str(fixture / rel)], **detached).pid)
     meta = {"task": task_id, "nonce": nonce, "fixture": str(fixture), "message": message, "checks": checks,
             "approved": setup.get("approved", []), "processes": processes, "baseline": exam_oracle.snapshot(fixture),
             "project": bool(setup.get("project")), "started_at": time.time(), "gates": task.get("gates"),
             "nonces": values}
     (host / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps({"host": str(host), "fixture": str(fixture), "message": message,
+                      "seed": setup["seed"].format(nonce=nonce) if setup.get("seed") else None,
                       "project_needed": meta["project"]}, ensure_ascii=False, indent=1))
 
 
@@ -216,7 +222,11 @@ def grade(host_dir):
     runs, messages = _runs(since), _messages(since)
     claims_path = QUARTZ_DIR / ".quartz" / "writer_claims.json"
     claims = json.loads(claims_path.read_text(encoding="utf-8")) if claims_path.is_file() else {}
-    reply = "\n".join(m.get("content") or "" for m in messages if m.get("role") == "assistant")
+    # With a seed message (exam-long-03), only replies to the question count:
+    # an echo of the seed must not pass a memory check.
+    asked = marks.get("question_at", since)
+    reply = "\n".join(m.get("content") or "" for m in messages
+                      if m.get("role") == "assistant" and float(m.get("timestamp") or 0) >= asked)
     mtimes = {p.relative_to(fixture).as_posix(): p.stat().st_mtime for p in fixture.rglob("*") if p.is_file()}
     context = exam_oracle.Context(fixture, baseline=meta["baseline"], state=state, events=state.get("events"),
                                   reply=reply, outcome=(runs[-1].get("outcome") if runs else {}), runs=runs,
