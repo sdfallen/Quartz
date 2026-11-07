@@ -56,6 +56,7 @@ class Control:
 
     def is_enabled(self): return True
     def is_visible(self): return True
+    def children(self): return []
     def set_edit_text(self, text): self.value = text
 
 
@@ -66,8 +67,45 @@ class Window:
     def process_id(self): return 42
     def window_text(self): return "Quartz Test Window"
     def descendants(self, **kwargs): return self.controls
+    def children(self): return self.controls
     def wrapper_object(self): return self
     def set_focus(self): pass
+
+
+class Node:
+    def __init__(self, kind, name="", kids=(), cls=""):
+        self.element_info = SimpleNamespace(control_type=kind, name=name, class_name=cls)
+        self.kids = list(kids)
+    def children(self): return self.kids
+
+
+class WebViewTraversalTests(unittest.TestCase):
+    """Live exam 7 Nov: a WebView2 window's Edit sat 12 levels below the window."""
+
+    def webview(self):
+        page = Node("Document", kids=[Node("Group", kids=[Node("Edit", "Test metni"), Node("Button", "TEST BUTTON")])])
+        chain = Node("Pane", kids=[page], cls="View")
+        for cls, name in (("MultiContentsView", ""), ("SidebarContentsSplitView", ""), ("BrowserView", ""),
+                          ("EmbeddedBrowserFrameView", ""), ("NonClientView", ""), ("BrowserRootView", "data:text/html"),
+                          ("Chrome_WidgetWin_1", "data:text/html")):
+            chain = Node("Pane", name, kids=[chain, Node("Pane", kids=[])] if cls == "BrowserView" else [chain], cls=cls)
+        return Node("Window", kids=[Node("Pane", kids=[chain], cls="WindowsForms10"), Node("Button", "Kapat")])
+
+    def test_wrapper_panes_cost_no_depth_so_page_controls_are_reached(self):
+        found = DesktopController._get_descendants(self.webview(), max_depth=4, max_elements=150)
+        kinds = [(n.element_info.control_type, n.element_info.name) for n in found]
+        self.assertIn(("Edit", "Test metni"), kinds)
+        self.assertIn(("Button", "TEST BUTTON"), kinds)
+        self.assertFalse(any(k == "Pane" for k, _ in kinds))  # Frames are not offered as targets.
+
+    def test_real_structure_still_counts_and_the_budget_holds(self):
+        deep = Node("Edit", "deep")
+        for _ in range(6):
+            deep = Node("List", "level", kids=[deep])
+        found = DesktopController._get_descendants(Node("Window", kids=[deep]), max_depth=4, max_elements=150)
+        self.assertNotIn("deep", [n.element_info.name for n in found])
+        wide = Node("Window", kids=[Node("Button", str(i)) for i in range(400)])
+        self.assertEqual(len(DesktopController._get_descendants(wide, max_depth=4, max_elements=150)), 150)
 
 
 class DesktopTests(unittest.TestCase):

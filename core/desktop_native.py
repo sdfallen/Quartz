@@ -406,8 +406,9 @@ class NativeDesktopBackend:
                 raise ValueError("Only bounded literal single-line text is allowed")
             with self.controller._desktop() as desktop:
                 win = self.controller._window(desktop, target["handle"])
-                # Never type into a guessed surface or another process.
-                focused = [c for c in win.descendants(depth=7)[:800] if c.has_keyboard_focus()]
+                # Never type into a guessed surface or another process. The same
+                # traversal as observe(), so a WebView/Chromium field it saw is found.
+                focused = [c for c in self.controller._get_descendants(win) if c.has_keyboard_focus()]
                 if len(focused) != 1: raise PermissionError("No unique focused edit control")
                 control = focused[0]
                 item = self.controller._describe(control)
@@ -463,7 +464,7 @@ class NativeDesktopBackend:
             if key not in SAFE_KEYS: raise PermissionError("Key/chord is outside the bounded operator profile")
             with self.controller._desktop() as desktop:
                 win = self.controller._window(desktop, target["handle"])
-                focused = [c for c in win.descendants(depth=7)[:800] if c.has_keyboard_focus()]
+                focused = [c for c in self.controller._get_descendants(win) if c.has_keyboard_focus()]
                 if any(CRITICAL.search(self.controller._describe(c)["name"]) for c in focused):
                     raise PermissionError("Focused consequential control requires user handoff")
             self._before_input(target)

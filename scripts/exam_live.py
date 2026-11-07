@@ -28,6 +28,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import exam_oracle  # noqa: E402
+import exam_plan  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 TASKS = REPO / "docs" / "task_exam" / "tasks_20261105.json"
@@ -101,10 +102,11 @@ SETUPS = {
 
 
 def prepare(task_id):
-    task, setup = _task(task_id), SETUPS.get(task_id)
+    setup = SETUPS.get(task_id)
     if setup is None:
         raise SystemExit(f"{task_id} has no live adapter yet")
-    nonce = "QX-" + secrets.token_hex(3).upper()
+    task, values = exam_plan.bind_nonces(_task(task_id))  # <nonce>, <nonce1>... fresh per run
+    nonce = values.get("<nonce>") or "q" + secrets.token_hex(4)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     fixture = EXAM_ROOT / "fixtures" / task_id
     host = EXAM_ROOT / "host" / f"{task_id}-{stamp}"
@@ -122,6 +124,8 @@ def prepare(task_id):
     message = _fill(task.get("message", ""), nonce, fixture)
     if setup.get("message_text") == "nonce":
         message = message.replace("Quartz sınavı 1", nonce)
+    if "<nonce1>" in values:  # The words the user asks for are the host's nonces, in order.
+        message = message.replace("'bir', 'iki', 'üç'", ", ".join(f"'{values[f'<nonce{i}>']}'" for i in (1, 2, 3)))
     checks = _fill(task["success"], nonce, fixture)
     processes = []
     if setup.get("app"):
@@ -131,7 +135,8 @@ def prepare(task_id):
         processes.append(subprocess.Popen(["notepad.exe", str(fixture / rel)]).pid)
     meta = {"task": task_id, "nonce": nonce, "fixture": str(fixture), "message": message, "checks": checks,
             "approved": setup.get("approved", []), "processes": processes, "baseline": exam_oracle.snapshot(fixture),
-            "project": bool(setup.get("project")), "started_at": time.time(), "gates": task.get("gates")}
+            "project": bool(setup.get("project")), "started_at": time.time(), "gates": task.get("gates"),
+            "nonces": values}
     (host / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps({"host": str(host), "fixture": str(fixture), "message": message,
                       "project_needed": meta["project"]}, ensure_ascii=False, indent=1))
@@ -155,7 +160,8 @@ def _messages(since):
     except (OSError, ValueError):
         return []
     found = []
-    for conversation in store.get("conversations", []):
+    conversations = store.get("conversations", {})
+    for conversation in (conversations.values() if isinstance(conversations, dict) else conversations):
         for message in conversation.get("messages", []):
             try:
                 at = float(message.get("timestamp") or 0)

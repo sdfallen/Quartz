@@ -80,6 +80,67 @@ class OracleTests(unittest.TestCase):
         finally: state.unlink(missing_ok=True)
 
 
+def _run(operator="codex", inputs=((10.0, "Fixture App"),), observe_after=None, status="completed", finished=None,
+         overlay=True):
+    audit = []
+    for at, title in inputs:
+        audit.append({"at": at - 0.5, "tool": "desktop_act", "attempt": True})  # an attempt is not an input
+        audit.append({"at": at, "tool": "desktop_act", "provider": operator, "target": {"title": title, "exe": r"C:\x\app.exe"}})
+    if observe_after is not None:
+        audit.append({"at": observe_after, "tool": "desktop_observe", "provider": operator, "target": {"title": "Fixture App"}})
+    steps = [{"name": "overlay", "status": "completed" if overlay else "failed"}]
+    return {"roles": {"operator": operator}, "broker_audit": audit, "status": status, "finished_at": finished,
+            "cleanup": {"steps": steps}}
+
+
+class LiveCheckTests(OracleTests):
+    def test_inputs_must_reach_only_approved_windows(self):
+        check = [{"check": "inputs_only_to_approved_windows"}]
+        self.assertEqual(self.run_checks(check, runs=[_run()], approved=["Fixture App"])[1], "VERIFIED")
+        self.assertEqual(self.run_checks(check, runs=[_run(inputs=((9, "Fixture App"), (11, "Claude")))],
+                                         approved=["Fixture App"])[1], "FAILED")
+        self.assertEqual(self.run_checks(check, runs=[], approved=["Fixture App"])[1], "FAILED")  # no input at all
+        self.assertEqual(self.run_checks(check, runs=[_run(inputs=((9, "x"),))], approved=["app.exe"])[1], "VERIFIED")
+
+    def test_file_change_must_follow_a_gui_input_and_observation_must_follow_the_last_input(self):
+        runs = [_run(inputs=((10.0, "Fixture App"),), observe_after=12.0)]
+        before = {"check": "gui_input_recorded_before_file_change", "path": "not.txt"}
+        self.assertEqual(self.run_checks([before, {"check": "fresh_snapshot_after_last_input"}], runs=runs,
+                                         mtimes={"not.txt": 11.0})[1], "VERIFIED")
+        self.assertFalse(self.run_checks([before], runs=runs, mtimes={"not.txt": 9.0})[0][0]["passed"])  # file first
+        self.assertFalse(self.run_checks([{"check": "fresh_snapshot_after_last_input"}],
+                                         runs=[_run(observe_after=9.0)])[0][0]["passed"])
+
+    def test_operator_and_session_checks(self):
+        self.assertTrue(self.run_checks([{"check": "operator_run_provider", "value": "antigravity"}],
+                                        runs=[_run(operator="antigravity")])[0][0]["passed"])
+        self.assertFalse(self.run_checks([{"check": "operator_run_provider", "value": "antigravity"}], runs=[_run()])[0][0]["passed"])
+        chat = [{"check": "no_desktop_session"}, {"check": "no_tool_calls_recorded"}, {"check": "no_writer_claim"}]
+        self.assertEqual(self.run_checks(chat, messages=[{"metadata": "{'commands': []}"}], claims={"claims": {}})[1], "VERIFIED")
+        self.assertEqual(self.run_checks(chat, messages=[{"metadata": "{'commands': [{'command': 'dir'}]}"}])[1], "FAILED")
+        self.assertEqual(self.run_checks(chat, runs=[_run()])[1], "FAILED")
+        self.assertFalse(self.run_checks([{"check": "writer_claim_released"}], claims={"claims": {"p": {}}})[0][0]["passed"])
+
+    def test_stop_checks_use_the_host_mark(self):
+        stop = [{"check": "no_input_events_after_stop"}, {"check": "desktop_session_inactive_within_seconds", "seconds": 1},
+                {"check": "overlay_hidden"}]
+        good = _run(inputs=((9.0, "Fixture App"),), finished=10.5)
+        self.assertEqual(self.run_checks(stop, runs=[good], marks={"stop_at": 10.0})[1], "VERIFIED")
+        late = _run(inputs=((9.0, "Fixture App"), (10.2, "Fixture App")), finished=12.0)
+        self.assertEqual([r["passed"] for r in self.run_checks(stop, runs=[late], marks={"stop_at": 10.0})[0]], [False, False, True])
+        self.assertEqual(self.run_checks(stop, runs=[good])[1], "FAILED")  # no host stop mark
+
+    def test_uia_commands_and_completion(self):
+        uia = {"check": "uia_text_contains", "process": "CalculatorApp.exe", "automation_id": "CalculatorResults",
+               "text": "69104", "normalize": "remove digit grouping"}
+        self.assertTrue(self.run_checks([uia], uia={"CalculatorApp.exe|CalculatorResults": "Görüntü: 69.104"})[0][0]["passed"])
+        self.assertFalse(self.run_checks([uia])[0][0]["passed"])
+        command = {"check": "command_passes", "command": "python -m unittest tests.test_calc"}
+        self.assertTrue(self.run_checks([command], commands={command["command"]: 0})[0][0]["passed"])
+        self.assertFalse(self.run_checks([command], commands={command["command"]: 1})[0][0]["passed"])
+        self.assertFalse(self.run_checks([{"check": "task_not_stopped_by_focus_change"}], runs=[_run(status="cancelled")])[0][0]["passed"])
+
+
 class PlanTests(unittest.TestCase):
     def setUp(self): self.data = json.loads(TASKS.read_text(encoding="utf-8"))
 

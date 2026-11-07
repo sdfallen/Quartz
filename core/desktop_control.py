@@ -6,6 +6,13 @@ import time
 import uuid
 from contextlib import contextmanager
 
+# Unnamed single-child containers that only wrap the real UI (see _get_descendants).
+_PASS_THROUGH = {"Pane", "Group", "Custom"}
+# Chromium/WebView2 host views carry the page URL as their name; they are frames, not UI.
+_FRAME_CLASSES = {"Chrome_WidgetWin_0", "Chrome_WidgetWin_1", "Chrome_RenderWidgetHostHWND", "BrowserRootView",
+                  "NonClientView", "EmbeddedBrowserFrameView", "BrowserView", "View"}
+_ABSOLUTE_UIA_DEPTH = 24
+
 
 class DesktopController:
     def __init__(self, desktop_factory=None, clock=time.monotonic):
@@ -89,27 +96,58 @@ class DesktopController:
             except Exception:
                 max_depth = max_depth or 5
                 max_elements = max_elements or 250
+        # Live exam 7 Nov: in a WebView2/Chromium window (browsers, Electron and
+        # pywebview apps) the page's Edit and Button sit ~12 levels down, below a
+        # chain of single-child Pane wrappers, so a plain depth limit of 4-5 never
+        # reached them and typing was refused. A wrapper that only passes through
+        # to one child costs no depth and is not listed; real structure still
+        # counts, and the element budget and an absolute depth cap bound the work.
+        # The native bounded scan stays first, so nothing it found before is lost
+        # (UWP apps such as Calculator); the wrapper-aware scan only adds controls.
         try:
-            return list(win.descendants(depth=max_depth)[:max_elements])
+            native = list(win.descendants(depth=max_depth)[:max_elements])
+        except Exception:
+            native = []
+        deep = DesktopController._wrapper_aware_scan(win, max_depth, max_elements)
+        known = {DesktopController._identity_key(e) for e in native}
+        merged = native + [e for e in deep if DesktopController._identity_key(e) not in known]
+        return merged[:max_elements]
+
+    @staticmethod
+    def _identity_key(element):
+        try:
+            runtime = tuple(element.element_info.runtime_id or ())
+            if runtime:
+                return runtime
         except Exception:
             pass
-        # Robust BFS fallback if win.descendants raises AttributeError on detached elements
-        elements = []
-        queue = [(win, 0)]
-        while queue and len(elements) < max_elements:
-            curr, depth = queue.pop(0)
-            if depth >= max_depth:
+        return id(element)
+
+    @staticmethod
+    def _wrapper_aware_scan(win, max_depth, max_elements):
+        elements, seen = [], 0
+        queue = [(win, 0, 0)]
+        while queue and len(elements) < max_elements and seen < max_elements * 4:
+            curr, depth, absolute = queue.pop(0)
+            if depth >= max_depth or absolute >= _ABSOLUTE_UIA_DEPTH:
                 continue
             try:
                 children = curr.children()
             except Exception:
                 continue
             for child in children:
-                elements.append(child)
-                if len(elements) >= max_elements:
-                    break
-                if depth + 1 < max_depth:
-                    queue.append((child, depth + 1))
+                seen += 1
+                try:
+                    info = child.element_info
+                    wrapper = (info.control_type == "Pane" and (not info.name or str(info.class_name or "") in _FRAME_CLASSES)) or (
+                        info.control_type in _PASS_THROUGH and not info.name and len(child.children()) == 1)
+                except Exception:
+                    wrapper = False
+                if not wrapper:
+                    elements.append(child)
+                    if len(elements) >= max_elements:
+                        break
+                queue.append((child, depth if wrapper else depth + 1, absolute + 1))
         return elements
 
     def _inspect(self, desktop, handle, query=""):
