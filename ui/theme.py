@@ -2,12 +2,21 @@
 
 Rules this file keeps (tests/test_gui_modern_theme.py enforces them):
 keyframes move only opacity and transform; every animation is declared inside
-the no-preference block and scoped to ``:not(.low-spec)``; nothing disables
+the no-preference block and scoped to ``:not(.low-spec)``, except the few
+one-element, compositor-only motions in LOW_SPEC_MOTION (the typing reveal and
+the live agent line); nothing disables
 pointer input; controls that stop real work never animate. Motion shows cause
 and effect (a message arrived, a panel opened, the agent is working), so idle
 screens stay still. While an agent works, light walks round the crystal in the
 brand mark.
 """
+
+# A message being written and an agent at work: the only motion while waiting.
+# Selectors that keep their motion on low-spec hardware (user, 7 Nov: no motion
+# at all on an 8 GB / 4-core PC, which counts as low-spec): each moves one small
+# element with opacity/transform only, and the reveal is cut short by Stop/history.
+LOW_SPEC_MOTION = ("body.low-spec .chat > .msg:last-child", "body:not(.ui-idle) .reveal-caret",
+                   "body .agent-live-now > span", "body:not(.ui-idle) .agent-live-gem")
 
 MODERN_CSS = r"""
 /* Stop must respond the instant it is pressed. */
@@ -71,10 +80,10 @@ MODERN_CSS = r"""
   body:not(.low-spec):not(.ui-idle) .bubble.pending > div:first-child::before { animation:q-dot 1100ms ease-in-out infinite; }
   body:not(.low-spec):not(.ui-idle) .bubble.pending > div:first-child::after { animation:q-dot 1100ms ease-in-out 200ms infinite; }
   body:not(.low-spec) .hud-dot { animation:q-hud-pulse 1600ms ease-in-out infinite; }
-  /* A message being written and an agent at work: the only motion while waiting. */
-  body:not(.low-spec):not(.ui-idle) .reveal-caret { animation:q-caret 900ms steps(1,end) infinite; }
-  body:not(.low-spec) .agent-live-now span { animation:q-live-in var(--t-med) var(--ease) both; }
-  body:not(.low-spec):not(.ui-idle) .agent-live-gem { animation:q-gem 1400ms ease-in-out infinite; }
+  body.low-spec .chat > .msg:last-child { animation:q-rise var(--t-slow) var(--ease) both; }
+  body:not(.ui-idle) .reveal-caret { animation:q-caret 900ms steps(1,end) infinite; }
+  body .agent-live-now > span { animation:q-live-in var(--t-med) var(--ease) both; }
+  body:not(.ui-idle) .agent-live-gem { animation:q-gem 1400ms ease-in-out infinite; }
 }
 /* Orb state still reads without motion. */
 #orbCore[data-state="error"] .f { fill:var(--danger); }
@@ -84,5 +93,5 @@ MODERN_CSS = r"""
   *,*::before,*::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; }
   .signature-intro { display:none !important; }
 }
-body.low-spec *,body.low-spec *::before,body.low-spec *::after { animation:none !important; transition:none !important; }
+body.low-spec *:not(.msg):not(.reveal-caret):not(.agent-live-gem):not(.agent-live-now > span),body.low-spec *::before,body.low-spec *::after { animation:none !important; transition:none !important; }
 """

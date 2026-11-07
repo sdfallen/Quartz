@@ -4,7 +4,7 @@ import subprocess
 import unittest
 
 import gui
-from ui.theme import MODERN_CSS
+from ui.theme import LOW_SPEC_MOTION, MODERN_CSS
 
 
 def _js(source: str, start: str, end: str) -> str:
@@ -31,7 +31,8 @@ class MotionContractTests(unittest.TestCase):
     def test_reduced_motion_and_low_spec_switch_everything_off(self):
         reduced = MODERN_CSS[MODERN_CSS.index("@media (prefers-reduced-motion: reduce)"):]
         self.assertRegex(reduced, r"\*,\*::before,\*::after \{ animation:none !important; transition:none !important;")
-        self.assertIn("body.low-spec *,body.low-spec *::before,body.low-spec *::after { animation:none !important; transition:none !important; }",
+        self.assertIn("body.low-spec *:not(.msg):not(.reveal-caret):not(.agent-live-gem):not(.agent-live-now > span),"
+                      "body.low-spec *::before,body.low-spec *::after { animation:none !important; transition:none !important; }",
                       MODERN_CSS)
 
     def test_animations_are_declared_only_for_motion_ok_and_not_low_spec(self):
@@ -46,7 +47,18 @@ class MotionContractTests(unittest.TestCase):
         for selector, body in _rules(MODERN_CSS[block_start:block_end].split("{", 1)[1]):
             if "animation:q-" in body:
                 for part in selector.split(","):
+                    part = " ".join(part.split())
+                    if part in LOW_SPEC_MOTION: continue
                     self.assertIn(":not(.low-spec)", part, part)
+
+    def test_low_spec_keeps_only_the_typing_reveal_and_live_line(self):
+        # User, 7 Nov: on an 8 GB / 4-core PC (low-spec) no animation was visible at all.
+        self.assertEqual(len(LOW_SPEC_MOTION), 4)
+        rules = {" ".join(sel.split()): body for sel, body in _rules(MODERN_CSS)}
+        for selector in LOW_SPEC_MOTION:
+            self.assertIn("animation:q-", rules[selector], selector)  # One rule each, not a group.
+        self.assertNotIn("low-spec')) return false", gui._HTML)  # The reveal itself is not gated by low-spec.
+        self.assertIn("prefers-reduced-motion: reduce)').matches", gui._HTML)
 
     def test_stop_controls_never_animate_or_transition(self):
         stop_ids = ("#btnDesktopTaskStop", "#btnHudStopTask", "#btnDesktopStop", "#btnCancel")
