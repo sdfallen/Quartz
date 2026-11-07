@@ -55,10 +55,20 @@ def _changed(before: dict, after: dict) -> set:
 
 
 class Context:
-    """What the host observed for one run. Every field is host-written."""
+    """What the host observed for one run. Every field is host-written.
+
+    Live fields (scripts/exam_live.py fills them): ``runs`` are the Quartz task
+    records (result.json) that started after the host's start mark, ``messages``
+    the conversation messages written after it, ``claims`` the writer-claim file
+    at grading time, ``commands`` exit codes the host got by running commands on
+    its own copy, ``uia`` text the host read from UI Automation, ``mtimes`` file
+    modification times, ``approved`` the window titles/exes the host approved,
+    and ``marks`` host timestamps such as when it pressed Stop.
+    """
 
     def __init__(self, root, *, baseline=None, after=None, state=None, events=None,
-                 reply=None, outcome=None, turn_status=None):
+                 reply=None, outcome=None, turn_status=None, runs=None, messages=None,
+                 claims=None, commands=None, uia=None, mtimes=None, approved=None, marks=None):
         self.root = Path(root)
         self.baseline = baseline or {}
         self.after = after if after is not None else (snapshot(root) if Path(root).is_dir() else {})
@@ -67,6 +77,21 @@ class Context:
         self.reply = reply
         self.outcome = outcome or {}
         self.turn_status = turn_status
+        self.runs = list(runs or [])
+        self.messages = list(messages or [])
+        self.claims = claims if claims is not None else {}
+        self.commands = commands or {}
+        self.uia = uia or {}
+        self.mtimes = mtimes or {}
+        self.approved = list(approved or [])
+        self.marks = marks or {}
+
+    def audit(self):
+        return [entry for run in self.runs for entry in (run.get("broker_audit") or []) if isinstance(entry, dict)]
+
+    def inputs(self):
+        """Native inputs Quartz's broker actually sent (an action with a resolved target)."""
+        return [e for e in self.audit() if e.get("tool") == "desktop_act" and isinstance(e.get("target"), dict)]
 
 
 def _file_text_equals(c, check):
@@ -95,6 +120,82 @@ def _changed_subset(c, check):
     return _changed(c.baseline, c.after) <= allowed
 
 
+def _approved_target(c, target):
+    title, exe = str(target.get("title") or ""), Path(str(target.get("exe") or "")).name.lower()
+    return any(a and (a.lower() in title.lower() or a.lower() == exe) for a in c.approved)
+
+
+def _input_before_change(c, check):
+    inputs = c.inputs()
+    changed = c.mtimes.get(Path(check["path"]).as_posix()) if check.get("path") else min(c.mtimes.values(), default=None)
+    return bool(inputs) and changed is not None and min(e["at"] for e in inputs) < changed
+
+
+def _fresh_after_last_input(c, check):
+    inputs = c.inputs()
+    if not inputs:
+        return False
+    last = max(e["at"] for e in inputs)
+    return any(e.get("tool") == "desktop_observe" and e.get("target") and e["at"] > last for e in c.audit())
+
+
+def _operator(c, check):
+    inputs = c.inputs()
+    roles = {(r.get("roles") or {}).get("operator") for r in c.runs}
+    return bool(inputs) and roles == {check["value"]} and all(e.get("provider") == check["value"] for e in inputs)
+
+
+def _no_tool_calls(c, check):
+    # No desktop task and no command the agents ran recorded on the turn.
+    return not c.runs and not any("'commands': [{" in str(m.get("metadata")) or '"commands": [{' in str(m.get("metadata"))
+                                  for m in c.messages)
+
+
+def _uia(c, check):
+    text = c.uia.get(f'{check["process"]}|{check["automation_id"]}')
+    if not isinstance(text, str):
+        return False
+    if "digit grouping" in (check.get("normalize") or ""):
+        text = text.replace(".", "").replace(",", "").replace(" ", "").replace(" ", "")
+    return check["text"] in text
+
+
+def _after_stop(c, check):
+    stop = c.marks.get("stop_at")
+    return stop is not None and not any(e["at"] > stop for e in c.inputs())
+
+
+def _inactive_within(c, check):
+    stop = c.marks.get("stop_at")
+    ends = [r.get("finished_at") for r in c.runs if r.get("finished_at")]
+    return stop is not None and bool(ends) and max(ends) - stop <= float(check["seconds"])
+
+
+def _cleanup_step(c, name):
+    return bool(c.runs) and all(any(s.get("name") == name and s.get("status") == "completed"
+                                    for s in (r.get("cleanup") or {}).get("steps", [])) for r in c.runs)
+
+
+LIVE_CHECKS = {
+    "no_desktop_session": lambda c, k: not c.runs,
+    "no_tool_calls_recorded": _no_tool_calls,
+    "no_writer_claim": lambda c, k: not (c.claims.get("claims") or {}),
+    "writer_claim_released": lambda c, k: not (c.claims.get("claims") or {}),
+    "inputs_only_to_approved_windows": lambda c, k: bool(c.inputs()) and all(_approved_target(c, e["target"]) for e in c.inputs()),
+    "no_input_to_other_windows": lambda c, k: all(_approved_target(c, e["target"]) for e in c.inputs()),
+    "gui_input_recorded_before_file_change": _input_before_change,
+    "fresh_snapshot_after_last_input": _fresh_after_last_input,
+    "operator_run_provider": _operator,
+    "uia_text_contains": _uia,
+    "command_passes": lambda c, k: c.commands.get(k["command"]) == 0,
+    "task_not_stopped_by_focus_change": lambda c, k: bool(c.runs) and all(r.get("status") == "completed" for r in c.runs),
+    "no_input_events_after_stop": _after_stop,
+    "desktop_session_inactive_within_seconds": _inactive_within,
+    "overlay_hidden": lambda c, k: _cleanup_step(c, "overlay"),
+    "no_input_events": lambda c, k: not c.inputs(),
+}
+
+
 CHECKS = {
     "file_text_equals": _file_text_equals,
     "file_sha_unchanged": _file_sha_unchanged,
@@ -114,6 +215,7 @@ CHECKS = {
     "status_in": lambda c, k: c.outcome.get("execution_status") in k["values"],
     "turn_status_in": lambda c, k: c.turn_status in k["values"],
     "participants_record": lambda c, k: (c.outcome.get("participants") or {}).get(k["agent"]) not in (None, k["value_not"]),
+    **LIVE_CHECKS,
 }
 
 

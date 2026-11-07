@@ -54,7 +54,7 @@ class OracleTests(unittest.TestCase):
 
     def test_human_grade_and_unknown_checks_never_verify(self):
         passing = {"check": "directory_exists", "path": "src"}
-        for extra, kind in (({"check": "human_grade"}, HUMAN), ({"check": "uia_text_contains"}, MISSING)):
+        for extra, kind in (({"check": "human_grade"}, HUMAN), ({"check": "learned_item_visible_and_deletable"}, MISSING)):
             results, overall = self.run_checks([passing, extra])
             self.assertEqual((results[1]["kind"], overall), (kind, "NOT VERIFIED"))
         self.assertEqual(verdict([]), "NOT VERIFIED")
