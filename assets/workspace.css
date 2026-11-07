@@ -476,7 +476,9 @@ body.low-spec .diagnostics-card, body.low-spec .diag-progress-fill, body.ui-idle
 .chat > .msg.sender-quartz, .chat > .msg.bot.sender-bot { --lane: var(--agent-quartz); }
 
 /* Frame: rail | main | inspector. */
-.app { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; }
+.app { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; grid-template-rows: minmax(0, 1fr); }
+/* Grid items default to their content height; the stream must scroll instead of pushing the composer off-screen. */
+.app > .main, .app > .inspector, .app > .app-rail { min-height: 0; }
 .app-rail { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 0 14px; min-height: 0; background: color-mix(in oklab, var(--surface-1) 64%, transparent); border-right: 1px solid var(--line); }
 .rail-mark { width: 30px; height: 30px; margin-bottom: 14px; flex: none; }
 .rail-btn { position: relative; width: 42px; height: 42px; flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 13px; color: var(--text-2); transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease), transform var(--t-fast) var(--ease); }
@@ -502,7 +504,7 @@ body.sidebar-open .drawer-scrim { opacity: 1; visibility: visible; }
 
 /* Stage: Codex column | stream | Antigravity column. */
 .stage-shell { flex: 1; min-height: 0; display: flex; container-type: inline-size; }
-.stage { flex: 1; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(190px, 248px) minmax(0, 1fr) minmax(190px, 248px); grid-template-areas: "codex stream agy"; }
+.stage { flex: 1; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(190px, 248px) minmax(0, 1fr) minmax(190px, 248px); grid-template-rows: minmax(0, 1fr); grid-template-areas: "codex stream agy"; }
 .lane-codex { grid-area: codex; }
 .lane-antigravity { grid-area: agy; }
 .stream { grid-area: stream; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
@@ -598,6 +600,6 @@ body.sidebar-open .drawer-scrim { opacity: 1; visibility: visible; }
 @media (max-width: 820px) { .app { grid-template-columns: 56px minmax(0, 1fr) auto; } .sidebar, body.sidebar-open .sidebar { left: 56px; } }
 body.compact .app { grid-template-columns: minmax(0, 1fr); }
 body.compact .app-rail, body.compact .lane-col, body.compact .stream-head, body.compact .lane-rails, body.compact .chat > .msg::before, body.compact .chat > .msg::after { display: none; }
-body.compact .stage { grid-template-columns: minmax(0, 1fr); grid-template-areas: "stream"; }
+body.compact .stage { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: "stream"; }
 body.compact .chat { padding-left: 12px; }
 body.compact .agent-seg-group { display: inline-flex; }
