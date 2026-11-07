@@ -155,15 +155,26 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
   // and the desktop task status: memory only, never evidence.
   const crewEl = document.getElementById('crew');
   const CREW_LANES = {
-    codex: {card: 'laneCodex', state: 'laneCodexState', model: 'laneCodexModel', select: () => codexModelSelect},
-    antigravity: {card: 'laneAgy', state: 'laneAgyState', model: 'laneAgyModel', select: () => agyModelSelect},
+    codex: {col: 'laneColCodex', card: 'laneCodex', state: 'laneCodexState', trail: 'laneCodexTrail'},
+    antigravity: {col: 'laneColAgy', card: 'laneAgy', state: 'laneAgyState', trail: 'laneAgyTrail'},
   };
   let crewProgress = {};
+  let crewTrail = {};  // Last run's steps per agent; kept after the run so the column is not blank.
   let crewDesktop = null;
   const crewSeg = agent => document.querySelector(`.agent-seg-btn[data-agent="${agent}"]`);
-  function crewModelText(select) {
-    const option = select && select.selectedOptions ? select.selectedOptions[0] : null;
-    return option ? String(option.textContent || '').trim() : '';
+  function renderCrewTrail(lane, steps, live) {
+    const list = document.getElementById(lane.trail);
+    if (!list) return;
+    const key = JSON.stringify([steps, live]);
+    if (list.dataset.key === key) return;
+    list.dataset.key = key;
+    list.replaceChildren(...steps.map((step, index) => {
+      const item = document.createElement('li');
+      item.textContent = step;
+      if (live && index === steps.length - 1) item.className = 'now';
+      return item;
+    }));
+    list.closest('.lane-col')?.classList.toggle('has-trail', steps.length > 0);
   }
   function crewLaneView(agent, unavailable, control) {
     const live = crewProgress[agent];
@@ -195,9 +206,9 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       if (view.state !== 'idle') flow.push(agent);
       const stateEl = document.getElementById(lane.state);
       if (stateEl && stateEl.textContent !== view.text) stateEl.textContent = view.text;
-      const modelEl = document.getElementById(lane.model);
-      const model = crewModelText(lane.select());
-      if (modelEl && modelEl.textContent !== model) modelEl.textContent = model;
+      const col = document.getElementById(lane.col);
+      if (col) { col.dataset.state = view.state; col.dataset.included = card.dataset.included; }
+      renderCrewTrail(lane, crewTrail[agent] || [], crewProgress[agent]?.status === 'running');
     }
     const flowText = flow.join(' ');
     crewEl.dataset.focus = focus;
@@ -218,6 +229,10 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     for (const [agent, entry] of Object.entries(progress || {})) {
       if (!CREW_LANES[agent] || !entry || typeof entry !== 'object') continue;
       next[agent] = {status: String(entry.status || ''), activity: String(entry.activity || '')};
+      const steps = (Array.isArray(entry.activity_trail) ? entry.activity_trail : [])
+        .concat(entry.activity ? [entry.activity] : []).map(s => String(s).slice(0, 140))
+        .filter((s, i, all) => s && s !== all[i - 1]);
+      if (steps.length) crewTrail[agent] = steps.slice(-6);
     }
     crewProgress = next;
     renderCrew();
@@ -240,7 +255,6 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
   if (crewSegGroup && typeof MutationObserver === 'function') {
     new MutationObserver(() => renderCrew()).observe(crewSegGroup, {subtree: true, attributes: true, attributeFilter: ['class', 'disabled']});
   }
-  for (const select of [agyModelSelect, codexModelSelect]) select?.addEventListener('change', renderCrew);
   renderCrew();
 
   if (btnContinueCollab) {

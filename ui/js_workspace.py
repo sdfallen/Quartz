@@ -70,11 +70,18 @@ JAVASCRIPT = r"""
   btnPanels.addEventListener('click', () => requestAnimationFrame(syncThumbs));
   document.getElementById('btnInspectorClose').addEventListener('click', () => { if (document.body.classList.contains('show-panels')) btnPanels.click(); });
 
-  function toggleSidebar() {
-    if (window.matchMedia('(max-width: 820px)').matches) document.body.classList.toggle('sidebar-open');
-    else document.body.classList.toggle('sidebar-collapsed');
+  // Conversations and projects live in a drawer that slides out from the rail.
+  function setDrawer(open) {
+    document.body.classList.toggle('sidebar-open', !!open);
+    document.getElementById('btnSidebar')?.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
+  function toggleSidebar() { setDrawer(!document.body.classList.contains('sidebar-open')); }
   document.getElementById('btnSidebar').addEventListener('click', toggleSidebar);
+  document.getElementById('btnDrawerClose')?.addEventListener('click', () => setDrawer(false));
+  document.getElementById('drawerScrim')?.addEventListener('click', () => setDrawer(false));
+  document.getElementById('conversationList')?.addEventListener('click', event => {
+    if (event.target.closest?.('.conversation-entry')) setDrawer(false);
+  });
   document.getElementById('btnWinMinimize').addEventListener('click', () => window.pywebview.api.minimize());
   let windowMaximized = false;
   const btnWinMaximize = document.getElementById('btnWinMaximize');
@@ -339,7 +346,7 @@ JAVASCRIPT = r"""
       const overlay = blockingOverlay();
       if (overlay?.id === 'agentOverlay') document.getElementById('btnAgentClose').click();
       else if (overlay?.id === 'cliSetup') document.getElementById('cliLater').click();
-      else document.body.classList.remove('sidebar-open');
+      else setDrawer(false);
       return;
     }
     if (!event.ctrlKey || event.altKey || event.shiftKey || event.metaKey || blockingOverlay()) return;

@@ -67,15 +67,25 @@ SHELL_MARKUP = r"""
 
 <div class="app shell">
 
-  <aside class="sidebar" id="sidebar" aria-label="Çalışma alanı">
-    <div class="side-head pywebview-drag-region">
-      <div class="orb-wrap" id="orbWrap">@@BRAND_MARK@@</div>
+  <!-- Quartz layout (7 Nov 2026, built from scratch): a slim rail, a drawer for
+       conversations, and a stage where Codex and Antigravity each have a column
+       either side of the conversation with the Quartz crystal at its head. -->
+  <nav class="app-rail pywebview-drag-region" aria-label="Quartz">
+    <div class="rail-mark" id="orbWrap">@@BRAND_MARK@@</div>
+    <button type="button" class="rail-btn primary" id="btnNewChat" title="Yeni sohbet başlat" aria-label="Yeni sohbet">@@i:plus@@<span class="rail-tip" aria-hidden="true">Yeni sohbet</span></button>
+    <button type="button" class="rail-btn" id="btnSidebar" title="Sohbetler ve projeler (Ctrl+B)" aria-label="Sohbetler ve projeler" aria-controls="sidebar" aria-keyshortcuts="Control+B">@@i:sidebar@@<span class="rail-tip" aria-hidden="true">Sohbetler</span></button>
+    <button type="button" class="rail-btn" id="btnCommand" title="Ara ve komutlar (Ctrl+K)" aria-label="Ara ve komutlar" aria-keyshortcuts="Control+K">@@i:search@@<span class="rail-tip" aria-hidden="true">Ara ve komutlar</span></button>
+    <div class="rail-spacer"></div>
+    <button type="button" class="rail-btn" id="btnSelfDiagnostics" title="Quartz öz teşhisini bu sohbette başlat" aria-label="Öz teşhis">@@i:pulse@@<span class="rail-tip" aria-hidden="true">Öz teşhis</span></button>
+    <button type="button" class="rail-btn" id="btnPanels" title="Durum ve araç panelini aç/kapat (Ctrl+I)" aria-label="Durum ve araçlar" aria-keyshortcuts="Control+I">@@i:panel@@<span class="rail-tip" aria-hidden="true">Durum ve araçlar</span></button>
+    <div class="signature-mark" title="Ali Mehdi">AM</div>
+  </nav>
+
+  <div class="drawer-scrim" id="drawerScrim"></div>
+  <aside class="sidebar" id="sidebar" aria-label="Sohbetler ve projeler">
+    <div class="side-head">
       <div class="brand">QUARTZ</div>
-      <div class="signature-mark" title="Ali Mehdi">AM</div>
-    </div>
-    <div class="side-actions">
-      <button type="button" class="side-action primary" id="btnNewChat" title="Yeni sohbet başlat">@@i:plus@@<span>Yeni sohbet</span></button>
-      <button type="button" class="side-action" id="btnCommand" title="Komut paleti" aria-keyshortcuts="Control+K">@@i:search@@<span>Ara ve komutlar</span><kbd>Ctrl K</kbd></button>
+      <button type="button" class="icon-btn" id="btnDrawerClose" title="Kapat (Esc)" aria-label="Sohbetler panelini kapat">@@i:close:sm@@</button>
     </div>
     <div class="side-section">
       <div class="workspace-nav-title">Proje</div>
@@ -98,7 +108,6 @@ SHELL_MARKUP = r"""
 
   <main class="main chat-col">
     <header class="topbar titlebar pywebview-drag-region">
-      <button type="button" class="icon-btn" id="btnSidebar" title="Kenar çubuğunu aç/kapat (Ctrl+B)" aria-label="Kenar çubuğu" aria-keyshortcuts="Control+B">@@i:sidebar@@</button>
       <div class="chat-title-group">
         <span class="chat-conv-title" id="chatConvTitle">Yeni Sohbet</span>
         <span class="project-tag" id="writerBadge" style="display:none"></span>
@@ -108,8 +117,6 @@ SHELL_MARKUP = r"""
       <div class="status-pill offline" id="statusPill"><span class="dot" aria-hidden="true"></span><span id="statusText">Bağlanıyor</span></div>
       <span class="squad-badge" id="squadBadge" title="Squad mesajlaşma altyapısı">Squad: Kontrol ediliyor</span>
       <span class="perm-hint" id="permissionSelectionHint" aria-live="polite">Tam Yetki</span>
-      <button type="button" class="icon-btn" id="btnSelfDiagnostics" title="Quartz öz teşhisini bu sohbette başlat" aria-label="Öz teşhis">@@i:pulse@@</button>
-      <button type="button" class="icon-btn" id="btnPanels" title="Durum ve araç panelini aç/kapat (Ctrl+I)" aria-label="Durum ve araçlar" aria-keyshortcuts="Control+I">@@i:panel@@</button>
       <div class="win-controls">
         <button type="button" class="win-btn" id="btnWinMinimize" title="Küçült" aria-label="Küçült">@@i:minus:sm@@</button>
         <button type="button" class="win-btn" id="btnWinMaximize" title="Büyüt" aria-label="Büyüt" aria-pressed="false">@@i:maximize:sm@@</button>
@@ -130,34 +137,52 @@ SHELL_MARKUP = r"""
       <button type="button" class="control-btn" id="btnDesktopTaskStop" hidden>Görevi durdur</button>
     </div>
 
-    <!-- The crew: Codex and Antigravity in their lanes, the Quartz crystal between
-         them. Choosing a lane chooses who you talk to; the crystal means both. -->
-    <section class="crew" id="crew" data-focus="antigravity" data-flow="" data-control="false" aria-label="Quartz ekibi">
-      <button type="button" class="lane-card" id="laneCodex" data-agent="codex" data-state="idle" aria-pressed="false" aria-describedby="laneCodexState">
-        <span class="lane-gem" aria-hidden="true"></span>
-        <span class="lane-copy">
-          <span class="lane-name">Codex</span>
-          <span class="lane-state" id="laneCodexState">Hazır</span>
-        </span>
-        <span class="lane-model" id="laneCodexModel"></span>
-      </button>
-      <button type="button" class="crew-core" id="crewCore" data-agent="collaboration" aria-pressed="false" aria-describedby="crewCoreLabel" title="Birlikte: Codex ve Antigravity aynı görevde">
-        <span class="core-beam beam-codex" aria-hidden="true"><b class="beam-flow"></b></span>
-        <span class="core-beam beam-agy" aria-hidden="true"><b class="beam-flow"></b></span>
-        <span class="core-crystal" aria-hidden="true"><span class="core-halo"></span>@@MARK@@</span>
-        <span class="core-label" id="crewCoreLabel">Birlikte</span>
-      </button>
-      <button type="button" class="lane-card lane-right" id="laneAgy" data-agent="antigravity" data-state="idle" aria-pressed="false" aria-describedby="laneAgyState">
-        <span class="lane-gem" aria-hidden="true"></span>
-        <span class="lane-copy">
-          <span class="lane-name">Antigravity</span>
-          <span class="lane-state" id="laneAgyState">Hazır</span>
-        </span>
-        <span class="lane-model" id="laneAgyModel"></span>
-      </button>
-    </section>
+    <div class="stage-shell">
+      <div class="stage crew" id="crew" data-focus="antigravity" data-flow="" data-control="false">
+        <aside class="lane-col lane-codex" id="laneColCodex" data-state="idle" aria-label="Codex">
+          <button type="button" class="lane-card" id="laneCodex" data-agent="codex" data-state="idle" aria-pressed="false" aria-describedby="laneCodexState">
+            <span class="lane-gem" aria-hidden="true"></span>
+            <span class="lane-copy">
+              <span class="lane-name">Codex</span>
+              <span class="lane-state" id="laneCodexState">Hazır</span>
+            </span>
+          </button>
+          <div class="model-selector-pill" id="codexModelPill" title="Codex modeli ve düşünme seviyesi">
+              <span class="pill-agent-name">Codex</span>
+              <select id="codexModelSelect" aria-label="Codex modeli">
+                <option value="gpt-6.1-sol">GPT-6.1-Sol</option>
+                <option value="gpt-6-astra">GPT-6-Astra</option>
+                <option value="gpt-6-sol">GPT-6-Sol</option>
+                <option value="gpt-6-luna">GPT-6-Luna</option>
+                <option value="gpt-5.6-sol">GPT-5.6-Sol</option>
+                <option value="gpt-5.6-terra">GPT-5.6-Terra</option>
+                <option value="gpt-5.6-luna">GPT-5.6-Luna</option>
+              </select>
+              <select id="codexEffortSelect" aria-label="Codex düşünme seviyesi" title="Codex düşünme seviyesi (model_reasoning_effort)">
+                <option value="low" selected>low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+                <option value="xhigh">xhigh</option>
+                <option value="max">max</option>
+                <option value="ultra">ultra</option>
+              </select>
+            </div>
+          <div class="lane-title">Son adımlar</div>
+          <ol class="lane-trail" id="laneCodexTrail"></ol>
+          <p class="lane-empty">Çalışırken attığı adımlar burada akar.</p>
+        </aside>
 
-    <div class="chat-stage">
+        <section class="stream" aria-label="Sohbet akışı">
+          <div class="stream-head">
+            <span class="core-beam beam-codex" aria-hidden="true"><b class="beam-flow"></b></span>
+            <button type="button" class="crew-core" id="crewCore" data-agent="collaboration" aria-pressed="false" aria-describedby="crewCoreLabel" title="Birlikte: Codex ve Antigravity aynı görevde">
+              <span class="core-crystal" aria-hidden="true"><span class="core-halo"></span>@@MARK@@</span>
+              <span class="core-label" id="crewCoreLabel">Birlikte</span>
+            </button>
+            <span class="core-beam beam-agy" aria-hidden="true"><b class="beam-flow"></b></span>
+          </div>
+
+          <div class="chat-stage">
       <div class="lane-rails" aria-hidden="true">
         <i class="rail rail-codex"><b class="rail-flow"></b></i>
         <i class="rail rail-agy"><b class="rail-flow"></b></i>
@@ -177,23 +202,39 @@ SHELL_MARKUP = r"""
       <button type="button" class="jump-bottom-btn" id="btnJumpBottom" title="En son mesaja git">Yeni mesajlar ↓</button>
     </div>
 
-    <div class="dock">
-      <div class="thinking-row" id="thinkingRow">
+          <div class="dock">
+            <div class="thinking-row" id="thinkingRow">
         <div class="thinking-dots" aria-hidden="true"><div class="d"></div><div class="d"></div><div class="d"></div></div>
         <span id="thinkingText">işleniyor...</span>
         <button type="button" class="control-btn" id="btnCancel" title="Etkin görevi ve ajan süreçlerini durdur" style="display:none">Görevi durdur</button>
       </div>
-      <div class="inputbar composer">
-        <textarea id="msgInput" rows="1" aria-label="Ekibe yazın veya görev verin" aria-keyshortcuts="Control+L" title="Sohbete odaklan: Ctrl+L · Gönder: Enter · Yeni satır: Shift+Enter" placeholder="Ekibe yazın veya görev verin…" autofocus></textarea>
-        <div class="composer-row">
-          <div class="agent-seg-group" id="agentSegGroup" role="group" aria-label="Ajan seçici">
+            <div class="inputbar composer">
+              <textarea id="msgInput" rows="1" aria-label="Ekibe yazın veya görev verin" aria-keyshortcuts="Control+L" title="Sohbete odaklan: Ctrl+L · Gönder: Enter · Yeni satır: Shift+Enter" placeholder="Ekibe yazın veya görev verin…" autofocus></textarea>
+              <div class="composer-row">
+                <div class="agent-seg-group" id="agentSegGroup" role="group" aria-label="Ajan seçici">
             <span class="seg-thumb" id="agentSegThumb" aria-hidden="true"></span>
             <button type="button" class="agent-seg-btn active" data-agent="antigravity">Antigravity</button>
             <button type="button" class="agent-seg-btn" data-agent="codex">Codex</button>
             <button type="button" class="agent-seg-btn" data-agent="collaboration">Birlikte</button>
           </div>
-          <div class="chat-models-bar" id="chatModelsBar">
-            <div class="model-selector-pill active-agy" id="agyModelPill" title="Antigravity modeli ve düşünme seviyesi">
+                <div class="composer-spacer"></div>
+                <button type="button" class="chat-tool-btn" id="btnContinueCollab" style="display:none" title="Birlikte modunda ajanlar arası tartışmayı 1 tur daha sürdür">@@i:loop:sm@@ 1 tur daha</button>
+          <button type="button" class="icon-btn mic" id="btnMic" title="Konuş (bas-konuş)" aria-label="Sesle yaz">@@i:mic@@</button>
+          <button type="button" class="send-btn send" id="btnSend" title="Gönder (Enter)" aria-label="Gönder">@@i:send@@</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="lane-col lane-antigravity" id="laneColAgy" data-state="idle" aria-label="Antigravity">
+          <button type="button" class="lane-card" id="laneAgy" data-agent="antigravity" data-state="idle" aria-pressed="false" aria-describedby="laneAgyState">
+            <span class="lane-gem" aria-hidden="true"></span>
+            <span class="lane-copy">
+              <span class="lane-name">Antigravity</span>
+              <span class="lane-state" id="laneAgyState">Hazır</span>
+            </span>
+          </button>
+          <div class="model-selector-pill active-agy" id="agyModelPill" title="Antigravity modeli ve düşünme seviyesi">
               <span class="pill-agent-name">Antigravity</span>
               <select id="agyModelSelect" aria-label="Antigravity modeli">
                 <option value="gemini-4-argon-medium">Gemini 4 Argon (Medium)</option>
@@ -214,32 +255,10 @@ SHELL_MARKUP = r"""
                 <option value="max">max</option>
               </select>
             </div>
-            <div class="model-selector-pill" id="codexModelPill" title="Codex modeli ve düşünme seviyesi">
-              <span class="pill-agent-name">Codex</span>
-              <select id="codexModelSelect" aria-label="Codex modeli">
-                <option value="gpt-6.1-sol">GPT-6.1-Sol</option>
-                <option value="gpt-6-astra">GPT-6-Astra</option>
-                <option value="gpt-6-sol">GPT-6-Sol</option>
-                <option value="gpt-6-luna">GPT-6-Luna</option>
-                <option value="gpt-5.6-sol">GPT-5.6-Sol</option>
-                <option value="gpt-5.6-terra">GPT-5.6-Terra</option>
-                <option value="gpt-5.6-luna">GPT-5.6-Luna</option>
-              </select>
-              <select id="codexEffortSelect" aria-label="Codex düşünme seviyesi" title="Codex düşünme seviyesi (model_reasoning_effort)">
-                <option value="low" selected>low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
-                <option value="xhigh">xhigh</option>
-                <option value="max">max</option>
-                <option value="ultra">ultra</option>
-              </select>
-            </div>
-          </div>
-          <div class="composer-spacer"></div>
-          <button type="button" class="chat-tool-btn" id="btnContinueCollab" style="display:none" title="Birlikte modunda ajanlar arası tartışmayı 1 tur daha sürdür">@@i:loop:sm@@ 1 tur daha</button>
-          <button type="button" class="icon-btn mic" id="btnMic" title="Konuş (bas-konuş)" aria-label="Sesle yaz">@@i:mic@@</button>
-          <button type="button" class="send-btn send" id="btnSend" title="Gönder (Enter)" aria-label="Gönder">@@i:send@@</button>
-        </div>
+          <div class="lane-title">Son adımlar</div>
+          <ol class="lane-trail" id="laneAgyTrail"></ol>
+          <p class="lane-empty">Çalışırken attığı adımlar burada akar.</p>
+        </aside>
       </div>
     </div>
 
