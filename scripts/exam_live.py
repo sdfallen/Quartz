@@ -36,7 +36,8 @@ EXAM_ROOT = Path(os.environ.get("QUARTZ_EXAM_ROOT", Path(tempfile.gettempdir()) 
 QUARTZ_DIR = Path(os.environ.get("QUARTZ_INSTALL_DIR", r"C:\Users\LENAVO\Desktop\Jarvis config\dist\Quartz"))
 EVIDENCE = Path(os.environ.get("LOCALAPPDATA", "")) / "Quartz" / "task-evidence"
 FIXTURE_APP = "Quartz Sinav Test Uygulamasi"
-QUARTZ_OWNED = (".squad/",)
+QUARTZ_OWNED = (".squad/", ".git/")  # Quartz's Squad store and Git internals (its checkpoint refs live here)
+CHECKPOINT_REFS = ".git/refs/quartz-checkpoints/"
 
 CALC = "def total(items):\n    result = 0\n    for index in range(1, len(items)):\n        result += items[index]\n    return result\n"
 CALC_TEST = ("import unittest\nfrom calc import total\n\n\nclass CalcTest(unittest.TestCase):\n"
@@ -113,8 +114,8 @@ def prepare(task_id):
     stamp = time.strftime("%Y%m%d-%H%M%S")
     fixture = EXAM_ROOT / "fixtures" / task_id
     host = EXAM_ROOT / "host" / f"{task_id}-{stamp}"
-    if fixture.exists():
-        shutil.rmtree(fixture)
+    if fixture.exists():  # Git marks its object files read-only.
+        shutil.rmtree(fixture, onexc=lambda fn, path, exc: (os.chmod(path, 0o700), fn(path)))
     fixture.mkdir(parents=True)
     host.mkdir(parents=True)
     _write(fixture, setup.get("files", {}))
@@ -232,7 +233,9 @@ def grade(host_dir):
     mtimes = {p.relative_to(fixture).as_posix(): p.stat().st_mtime for p in fixture.rglob("*") if p.is_file()}
     # Quartz's own Squad coordination store lives in the project; it is not the agents' work.
     own = lambda tree: {p: h for p, h in tree.items() if not p.startswith(QUARTZ_OWNED)}
-    context = exam_oracle.Context(fixture, baseline=own(meta["baseline"]), after=own(exam_oracle.snapshot(fixture)),
+    full_after = exam_oracle.snapshot(fixture)
+    marks["new_checkpoints"] = sorted(p for p in full_after if p.startswith(CHECKPOINT_REFS) and p not in meta["baseline"])
+    context = exam_oracle.Context(fixture, baseline=own(meta["baseline"]), after=own(full_after),
                                   state=state, events=state.get("events"),
                                   reply=reply, outcome=(runs[-1].get("outcome") if runs else {}), runs=runs,
                                   messages=messages, claims=claims, commands=_commands(meta, checks),

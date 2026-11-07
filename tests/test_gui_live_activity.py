@@ -153,6 +153,8 @@ assert.equal(els.laneCodexTrail.children[2].className,'now');assert.equal(els.la
 setCrewProgress(null);
 assert.equal(els.laneCodexTrail.children.length,3);  // The last run's steps stay visible...
 assert.equal(els.laneCodexTrail.children[2].className,'');  // ...but nothing is marked as happening now.
+currentConvId='c2';renderCrew();
+assert.equal(els.laneCodexTrail.children.length,0);  // another conversation starts with empty columns
 assert.equal(els.laneCodex.dataset.state,'idle');assert.equal(els.crew.dataset.flow,'');assert.equal(els.crewCoreLabel.textContent,'Birlikte');
 ''')
 
