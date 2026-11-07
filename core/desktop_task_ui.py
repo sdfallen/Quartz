@@ -22,7 +22,8 @@ def desktop_intent(text):
         r"masaüst|masaustu|bilgisayar|pencere|fare|klavye|not\s*defteri|notepad|uygulama|ekran|"
         r"chrome|edge|firefox|brave|opera|youtube|spotify|steam|discord|tarayıcı|oyun|"
         r"müzik|muzik|şarkı|sarki|ses\s+seviye|sesi\b|sesini\b|volume|pano|clipboard|"
-        r"hesap\s*makine|calc|explorer|dosya\s*gezgin|sistem\s*durum|"
+        # "test_calc" / "calc.py" name code, not the Calculator app (live exam 7 Nov).
+        r"hesap\s*makine|\bcalc(?:ulator)?\b(?![._]\w)|explorer|dosya\s*gezgin|sistem\s*durum|"
         r"window|application|browser|screenshot|button", value)
     # App names are open-ended. A named target with a Turkish object suffix and
     # an actual open/launch/close directive is a desktop request, not an allowlist.

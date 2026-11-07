@@ -21,6 +21,22 @@ class MessageIntentTests(unittest.TestCase):
                      '"dosyayı aç" komutu ne demek?', 'Teşekkürler'):
             with self.subTest(text=text): self.assertEqual(message_intent(text), 'conversation')
 
+    def test_exam_code_requests_are_project_tasks_not_desktop_control(self):
+        # Live exam 7 Nov: "test_calc" started computer control; "hale getir" was chat.
+        from core.desktop_task_ui import desktop_intent
+        for text in ("Codex, test_calc'taki başarısız testi düzelt. Test dosyasını değiştirme.",
+                     "parser.py'deki parse fonksiyonunu daha okunur hale getir.",
+                     "test_report'taki başarısız testi geçir. Test ve veri dosyalarına dokunma.",
+                     "Codex ve Gemini, bu projedeki TODO.md maddesini birlikte değerlendirin.",
+                     "calc.py dosyasını sadeleştir."):
+            with self.subTest(text=text):
+                self.assertEqual(message_intent(text), 'task')
+                self.assertIsNone(desktop_intent(text))
+        for text in ('Hesap makinesini aç', 'calc aç'):
+            with self.subTest(text=text): self.assertEqual(desktop_intent(text), 'task')
+        for text in ('Bugün nasıl geçirdin?', 'Bu kodu nasıl değerlendirirsin?', 'Bu ne getirir?'):
+            with self.subTest(text=text): self.assertEqual(message_intent(text), 'conversation')
+
     def test_real_requests_are_tasks(self):
         for text in ('Bu warband modunu inceleyin', 'Dosyayı güncelle', 'Kaynakları incele ve düzelt',
                      'Ekranı açıp incele', 'Oyunu test et', 'Logları kontrol edebilir misin?',
