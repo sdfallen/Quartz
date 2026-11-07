@@ -609,6 +609,52 @@ class NaturalTaskTests(unittest.TestCase):
             self.assertEqual(task.job["verification"]["status"],"NOT VERIFIED")
         finally:task.stop()
 
+    def test_a_run_that_used_its_tools_after_consent_is_not_restarted(self):
+        # Live 7 Nov (task 47c6783c): Gemini reviewed the approved state, ended its turn,
+        # and was restarted anyway; the same review ran again for 87 s.
+        from tests.test_chat_coordination import MODELS
+        class Runtime:
+            TERMINAL={"completed","failed","cancelled"}
+            executable="test-runtime.exe"
+            def __init__(self):self.states={};self.started=[]
+            def start(self,prompt,workspace,**opts):
+                rid="run"+str(len(self.started)+1)
+                self.started.append(prompt)
+                self.states[rid]={"id":rid,"status":"running","result":"İnceleme bitti."}
+                return self.states[rid]
+            def get(self,rid):return self.states[rid]
+            def cancel(self,rid):self.states[rid]["status"]="cancelled"
+        codex,gemini=Runtime(),Runtime()
+        squad=Mock();squad.initialized=True;squad.create_task.return_value={"id":"task"};squad.receive.return_value=[]
+        task=NaturalDesktopTask(self.desktop,lambda *a:None,factories={"codex":lambda:codex,"antigravity":lambda:gemini},
+            squad_factory=lambda p:squad,evidence_root=self.root/"consent-seen")
+        try:
+            with patch("core.natural_desktop.subprocess.run",return_value=SimpleNamespace(returncode=0)),                  patch("core.natural_desktop.ensure_antigravity_tool_grants"),patch("core.natural_desktop.write_operator_hooks"):
+                task.start("Codex test uygulamasını incele. Gemini sonucu değerlendir.",{"path":str(self.root)},"chat",MODELS,
+                           requested_permission_level="full")
+                # Tam Yetki grants inside the operator's own call while both runs are working.
+                task.call(task.tokens["codex"],{"name":"desktop_request_access","arguments":{"handles":[1],"reason":"Test penceresi için izin"}})
+                self.assertIsNone(task.pending)
+                self.assertEqual(set(task._approval_resume),{"codex","antigravity"})
+                time.sleep(.01)
+                task.call(task.tokens["antigravity"],{"name":"task_context","arguments":{}})
+                codex.states["run1"]["status"]="completed"
+                gemini.states["run1"]["status"]="completed"
+                time.sleep(.6)
+            self.assertEqual(len(gemini.started),1)  # Saw the consent through its own tool call.
+            self.assertEqual(len(codex.started),2)   # Never looked after consent: continues once.
+        finally:task.stop()
+
+    def test_placeholder_messages_never_reach_the_chat(self):
+        with self.assertRaises(ValueError):
+            self.call("task_message",{"text":"Test"},token="review")
+        with self.task.changed:
+            self.task._message("antigravity","Hazırım.")  # e.g. a final turn result
+            self.task._message("antigravity","Test sonucu: imzalar görünüyor.")
+        texts=[e[1] for e in self.events if len(e)>1]
+        self.assertFalse(any(str(t).strip() in {"Test","Hazırım."} for t in texts))
+        self.assertEqual(self.task.squad.send.call_count,1)
+
     def test_shelved_aster_project_gets_an_ordinary_isolated_desktop_task(self):
         # Live 4-7 Nov: every desktop task in the ASTER chat ran the Universal Modder profile.
         from tests.test_chat_coordination import MODELS
