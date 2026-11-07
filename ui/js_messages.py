@@ -180,13 +180,12 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
   // Typing reveal for agent text that arrives while Quartz is open. History
   // (first load, conversation switch) appears at once; a growing streamed
   // message continues from what is already visible. Off under reduced motion
-  // and low-spec; the full text is always in the DOM model it is rebuilt from.
+  // (low-spec keeps it: one rAF loop over text nodes); the full text is always in the DOM model it is rebuilt from.
   const revealedLength = new Map();
   let liveRevealArmed = false;
   let revealSuppressed = false;
   function revealMotionAllowed() {
     if (typeof window === 'undefined' || !document.body) return false;
-    if (document.body.classList?.contains('low-spec')) return false;
     return !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   }
   function revealMessage(bubble, body, msgId) {
@@ -220,19 +219,24 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       if (target.parentNode) target.parentNode.insertBefore(caret, target.nextSibling);
     };
     const finish = () => { caret.remove(); for (const block of blocks) block.classList.remove('reveal-pending'); };
+    // A timer, not requestAnimationFrame: WebView2 stops frames while Quartz is
+    // covered (e.g. by the app an agent is driving) and the text must not wait for
+    // that. Progress follows elapsed time; a hidden window gets the whole text.
     let last = performance.now();
+    const next = () => setTimeout(() => step(performance.now()), 16);
     const step = (now) => {
       if (bubble.__reveal !== token || !body.isConnected) { finish(); return; }
-      shown = Math.min(total, shown + Math.max(1, Math.round(rate * (now - last) / 1000)));
+      const hidden = typeof document.hidden === 'boolean' && document.hidden;
+      shown = hidden ? total : Math.min(total, shown + Math.max(1, Math.round(rate * (now - last) / 1000)));
       last = now;
       revealedLength.set(msgId, shown);
       paint();
       if (userPinnedToBottom) scrollToBottom(true);
-      if (shown < total) requestAnimationFrame(step);
+      if (shown < total) next();
       else { finish(); bubble.__reveal = null; }
     };
     paint();
-    requestAnimationFrame(step);
+    next();
   }
 
   // What each agent is doing right now, under its own working bubble. The

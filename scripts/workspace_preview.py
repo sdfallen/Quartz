@@ -38,7 +38,7 @@ if(name==='chat_poll'){const s=liveState();if(!s)return {status:'ok',data:{activ
 if(name==='coordination_route'&&!/erişim|yetki|pencere|masaüstü/i.test(String(args[0]||'')))return {status:'ok',data:{handled:false,intent:'conversation'}};
 if(name==='chat_status')return {status:'ok',data:{preferences:{response_detail:'short'},active_conversation:sampleConversation,conversations:[sampleConversation,{id:'older',title:'Önceki test notları'}],projects:[{id:'preview-project',name:'Geçici test projesi',path:'Preview only'}],agents:{},models:{},single_writer:{}}};
 if(name==='ping')return {status:'ok',data:'Preview only'};
-if(name==='get_stats')return {cpu:0,mem:0,disk:0};
+if(name==='get_stats')return {cpu:0,mem:0,disk:0,low_spec:location.hash.includes('lowspec')};
 if(name==='ui_events')return {status:'ok',data:[]};
 if(name==='desktop_task_status')return {status:'ok',data:previewDesktop};
 if(name==='coordination_status')return {status:'ok',data:{active:false}};
@@ -53,7 +53,7 @@ if(name==='coordination_approve')return {status:'error',data:'PREVIEW ONLY: no r
 return {status:'ok',data:[]};
 }})};
 window.addEventListener('DOMContentLoaded',()=>window.dispatchEvent(new Event('pywebviewready')));
-// #light / #live (headless QA): pick the light theme, or run one live turn without clicks.
+// #light / #live / #lowspec (headless QA): light theme, one live turn without clicks, low-spec hardware.
 window.addEventListener('load',()=>{if(location.hash.includes('light'))setTimeout(()=>{document.documentElement.dataset.theme='light';},300);});
 window.addEventListener('load',()=>{if(!location.hash.includes('live'))return;setTimeout(()=>{
  const input=document.getElementById('msgInput');if(!input)return;input.value='Bu etkinlik satırı fikrini değerlendir';

@@ -73,6 +73,24 @@ revealMessage(new El('div'),new El('div'),'h2');
 assert.equal(revealedLength.get('h2'),0);
 ''')
 
+    def test_reveal_finishes_without_animation_frames_and_at_once_when_hidden(self):
+        # Live 7 Nov: frames never came in a covered pane, so the text stayed hidden.
+        self.run_js(r'''
+global.requestAnimationFrame=()=>{throw new Error('frames are not available');};
+global.window={matchMedia:()=>({matches:false})};
+function textBody(text){const parent={insertBefore(){}};const node={nodeValue:text,parentNode:parent};
+  const body=new El('div');body.isConnected=true;body.querySelectorAll=()=>[];body._node=node;return body;}
+document.createTreeWalker=(body)=>{let done=false;return {nextNode:()=>{if(done)return null;done=true;return body._node;}};};
+liveRevealArmed=true;
+const visible=textBody('x'.repeat(300));revealMessage(new El('div'),visible,'v1');
+assert.equal(visible._node.nodeValue,'');            // Starts empty, then types out.
+setTimeout(()=>{const n=visible._node.nodeValue.length;assert.ok(n>0&&n<300,String(n));},500);
+setTimeout(()=>{assert.equal(visible._node.nodeValue,'x'.repeat(300));assert.equal(revealedLength.get('v1'),300);
+  document.hidden=true;
+  const covered=textBody('gizli pencere metni '.repeat(20));revealMessage(new El('div'),covered,'v2');
+  setTimeout(()=>assert.equal(covered._node.nodeValue,'gizli pencere metni '.repeat(20)),60);},2600);
+''')
+
     def test_status_line_prefers_the_live_activity(self):
         result = _node("function agentProgressText(" + PROGRESS + r'''
 const assert=require('node:assert/strict');
