@@ -89,11 +89,6 @@ JAVASCRIPT = r"""  function addAgentRow(container, title, details, status='') {
     setTimeout(() => pollAgentCenter(token), 2500);
   }
 
-  document.getElementById('btnAgentCenter').addEventListener('click', () => {
-    openModalOverlay(agentOverlay, 'agentPrompt');
-    const token = ++agentPollToken;
-    pollAgentCenter(token);
-  });
   document.getElementById('btnAgentClose').addEventListener('click', () => {
     closeModalOverlay(agentOverlay); agentPollToken++;
   });
@@ -201,13 +196,6 @@ JAVASCRIPT = r"""  function addAgentRow(container, title, details, status='') {
     providerStatus.textContent = `${p.provider || '—'} · ${labels[p.status] || p.status}\n${p.model || '—'}\nGecikme: ${latency} · Hata: ${p.failures || 0}` +
       (p.last_error ? `\n${p.last_error}` : '');
   }
-  advisorBtn.addEventListener('click', async () => {
-    const r = await window.pywebview.api.set_screen_advisor(!advisorEnabled);
-    advisorEnabled = !!(r.data && r.data.enabled);
-    advisorBtn.classList.toggle('active', advisorEnabled);
-    document.getElementById('advisorLabel').textContent = `Ekran rehberi: ${advisorEnabled ? 'açık' : 'kapalı'}`;
-    logLine(`Ekran Rehberi ${advisorEnabled ? 'açıldı' : 'kapatıldı'}`);
-  });
   learnOperationBtn.addEventListener('click', () => sendDirect('bu işi öğren'));
   finishOperationBtn.addEventListener('click', () => sendDirect('görevi bitir'));
   // Keyboard access remains available when pointer geometry cannot be captured.

@@ -38,9 +38,6 @@ JAVASCRIPT = r"""  let lastUserActivityAt = Date.now();
           safeMode = !!c.safe_mode;
           safeBtn.classList.toggle('active', safeMode);
           document.getElementById('safeLabel').textContent = `Güvenli mod: ${safeMode ? 'açık' : 'kapalı'}`;
-          advisorEnabled = !!(c.screen_advisor && c.screen_advisor.enabled);
-          advisorBtn.classList.toggle('active', advisorEnabled);
-          document.getElementById('advisorLabel').textContent = `Ekran rehberi: ${advisorEnabled ? 'açık' : 'kapalı'}`;
           const operation = c.operation && c.operation.active;
           if (operation) {
             const actionCount = (operation.actions || []).length;

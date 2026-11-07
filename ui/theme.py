@@ -16,7 +16,12 @@ brand mark.
 # at all on an 8 GB / 4-core PC, which counts as low-spec): each moves one small
 # element with opacity/transform only, and the reveal is cut short by Stop/history.
 LOW_SPEC_MOTION = ("body.low-spec .chat > .msg:last-child", "body:not(.ui-idle) .reveal-caret",
-                   "body .agent-live-now > span", "body:not(.ui-idle) .agent-live-gem")
+                   "body .agent-live-now > span", "body:not(.ui-idle) .agent-live-gem",
+                   # Crew band (7 Nov): light flowing down a working agent's rail, along
+                   # the crystal's beam, and the crystal's halo. Declared paused; the
+                   # stylesheet runs them only while that agent is working.
+                   "body:not(.ui-idle) .rail-flow", "body:not(.ui-idle) .beam-flow",
+                   "body:not(.ui-idle) .core-halo")
 
 MODERN_CSS = r"""
 /* Stop must respond the instant it is pressed. */
@@ -35,6 +40,9 @@ MODERN_CSS = r"""
 @keyframes q-caret { 0%,45% { opacity:1; } 55%,100% { opacity:.2; } }
 @keyframes q-live-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
 @keyframes q-gem { 0%,100% { opacity:1; transform:rotate(45deg) scale(1); } 50% { opacity:.55; transform:rotate(45deg) scale(.78); } }
+@keyframes q-flow { from { transform:translateY(-100%); } to { transform:translateY(340%); } }
+@keyframes q-beam { from { transform:translateX(-100%); } to { transform:translateX(230%); } }
+@keyframes q-halo { 0%,100% { opacity:.55; transform:scale(.9); } 50% { opacity:1; transform:scale(1.1); } }
 
 @media (prefers-reduced-motion: no-preference) {
   body:not(.low-spec) .chat > .msg:nth-last-child(-n+8),
@@ -84,6 +92,9 @@ MODERN_CSS = r"""
   body:not(.ui-idle) .reveal-caret { animation:q-caret 900ms steps(1,end) infinite; }
   body .agent-live-now > span { animation:q-live-in var(--t-med) var(--ease) both; }
   body:not(.ui-idle) .agent-live-gem { animation:q-gem 1400ms ease-in-out infinite; }
+  body:not(.ui-idle) .rail-flow { animation:q-flow 2600ms linear infinite paused; }
+  body:not(.ui-idle) .beam-flow { animation:q-beam 1300ms linear infinite paused; }
+  body:not(.ui-idle) .core-halo { animation:q-halo 2400ms ease-in-out infinite paused; }
 }
 /* Orb state still reads without motion. */
 #orbCore[data-state="error"] .f { fill:var(--danger); }
@@ -93,5 +104,5 @@ MODERN_CSS = r"""
   *,*::before,*::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; }
   .signature-intro { display:none !important; }
 }
-body.low-spec *:not(.msg):not(.reveal-caret):not(.agent-live-gem):not(.agent-live-now > span),body.low-spec *::before,body.low-spec *::after { animation:none !important; transition:none !important; }
+body.low-spec *:not(.msg):not(.reveal-caret):not(.agent-live-gem):not(.agent-live-now > span):not(.rail-flow):not(.beam-flow):not(.core-halo),body.low-spec *::before,body.low-spec *::after { animation:none !important; transition:none !important; }
 """

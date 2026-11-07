@@ -10,6 +10,7 @@ JAVASCRIPT = r"""  let desktopView={code:'normal',stop_ref:null};
     stop.hidden=!view.stop_ref;stop.disabled=!view.stop_ref;
     const isControlActive=(view.code==='active'||view.code==='preparing')&&!!view.stop_ref;
     document.body.classList.toggle('screen-control-active',isControlActive);
+    if(typeof renderCrew==='function')renderCrew();
     const hud=document.getElementById('screenControlHud');
     if(hud){
       hud.hidden=!isControlActive;
@@ -49,6 +50,7 @@ JAVASCRIPT = r"""  let desktopView={code:'normal',stop_ref:null};
     const r=await window.pywebview.api.natural_status();
     if(r.status!=='ok')return;
     const state=r.data, pending=state.pending;
+    if(typeof setCrewDesktop==='function')setCrewDesktop(state);
     activeTaskSquad = state.active && state.squad && state.job?.conversation_id === currentConvId
       ? {...state.squad, conversation_id:state.job.conversation_id} : null;
     if (activeTaskSquad) updateSquadBadge(activeTaskSquad);

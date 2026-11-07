@@ -150,6 +150,113 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     });
   });
 
+  // Crew band: the lanes mirror the agent picker (kept in the DOM, hidden) and
+  // show what each agent is doing. Live text comes from chat_poll agent_progress
+  // and the desktop task status: memory only, never evidence.
+  const crewEl = document.getElementById('crew');
+  const CREW_LANES = {
+    codex: {col: 'laneColCodex', card: 'laneCodex', state: 'laneCodexState', trail: 'laneCodexTrail'},
+    antigravity: {col: 'laneColAgy', card: 'laneAgy', state: 'laneAgyState', trail: 'laneAgyTrail'},
+  };
+  let crewProgress = {};
+  let crewTrail = {};  // Last run's steps per agent; kept after the run so the column is not blank.
+  let crewDesktop = null;
+  const crewSeg = agent => document.querySelector(`.agent-seg-btn[data-agent="${agent}"]`);
+  function renderCrewTrail(lane, steps, live) {
+    const list = document.getElementById(lane.trail);
+    if (!list) return;
+    const key = JSON.stringify([steps, live]);
+    if (list.dataset.key === key) return;
+    list.dataset.key = key;
+    list.replaceChildren(...steps.map((step, index) => {
+      const item = document.createElement('li');
+      item.textContent = step;
+      if (live && index === steps.length - 1) item.className = 'now';
+      return item;
+    }));
+    list.closest('.lane-col')?.classList.toggle('has-trail', steps.length > 0);
+  }
+  function crewLaneView(agent, unavailable, control) {
+    const live = crewProgress[agent];
+    const desk = crewDesktop;
+    let state = 'idle', prefix = '', text = unavailable ? 'Bağlı değil' : 'Hazır';
+    if (desk && desk.operator === agent) { state = control ? 'keyboard' : 'working'; prefix = control ? 'Klavyede' : 'Görevde'; text = prefix; }
+    else if (desk && desk.observer === agent) { state = 'review'; prefix = 'İnceliyor'; text = prefix; }
+    if (live && live.status === 'running') {
+      if (state === 'idle') state = 'working';
+      const activity = live.activity || 'Çalışıyor';
+      text = prefix ? `${prefix} · ${activity}` : activity;
+    }
+    return {state, text: text.slice(0, 140)};
+  }
+  function renderCrew() {
+    if (!crewEl) return;
+    const focus = ['codex', 'antigravity', 'collaboration'].find(a => crewSeg(a)?.classList.contains('active')) || 'antigravity';
+    const control = document.body.classList.contains('screen-control-active');
+    const flow = [];
+    for (const [agent, lane] of Object.entries(CREW_LANES)) {
+      const card = document.getElementById(lane.card);
+      if (!card) continue;
+      const unavailable = !!crewSeg(agent)?.disabled;
+      const view = crewLaneView(agent, unavailable, control);
+      card.disabled = unavailable;
+      card.setAttribute('aria-pressed', focus === agent ? 'true' : 'false');
+      card.dataset.included = focus === agent || focus === 'collaboration' ? 'true' : 'false';
+      card.dataset.state = view.state;
+      if (view.state !== 'idle') flow.push(agent);
+      const stateEl = document.getElementById(lane.state);
+      if (stateEl && stateEl.textContent !== view.text) stateEl.textContent = view.text;
+      const col = document.getElementById(lane.col);
+      if (col) { col.dataset.state = view.state; col.dataset.included = card.dataset.included; }
+      renderCrewTrail(lane, crewTrail[agent] || [], crewProgress[agent]?.status === 'running');
+    }
+    const flowText = flow.join(' ');
+    crewEl.dataset.focus = focus;
+    crewEl.dataset.flow = flowText;
+    crewEl.dataset.control = control ? 'true' : 'false';
+    document.querySelector('.chat-stage')?.setAttribute('data-flow', flowText);
+    const core = document.getElementById('crewCore');
+    if (core) {
+      core.setAttribute('aria-pressed', focus === 'collaboration' ? 'true' : 'false');
+      core.disabled = !!crewSeg('collaboration')?.disabled;
+    }
+    const label = document.getElementById('crewCoreLabel');
+    const coreText = control ? 'Kontrolde' : flow.length === 2 ? 'İkisi çalışıyor' : flow.length ? 'Yönlendiriyor' : 'Birlikte';
+    if (label && label.textContent !== coreText) label.textContent = coreText;
+  }
+  function setCrewProgress(progress) {
+    const next = {};
+    for (const [agent, entry] of Object.entries(progress || {})) {
+      if (!CREW_LANES[agent] || !entry || typeof entry !== 'object') continue;
+      next[agent] = {status: String(entry.status || ''), activity: String(entry.activity || '')};
+      const steps = (Array.isArray(entry.activity_trail) ? entry.activity_trail : [])
+        .concat(entry.activity ? [entry.activity] : []).map(s => String(s).slice(0, 140))
+        .filter((s, i, all) => s && s !== all[i - 1]);
+      if (steps.length) crewTrail[agent] = steps.slice(-6);
+    }
+    crewProgress = next;
+    renderCrew();
+  }
+  function setCrewDesktop(state) {
+    const job = state && state.active ? state.job : null;
+    const operator = job?.roles?.operator;
+    if (!job || job.conversation_id !== currentConvId || !CREW_LANES[operator]) crewDesktop = null;
+    else crewDesktop = {operator, observer: operator === 'codex' ? 'antigravity' : 'codex'};
+    renderCrew();
+  }
+  for (const id of ['laneCodex', 'laneAgy', 'crewCore']) {
+    document.getElementById(id)?.addEventListener('click', event => {
+      const button = crewSeg(event.currentTarget.dataset.agent);
+      if (button && !button.disabled) button.click();
+      renderCrew();
+    });
+  }
+  const crewSegGroup = document.getElementById('agentSegGroup');
+  if (crewSegGroup && typeof MutationObserver === 'function') {
+    new MutationObserver(() => renderCrew()).observe(crewSegGroup, {subtree: true, attributes: true, attributeFilter: ['class', 'disabled']});
+  }
+  renderCrew();
+
   if (btnContinueCollab) {
     btnContinueCollab.addEventListener('click', async () => {
       if (thinking || !currentConvId) return;
@@ -375,6 +482,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       }
 
       if (typeof renderAgentLive === 'function') renderAgentLive(data.active ? data.agent_progress : null);
+      if (typeof setCrewProgress === 'function') setCrewProgress(data.active ? data.agent_progress : null);
       if (data.metadata) {
         if (Object.keys(data.agent_progress || {}).length) {
           thinkingText.textContent = agentProgressText(data.agent_progress);

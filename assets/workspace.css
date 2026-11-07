@@ -463,3 +463,141 @@ body.low-spec .diagnostics-card, body.low-spec .diag-progress-fill, body.ui-idle
 .desktop-task-bar, .action-card, .coordination-card { background: color-mix(in oklab, var(--surface-1) 88%, transparent); border-color: color-mix(in oklab, var(--amethyst) 22%, var(--line-strong)); }
 .prompt-chip { background: color-mix(in oklab, var(--surface-1) 80%, transparent); }
 .prompt-chip:hover { border-color: color-mix(in oklab, var(--accent) 45%, var(--line-strong)); color: var(--text); }
+
+/* Quartz layout (7 Nov 2026, built from scratch) ----------------------- */
+/* Quartz is a team, not one assistant. A slim rail holds navigation; the
+   conversations slide out of it as a drawer. The stage gives Codex (citrine)
+   and Antigravity (amethyst) a column each, either side of the conversation,
+   with the Quartz crystal conducting at its head. Choosing a column chooses who
+   you talk to; the crystal means both. The columns run on down the stream as
+   two rails, and each agent's message hangs on its own rail. */
+#laneCodex, .lane-codex, .rail-codex, .beam-codex, .chat > .msg.sender-codex { --lane: var(--agent-codex); }
+#laneAgy, .lane-antigravity, .rail-agy, .beam-agy, .chat > .msg.sender-antigravity, .chat > .msg.sender-gemini { --lane: var(--agent-agy); }
+.chat > .msg.sender-quartz, .chat > .msg.bot.sender-bot { --lane: var(--agent-quartz); }
+
+/* Frame: rail | main | inspector. */
+.app { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; }
+.app-rail { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 0 14px; min-height: 0; background: color-mix(in oklab, var(--surface-1) 64%, transparent); border-right: 1px solid var(--line); }
+.rail-mark { width: 30px; height: 30px; margin-bottom: 14px; flex: none; }
+.rail-btn { position: relative; width: 42px; height: 42px; flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 13px; color: var(--text-2); transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease), transform var(--t-fast) var(--ease); }
+.rail-btn:hover { background: var(--surface-2); color: var(--text); }
+.rail-btn:active { transform: scale(.94); }
+.rail-btn.primary { color: var(--on-accent); background: linear-gradient(140deg, var(--accent), color-mix(in oklab, var(--accent) 66%, var(--amethyst))); box-shadow: 0 6px 18px color-mix(in oklab, var(--accent) 28%, transparent); }
+.rail-btn.primary:hover { filter: brightness(1.07); color: var(--on-accent); }
+body.sidebar-open #btnSidebar, body.show-panels #btnPanels { background: var(--surface-3); color: var(--text); }
+.rail-tip { position: absolute; left: calc(100% + 12px); top: 50%; translate: 0 -50%; padding: 5px 9px; font-size: var(--text-xs); font-weight: 500; color: var(--text); white-space: nowrap; background: var(--surface-3); border: 1px solid var(--line-strong); border-radius: var(--r-sm); box-shadow: var(--shadow-2); opacity: 0; visibility: hidden; transition: opacity var(--t-fast) var(--ease), visibility var(--t-fast); z-index: 80; }
+.rail-btn:hover .rail-tip, .rail-btn:focus-visible .rail-tip { opacity: 1; visibility: visible; }
+.rail-spacer { flex: 1; }
+.app-rail .signature-mark { margin: 10px 0 0; }
+
+/* Drawer: conversations, project and agent connections. */
+.sidebar, body.sidebar-open .sidebar { position: fixed; top: 0; bottom: 0; left: 64px; z-index: 60; width: 300px; display: flex; background: var(--surface-1); border-right: 1px solid var(--line-strong); box-shadow: var(--shadow-3); transform: translateX(calc(-100% - 64px)); visibility: hidden; transition: transform var(--t-slow) var(--ease), visibility var(--t-slow); }
+body.sidebar-open .sidebar { transform: none; visibility: visible; }
+.drawer-scrim { position: fixed; inset: 0; z-index: 55; background: var(--scrim); opacity: 0; visibility: hidden; transition: opacity var(--t-med) var(--ease), visibility var(--t-med); }
+body.sidebar-open .drawer-scrim { opacity: 1; visibility: visible; }
+.side-head { justify-content: space-between; padding: 0 10px 0 16px; }
+
+/* Title bar sits over the stage without boxing it in. */
+.topbar { padding-left: 18px; }
+
+/* Stage: Codex column | stream | Antigravity column. */
+.stage-shell { flex: 1; min-height: 0; display: flex; container-type: inline-size; }
+.stage { flex: 1; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(190px, 248px) minmax(0, 1fr) minmax(190px, 248px); grid-template-areas: "codex stream agy"; }
+.lane-codex { grid-area: codex; }
+.lane-antigravity { grid-area: agy; }
+.stream { grid-area: stream; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+
+.lane-col { position: relative; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; overflow-y: auto; padding: 8px 14px 18px; background: linear-gradient(180deg, color-mix(in oklab, var(--lane) 7%, transparent), transparent 46%); transition: opacity var(--t-med) var(--ease); }
+.lane-codex { border-right: 1px solid color-mix(in oklab, var(--lane) 16%, var(--line)); }
+.lane-antigravity { border-left: 1px solid color-mix(in oklab, var(--lane) 16%, var(--line)); }
+.lane-col[data-included="false"] { opacity: .66; }
+.lane-col[data-included="false"]:hover { opacity: 1; }
+.lane-card { position: relative; display: flex; align-items: center; gap: 11px; width: 100%; min-width: 0; padding: 12px 13px; text-align: left; color: var(--text-2); background: color-mix(in oklab, var(--surface-1) 76%, transparent); border: 1px solid var(--line); border-radius: var(--r-lg); transition: border-color var(--t-med) var(--ease), background var(--t-med) var(--ease), box-shadow var(--t-med) var(--ease); }
+.lane-card:hover:not(:disabled) { border-color: color-mix(in oklab, var(--lane) 42%, var(--line-strong)); color: var(--text); }
+.lane-card[aria-pressed="true"], .lane-card[data-included="true"] { color: var(--text); border-color: color-mix(in oklab, var(--lane) 50%, transparent); background: linear-gradient(130deg, color-mix(in oklab, var(--lane) 15%, transparent), color-mix(in oklab, var(--surface-1) 82%, transparent) 72%); box-shadow: 0 10px 28px color-mix(in oklab, var(--lane) 13%, transparent); }
+.lane-card[data-state="review"] { border-style: dashed; }
+.lane-card[data-state="keyboard"] { border-color: var(--lane); }
+.lane-gem { width: 12px; height: 12px; flex: none; transform: rotate(45deg); border-radius: 3px; background: var(--lane); box-shadow: 0 0 0 4px color-mix(in oklab, var(--lane) 15%, transparent); transition: box-shadow var(--t-med) var(--ease); }
+.lane-card:not([data-state="idle"]) .lane-gem { box-shadow: 0 0 0 4px color-mix(in oklab, var(--lane) 26%, transparent), 0 0 18px var(--lane); }
+.lane-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; line-height: 1.3; }
+.lane-name { font: 600 var(--text-lg) var(--font-display); letter-spacing: .01em; color: var(--text); }
+.lane-state { font-size: var(--text-xs); color: var(--text-3); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.lane-card:not([data-state="idle"]) .lane-state { color: var(--text-2); }
+.lane-card:disabled .lane-state { color: var(--warn); }
+
+.lane-col .model-selector-pill { display: flex; flex-direction: column; align-items: stretch; gap: 6px; height: auto; padding: 0; background: none; }
+.lane-col .model-selector-pill:hover { background: none; }
+.lane-col .model-selector-pill select, .lane-col .model-selector-pill select + select { width: 100%; max-width: none; height: 32px; padding: 0 10px; font-size: var(--text-xs); color: var(--text-2); background: color-mix(in oklab, var(--surface-2) 80%, transparent); border: 1px solid var(--line); border-radius: var(--r-md); }
+.lane-col .model-selector-pill select:hover { color: var(--text); border-color: color-mix(in oklab, var(--lane) 36%, var(--line-strong)); }
+.lane-title { margin-top: 4px; font: 600 10.5px var(--font); letter-spacing: .1em; text-transform: uppercase; color: var(--text-3); }
+.lane-trail { list-style: none; display: flex; flex-direction: column; gap: 9px; margin: 0; padding: 0 0 0 16px; position: relative; font-size: var(--text-xs); color: var(--text-3); }
+.lane-trail::before { content: ""; position: absolute; left: 4px; top: 6px; bottom: 6px; width: 1px; background: color-mix(in oklab, var(--lane) 30%, transparent); }
+.lane-trail li { position: relative; overflow-wrap: anywhere; line-height: 1.4; }
+.lane-trail li::before { content: ""; position: absolute; left: -15px; top: 5px; width: 7px; height: 7px; border-radius: 2px; transform: rotate(45deg); background: color-mix(in oklab, var(--lane) 45%, var(--surface-3)); }
+.lane-trail li.now { color: var(--text); }
+.lane-trail li.now::before { background: var(--lane); box-shadow: 0 0 10px var(--lane); }
+.lane-empty { font-size: var(--text-xs); color: var(--text-3); }
+.lane-col.has-trail .lane-empty { display: none; }
+
+/* The crystal heads the stream; its beams reach out to both columns. */
+.stream-head { display: flex; align-items: center; padding: 6px 0 4px; flex: none; }
+.core-beam { position: relative; flex: 1; height: 2px; overflow: hidden; border-radius: 2px; background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--lane) 26%, transparent)); transition: background var(--t-med) var(--ease); }
+.beam-codex { transform: scaleX(-1); }
+.crew[data-focus="collaboration"] .core-beam, .crew[data-focus="codex"] .beam-codex, .crew[data-focus="antigravity"] .beam-agy { background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--lane) 58%, transparent)); }
+.beam-flow { position: absolute; top: 0; bottom: 0; left: 0; width: 34%; background: linear-gradient(90deg, transparent, var(--lane), transparent); opacity: 0; }
+.crew[data-flow~="codex"] .beam-codex .beam-flow, .crew[data-flow~="antigravity"] .beam-agy .beam-flow { opacity: 1; animation-play-state: running; }
+.crew-core { position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px; width: 128px; flex: none; padding: 2px 0 0; color: var(--text-3); }
+.crew-core:disabled { opacity: .5; }
+.core-crystal { position: relative; width: 50px; height: 50px; display: block; transition: transform var(--t-slow) var(--spring); }
+.crew-core:hover:not(:disabled) .core-crystal { transform: scale(1.06); }
+.crew-core:active:not(:disabled) .core-crystal { transform: scale(.96); }
+.core-crystal .q-mark { position: relative; }
+.core-halo { position: absolute; inset: -14px; border-radius: 50%; background: radial-gradient(closest-side, color-mix(in oklab, var(--amethyst) 36%, transparent), color-mix(in oklab, var(--accent) 12%, transparent) 62%, transparent); opacity: .5; }
+.crew[data-control="true"] .core-halo { background: radial-gradient(closest-side, color-mix(in oklab, var(--stop) 48%, transparent), transparent); }
+.crew:not([data-flow=""]) .core-halo { animation-play-state: running; }
+.core-label { font: 600 10.5px var(--font); letter-spacing: .12em; text-transform: uppercase; white-space: nowrap; }
+.crew-core[aria-pressed="true"] .core-label { color: var(--accent); }
+.crew[data-control="true"] .core-label { color: var(--danger); }
+
+/* Rails down the stream; each agent message hangs on its own rail. */
+.desktop-task-bar { margin-top: 2px; }
+.lane-rails { position: absolute; inset: 0; overflow: hidden; }
+.rail { position: absolute; top: 0; bottom: 0; width: 2px; overflow: hidden; border-radius: 2px; background: linear-gradient(to bottom, transparent, color-mix(in oklab, var(--lane) 22%, transparent) 48px, color-mix(in oklab, var(--lane) 22%, transparent) calc(100% - 48px), transparent); transition: background var(--t-slow) var(--ease); }
+.rail-codex { left: calc(max(16px, calc((100% - var(--measure)) / 2)) + 11px); }
+.rail-agy { left: calc(max(16px, calc((100% - var(--measure)) / 2)) + 27px); }
+.chat-stage[data-flow~="codex"] .rail-codex, .chat-stage[data-flow~="antigravity"] .rail-agy { background: linear-gradient(to bottom, transparent, color-mix(in oklab, var(--lane) 46%, transparent) 48px, color-mix(in oklab, var(--lane) 46%, transparent) calc(100% - 48px), transparent); }
+.rail-flow { position: absolute; left: 0; top: 0; width: 100%; height: 30%; background: linear-gradient(to bottom, transparent, var(--lane), transparent); opacity: 0; }
+.chat-stage[data-flow~="codex"] .rail-codex .rail-flow, .chat-stage[data-flow~="antigravity"] .rail-agy .rail-flow { opacity: 1; animation-play-state: running; }
+.chat { position: relative; padding-left: calc(max(16px, calc((100% - var(--measure)) / 2)) + 44px); }
+.chat > .msg { position: relative; }
+.chat > .msg.sender-codex::before, .chat > .msg.sender-antigravity::before, .chat > .msg.sender-gemini::before, .chat > .msg.sender-quartz::before, .chat > .msg.bot.sender-bot::before { content: ""; position: absolute; top: 4px; width: 9px; height: 9px; border-radius: 2px; transform: rotate(45deg); background: var(--lane); box-shadow: 0 0 0 3px var(--bg), 0 0 12px color-mix(in oklab, var(--lane) 55%, transparent); }
+.chat > .msg.sender-codex::before { left: -36.5px; }
+.chat > .msg.sender-antigravity::before, .chat > .msg.sender-gemini::before { left: -20.5px; }
+.chat > .msg.sender-quartz::before, .chat > .msg.bot.sender-bot::before { left: -28.5px; width: 8px; height: 8px; }
+.chat > .msg.sender-codex::after, .chat > .msg.sender-antigravity::after, .chat > .msg.sender-gemini::after { content: ""; position: absolute; top: 8px; height: 1px; right: calc(100% + 6px); background: linear-gradient(90deg, color-mix(in oklab, var(--lane) 60%, transparent), transparent); }
+.chat > .msg.sender-codex::after { width: 22px; }
+.chat > .msg.sender-antigravity::after, .chat > .msg.sender-gemini::after { width: 6px; }
+.msg.sender-codex .bubble, .msg.sender-antigravity .bubble, .msg.sender-gemini .bubble { padding-left: 0; border-left: 0; }
+.empty-state > .q-mark { display: none; }
+
+/* The composer is a floating command field; agent choice lives in the columns. */
+.agent-seg-group { display: none; }
+.dock { padding: 0 18px 16px; }
+.composer { border-radius: 22px; }
+
+/* Narrow stage: the columns fold into two cards above the stream. */
+@container (max-width: 900px) {
+  .stage { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "codex agy" "stream stream"; }
+  .lane-col { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px 6px; overflow: visible; background: none; border: 0; }
+  .lane-card { flex: 1 1 160px; padding: 9px 11px; }
+  .lane-col .model-selector-pill { flex: 1 1 150px; flex-direction: row; }
+  .lane-title, .lane-trail, .lane-empty { display: none; }
+  .lane-state { -webkit-line-clamp: 1; }
+}
+@container (max-width: 520px) { .lane-col .model-selector-pill select + select { display: none; } .crew-core { width: 96px; } }
+@media (max-width: 820px) { .app { grid-template-columns: 56px minmax(0, 1fr) auto; } .sidebar, body.sidebar-open .sidebar { left: 56px; } }
+body.compact .app { grid-template-columns: minmax(0, 1fr); }
+body.compact .app-rail, body.compact .lane-col, body.compact .stream-head, body.compact .lane-rails, body.compact .chat > .msg::before, body.compact .chat > .msg::after { display: none; }
+body.compact .stage { grid-template-columns: minmax(0, 1fr); grid-template-areas: "stream"; }
+body.compact .chat { padding-left: 12px; }
+body.compact .agent-seg-group { display: inline-flex; }

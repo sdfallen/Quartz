@@ -100,5 +100,77 @@ assert.equal(agentProgressText({codex:{status:'running',step:'CODEX yanıtlıyor
         self.assertEqual(result.returncode, 0, result.stderr)
 
 
+CREW = "//" + gui._HTML.split("  // Crew band:", 1)[1].split("  if (btnContinueCollab) {", 1)[0]
+
+
+class CrewBandTests(unittest.TestCase):
+    def run_js(self, checks):
+        harness = r'''
+const assert=require('node:assert/strict');
+const els={};
+function el(id){const e={id,dataset:{},attrs:{},textContent:'',disabled:false,listeners:{},
+  setAttribute(k,v){this.attrs[k]=String(v)},getAttribute(k){return this.attrs[k]},
+  addEventListener(t,f){this.listeners[t]=f},click(){this.listeners.click&&this.listeners.click({currentTarget:this})}};els[id]=e;return e;}
+['crew','laneCodex','laneCodexState','laneColCodex','laneAgy','laneAgyState','laneColAgy','crewCore','crewCoreLabel'].forEach(id=>el(id));
+for(const id of ['laneCodexTrail','laneAgyTrail']){const t=el(id);t.children=[];t.replaceChildren=(...c)=>{t.children=c};t.closest=()=>({classList:{toggle(){}}});}els.laneCodex.dataset.agent='codex';els.laneAgy.dataset.agent='antigravity';els.crewCore.dataset.agent='collaboration';
+const seg={};for(const a of ['codex','antigravity','collaboration'])seg[a]={disabled:false,clicks:0,_active:a==='antigravity',
+  classList:{contains(c){return c==='active'&&seg[a]._active}},click(){this.clicks++;for(const b of Object.values(seg))b._active=false;this._active=true;}};
+const stage={attrs:{},setAttribute(k,v){this.attrs[k]=v}};
+const bodyClasses=new Set();
+global.document={body:{classList:{contains:c=>bodyClasses.has(c)}},getElementById:id=>els[id]||null,
+  createElement:t=>({tag:t,textContent:'',className:''}),
+  querySelector:s=>{const m=s.match(/data-agent="(\w+)"/);if(m)return seg[m[1]]||null;if(s==='.chat-stage')return stage;return null;}};
+const codexModelSelect={selectedOptions:[{textContent:'GPT-6.1-Sol'}],addEventListener(){}};
+const agyModelSelect={selectedOptions:[{textContent:'Gemini 3.8 Flash (High)'}],addEventListener(){}};
+let currentConvId='c1';
+'''
+        result = _node(harness + CREW + checks)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_lanes_follow_the_picker_and_show_models(self):
+        self.run_js(r'''
+assert.equal(els.crew.dataset.focus,'antigravity');
+assert.equal(els.laneAgy.attrs['aria-pressed'],'true');assert.equal(els.laneCodex.attrs['aria-pressed'],'false');
+assert.equal(els.laneCodex.dataset.included,'false');
+assert.equal(els.laneColCodex.dataset.included,'false');
+els.crewCore.click();
+assert.equal(seg.collaboration.clicks,1);assert.equal(els.crew.dataset.focus,'collaboration');
+assert.equal(els.crewCore.attrs['aria-pressed'],'true');assert.equal(els.laneCodex.dataset.included,'true');
+seg.codex.disabled=true;renderCrew();
+assert.equal(els.laneCodex.disabled,true);assert.equal(els.laneCodexState.textContent,'Bağlı değil');
+els.laneCodex.click();assert.equal(seg.codex.clicks,0);  // A disconnected agent is never chosen.
+''')
+
+    def test_working_agent_lights_its_lane_and_rail_and_clears_when_done(self):
+        self.run_js(r'''
+setCrewProgress({codex:{status:'running',activity:'Dosya okuyor: app.py'},notion:{status:'running',activity:'x'}});
+assert.equal(els.laneCodex.dataset.state,'working');assert.equal(els.laneCodexState.textContent,'Dosya okuyor: app.py');
+assert.equal(els.crew.dataset.flow,'codex');assert.equal(stage.attrs['data-flow'],'codex');
+assert.equal(els.crewCoreLabel.textContent,'Yönlendiriyor');
+setCrewProgress({codex:{status:'running',activity:'Komut çalıştırıyor: ls',activity_trail:['Düşünüyor…','Dosya okuyor: app.py','Komut çalıştırıyor: ls']}});
+assert.deepEqual(els.laneCodexTrail.children.map(c=>c.textContent),['Düşünüyor…','Dosya okuyor: app.py','Komut çalıştırıyor: ls']);
+assert.equal(els.laneCodexTrail.children[2].className,'now');assert.equal(els.laneColCodex.dataset.state,'working');
+setCrewProgress(null);
+assert.equal(els.laneCodexTrail.children.length,3);  // The last run's steps stay visible...
+assert.equal(els.laneCodexTrail.children[2].className,'');  // ...but nothing is marked as happening now.
+assert.equal(els.laneCodex.dataset.state,'idle');assert.equal(els.crew.dataset.flow,'');assert.equal(els.crewCoreLabel.textContent,'Birlikte');
+''')
+
+    def test_desktop_task_marks_operator_and_reviewer_only_for_this_conversation(self):
+        self.run_js(r'''
+const task={active:true,job:{conversation_id:'c1',roles:{operator:'codex'}}};
+bodyClasses.add('screen-control-active');setCrewDesktop(task);
+assert.equal(els.laneCodex.dataset.state,'keyboard');assert.equal(els.laneCodexState.textContent,'Klavyede');
+assert.equal(els.laneAgy.dataset.state,'review');assert.equal(els.crew.dataset.control,'true');
+assert.equal(els.crewCoreLabel.textContent,'Kontrolde');
+setCrewProgress({antigravity:{status:'running',activity:'Ekranı inceliyor'}});
+assert.equal(els.laneAgyState.textContent,'İnceliyor · Ekranı inceliyor');
+setCrewDesktop({...task,job:{...task.job,conversation_id:'other'}});
+assert.equal(els.laneCodex.dataset.state,'idle');
+setCrewDesktop({active:true,job:{conversation_id:'c1',roles:{operator:'notion'}}});
+assert.equal(els.laneCodex.dataset.state,'idle');
+''')
+
+
 if __name__ == "__main__":
     unittest.main()
