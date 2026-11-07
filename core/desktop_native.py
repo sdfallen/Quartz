@@ -22,7 +22,11 @@ DENIED_EXES = {"cmd.exe", "powershell.exe", "pwsh.exe", "windowsterminal.exe",
                "sechealthui.exe", "consent.exe", "credentialuibroker.exe", "logonui.exe",
                "lockapp.exe", "keepass.exe", "1password.exe", "bitwarden.exe",
                "codex.exe", "chatgpt.exe", "quartz.exe", "codex-computer-use.exe",
-               "antigravity.exe"}
+               "antigravity.exe",
+               # Live exam 7 Nov: under Tam Yetki the Claude desktop app was approved as a
+               # target and observed. Other AI assistants' windows hold the user's private
+               # conversations and can run actions themselves; never a control target.
+               "claude.exe", "copilot.exe", "cursor.exe", "windsurf.exe", "ollama app.exe"}
 SENSITIVE = re.compile(r"password|parola|şifre|sign.in|oturum aç|authentication|verify.*identity|"
                        r"user account control|kullanıcı hesabı denetimi|windows security", re.I)
 CRITICAL = re.compile(r"\b(delete|remove|overwrite|purchase|buy|pay|send|upload|save|sil|"

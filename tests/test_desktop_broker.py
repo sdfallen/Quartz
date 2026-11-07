@@ -569,7 +569,8 @@ class NativePolicyTests(unittest.TestCase):
         window.set_focus.assert_called_once()
         self.assertEqual(sleep.call_count, 2)
     def test_protected_apps_and_warband_are_not_generic_targets(self):
-        for exe in ("powershell.exe", "cmd.exe", "regedit.exe", "consent.exe", "mb_warband.exe", "Quartz.exe", "codex-computer-use.exe"):
+        for exe in ("powershell.exe", "cmd.exe", "regedit.exe", "consent.exe", "mb_warband.exe", "Quartz.exe", "codex-computer-use.exe",
+                    r"C:\Program Files\WindowsApps\Claude_4.23118.0.0_x64__pzs8sxrjxfjjc\app\claude.exe", "Copilot.exe"):
             with self.subTest(exe=exe), self.assertRaises(PermissionError):
                 NativeDesktopBackend.validate_target({"exe": exe, "title": "normal"})
     def test_password_dialog_is_denied_even_for_allowed_process(self):
