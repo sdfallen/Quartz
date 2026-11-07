@@ -88,6 +88,21 @@ assert.deepEqual(calls.slice(0,2).map(x=>x[0]),['route','send']);
 assert.equal(calls[1][3],'c');assert.equal(calls[1][6],'full');
 """)
 
+    def test_a_reply_polled_before_send_returns_is_reused_not_duplicated(self):
+        # Live exam 7 Nov: Codex answered within ms; polling drew the reply first,
+        # then the send path added the user bubble below it and an empty "..." twin.
+        self.check(r"""
+response={status:'ok',data:{conversation_id:'c',user_message:{id:'u1'},assistant_message:{id:'a1',sender:'codex'}}};
+const early={kind:'bot',dataset:{msgId:'a1'},querySelector:()=>({textContent:'hazır yanıt'})};
+const order=[early];
+chatEl.querySelector=sel=>order.find(x=>sel.includes(`"${x.dataset.msgId}"`))||null;
+chatEl.insertBefore=(node,ref)=>{order.splice(order.indexOf(node),1);order.splice(order.indexOf(ref),0,node);};
+const realAppend=appendMsg;appendMsg=(...a)=>{const item=realAppend(...a);item.parentNode=chatEl;order.push(item);return item;};
+await sendAgentMessage();
+assert.equal(rendered.filter(x=>x.kind==='bot').length,0);  // no second, empty bubble for a1
+assert.deepEqual(order.map(x=>x.dataset.msgId),['u1','a1']);  // the question sits above its answer
+""")
+
     def test_rejected_followup_preserves_input_and_current_task(self):
         self.check(r"""
 setThinking(true);const oldBubble=activeBotBubble,oldTimer=requestTimer;

@@ -87,7 +87,10 @@ class Context:
         self.marks = marks or {}
 
     def audit(self):
-        return [entry for run in self.runs for entry in (run.get("broker_audit") or []) if isinstance(entry, dict)]
+        # Live exam 7 Nov: Quartz's broker audit also carries the previous task's
+        # entries, so only those inside this run's own time window count.
+        return [entry for run in self.runs for entry in (run.get("broker_audit") or [])
+                if isinstance(entry, dict) and float(entry.get("at") or 0) >= float(run.get("started_at") or 0)]
 
     def inputs(self):
         """Native inputs Quartz's broker actually sent (an action with a resolved target)."""

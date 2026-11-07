@@ -111,6 +111,13 @@ class LiveCheckTests(OracleTests):
         self.assertFalse(self.run_checks([{"check": "fresh_snapshot_after_last_input"}],
                                          runs=[_run(observe_after=9.0)])[0][0]["passed"])
 
+    def test_an_earlier_tasks_audit_entries_do_not_count(self):
+        run = _run(operator="antigravity", inputs=())
+        run["started_at"] = 100.0
+        run["broker_audit"].append({"at": 50.0, "tool": "desktop_act", "provider": "codex", "target": {"title": "Fixture App"}})
+        self.assertFalse(self.run_checks([{"check": "inputs_only_to_approved_windows"}], runs=[run], approved=["Fixture App"])[0][0]["passed"])
+        self.assertTrue(self.run_checks([{"check": "no_input_events"}], runs=[run])[0][0]["passed"])
+
     def test_operator_and_session_checks(self):
         self.assertTrue(self.run_checks([{"check": "operator_run_provider", "value": "antigravity"}],
                                         runs=[_run(operator="antigravity")])[0][0]["passed"])

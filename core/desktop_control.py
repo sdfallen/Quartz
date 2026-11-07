@@ -218,7 +218,7 @@ class DesktopController:
             return self._inspect(desktop, handle, query)
 
     def action(self, snapshot_id: str, ref: str, action: str, text: str = "", *, input_guard=None):
-        if action not in {"invoke", "select", "expand", "collapse", "toggle", "set_text"}:
+        if action not in {"invoke", "select", "expand", "collapse", "toggle", "set_text", "focus"}:
             raise ValueError("Unsupported UI action")
         with self._lock, self._desktop() as desktop:
             snapshot = self._snapshots.get(snapshot_id)
@@ -256,6 +256,8 @@ class DesktopController:
                 win.set_focus()
             if action == "set_text":
                 element.set_edit_text(text)
+            elif action == "focus":
+                element.set_focus()
             else:
                 getattr(element, action)()
             time.sleep(.1)

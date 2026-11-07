@@ -696,12 +696,22 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       msgCount++;
       document.getElementById('sessMsgs').textContent = msgCount;
       chatEl.querySelectorAll('[data-welcome="1"]').forEach(el => el.remove());
-      const userWrap = appendMsg('user', 'SEN', text, data.user_message?.id || '', 'user', null, false, true);
-      if (data.conversation_id) currentConvId = data.conversation_id;
+      // Live exam 7 Nov: a fast reply can reach the chat through polling before
+      // chat_send returns. Reuse those bubbles instead of adding a second user
+      // bubble below the reply and an empty "..." twin that never updates.
+      const rendered = id => (id && /^[\w-]{1,80}$/.test(id) && typeof chatEl.querySelector === 'function')
+        ? chatEl.querySelector(`.msg[data-msg-id="${id}"]`) : null;
       const firstMsg = data.assistant_message;
+      const earlyBot = rendered(firstMsg?.id);
+      let userWrap = rendered(data.user_message?.id);
+      if (!userWrap) {
+        userWrap = appendMsg('user', 'SEN', text, data.user_message?.id || '', 'user', null, false, true);
+        if (earlyBot && userWrap && userWrap.parentNode === chatEl && typeof chatEl.insertBefore === 'function') chatEl.insertBefore(userWrap, earlyBot);
+      }
+      if (data.conversation_id) currentConvId = data.conversation_id;
       const initialSender = firstMsg?.sender || (agent === 'collaboration' ? 'codex' : agent);
       const initialLabel = firstMsg ? formatMessageLabel(firstMsg) : agent.toUpperCase();
-      const botWrap = appendMsg('bot', initialLabel, data.queued ? 'Ek talimat sırada; mevcut adımın ardından uygulanacak.' : '...', firstMsg?.id || '', initialSender, firstMsg, false, true);
+      const botWrap = earlyBot || appendMsg('bot', initialLabel, data.queued ? 'Ek talimat sırada; mevcut adımın ardından uygulanacak.' : '...', firstMsg?.id || '', initialSender, firstMsg, false, true);
       if (data.queued) {
         thinkingText.textContent = `Ek talimat sıraya alındı (${data.queue_position || 1}); mevcut görev sürüyor...`;
         logLine('Ek talimat aynı göreve iletildi; yetki kapsamı değişmedi.');

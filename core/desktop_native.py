@@ -411,15 +411,36 @@ class NativeDesktopBackend:
         if not self.is_foreground(target): raise PermissionError("Target lost foreground")
         self._safe_controls(target)
         action = args.get("action")
+        ref = args.get("ref")
+        ref = str(ref) if ref not in (None, "") else ""
+        item = next((i for i in observation["ui"]["elements"] if i["ref"] == ref), None) if ref else None
+        # Live exam 7 Nov: Gemini as operator named the element it meant (text/click
+        # with ref, ui without an operation) and every attempt was refused for
+        # its form, never for safety. An element reference is the more precise
+        # target, so these forms now go through the same snapshot-bound path.
+        if action == "click" and item is not None and args.get("x") is None and args.get("y") is None:
+            action = "ui"
         if action == "ui":
-            ref = str(args.get("ref", ""))
-            item = next((i for i in observation["ui"]["elements"] if i["ref"] == ref), None)
             if not item or CRITICAL.search(item["name"]):
                 raise PermissionError("Unknown or consequential UI action; user confirmation required outside the agent")
-            operation = args.get("ui_action")
-            if operation not in {"invoke", "select", "expand", "collapse"}:
+            operation = args.get("ui_action") or ("focus" if item["type"] == "Edit" else "invoke")
+            if operation not in {"invoke", "select", "expand", "collapse", "focus"}:
                 raise ValueError("Unsupported UI operation")
             self.controller.action(observation["ui"]["snapshot_id"], ref, operation,
+                                   input_guard=lambda: self._before_input(target))
+            return
+        if action == "text" and item is not None:
+            text = args.get("text", "")
+            if not isinstance(text, str) or len(text) > 2000 or any(c in text for c in "\r\n\x00"):
+                raise ValueError("Only bounded literal single-line text is allowed")
+            if item["type"] != "Edit":
+                raise PermissionError("Text can only go into an Edit control")
+            with self.controller._desktop() as desktop:
+                if CRITICAL.search(self.controller._window(desktop, target["handle"]).window_text()):
+                    raise PermissionError("File/critical dialog requires a separate user decision")
+            # set_text re-finds the element by runtime id, refuses password/disabled
+            # fields and runs the broker's input guard first.
+            self.controller.action(observation["ui"]["snapshot_id"], ref, "set_text", text,
                                    input_guard=lambda: self._before_input(target))
             return
         if action == "text":
@@ -482,6 +503,7 @@ class NativeDesktopBackend:
             pyautogui.click(left + x, top + y)
         elif action in {"key", "hold"}:
             key = args.get("key")
+            key = key.strip().lower() if isinstance(key, str) else key  # "Tab" and "tab" are the same key
             if key not in SAFE_KEYS: raise PermissionError("Key/chord is outside the bounded operator profile")
             with self.controller._desktop() as desktop:
                 win = self.controller._window(desktop, target["handle"])
