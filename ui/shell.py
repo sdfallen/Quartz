@@ -130,7 +130,38 @@ SHELL_MARKUP = r"""
       <button type="button" class="control-btn" id="btnDesktopTaskStop" hidden>Görevi durdur</button>
     </div>
 
+    <!-- The crew: Codex and Antigravity in their lanes, the Quartz crystal between
+         them. Choosing a lane chooses who you talk to; the crystal means both. -->
+    <section class="crew" id="crew" data-focus="antigravity" data-flow="" data-control="false" aria-label="Quartz ekibi">
+      <button type="button" class="lane-card" id="laneCodex" data-agent="codex" data-state="idle" aria-pressed="false" aria-describedby="laneCodexState">
+        <span class="lane-gem" aria-hidden="true"></span>
+        <span class="lane-copy">
+          <span class="lane-name">Codex</span>
+          <span class="lane-state" id="laneCodexState">Hazır</span>
+        </span>
+        <span class="lane-model" id="laneCodexModel"></span>
+      </button>
+      <button type="button" class="crew-core" id="crewCore" data-agent="collaboration" aria-pressed="false" aria-describedby="crewCoreLabel" title="Birlikte: Codex ve Antigravity aynı görevde">
+        <span class="core-beam beam-codex" aria-hidden="true"><b class="beam-flow"></b></span>
+        <span class="core-beam beam-agy" aria-hidden="true"><b class="beam-flow"></b></span>
+        <span class="core-crystal" aria-hidden="true"><span class="core-halo"></span>@@MARK@@</span>
+        <span class="core-label" id="crewCoreLabel">Birlikte</span>
+      </button>
+      <button type="button" class="lane-card lane-right" id="laneAgy" data-agent="antigravity" data-state="idle" aria-pressed="false" aria-describedby="laneAgyState">
+        <span class="lane-gem" aria-hidden="true"></span>
+        <span class="lane-copy">
+          <span class="lane-name">Antigravity</span>
+          <span class="lane-state" id="laneAgyState">Hazır</span>
+        </span>
+        <span class="lane-model" id="laneAgyModel"></span>
+      </button>
+    </section>
+
     <div class="chat-stage">
+      <div class="lane-rails" aria-hidden="true">
+        <i class="rail rail-codex"><b class="rail-flow"></b></i>
+        <i class="rail rail-agy"><b class="rail-flow"></b></i>
+      </div>
       <div class="chat" id="chat" role="log" aria-label="Sohbet"></div>
       <section class="empty-state" id="emptyState" aria-label="Başlangıç">
         @@MARK@@
@@ -304,13 +335,9 @@ SHELL_MARKUP = r"""
         <div class="card-label">Hızlı işlemler</div>
         <button type="button" class="qa-btn" data-action="screenshot">@@i:camera@@ Ekran görüntüsü</button>
         <button type="button" class="qa-btn" data-action="sysinfo">@@i:chip@@ Sistem bilgisi</button>
-        <button type="button" class="qa-btn" data-action="windows">@@i:windows@@ Açık pencereler</button>
         <button type="button" class="qa-btn" data-action="desktop" style="display:none">Masaüstünü listele</button>
         <button type="button" class="qa-btn" data-action="plugins" style="display:none">Eklentiler</button>
         <button type="button" class="qa-btn" data-action="update_all" style="display:none">Hepsini güncelle</button>
-        <button type="button" class="qa-btn quartz-mode" data-action="quartz_mode">@@i:spark@@ Quartz Mode</button>
-        <button type="button" class="qa-btn" id="btnAdvisor">@@i:eye@@ <span id="advisorLabel">Ekran rehberi: kapalı</span></button>
-        <button type="button" class="qa-btn" id="btnAgentCenter">@@i:agents@@ Ajan merkezi</button>
         <button type="button" class="qa-btn" id="btnMobile">@@i:phone@@ Mobil erişim</button>
       </section>
       <section class="card">

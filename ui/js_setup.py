@@ -14,7 +14,6 @@ JAVASCRIPT = r"""
   const clockEl     = document.getElementById('clock');
   const logBox      = document.getElementById('logBox');
   const safeBtn     = document.getElementById('btnSafe');
-  const advisorBtn  = document.getElementById('btnAdvisor');
   const cancelBtn   = document.getElementById('btnCancel');
   const thinkingText= document.getElementById('thinkingText');
   const taskList     = document.getElementById('taskList');

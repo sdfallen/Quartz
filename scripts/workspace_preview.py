@@ -27,7 +27,9 @@ function liveState(){
  const streaming=e>8, done=e>13;
  const content=streaming?LIVE_ANSWER.slice(0,Math.floor((e-8)/4*LIVE_ANSWER.length)):'';
  const msg={id:'live-a',role:'assistant',sender:'antigravity',content:done?LIVE_ANSWER:content,status:done?'completed':'running',metadata:{status:done?'completed':'running',model:'gemini-3.8-flash-high',effort:'high'}};
- return {done,msg,progress:{antigravity:{message_id:'live-a',status:done?'completed':'running',activity:LIVE_STEPS[step],activity_trail:LIVE_STEPS.slice(0,step+1)}}};
+ const codexBusy=e<7;  // Codex works alongside for the first seconds (crew band preview).
+ return {done,msg,progress:{antigravity:{message_id:'live-a',status:done?'completed':'running',activity:LIVE_STEPS[step],activity_trail:LIVE_STEPS.slice(0,step+1)},
+  codex:{message_id:'live-c',status:codexBusy?'running':'completed',activity:e<3.5?'Kodda arıyor: renderCrew':'Komut çalıştırıyor: python -m unittest'}}};
 }
 window.pywebview={api:new Proxy({},{get:(_,name)=>async(...args)=>{
 if(name==='chat_send'){liveTurn={t0:Date.now()};sampleConversation.messages.push({id:'live-u',role:'user',sender:'user',content:String(args[0]||''),metadata:{}});
@@ -38,6 +40,7 @@ if(name==='chat_poll'){const s=liveState();if(!s)return {status:'ok',data:{activ
 if(name==='coordination_route'&&!/erişim|yetki|pencere|masaüstü/i.test(String(args[0]||'')))return {status:'ok',data:{handled:false,intent:'conversation'}};
 if(name==='chat_status')return {status:'ok',data:{preferences:{response_detail:'short'},active_conversation:sampleConversation,conversations:[sampleConversation,{id:'older',title:'Önceki test notları'}],projects:[{id:'preview-project',name:'Geçici test projesi',path:'Preview only'}],agents:{},models:{},single_writer:{}}};
 if(name==='ping')return {status:'ok',data:'Preview only'};
+if(name==='onboarding_status')return {status:'ok',data:{needs_setup:false,providers:{codex:{ready:true,installed:true},gemini:{ready:true,installed:true}}}};
 if(name==='get_stats')return {cpu:0,mem:0,disk:0,low_spec:location.hash.includes('lowspec')};
 if(name==='ui_events')return {status:'ok',data:[]};
 if(name==='desktop_task_status')return {status:'ok',data:previewDesktop};

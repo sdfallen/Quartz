@@ -31,7 +31,8 @@ class MotionContractTests(unittest.TestCase):
     def test_reduced_motion_and_low_spec_switch_everything_off(self):
         reduced = MODERN_CSS[MODERN_CSS.index("@media (prefers-reduced-motion: reduce)"):]
         self.assertRegex(reduced, r"\*,\*::before,\*::after \{ animation:none !important; transition:none !important;")
-        self.assertIn("body.low-spec *:not(.msg):not(.reveal-caret):not(.agent-live-gem):not(.agent-live-now > span),"
+        self.assertIn("body.low-spec *:not(.msg):not(.reveal-caret):not(.agent-live-gem):not(.agent-live-now > span)"
+                      ":not(.rail-flow):not(.beam-flow):not(.core-halo),"
                       "body.low-spec *::before,body.low-spec *::after { animation:none !important; transition:none !important; }",
                       MODERN_CSS)
 
@@ -53,7 +54,11 @@ class MotionContractTests(unittest.TestCase):
 
     def test_low_spec_keeps_only_the_typing_reveal_and_live_line(self):
         # User, 7 Nov: on an 8 GB / 4-core PC (low-spec) no animation was visible at all.
-        self.assertEqual(len(LOW_SPEC_MOTION), 4)
+        # Kept: typing reveal, live agent line, and the crew band's rail/beam/halo light.
+        self.assertEqual(len(LOW_SPEC_MOTION), 7)
+        rules_all = {" ".join(sel.split()): body for sel, body in _rules(MODERN_CSS)}
+        for selector in ("body:not(.ui-idle) .rail-flow", "body:not(.ui-idle) .beam-flow", "body:not(.ui-idle) .core-halo"):
+            self.assertIn("infinite paused", rules_all[selector], selector)  # Runs only while an agent works.
         rules = {" ".join(sel.split()): body for sel, body in _rules(MODERN_CSS)}
         for selector in LOW_SPEC_MOTION:
             self.assertIn("animation:q-", rules[selector], selector)  # One rule each, not a group.

@@ -463,3 +463,78 @@ body.low-spec .diagnostics-card, body.low-spec .diag-progress-fill, body.ui-idle
 .desktop-task-bar, .action-card, .coordination-card { background: color-mix(in oklab, var(--surface-1) 88%, transparent); border-color: color-mix(in oklab, var(--amethyst) 22%, var(--line-strong)); }
 .prompt-chip { background: color-mix(in oklab, var(--surface-1) 80%, transparent); }
 .prompt-chip:hover { border-color: color-mix(in oklab, var(--accent) 45%, var(--line-strong)); color: var(--text); }
+
+/* Crew and lanes (7 Nov 2026) ------------------------------------------ */
+/* Quartz is a team, not one assistant: Codex has the citrine lane, Antigravity
+   the amethyst one, and the Quartz crystal conducts between them. Picking a lane
+   picks who you talk to; the crystal means both. The lanes run on down the
+   conversation as two rails, and each agent's message hangs on its own rail. */
+#laneCodex, .rail-codex, .beam-codex, .chat > .msg.sender-codex { --lane: var(--agent-codex); }
+#laneAgy, .rail-agy, .beam-agy, .chat > .msg.sender-antigravity, .chat > .msg.sender-gemini { --lane: var(--agent-agy); }
+.chat > .msg.sender-quartz, .chat > .msg.bot.sender-bot { --lane: var(--agent-quartz); }
+
+.agent-seg-group { display: none; }
+.crew { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; width: min(var(--measure), calc(100% - 32px)); margin: 0 auto 4px; flex: none; container-type: inline-size; }
+.lane-card { position: relative; display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 54px; padding: 8px 12px; text-align: left; color: var(--text-2); background: color-mix(in oklab, var(--surface-1) 72%, transparent); border: 1px solid var(--line); border-radius: var(--r-lg); transition: border-color var(--t-med) var(--ease), background var(--t-med) var(--ease), box-shadow var(--t-med) var(--ease), opacity var(--t-med) var(--ease); }
+.lane-card.lane-right { flex-direction: row-reverse; text-align: right; }
+.lane-card:hover:not(:disabled) { border-color: color-mix(in oklab, var(--lane) 40%, var(--line-strong)); color: var(--text); }
+.lane-card[data-included="false"] { opacity: .62; }
+.lane-card[data-included="false"]:hover:not(:disabled) { opacity: .9; }
+.lane-card[aria-pressed="true"] { color: var(--text); border-color: color-mix(in oklab, var(--lane) 55%, transparent); background: linear-gradient(120deg, color-mix(in oklab, var(--lane) 14%, transparent), color-mix(in oklab, var(--surface-1) 80%, transparent) 70%); box-shadow: 0 0 0 1px color-mix(in oklab, var(--lane) 18%, transparent), 0 8px 26px color-mix(in oklab, var(--lane) 12%, transparent); }
+.lane-card.lane-right[aria-pressed="true"] { background: linear-gradient(240deg, color-mix(in oklab, var(--lane) 16%, transparent), color-mix(in oklab, var(--surface-1) 80%, transparent) 70%); }
+.lane-gem { width: 10px; height: 10px; flex: none; transform: rotate(45deg); border-radius: 2.5px; background: var(--lane); box-shadow: 0 0 0 3px color-mix(in oklab, var(--lane) 16%, transparent); transition: box-shadow var(--t-med) var(--ease); }
+.lane-card[data-state="working"] .lane-gem, .lane-card[data-state="keyboard"] .lane-gem, .lane-card[data-state="review"] .lane-gem { box-shadow: 0 0 0 3px color-mix(in oklab, var(--lane) 26%, transparent), 0 0 16px var(--lane); }
+.lane-card[data-state="review"] { border-style: dashed; }
+.lane-card[data-state="keyboard"] { border-color: var(--lane); }
+.lane-copy { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.3; }
+.lane-name { font: 600 var(--text-sm) var(--font-display); letter-spacing: .02em; color: var(--text); }
+.lane-state { font-size: var(--text-xs); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lane-card[data-state="working"] .lane-state, .lane-card[data-state="keyboard"] .lane-state, .lane-card[data-state="review"] .lane-state { color: var(--text-2); }
+.lane-model { flex: none; max-width: 42%; font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lane-card:disabled .lane-state { color: var(--warn); }
+
+.crew-core { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; width: 112px; padding: 2px 0 0; color: var(--text-3); }
+.crew-core:disabled { opacity: .5; }
+.core-crystal { position: relative; width: 46px; height: 46px; display: block; transition: transform var(--t-slow) var(--spring); }
+.crew-core:hover:not(:disabled) .core-crystal { transform: scale(1.06); }
+.crew-core:active:not(:disabled) .core-crystal { transform: scale(.96); }
+.core-crystal .q-mark { position: relative; }
+.core-halo { position: absolute; inset: -12px; border-radius: 50%; background: radial-gradient(closest-side, color-mix(in oklab, var(--amethyst) 34%, transparent), color-mix(in oklab, var(--accent) 12%, transparent) 60%, transparent); opacity: .5; }
+.crew[data-focus="collaboration"] .core-halo { opacity: .8; }
+.crew[data-control="true"] .core-halo { background: radial-gradient(closest-side, color-mix(in oklab, var(--stop) 46%, transparent), transparent); opacity: 1; }
+.core-label { font: 600 10.5px var(--font); letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
+.crew-core[aria-pressed="true"] .core-label { color: var(--accent); }
+.crew[data-control="true"] .core-label { color: var(--danger); }
+.core-beam { position: absolute; top: 25px; width: 32px; height: 2px; overflow: hidden; border-radius: 2px; background: color-mix(in oklab, var(--lane) 22%, transparent); transition: background var(--t-med) var(--ease); }
+.beam-codex { right: calc(50% + 24px); transform: scaleX(-1); }
+.beam-agy { left: calc(50% + 24px); }
+.crew[data-focus="collaboration"] .core-beam, .crew[data-focus="codex"] .beam-codex, .crew[data-focus="antigravity"] .beam-agy { background: color-mix(in oklab, var(--lane) 48%, transparent); }
+.beam-flow { position: absolute; top: 0; bottom: 0; left: 0; width: 45%; background: linear-gradient(90deg, transparent, var(--lane), transparent); opacity: 0; }
+.crew[data-flow~="codex"] .beam-codex .beam-flow, .crew[data-flow~="antigravity"] .beam-agy .beam-flow { opacity: 1; animation-play-state: running; }
+.crew:not([data-flow=""]) .core-halo { animation-play-state: running; }
+
+.lane-rails { position: absolute; inset: 0; overflow: hidden; }
+.rail { position: absolute; top: 0; bottom: 0; width: 2px; overflow: hidden; border-radius: 2px; background: linear-gradient(to bottom, transparent, color-mix(in oklab, var(--lane) 22%, transparent) 48px, color-mix(in oklab, var(--lane) 22%, transparent) calc(100% - 48px), transparent); transition: background var(--t-slow) var(--ease); }
+.rail-codex { left: calc(max(16px, calc((100% - var(--measure)) / 2)) + 11px); }
+.rail-agy { left: calc(max(16px, calc((100% - var(--measure)) / 2)) + 27px); }
+.chat-stage[data-flow~="codex"] .rail-codex, .chat-stage[data-flow~="antigravity"] .rail-agy { background: linear-gradient(to bottom, transparent, color-mix(in oklab, var(--lane) 46%, transparent) 48px, color-mix(in oklab, var(--lane) 46%, transparent) calc(100% - 48px), transparent); }
+.rail-flow { position: absolute; left: 0; top: 0; width: 100%; height: 30%; background: linear-gradient(to bottom, transparent, var(--lane), transparent); opacity: 0; }
+.chat-stage[data-flow~="codex"] .rail-codex .rail-flow, .chat-stage[data-flow~="antigravity"] .rail-agy .rail-flow { opacity: 1; animation-play-state: running; }
+
+.chat { position: relative; padding-left: calc(max(16px, calc((100% - var(--measure)) / 2)) + 44px); }
+.chat > .msg { position: relative; }
+.chat > .msg.sender-codex::before, .chat > .msg.sender-antigravity::before, .chat > .msg.sender-gemini::before, .chat > .msg.sender-quartz::before, .chat > .msg.bot.sender-bot::before { content: ""; position: absolute; top: 4px; width: 9px; height: 9px; border-radius: 2px; transform: rotate(45deg); background: var(--lane); box-shadow: 0 0 0 3px var(--bg), 0 0 12px color-mix(in oklab, var(--lane) 55%, transparent); }
+.chat > .msg.sender-codex::before { left: -36.5px; }
+.chat > .msg.sender-antigravity::before, .chat > .msg.sender-gemini::before { left: -20.5px; }
+.chat > .msg.sender-quartz::before, .chat > .msg.bot.sender-bot::before { left: -28.5px; width: 8px; height: 8px; }
+.chat > .msg.sender-codex::after, .chat > .msg.sender-antigravity::after, .chat > .msg.sender-gemini::after { content: ""; position: absolute; top: 8px; height: 1px; right: calc(100% + 6px); background: linear-gradient(90deg, color-mix(in oklab, var(--lane) 60%, transparent), transparent); }
+.chat > .msg.sender-codex::after { width: 22px; }
+.chat > .msg.sender-antigravity::after, .chat > .msg.sender-gemini::after { width: 6px; }
+.msg.sender-codex .bubble, .msg.sender-antigravity .bubble, .msg.sender-gemini .bubble { padding-left: 0; border-left: 0; }
+.empty-state > .q-mark { display: none; }
+
+@container (max-width: 560px) { .lane-model { display: none; } }
+@container (max-width: 400px) { .lane-state { display: none; } .crew-core { width: 72px; } .core-beam { width: 14px; } }
+body.compact .crew, body.compact .lane-rails, body.compact .chat > .msg::before, body.compact .chat > .msg::after { display: none; }
+body.compact .chat { padding-left: 12px; }
+body.compact .agent-seg-group { display: inline-flex; }

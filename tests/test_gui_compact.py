@@ -59,22 +59,24 @@ class CompactWindowTests(unittest.TestCase):
         self.assertIn("ANAHTARI KOPYALA", gui._HTML)
         self.assertIn("mobile-access-card", gui._HTML)
 
-    def test_quartz_mode_quick_action_is_present(self):
-        self.assertEqual(gui._QUICK_ACTIONS["quartz_mode"], "Quartz Mode")
-        self.assertIn('data-action="quartz_mode"', gui._HTML)
+    def test_removed_tool_buttons_stay_removed(self):
+        # User, 7 Nov: Ajan merkezi, Açık pencereler, Quartz Mode and Ekran rehberi leave the UI.
+        for marker in ('data-action="quartz_mode"', 'data-action="windows"', 'id="btnAdvisor"',
+                       'id="btnAgentCenter"', "Ajan merkezini aç", "'Açık pencereler'"):
+            self.assertNotIn(marker, gui._HTML)
+        self.assertNotIn("advisorBtn", gui._HTML)  # No handler left pointing at a removed button.
 
     def test_operator_controls_are_present(self):
-        self.assertIn('id="btnAdvisor"', gui._HTML)
         self.assertIn('id="operationStatus"', gui._HTML)
         self.assertIn('id="btnLearnOperation"', gui._HTML)
         self.assertIn('id="btnFinishOperation"', gui._HTML)
 
-    def test_agent_center_matches_existing_ui_and_exposes_safe_controls(self):
-        self.assertIn('id="btnAgentCenter"', gui._HTML)
-        self.assertIn('id="agentOverlay"', gui._HTML)
-        self.assertIn('id="agentPrompt"', gui._HTML)
-        self.assertIn('id="agentWrite"', gui._HTML)
-        self.assertIn('id="agentProvider"', gui._HTML)
+    def test_crew_band_lanes_choose_the_agent_through_the_picker(self):
+        for marker in ('id="crew"', 'id="laneCodex"', 'id="laneAgy"', 'id="crewCore"', 'class="lane-rails"'):
+            self.assertIn(marker, gui._HTML)
+        self.assertIn('data-agent="collaboration" aria-pressed="false"', gui._HTML)
+
+    def test_confirm_modal_replaces_window_confirm(self):
         self.assertIn('value="antigravity"', gui._HTML)
         self.assertIn('value="collaboration"', gui._HTML)
         self.assertIn('id="confirmModal"', gui._HTML)
