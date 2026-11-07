@@ -73,10 +73,26 @@ class Window:
 
 
 class Node:
-    def __init__(self, kind, name="", kids=(), cls=""):
+    def __init__(self, kind, name="", kids=(), cls="", focus=False):
         self.element_info = SimpleNamespace(control_type=kind, name=name, class_name=cls)
         self.kids = list(kids)
+        self.focus = focus
     def children(self): return self.kids
+    def has_keyboard_focus(self): return self.focus
+
+
+class FocusTests(unittest.TestCase):
+    """Live exam 7 Nov: Chromium's host Pane and the page Edit both claim focus."""
+
+    def test_a_focus_holding_frame_does_not_hide_the_focused_field(self):
+        frame, edit = Node("Pane", "data:text/html", focus=True), Node("Edit", "Test metni", focus=True)
+        self.assertIs(DesktopController.focused_control(None, scanned=[frame, Node("Button", "x"), edit]), edit)
+
+    def test_two_focused_fields_or_none_mean_no_target(self):
+        self.assertIsNone(DesktopController.focused_control(None, scanned=[Node("Edit", "a", focus=True), Node("Edit", "b", focus=True)]))
+        self.assertIsNone(DesktopController.focused_control(None, scanned=[Node("Edit", "a")]))
+        only_frame = Node("Pane", focus=True)
+        self.assertIs(DesktopController.focused_control(None, scanned=[only_frame]), only_frame)  # then the Edit-type check refuses it
 
 
 class WebViewTraversalTests(unittest.TestCase):

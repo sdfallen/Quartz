@@ -39,6 +39,22 @@ VALUE_LIMIT = 1000
 VALUE_CONTROLS = 10
 
 
+def _same_application(control_pid, target_pid):
+    """The control's process is the target's or one the target started.
+
+    Live exam 7 Nov: a WebView2/Chromium page runs in a renderer process the host
+    app started, so the focused Edit's pid never equals the window's pid. The
+    control is still required to sit inside the target window (focused_control).
+    """
+    if control_pid == target_pid:
+        return True
+    try:
+        import psutil
+        return any(parent.pid == target_pid for parent in psutil.Process(control_pid).parents())
+    except Exception:
+        return False
+
+
 def _control_value(control):
     readers = (lambda: control.iface_value.CurrentValue, lambda: control.get_value(),
                lambda: control.window_text())
@@ -300,15 +316,14 @@ class NativeDesktopBackend:
             snapshot_id = uuid.uuid4().hex[:12]
             focused_item = None
             values_read = 0
-            for control in self.controller._get_descendants(win):
+            controls = self.controller._get_descendants(win)
+            for control in controls:
                 try:
                     item = self.controller._describe(control)
                     if not item["visible"]:
                         continue
                     if item["password"] or SENSITIVE.search(item["name"]):
                         raise PermissionError("Authentication/private input appeared; hand off to user")
-                    if focused_item is None and control.has_keyboard_focus():
-                        focused_item = item.copy()
                     if len(elements) < 120:
                         ref = str(len(elements) + 1)
                         references[ref] = item.copy()
@@ -324,6 +339,13 @@ class NativeDesktopBackend:
                     raise
                 except Exception:
                     continue
+            # The same single focused control the typing check will demand.
+            focus = self.controller.focused_control(win, scanned=controls)
+            if focus is not None:
+                try:
+                    focused_item = self.controller._describe(focus)
+                except Exception:
+                    focused_item = None
             self.controller._snapshots = {k: v for k, v in self.controller._snapshots.items()
                                           if self.controller._clock() - v["at"] < 120}
             self.controller._snapshots[snapshot_id] = {
@@ -408,11 +430,10 @@ class NativeDesktopBackend:
                 win = self.controller._window(desktop, target["handle"])
                 # Never type into a guessed surface or another process. The same
                 # traversal as observe(), so a WebView/Chromium field it saw is found.
-                focused = [c for c in self.controller._get_descendants(win) if c.has_keyboard_focus()]
-                if len(focused) != 1: raise PermissionError("No unique focused edit control")
-                control = focused[0]
+                control = self.controller.focused_control(win)
+                if control is None: raise PermissionError("No unique focused edit control")
                 item = self.controller._describe(control)
-                if (control.process_id() != target["pid"] or item["type"] != "Edit" or item["password"]):
+                if (not _same_application(control.process_id(), target["pid"]) or item["type"] != "Edit" or item["password"]):
                     raise PermissionError("Observe and focus a normal Edit control before typing")
                 old_focus = observation["ui"].get("focused") or {}
                 if item["runtime_id"] != old_focus.get("runtime_id"):
@@ -464,7 +485,7 @@ class NativeDesktopBackend:
             if key not in SAFE_KEYS: raise PermissionError("Key/chord is outside the bounded operator profile")
             with self.controller._desktop() as desktop:
                 win = self.controller._window(desktop, target["handle"])
-                focused = [c for c in self.controller._get_descendants(win) if c.has_keyboard_focus()]
+                focused = [c for c in [self.controller.focused_control(win)] if c is not None]
                 if any(CRITICAL.search(self.controller._describe(c)["name"]) for c in focused):
                     raise PermissionError("Focused consequential control requires user handoff")
             self._before_input(target)

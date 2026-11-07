@@ -577,3 +577,11 @@ class NativePolicyTests(unittest.TestCase):
         with self.assertRaises(PermissionError): NativeDesktopBackend.validate_target({"exe": "app.exe", "title": "Enter password"})
     def test_normal_app_is_allowed(self):
         NativeDesktopBackend.validate_target({"exe": "notepad.exe", "title": "Untitled - Notepad"})
+    def test_a_web_page_field_may_live_in_a_process_the_app_started(self):
+        # Live exam 7 Nov: a WebView2 page's Edit belongs to the renderer the host started.
+        import os
+        from core.desktop_native import _same_application
+        self.assertTrue(_same_application(os.getpid(), os.getpid()))
+        self.assertTrue(_same_application(os.getpid(), os.getppid()))  # child of the target
+        self.assertFalse(_same_application(os.getppid(), os.getpid()))  # the parent is not the child's app
+        self.assertFalse(_same_application(999999999, os.getpid()))

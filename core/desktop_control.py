@@ -114,6 +114,37 @@ class DesktopController:
         return merged[:max_elements]
 
     @staticmethod
+    def focused_control(win, scanned=None):
+        """The one control holding keyboard focus inside ``win``, or None.
+
+        Live exam 7 Nov: in a WebView2 window both the Chromium host Pane and the
+        page's Edit report HasKeyboardFocus, so "exactly one focused control" was
+        never true and typing was refused. UI Automation's own focused element is
+        the single answer; it counts only when it belongs to this window. Without
+        it, focus-holding frame Panes are dropped and one control must remain.
+        """
+        try:
+            from pywinauto.controls.uiawrapper import UIAWrapper
+            if isinstance(win, UIAWrapper):
+                from pywinauto.uia_defines import IUIA
+                from pywinauto.uia_element_info import UIAElementInfo
+                focused = UIAWrapper(UIAElementInfo(IUIA().iuia.GetFocusedElement()))
+                if focused.top_level_parent().handle == win.handle:
+                    return focused
+        except Exception:
+            pass
+        candidates = []
+        for control in (scanned if scanned is not None else DesktopController._get_descendants(win)):
+            try:
+                if control.has_keyboard_focus():
+                    candidates.append(control)
+            except Exception:
+                continue
+        leaves = [c for c in candidates if getattr(c.element_info, "control_type", "") != "Pane"]
+        pool = leaves or candidates
+        return pool[0] if len(pool) == 1 else None
+
+    @staticmethod
     def _identity_key(element):
         try:
             runtime = tuple(element.element_info.runtime_id or ())
