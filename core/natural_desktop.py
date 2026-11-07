@@ -73,6 +73,14 @@ _QUOTED = re.compile("(?:^|(?<=[\\s(\\[:,]))(['\"‘“«])"
                      "([^'\"‘’“”«»\\n]{2,300}?)(['\"’”»])")
 
 
+PLACEHOLDER_MESSAGES = {"test", "testing", "ping", "hazırım", "hazır", "ok", "okay", "tamam"}
+
+
+def _placeholder_message(text):
+    """Live 7 Nov: Gemini posted bare "Test"/"Hazırım" lines into the user's chat."""
+    return isinstance(text, str) and text.strip().strip(".!…").strip().casefold() in PLACEHOLDER_MESSAGES
+
+
 def _text_visible(record, expected):
     """Exact text in a visible UIA name, or inside an edit box's value (typed text)."""
     if not isinstance(expected, str) or not expected: return False
@@ -204,6 +212,8 @@ class NaturalDesktopTask:
         self.thread = None
         self.relaunches = {"codex": 0, "antigravity": 0}
         self._approval_resume = {}
+        self._approval_resume_at = {}
+        self._seen_at = {}
         self.application_learning = None
         self._learning_seen = set()
         self._sys_ctrl = None
@@ -360,6 +370,8 @@ class NaturalDesktopTask:
                 self.notes.clear()
                 self.relaunches = {"codex": 0, "antigravity": 0}
                 self._approval_resume = {}
+                self._approval_resume_at = {}
+                self._seen_at = {}
                 self.application_learning = None
                 self._learning_seen = set()
                 self.warband = None
@@ -520,7 +532,9 @@ class NaturalDesktopTask:
         if self.stopped.is_set() or not self.job or (_job_expired(self.job) and not self._paused()):
             raise PermissionError("Task stopped or expired")
         for provider, secret in self.tokens.items():
-            if hmac.compare_digest(str(token), secret): return provider
+            if hmac.compare_digest(str(token), secret):
+                self._seen_at[provider] = time.time()
+                return provider
         raise PermissionError("Invalid task capability")
 
     def _log_candidates(self):
@@ -705,6 +719,7 @@ class NaturalDesktopTask:
                         self._launch_provider(provider, after_approval=True)
                     elif runtime.get(rid)["status"] not in runtime.TERMINAL:
                         self._approval_resume[provider] = rid
+                        self._approval_resume_at[provider] = time.time()
                 self._event("quartz", "İzin verildi. Ajanlar aynı göreve devam ediyor; yeni kapsam ayrıca onaylanacak.")
                 self.changed.notify_all()
                 return self.status()
@@ -741,6 +756,7 @@ class NaturalDesktopTask:
 
     def _message(self, provider, text):
         if not isinstance(text, str) or not 1 <= len(text.strip()) <= 6000: raise ValueError("Bounded message required")
+        if _placeholder_message(text): return  # e.g. a final turn result of just "Test"
         other = "antigravity" if provider == "codex" else "codex"
         self.squad.send(self.agent_ids[provider], self.agent_ids[other], text, task_id=self.job["task_id"])
         self.notes.append({"sender": provider, "content": text, "at": time.time()})
@@ -856,7 +872,9 @@ class NaturalDesktopTask:
                     else:
                         self._event('quartz','Windows yanıtı alındı ancak devam turu sınırına ulaşıldı; sonuç doğrulanmadı.')
                         self.stop('continuation limit');return
-                else:self._approval_resume[provider]=rid
+                else:
+                    self._approval_resume[provider]=rid
+                    self._approval_resume_at[provider]=time.time()
             self.changed.notify_all()
 
     def _assert_jarvis_generation(self, job):
@@ -1183,6 +1201,8 @@ class NaturalDesktopTask:
                 return self._context(provider)
             if tool == "task_context": return self._context(provider)
             if tool == "task_message":
+                if _placeholder_message(args.get("text")):
+                    raise ValueError("Placeholder message not delivered; send a real finding or nothing")
                 self._message(provider, args.get("text"))
                 return {"delivered_via": "Squad", "task_id": self.job["task_id"]}
             if tool == "desktop_request_access":
@@ -1370,7 +1390,13 @@ class NaturalDesktopTask:
                         key = (p, rid)
                         if run["status"] in runtime.TERMINAL and key not in reported:
                             reported.add(key)
-                            if self._approval_resume.pop(p, None) == rid and run['status'] == 'completed':
+                            # A run that used its task tools after consent has seen it
+                            # (Tam Yetki grants inside the operator's own call). Restarting
+                            # it repeated finished work: live 7 Nov, task 47c6783c, +87 s.
+                            granted_at = self._approval_resume_at.pop(p, None)
+                            saw_consent = granted_at is not None and self._seen_at.get(p, 0) > granted_at
+                            if (self._approval_resume.pop(p, None) == rid and run['status'] == 'completed'
+                                    and not saw_consent):
                                 if self.relaunches[p] >= 4:
                                     self._event('quartz','İzin verildi ancak güvenli devam turu sınırına ulaşıldı; görev tamamlanmış sayılmadı.')
                                     self.stop('continuation limit'); return
