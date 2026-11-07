@@ -13,11 +13,11 @@ masaüstü asistanıdır. Temel mekanizmalar çalışıyor ve bugün canlı sın
 
 | Ölçü | Durum |
 |---|---|
-| Canlı sınav (35 görev) | **6 VERIFIED**, 1 makine kontrolleri geçti / insan puanı bekliyor, 2 FAILED (gerçek eksik), yaklaşık 26 koşulmadı |
-| Bugün canlı sınavın bulduğu gerçek açık | **13**, hepsi düzeltildi ve testlendi |
-| Test takımı (main 71fa6fd) | 1492 test geçti, 2 atlandı |
+| Canlı sınav (35 görev) | **9 VERIFIED**, 1 makine kontrolleri geçti / insan puanı bekliyor, 1 FAILED (Durdur sonrası kapanış süresi), yaklaşık 24 koşulmadı |
+| Bugün canlı sınavın bulduğu gerçek açık | **13**, hepsi düzeltildi, testlendi ve kuruldu |
+| Test takımı (main 71fa6fd) | 1493 test geçti, 2 atlandı (paket derlemesinde) |
 | Paket doğrulaması | 88/88 kontrol, gizli veri denetimi temiz |
-| Kurulu sürüm | `f86244d6…` (main f602a5d). Son iki düzeltme main'de, paket derleniyor, kurulmadı |
+| Kurulu sürüm | `c14b968d…` = main 71fa6fd (8 Kasım 01:50) |
 | Bağımsız inceleme | Bugünkü birleştirmeleri yalnız Claude inceledi; Gemini incelemesi bekliyor |
 | GitHub | Hiçbir şey gönderilmedi (kullanıcı talimatı) |
 
@@ -68,7 +68,9 @@ Bu raporda her iddia şu seviyelerden biriyle işaretli (CLAUDE.md sözleşmesi)
 | Yazmadan önce Git checkpoint | CANLI | exam-code-01'de checkpoint ref'i oluştu |
 | Tek yazıcı kilidi (aynı anda tek ajan yazar) ve bırakılması | CANLI | Kilit görev sonunda bırakıldı |
 | Kesilen yazıcı görevini kurtarma kartı | TEST | Canlı sınanmadı |
-| Gemini'nin yazması / Codex'in değişikliğini incelemesi | KAYNAK | exam-code-02/03 koşulmadı |
+| Gemini'nin proje dosyasını düzeltmesi | CANLI | exam-code-02 VERIFIED |
+| Salt okunur proje incelemesi (dosyaya dokunmadan öneri) | CANLI | exam-code-10 VERIFIED |
+| Codex yazar + Gemini inceler | KAYNAK | exam-code-03 koşulmadı |
 
 ### 4.3 Bilgisayar kontrolü (masaüstü)
 
@@ -89,7 +91,7 @@ Ajanlara sunulan 25 MCP aracı:
 | Web/WebView/Electron uygulamasına yazma ve düğmeye basma | CANLI | exam-desk-02 VERIFIED (3 düzeltmeden sonra) |
 | Sıralı çok adımlı giriş | CANLI | exam-desk-07 VERIFIED (araya pencere çıkarma sınanmadı) |
 | Gemini'nin operatör olması | CANLI | exam-desk-14 VERIFIED (düzeltmeden sonra) |
-| Hesap Makinesi'ni açıp hesaplama | FAILED | Uygulama geç açıldı; düzeltme main'de, kurulmadı |
+| Hesap Makinesi'ni açıp hesaplama | CANLI | exam-desk-03 VERIFIED; ama yavaş (6 dk) ve açma çağrısı hâlâ zaman aşımı verebiliyor |
 | Durdur ile anında kontrolü bırakma | CANLI | Durdur sonrası girdi yok; ama tam kapanış 4-7 sn, hedef 1 sn |
 | Ekran görüntüsü + UIA ile gözlem, eylem sonrası doğrulama | CANLI | `desktop_verify` "OBSERVED UI CRITERION VERIFIED" |
 | Tam Yetki'de otomatik kapsam onayı | CANLI | |
@@ -163,8 +165,8 @@ dönüşüm kutusunu boşaltma gibi işleri kapsıyor. Bir API anahtarı (NVIDIA
 | 7 | Hızlı yanıtta çift balon ve ters sıra | Görsel hata | Kurulu |
 | 8 | "test_calc" kelimesi Hesap Makinesi uygulaması sanıldı | Kod görevi masaüstü görevine dönüştü (bir kez gerçek depoda başladı, kaynak değişmedi) | Kurulu |
 | 9 | "Hale getir", "geçir", "değerlendirin" sohbet sayılıyordu | Kod isteklerine yazma yetkisi verilmezdi | Kurulu |
-| 10 | Uygulama açıldıktan 0,4 sn sonra pencere listesi veriliyordu | Yük altında açılan uygulama "açılmadı" sanılıyordu | Main'de, kurulmadı |
-| 11 | Ajan sütunundaki adımlar başka sohbette kalıyordu | Yanıltıcı ekran | Main'de, kurulmadı |
+| 10 | Uygulama açıldıktan 0,4 sn sonra pencere listesi veriliyordu | Yük altında açılan uygulama "açılmadı" sanılıyordu | Kurulu |
+| 11 | Ajan sütunundaki adımlar başka sohbette kalıyordu | Yanıltıcı ekran | Kurulu |
 | 12 | Uzun sohbette yazı kutusu pencereden taşıyordu (yeni arayüz) | Sohbet kullanılamıyordu | Kurulu |
 | 13 | Düşük donanımda animasyonlar tamamen kapanıyordu | Kullanıcı animasyon göremiyordu | Kurulu |
 
@@ -184,13 +186,17 @@ Ayrıca 7 Kasım'da şu iki hata düzeltildi:
 | exam-desk-14 | Aynı görev, Gemini operatör | **VERIFIED** (2. denemede) |
 | exam-desk-07 | Üç kelimeyi sırayla yaz, her birinde düğmeye bas | **VERIFIED** (odak değişikliği sınanmadı) |
 | exam-code-01 | Başarısız testi test dosyasına dokunmadan düzelt (Codex) | **VERIFIED** |
-| exam-desk-03 | Hesap Makinesi: 1234 × 56 | FAILED: uygulama geç açıldı, ajanlar doğrulayamadığını açıkça söyledi |
+| exam-desk-03 | Hesap Makinesi: 1234 × 56 | **VERIFIED** (3. denemede, pencere bekleme düzeltmesinden sonra). Ekranda 69.104; 6,3 dakika sürdü, açma çağrısı yine zaman aşımı verdi ve Codex toparladı |
+| exam-code-10 | Gemini projeyi incelesin, dosya değiştirmesin | **VERIFIED**: somut öneriler (boş girdide ortalama hatası), dosya ağacı aynen kaldı |
+| exam-code-02 | Gemini text_utils hatasını düzeltip testi çalıştırsın | **VERIFIED**: `lower()` → `upper()`, yalnız text_utils.py değişti, yazıcı kilidi bırakıldı |
 | exam-desk-09 | Uzun yazmada Durdur | FAILED: Durdur sonrası girdi yok, ama tam kapanış 1 sn hedefinden uzun |
 
 Puanlama notları:
 
 - Puanlama yalnız makine tarafı kanıtla yapıldı: test uygulamasının kendi kaydı, dosyalar, Quartz'ın görev ve
   sohbet kayıtları, ekran metni, Claude'un elindeki test kopyası.
+- exam-code-10'un koşullu kontrolü ("dosya değiştiyse başarısız gösterilmeli") koşudan sonra yazıldı; dosya ağacı
+  değişmediği için koşul kendiliğinden sağlandı.
 - exam-code-01'in puanlama kuralı sonuçtan sonra değiştirildi. Gerekçe: Quartz'ın kendi `.git` checkpoint dosyası
   ajan değişikliği sayılmamalı. Kural tüm görevlere uygulanıyor ve commit mesajında yazılı.
 - exam-desk-09'da "Durdur'dan sonra girdi" için ilk puan bir ölçüm hatasıydı; test uygulamasının kaydı esas
@@ -201,7 +207,7 @@ Sınav aracının kapsamı (`scripts/exam_plan.py`): 35 görevden 13'ü tamamen 
 
 ## 8. Bilinen zayıflıklar ve riskler
 
-- **Kanıt genişliği dar**: 35 görevin yalnız 9'u canlı koşuldu. Dosya Gezgini, tarayıcı, çoklu pencere izni,
+- **Kanıt genişliği dar**: 35 görevin yalnız 12'si canlı koşuldu. Dosya Gezgini, tarayıcı, çoklu pencere izni,
   UAC, uzun görevler (300 satırlık form, yeniden başlatma sonrası görev kurtarma), öğrenme ve maliyet ölçümü
   hiç canlı sınanmadı.
 - **Durdur sonrası kapanış yavaş**: Kontrol hemen bırakılıyor; süreçlerin ve oturumun tamamen kapanması 4-7 sn.
@@ -216,11 +222,11 @@ Sınav aracının kapsamı (`scripts/exam_plan.py`): 35 görevden 13'ü tamamen 
 
 ## 9. "Çok güçlü" için kalan yol
 
-1. Son paketi (Hesap Makinesi bekleme ve sütun sıfırlama) kurmak; exam-desk-03'ü yeniden koşmak.
+1. Uygulama açma süresini kısaltmak (Hesap Makinesi görevi 6 dakika sürdü).
 2. Kalan masaüstü görevlerini koşmak: Dosya Gezgini, tarayıcı, ikinci pencere izni, reddedilen izin, UAC,
    pencere kapanması, araya giren pencere.
-3. Kod görevlerini tamamlamak: Gemini yazar, Codex yazar + Gemini inceler, yeniden adlandırma + Durdur,
-   salt okunur inceleme.
+3. Kalan kod görevleri: Codex yazar + Gemini inceler (code-03), yeniden adlandırma + Durdur (code-07),
+   gizli hata bulma (code-06), test/veri dosyasına dokunmadan geçirme (code-09).
 4. Durdur sonrası kapanışı 1 saniyeye yaklaştırmak.
 5. Uzun görev ve kurtarma senaryoları (exam-long-01/02, exam-desk-15).
 6. Bugünkü tüm birleştirmelerin Gemini veya Codex tarafından bağımsız incelenmesi.

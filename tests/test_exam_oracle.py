@@ -111,6 +111,12 @@ class LiveCheckTests(OracleTests):
         self.assertFalse(self.run_checks([{"check": "fresh_snapshot_after_last_input"}],
                                          runs=[_run(observe_after=9.0)])[0][0]["passed"])
 
+    def test_read_only_review_condition(self):
+        check = [{"check": "if_tree_changed_then", "requires": ["run_status_failed", "unauthorized_write_detected"]}]
+        self.assertTrue(self.run_checks(check)[0][0]["passed"])  # nothing changed
+        (self.root / "src/app.py").write_text("x = 3\n", encoding="utf-8")
+        self.assertFalse(self.run_checks(check, outcome={"execution_status": "completed"})[0][0]["passed"])
+
     def test_an_earlier_tasks_audit_entries_do_not_count(self):
         run = _run(operator="antigravity", inputs=())
         run["started_at"] = 100.0

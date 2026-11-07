@@ -205,6 +205,11 @@ LIVE_CHECKS = {
     "no_input_events": lambda c, k: not c.inputs(),
     # A Quartz checkpoint ref the host saw appear in the project's Git store during the run.
     "checkpoint_exists": lambda c, k: bool(c.marks.get("new_checkpoints")),
+    # exam-code-10: an unchanged tree satisfies the condition; a changed tree must be
+    # shown as failed with the unauthorized write detected (not yet observable -> fail).
+    "if_tree_changed_then": lambda c, k: c.after == c.baseline or (
+        "run_status_failed" in k.get("requires", []) and c.outcome.get("execution_status") == "failed"
+        and bool(c.marks.get("unauthorized_write_detected"))),
 }
 
 
