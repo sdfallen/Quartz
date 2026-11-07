@@ -462,6 +462,34 @@ class NaturalTaskTests(unittest.TestCase):
         observed=self.call("desktop_observe")
         self.assertEqual(self.call("desktop_verify",{"snapshot_id":observed["snapshot_id"],"expected_text":"deneme"})["status"],"NOT VERIFIED")
 
+    def test_a_read_only_look_after_verify_keeps_the_verified_text(self):
+        # Live 7 Nov (task afdd5615): Codex verified 'Codex | Antigravity', looked once
+        # more without input, and the task ended NOT VERIFIED.
+        self.approve(); self.notepad("Codex | Antigravity")
+        observed=self.call("desktop_focus")
+        observed=self.call("desktop_act",{"snapshot_id":observed["snapshot_id"],"action":"text","text":"Codex | Antigravity"})
+        self.call("desktop_verify",{"snapshot_id":observed["snapshot_id"],"expected_text":"Codex | Antigravity"})
+        again=self.call("desktop_observe")
+        verification=self.task.job["verification"]
+        self.assertEqual(verification["status"],"OBSERVED UI CRITERION VERIFIED")
+        self.assertEqual(verification["snapshot_id"],again["snapshot_id"])
+        self.assertTrue(verification["rechecked"])
+        self.notepad("")  # The text is gone: the look withdraws the check.
+        self.call("desktop_observe")
+        self.assertEqual(self.task.job["verification"]["status"],"NOT VERIFIED")
+        self.notepad("Codex | Antigravity")  # Back on screen, but the earlier check is not revived.
+        self.call("desktop_observe")
+        self.assertEqual(self.task.job["verification"]["status"],"NOT VERIFIED")
+
+    def test_input_after_verify_still_requires_a_new_verify(self):
+        self.approve(); self.notepad("imza")
+        observed=self.call("desktop_focus")
+        observed=self.call("desktop_act",{"snapshot_id":observed["snapshot_id"],"action":"text","text":"imza"})
+        self.call("desktop_verify",{"snapshot_id":observed["snapshot_id"],"expected_text":"imza"})
+        observed=self.call("desktop_act",{"snapshot_id":observed["snapshot_id"],"action":"key","key":"end"})
+        self.call("desktop_observe")
+        self.assertEqual(self.task.job["verification"]["status"],"NOT VERIFIED")
+
     def test_mcp_returns_image_not_only_a_file_path(self):
         self.approve()
         result=handle({"method":"tools/call","params":{"name":"desktop_focus","arguments":{}}},transport=lambda p:self.task.call("op",p))

@@ -73,6 +73,14 @@ _QUOTED = re.compile("(?:^|(?<=[\\s(\\[:,]))(['\"‘“«])"
                      "([^'\"‘’“”«»\\n]{2,300}?)(['\"’”»])")
 
 
+def _text_visible(record, expected):
+    """Exact text in a visible UIA name, or inside an edit box's value (typed text)."""
+    if not isinstance(expected, str) or not expected: return False
+    visible = [e for e in record["observation"].get("ui", {}).get("elements", []) if e.get("visible", True)]
+    return (expected in [str(e.get("name", "")) for e in visible]
+            or any(isinstance(e.get("value"), str) and expected in e["value"] for e in visible))
+
+
 def requested_literals(text):
     """Exact text the user quoted in their own request, e.g. 'deneme'."""
     found = []
@@ -1209,6 +1217,7 @@ class NaturalDesktopTask:
                 # An input may have happened even if its post-action capture fails.
                 # Never let the older observation certify that unknown outcome.
                 self.latest = None
+                self._prior_criterion = self.job.get("verification")
                 self.job["verification"] = {"status":"NOT VERIFIED", "reason":"fresh observation required"}
             result = self.broker.call(self.connection["token"], request)
             if "observation" in result:
@@ -1297,7 +1306,20 @@ class NaturalDesktopTask:
         if self.application_learning and target_exe:
             self.application_learning.note_operation(target_exe, focus_verified=(tool in {"desktop_focus", "desktop_switch"}), observation_verified=bool(image_hash))
         if tool == "desktop_act": self.job["verification"] = {"status": "NOT VERIFIED", "reason": "new action requires verification"}
+        else: self._recheck_criterion(record)
         self._host_text_check(record)
+
+    def _recheck_criterion(self, record):
+        # A read-only look after desktop_verify must not erase it (live 7 Nov, task
+        # afdd5615): Quartz re-checks the same exact text in the new observation.
+        # Only when no input happened since; missing text keeps NOT VERIFIED.
+        prior, self._prior_criterion = getattr(self, "_prior_criterion", None), None
+        if (not isinstance(prior, dict) or prior.get("status") != "OBSERVED UI CRITERION VERIFIED"
+                or prior.get("source") == HOST_TEXT_SOURCE or prior.get("actions") != record.get("actions")
+                or not record.get("image_sha256") or not _text_visible(record, prior.get("expected_text"))):
+            return
+        self.job["verification"] = dict(prior, snapshot_id=record["snapshot_id"], image_sha256=record["image_sha256"],
+                                        at=time.time(), rechecked=True)
 
     def _verify(self, args):
         # A model cannot self-certify completion merely by writing 'success'.
@@ -1307,13 +1329,8 @@ class NaturalDesktopTask:
             raise PermissionError("Fresh observation required for verification")
         expected = args.get("expected_text", "")
         if not isinstance(expected, str) or not 2 <= len(expected.strip()) <= 300: raise ValueError("Exact visible result text required")
-        visible = [e for e in record["observation"].get("ui", {}).get("elements", []) if e.get("visible", True)]
-        names = [str(e.get("name", "")) for e in visible]
-        # Typed text lives in an edit box's value, not its name.
-        values = [e["value"] for e in visible if isinstance(e.get("value"), str)]
-        passed = bool(record["image_sha256"] and record["actions"]
-                      and (expected in names or any(expected in value for value in values)))
-        result = {"status": "OBSERVED UI CRITERION VERIFIED" if passed else "NOT VERIFIED",
+        passed = bool(record["image_sha256"] and record["actions"] and _text_visible(record, expected))
+        result = {"status": "OBSERVED UI CRITERION VERIFIED" if passed else "NOT VERIFIED", "actions": record["actions"],
                   "expected_text": expected, "snapshot_id": record["snapshot_id"], "image_sha256": record["image_sha256"],
                   "at": time.time(), "scope": "visible exact UIA text after action; not proof of all user requirements"}
         self.job["verification"] = result
