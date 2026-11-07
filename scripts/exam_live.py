@@ -205,8 +205,9 @@ def _uia(checks):
     for check in wanted:
         for window in Desktop(backend="uia").windows():
             try:
-                for child in window.descendants(auto_id=check["automation_id"]):
-                    found[f'{check["process"]}|{check["automation_id"]}'] = child.window_text()
+                for child in window.descendants():
+                    if child.element_info.automation_id == check["automation_id"]:
+                        found[f'{check["process"]}|{check["automation_id"]}'] = child.window_text()
             except Exception:  # A window can close while being read.
                 continue
     return found

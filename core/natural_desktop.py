@@ -58,6 +58,8 @@ WARBAND_EXES = {'mb_warband.exe', 'warband.exe'}
 # a value for one turn, so a stuck provider process cannot outlive a day.
 PROVIDER_TURN_TIMEOUT = "1440m"
 # jarvis_* calls return no screen to compare, so this bound is deliberately loose.
+# Seconds jarvis_open_app waits for the launched app's window (kept under the 25 s tool socket timeout).
+OPEN_WINDOW_WAIT = 8.0
 JARVIS_REPEAT_REFUSE_AFTER = 40
 JARVIS_REPEAT_STOP_AFTER = 44
 
@@ -978,6 +980,10 @@ class NaturalDesktopTask:
             if not target:
                 raise ValueError("Target is required")
             self._check_not_protected_target(target)
+            try:
+                before = {w.get("handle") for w in self.desktop.windows()}
+            except Exception:
+                before = None
             mode = args.get("mode") or "smart_open"
             if mode == "url":
                 result_text = self._controller(job, adv_ctrl.browser_open_url, target)
@@ -989,11 +995,26 @@ class NaturalDesktopTask:
                 result_text = self._controller(job, adv_ctrl.steam_open_library)
             else:
                 result_text = self._controller(job, adv_ctrl.smart_open, target)
-            time.sleep(0.4)
-            try:
-                extra["open_windows"] = self.desktop.windows()
-            except Exception:
-                pass
+            # Live exam 8 Nov: on a loaded low-spec PC Calculator's window came up
+            # after the 0.4 s snapshot, so the operator saw no window and gave up.
+            # Wait a bounded time for a new window and say plainly if none came.
+            deadline = time.monotonic() + OPEN_WINDOW_WAIT
+            windows = []
+            while True:
+                time.sleep(0.4)
+                try:
+                    windows = self.desktop.windows()
+                except Exception:
+                    windows = []
+                new = [w for w in windows if before is not None and w.get("handle") not in before]
+                if new or before is None or time.monotonic() >= deadline or self.stopped.is_set():
+                    break
+            extra["open_windows"] = windows
+            if before is not None:
+                extra["new_windows"] = new
+                if not new:
+                    extra["note"] = (f"No new window within {OPEN_WINDOW_WAIT:g} s; the app may still be starting "
+                                     "or reused an existing window. Check jarvis_system_info(windows) again before retrying.")
 
         elif tool == "jarvis_media_web":
             action = args.get("action")
