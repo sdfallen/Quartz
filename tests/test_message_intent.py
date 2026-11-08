@@ -34,7 +34,11 @@ class MessageIntentTests(unittest.TestCase):
                 self.assertIsNone(desktop_intent(text))
         for text in ('Hesap makinesini aç', 'calc aç'):
             with self.subTest(text=text): self.assertEqual(desktop_intent(text), 'task')
-        for text in ('Bugün nasıl geçirdin?', 'Bu kodu nasıl değerlendirirsin?', 'Bu ne getirir?'):
+        for text in ('Bugün nasıl geçirdin?', 'Bu kodu nasıl değerlendirirsin?', 'Bu ne getirir?',
+                     'Mikroservis mimarisinin avantajlarını değerlendir?',
+                     'Bu yaklaşımın olası risklerini gözden geçir?',
+                     'Yapay zeka geleceğe ne getir?',
+                     'Zamanı verimli geçir?'):
             with self.subTest(text=text): self.assertEqual(message_intent(text), 'conversation')
 
     def test_real_requests_are_tasks(self):
