@@ -90,6 +90,29 @@ class JarvisRegressionTests(unittest.TestCase):
             result=self.task.call('token-op',{'name':'jarvis_open_app','arguments':{'target':'calc'}})
         self.assertEqual([w['handle'] for w in result['open_windows']],[77])
 
+    def test_open_app_returns_within_bounded_wait_and_tracks_late_window_in_background(self):
+        # Step 2.3 (exam-desk-03): jarvis_open_app must not block near the 25 s socket
+        # timeout; if no window appears within OPEN_WINDOW_WAIT, it returns immediately
+        # and wakes task_wait when the window arrives in the background.
+        from core.natural_desktop import OPEN_WINDOW_WAIT
+        self.assertLessEqual(OPEN_WINDOW_WAIT, 2.5)
+        self.adv.smart_open=lambda target:'Opened calculator'
+        old=dict(self.backend.target); late={**old,'handle':88,'title':'Hesap Makinesi'}
+        state={'windows':[old]}
+        with patch.object(self.task.desktop,'windows',side_effect=lambda:list(state['windows'])), \
+             patch('core.natural_desktop.OPEN_WINDOW_WAIT',0.2):
+            t0=time.monotonic()
+            result=self.task.call('token-op',{'name':'jarvis_open_app','arguments':{'target':'calculator'}})
+            elapsed=time.monotonic()-t0
+            self.assertLess(elapsed, 1.0)
+            self.assertEqual(result['new_windows'],[])
+            self.assertIn('task_context',result['note'])
+            state['windows']=[old,late]
+            deadline=time.monotonic()+2.0
+            while time.monotonic()<deadline and not self.task.job.get('late_opened_windows'):
+                time.sleep(0.05)
+            self.assertEqual([w['handle'] for w in self.task.job.get('late_opened_windows',[])],[88])
+
     def test_missing_or_ambiguous_target_never_clicks_or_focuses(self):
         with self.assertRaises(ValueError):self.call('click',target_window='ABSENT',x=5,y=5)
         self.mouse.click.assert_not_called()

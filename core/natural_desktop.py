@@ -58,8 +58,8 @@ WARBAND_EXES = {'mb_warband.exe', 'warband.exe'}
 # a value for one turn, so a stuck provider process cannot outlive a day.
 PROVIDER_TURN_TIMEOUT = "1440m"
 # jarvis_* calls return no screen to compare, so this bound is deliberately loose.
-# Seconds jarvis_open_app waits for the launched app's window (kept under the 25 s tool socket timeout).
-OPEN_WINDOW_WAIT = 8.0
+# Seconds jarvis_open_app waits for the launched app's window (kept well under the 25 s tool socket timeout).
+OPEN_WINDOW_WAIT = 2.0
 JARVIS_REPEAT_REFUSE_AFTER = 40
 JARVIS_REPEAT_STOP_AFTER = 44
 
@@ -1000,19 +1000,22 @@ class NaturalDesktopTask:
             else:
                 result_text = self._controller(job, adv_ctrl.smart_open, target)
             # Live exam 8 Nov: on a loaded low-spec PC Calculator's window came up
-            # after the 0.4 s snapshot, so the operator saw no window and gave up.
-            # Wait a bounded time for a new window and say plainly if none came.
+            # after the 0.4 s snapshot, while an 8 s blocking loop + slow UIA scans
+            # pushed jarvis_open_app past the 25 s MCP socket timeout (exam-desk-03).
+            # Poll briefly for a fast window, then continue polling in the background
+            # and return promptly so the operator can inspect desktop_windows / task_context.
             deadline = time.monotonic() + OPEN_WINDOW_WAIT
             windows = []
+            new = []
             while True:
-                time.sleep(0.4)
+                time.sleep(0.35)
                 try:
                     windows = self.desktop.windows()
                 except Exception:
                     windows = []
                 new = [w for w in windows if before is not None and w.get("handle") not in before]
                 # Gemini review 8 Nov: without a before-list, keep waiting until the
-                # window list can be read at all instead of leaving after 0.4 s.
+                # window list can be read at all instead of leaving after the first sleep.
                 if new or (before is None and windows) or time.monotonic() >= deadline or self.stopped.is_set():
                     break
             extra["open_windows"] = windows
@@ -1020,7 +1023,24 @@ class NaturalDesktopTask:
                 extra["new_windows"] = new
                 if not new:
                     extra["note"] = (f"No new window within {OPEN_WINDOW_WAIT:g} s; the app may still be starting "
-                                     "or reused an existing window. Check jarvis_system_info(windows) again before retrying.")
+                                     "or reused an existing window. Check jarvis_system_info(windows) or task_context again before retrying.")
+                    if not self.stopped.is_set():
+                        def _poll_late_window(expected_job=job, known=set(before)):
+                            bg_deadline = time.monotonic() + 10.0
+                            while time.monotonic() < bg_deadline and not self.stopped.is_set():
+                                time.sleep(0.5)
+                                try:
+                                    wins = self.desktop.windows()
+                                except Exception:
+                                    continue
+                                late = [w for w in wins if w.get("handle") not in known]
+                                if late:
+                                    with self.changed:
+                                        if self.job is expected_job and not self.stopped.is_set():
+                                            expected_job.setdefault("late_opened_windows", []).extend(late)
+                                            self.changed.notify_all()
+                                    return
+                        threading.Thread(target=_poll_late_window, daemon=True, name="quartz-open-window-poll").start()
 
         elif tool == "jarvis_media_web":
             action = args.get("action")
