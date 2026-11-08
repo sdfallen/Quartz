@@ -461,6 +461,12 @@ class IPCServer:
                 str(data.get("project_id") or ""), data.get("conversation_ids"),
                 confirmed=data.get("confirmed") is True)}
 
+        if action == "project_remove":
+            data = req.get("data", {}) or {}
+            return {"status": "ok", "data": self._get_agent_chat().remove_project(
+                str(data.get("project_id") or ""), data.get("conversation_ids"),
+                confirmed=data.get("confirmed") is True)}
+
         if action == "chat_set_agent":
             data = req.get("data", {}) or {}
             cid = str(data.get("conversation_id", ""))

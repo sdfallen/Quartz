@@ -846,6 +846,15 @@ class Api:
         except Exception as exc:
             return {"status": "error", "data": str(exc)}
 
+    def project_remove(self, project_id: str, conversation_ids, confirmed: bool = False) -> dict:
+        try:
+            with self._natural_start_lock:
+                self._chat_delete_guard()
+                return ipc_send("project_remove", {"project_id": project_id,
+                    "conversation_ids": conversation_ids, "confirmed": confirmed is True})
+        except Exception as exc:
+            return {"status": "error", "data": str(exc)}
+
     def chat_set_agent(self, conversation_id: str, agent: str) -> dict:
         return ipc_send("chat_set_agent", {"conversation_id": conversation_id, "agent": agent})
 

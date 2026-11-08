@@ -223,7 +223,7 @@ class ConversationStore:
     def delete(self, conversation_id: str) -> dict:
         return self.delete_many([conversation_id])["active_conversation"]
 
-    def delete_many(self, conversation_ids: list[str]) -> dict:
+    def delete_many(self, conversation_ids: list[str], fallback_project_id: str | None = None) -> dict:
         """Remove only exact IDs, after a durable local recovery copy.
 
         No CLI session, project directory or external agent history is deleted.
@@ -238,7 +238,7 @@ class ConversationStore:
             previous = self._conversations.get(active, {})
             remaining = {cid: rec for cid, rec in self._conversations.items() if cid not in removed}
             if active not in remaining:
-                project = previous.get("project_id")
+                project = fallback_project_id or previous.get("project_id")
                 candidates = [c for c in remaining.values() if
                               (c.get("project_id") or "squad-pilot") == (project or "squad-pilot")]
                 if candidates:

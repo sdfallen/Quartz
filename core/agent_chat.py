@@ -322,6 +322,40 @@ class AgentChatService:
                 self._active_turn = None
             return result
 
+    def remove_project(self, project_id: str, conversation_ids, *, confirmed=False) -> dict:
+        """Take a project off the list and delete its conversations (with the usual
+        local recovery copy). The project folder and its files are never deleted."""
+        with self._lock:
+            self._allow_delete(confirmed)
+            registry = self.agent_service.projects
+            project = registry.get(project_id)
+            if project["id"] == "squad-pilot":
+                raise ValueError("Varsayılan proje listeden kaldırılamaz.")
+            if not isinstance(conversation_ids, list) or any(not isinstance(cid, str) for cid in conversation_ids):
+                raise ValueError("Onaylanan sohbet listesi gerekli.")
+            current = [c["id"] for c in self.store.list()
+                       if (c.get("project_id") or "squad-pilot") == project["id"]]
+            if set(current) != set(conversation_ids):
+                raise ValueError("Projenin sohbet listesi değişti; yenileyip tekrar onaylayın.")
+            others = [p for p in registry.list() if p["id"] != project["id"]]
+            fallback = (next((p for p in others if p.get("selected") and p.get("exists")), None)
+                        or next((p for p in others if p["id"] == "squad-pilot"), None)
+                        or (others[0] if others else None))
+            if fallback is None:
+                raise ValueError("Son proje listeden kaldırılamaz.")
+            deleted = (self.store.delete_many(current, fallback_project_id=fallback["id"])
+                       if current else {"deleted_count": 0})
+            if self._active_turn and self._active_turn.get("conversation_id") in current:
+                self._active_turn = None
+            registry.remove(project["id"], fallback["id"])
+            active = self.store.get_active()
+            if (active.get("project_id") or "squad-pilot") == project["id"]:
+                active = self.store.create(title="Yeni Sohbet", agent=active.get("agent", "antigravity"),
+                                           project_id=fallback["id"], models=active.get("models"))
+            return {"removed_project": project, "selected_project": fallback["id"],
+                    "deleted_count": deleted["deleted_count"], "backup": deleted.get("backup"),
+                    "files_deleted": False, "active_conversation": active}
+
     def set_agent(self, conversation_id: str, agent: str) -> None:
         agent = agent.strip().lower()
         if agent not in {"antigravity", "codex", "collaboration", "notion"}:
