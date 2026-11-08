@@ -75,7 +75,7 @@ _QUOTED = re.compile("(?:^|(?<=[\\s(\\[:,]))(['\"‘“«])"
                      "([^'\"‘’“”«»\\n]{2,300}?)(['\"’”»])")
 
 
-PLACEHOLDER_MESSAGES = {"test", "testing", "ping", "hazırım", "hazır", "ok", "okay", "tamam"}
+PLACEHOLDER_MESSAGES = {"test", "testing", "ping", "hazırım", "hazır", "ready", "ok", "okay", "tamam"}
 
 
 def _placeholder_message(text):

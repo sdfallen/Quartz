@@ -601,6 +601,13 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
 
   function syncConversationMessages(messages, replaceAll=false) {
     if (!Array.isArray(messages)) return;
+    const activeMsgIds = new Set();
+    for (const m of messages) {
+      if (m && m.id) activeMsgIds.add(m.id);
+    }
+    for (const key of Array.from(revealedLength.keys())) {
+      if (!activeMsgIds.has(key)) revealedLength.delete(key);
+    }
     revealSuppressed = replaceAll;  // history appears at once; later arrivals are written out
     if (replaceAll) {
       chatEl.innerHTML = '';

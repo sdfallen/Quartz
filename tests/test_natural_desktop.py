@@ -656,13 +656,15 @@ class NaturalTaskTests(unittest.TestCase):
         finally:task.stop()
 
     def test_placeholder_messages_never_reach_the_chat(self):
-        with self.assertRaises(ValueError):
-            self.call("task_message",{"text":"Test"},token="review")
+        for raw in ("Test", "Ready", "ready!"):
+            with self.assertRaises(ValueError):
+                self.call("task_message",{"text":raw},token="review")
         with self.task.changed:
             self.task._message("antigravity","Hazırım.")  # e.g. a final turn result
+            self.task._message("antigravity","Ready.")
             self.task._message("antigravity","Test sonucu: imzalar görünüyor.")
         texts=[e[1] for e in self.events if len(e)>1]
-        self.assertFalse(any(str(t).strip() in {"Test","Hazırım."} for t in texts))
+        self.assertFalse(any(str(t).strip() in {"Test","Hazırım.","Ready."} for t in texts))
         self.assertEqual(self.task.squad.send.call_count,1)
 
     def test_shelved_aster_project_gets_an_ordinary_isolated_desktop_task(self):
