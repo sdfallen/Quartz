@@ -58,8 +58,8 @@ WARBAND_EXES = {'mb_warband.exe', 'warband.exe'}
 # a value for one turn, so a stuck provider process cannot outlive a day.
 PROVIDER_TURN_TIMEOUT = "1440m"
 # jarvis_* calls return no screen to compare, so this bound is deliberately loose.
-# Seconds jarvis_open_app waits for the launched app's window (kept under the 25 s tool socket timeout).
-OPEN_WINDOW_WAIT = 8.0
+# Seconds jarvis_open_app waits for the launched app's window (kept well under the 25 s tool socket timeout).
+OPEN_WINDOW_WAIT = 2.0
 JARVIS_REPEAT_REFUSE_AFTER = 40
 JARVIS_REPEAT_STOP_AFTER = 44
 
@@ -75,7 +75,7 @@ _QUOTED = re.compile("(?:^|(?<=[\\s(\\[:,]))(['\"‘“«])"
                      "([^'\"‘’“”«»\\n]{2,300}?)(['\"’”»])")
 
 
-PLACEHOLDER_MESSAGES = {"test", "testing", "ping", "hazırım", "hazır", "ok", "okay", "tamam"}
+PLACEHOLDER_MESSAGES = {"test", "testing", "ping", "hazırım", "hazır", "ready", "ok", "okay", "tamam"}
 
 
 def _placeholder_message(text):
@@ -551,16 +551,20 @@ class NaturalDesktopTask:
                 except (ValueError, OSError, PermissionError): continue
         return found[:24]
 
-    def _context(self, provider):
+    def _context(self, provider, *, windows_snapshot=None):
         knowledge = self.application_learning.context() if self.application_learning else []
         if knowledge and all(k['state'] not in {'queued','running'} for k in knowledge):
             self._learning_seen.add(provider)
         messages = [m for m in self.squad.receive(self.agent_ids[provider]) if m.get("task_id") == self.job["task_id"]]
+        if provider == self.job["roles"]["operator"]:
+            windows_meta = self.desktop.windows() if windows_snapshot is None else windows_snapshot
+        else:
+            windows_meta = []
         return {"task_id": self.job["id"], "squad_task_id": self.job["task_id"],
                 "role": "operator" if provider == self.job["roles"]["operator"] else "collaborator",
                 "requested_file_mode":self.job.get('requested_permission_level','read-only'),
                 "capability_mode":"scoped-mcp", "runtime_filesystem":"read-only",
-                "windows_metadata_only": self.desktop.windows() if provider == self.job["roles"]["operator"] else [],
+                "windows_metadata_only": windows_meta,
                 "project_logs_metadata_only": self._log_candidates(), "approved_logs": list(self.approved_logs),
                 "pending_permission": self.pending, "desktop_active": self.broker.status()["active"],
                 "colleague_messages": messages, "recent_notes": self.notes[-12:],
@@ -996,19 +1000,22 @@ class NaturalDesktopTask:
             else:
                 result_text = self._controller(job, adv_ctrl.smart_open, target)
             # Live exam 8 Nov: on a loaded low-spec PC Calculator's window came up
-            # after the 0.4 s snapshot, so the operator saw no window and gave up.
-            # Wait a bounded time for a new window and say plainly if none came.
+            # after the 0.4 s snapshot, while an 8 s blocking loop + slow UIA scans
+            # pushed jarvis_open_app past the 25 s MCP socket timeout (exam-desk-03).
+            # Poll briefly for a fast window, then continue polling in the background
+            # and return promptly so the operator can inspect desktop_windows / task_context.
             deadline = time.monotonic() + OPEN_WINDOW_WAIT
             windows = []
+            new = []
             while True:
-                time.sleep(0.4)
+                time.sleep(0.35)
                 try:
                     windows = self.desktop.windows()
                 except Exception:
                     windows = []
                 new = [w for w in windows if before is not None and w.get("handle") not in before]
                 # Gemini review 8 Nov: without a before-list, keep waiting until the
-                # window list can be read at all instead of leaving after 0.4 s.
+                # window list can be read at all instead of leaving after the first sleep.
                 if new or (before is None and windows) or time.monotonic() >= deadline or self.stopped.is_set():
                     break
             extra["open_windows"] = windows
@@ -1016,7 +1023,24 @@ class NaturalDesktopTask:
                 extra["new_windows"] = new
                 if not new:
                     extra["note"] = (f"No new window within {OPEN_WINDOW_WAIT:g} s; the app may still be starting "
-                                     "or reused an existing window. Check jarvis_system_info(windows) again before retrying.")
+                                     "or reused an existing window. Check jarvis_system_info(windows) or task_context again before retrying.")
+                    if not self.stopped.is_set():
+                        def _poll_late_window(expected_job=job, known=set(before)):
+                            bg_deadline = time.monotonic() + 10.0
+                            while time.monotonic() < bg_deadline and not self.stopped.is_set():
+                                time.sleep(0.5)
+                                try:
+                                    wins = self.desktop.windows()
+                                except Exception:
+                                    continue
+                                late = [w for w in wins if w.get("handle") not in known]
+                                if late:
+                                    with self.changed:
+                                        if self.job is expected_job and not self.stopped.is_set():
+                                            expected_job.setdefault("late_opened_windows", []).extend(late)
+                                            self.changed.notify_all()
+                                    return
+                        threading.Thread(target=_poll_late_window, daemon=True, name="quartz-open-window-poll").start()
 
         elif tool == "jarvis_media_web":
             action = args.get("action")
@@ -1216,21 +1240,25 @@ class NaturalDesktopTask:
             return self._jarvis_call(token, request)
         with self.changed:
             provider = self._provider(token)
+            job = self.job
             tool, args = request.get("name"), request.get("arguments") or {}
             if tool == "task_wait":
                 # Bounded server wait, not model busy polling. Stop wakes it immediately.
                 self.changed.wait(timeout=20)
                 self._provider(token)
-                return self._context(provider)
-            if tool == "task_context": return self._context(provider)
-            if tool == "task_message":
+                is_op = (provider == self.job["roles"]["operator"])
+                self._inflight_calls += 1
+            elif tool == "task_context":
+                is_op = (provider == self.job["roles"]["operator"])
+                self._inflight_calls += 1
+            elif tool == "task_message":
                 if _placeholder_message(args.get("text")):
                     raise ValueError("Placeholder message not delivered; send a real finding or nothing")
                 self._message(provider, args.get("text"))
                 return {"delivered_via": "Squad", "task_id": self.job["task_id"]}
-            if tool == "desktop_request_access":
+            elif tool == "desktop_request_access":
                 return self._request(provider, args.get("handles", []), args.get("log_paths", []), args.get("reason", ""))
-            if tool == "task_read_log":
+            elif tool == "task_read_log":
                 path = args.get("path")
                 if not path and isinstance(args.get("log_paths"), list) and args.get("log_paths"):
                     path = args.get("log_paths")[0]
@@ -1245,33 +1273,76 @@ class NaturalDesktopTask:
                 result = self.approved_logs[path].read()
                 self.job.setdefault("log_reads", []).append({k: v for k, v in result.items() if k != "text"})
                 return {"untrusted_log": result, "path": path}
-            if provider != self.job["roles"]["operator"]: raise PermissionError("Collaborator cannot control or observe the desktop")
-            self._assert_unpaused()
-            if self._control_inflight: raise PermissionError('Kontrol çağrısı sürüyor; task_wait kullanın')
-            if not self.connection and self.job.get("requested_permission_level") == "full" and not self.warband:
+            else:
+                if provider != self.job["roles"]["operator"]: raise PermissionError("Collaborator cannot control or observe the desktop")
+                self._assert_unpaused()
+                if self._control_inflight: raise PermissionError('Kontrol çağrısı sürüyor; task_wait kullanın')
+                if tool == "desktop_verify":
+                    if not self.connection: raise PermissionError("Request inline access first; no input authority exists")
+                    return self._verify(args)
+                need_auto_grant = (not self.connection and self.job.get("requested_permission_level") == "full" and not self.warband)
+                if not need_auto_grant and not self.connection:
+                    raise PermissionError("Request inline access first; no input authority exists")
+                if not need_auto_grant and tool == "desktop_act" and (not self.latest or not self.latest.get("image_sha256")):
+                    raise PermissionError("No real screenshot available; do not act from guessed coordinates or UIA alone")
+                self._control_inflight += 1
+                self._inflight_calls += 1
+        if tool in {"task_wait", "task_context"}:
+            try:
+                wins = self.desktop.windows() if is_op else []
+                with self.changed:
+                    if self.job is not job or self.stopped.is_set():
+                        raise PermissionError("Task stopped or expired")
+                    self._provider(token)
+                    return self._context(provider, windows_snapshot=wins)
+            finally:
+                with self.changed:
+                    self._inflight_calls -= 1
+                    self.changed.notify_all()
+        # Desktop observation/action calls never hold the Stop lock across UIA/ImageGrab,
+        # so Stop revokes authority immediately (< 1 s) even during a slow capture.
+        try:
+            if need_auto_grant:
                 avail = self.desktop.windows()[:12]
-                if avail:
-                    self._request(provider, [w["handle"] for w in avail], [], "Tam Yetki kapsamında otomatik masaüstü erişimi")
-            if not self.connection: raise PermissionError("Request inline access first; no input authority exists")
-            if tool == "desktop_verify": return self._verify(args)
-            if tool == "desktop_act" and (not self.latest or not self.latest.get("image_sha256")):
-                raise PermissionError("No real screenshot available; do not act from guessed coordinates or UIA alone")
-            if tool in {"desktop_focus", "desktop_switch", "desktop_act", "desktop_launch", "desktop_observe"}:
-                # An input may have happened even if its post-action capture fails.
-                # Never let the older observation certify that unknown outcome.
-                self.latest = None
-                self._prior_criterion = self.job.get("verification")
-                self.job["verification"] = {"status":"NOT VERIFIED", "reason":"fresh observation required"}
-            result = self.broker.call(self.connection["token"], request)
-            if "observation" in result:
-                self._capture(tool, result)
-                if self.job["verification"].get("source") == HOST_TEXT_SOURCE:
-                    result = dict(result, host_verification={
-                        "status": self.job["verification"]["status"],
-                        "expected_text": self.job["verification"]["expected_text"],
-                        "next": "Quartz verified the text quoted in the user's request in its own observation. "
-                                "Do not call more tools: reply to the user in one short Turkish sentence and end your turn."})
-            return result
+                with self.changed:
+                    if self.job is not job or self.stopped.is_set():
+                        raise PermissionError("Task stopped or expired")
+                    self._assert_unpaused()
+                    if not self.connection and avail:
+                        self._request(provider, [w["handle"] for w in avail], [], "Tam Yetki kapsamında otomatik masaüstü erişimi")
+            with self.changed:
+                if self.job is not job or self.stopped.is_set():
+                    raise PermissionError("Task stopped or expired")
+                self._assert_unpaused()
+                if not self.connection:
+                    raise PermissionError("Request inline access first; no input authority exists")
+                if tool == "desktop_act" and (not self.latest or not self.latest.get("image_sha256")):
+                    raise PermissionError("No real screenshot available; do not act from guessed coordinates or UIA alone")
+                if tool in {"desktop_focus", "desktop_switch", "desktop_act", "desktop_launch", "desktop_observe"}:
+                    # An input may have happened even if its post-action capture fails.
+                    # Never let the older observation certify that unknown outcome.
+                    self.latest = None
+                    self._prior_criterion = self.job.get("verification")
+                    self.job["verification"] = {"status":"NOT VERIFIED", "reason":"fresh observation required"}
+                conn_token = self.connection["token"]
+            result = self.broker.call(conn_token, request)
+            with self.changed:
+                if self.job is not job or self.stopped.is_set():
+                    raise PermissionError("Task stopped or expired")
+                if "observation" in result:
+                    self._capture(tool, result)
+                    if self.job["verification"].get("source") == HOST_TEXT_SOURCE:
+                        result = dict(result, host_verification={
+                            "status": self.job["verification"]["status"],
+                            "expected_text": self.job["verification"]["expected_text"],
+                            "next": "Quartz verified the text quoted in the user's request in its own observation. "
+                                    "Do not call more tools: reply to the user in one short Turkish sentence and end your turn."})
+                return result
+        finally:
+            with self.changed:
+                self._inflight_calls -= 1
+                self._control_inflight -= 1
+                self.changed.notify_all()
 
     def _host_text_check(self, record):
         # The expected text comes only from the user's own message, never from a

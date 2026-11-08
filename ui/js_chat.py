@@ -21,6 +21,14 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
   function populateSelectOptions(selectEl, items, valueKey='id', labelKey='label') {
     if (!selectEl || !Array.isArray(items) || !items.length) return;
     if (document.activeElement === selectEl) return;
+    if (!selectEl.__knownLabels) {
+      selectEl.__knownLabels = new Map();
+    }
+    for (const opt of Array.from(selectEl.options || [])) {
+      if (opt.value && opt.textContent && opt.textContent !== opt.value) {
+        selectEl.__knownLabels.set(opt.value, opt.textContent);
+      }
+    }
     const prevValue = selectEl.value;
     const sig = items.map(it => typeof it === 'string' ? it : `${it[valueKey]}:${it[labelKey]}`).join('|');
     if (selectEl.dataset.optionsSig === sig) return;
@@ -30,10 +38,17 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       const opt = document.createElement('option');
       if (typeof item === 'string') {
         opt.value = item;
-        opt.textContent = item;
+        opt.textContent = selectEl.__knownLabels.get(item) || item;
       } else {
-        opt.value = item[valueKey];
-        opt.textContent = item[labelKey] || item[valueKey];
+        const val = item[valueKey];
+        const rawLabel = item[labelKey] || val;
+        opt.value = val;
+        if (rawLabel && rawLabel !== val) {
+          selectEl.__knownLabels.set(val, rawLabel);
+          opt.textContent = rawLabel;
+        } else {
+          opt.textContent = selectEl.__knownLabels.get(val) || rawLabel;
+        }
         if (item.description) opt.title = item.description;
       }
       selectEl.appendChild(opt);
@@ -60,7 +75,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
           if (!Array.from(agyModelSelect.options).some(o => o.value === convModels.antigravity.model)) {
             const extra = document.createElement('option');
             extra.value = convModels.antigravity.model;
-            extra.textContent = convModels.antigravity.model;
+            extra.textContent = (agyModelSelect.__knownLabels && agyModelSelect.__knownLabels.get(convModels.antigravity.model)) || convModels.antigravity.model;
             agyModelSelect.appendChild(extra);
           }
           agyModelSelect.value = convModels.antigravity.model;
@@ -74,7 +89,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
           if (!Array.from(codexModelSelect.options).some(o => o.value === convModels.codex.model)) {
             const extra = document.createElement('option');
             extra.value = convModels.codex.model;
-            extra.textContent = convModels.codex.model;
+            extra.textContent = (codexModelSelect.__knownLabels && codexModelSelect.__knownLabels.get(convModels.codex.model)) || convModels.codex.model;
             codexModelSelect.appendChild(extra);
           }
           codexModelSelect.value = convModels.codex.model;

@@ -52,10 +52,16 @@ def stop_summary(reason, verification=None):
     return 'Görev tamamlanamadı; kontrol bırakıldı. Ayrıntılar hata kaydında.'
 
 
+import time
+
+
 def cleanup_step(report, name, action):
     """Attempt every release independently; do not hide or short-circuit errors."""
+    t0 = time.monotonic()
     try:
         action()
-        report['steps'].append({'name': name, 'status': 'completed'})
+        report['steps'].append({'name': name, 'status': 'completed',
+                                'duration_ms': round((time.monotonic() - t0) * 1000, 1)})
     except Exception as exc:
-        report['steps'].append({'name': name, 'status': 'failed', 'error': str(exc)})
+        report['steps'].append({'name': name, 'status': 'failed', 'error': str(exc),
+                                'duration_ms': round((time.monotonic() - t0) * 1000, 1)})
