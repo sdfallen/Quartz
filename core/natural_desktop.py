@@ -1007,7 +1007,9 @@ class NaturalDesktopTask:
                 except Exception:
                     windows = []
                 new = [w for w in windows if before is not None and w.get("handle") not in before]
-                if new or before is None or time.monotonic() >= deadline or self.stopped.is_set():
+                # Gemini review 8 Nov: without a before-list, keep waiting until the
+                # window list can be read at all instead of leaving after 0.4 s.
+                if new or (before is None and windows) or time.monotonic() >= deadline or self.stopped.is_set():
                     break
             extra["open_windows"] = windows
             if before is not None:
@@ -1357,6 +1359,7 @@ class NaturalDesktopTask:
         prior, self._prior_criterion = getattr(self, "_prior_criterion", None), None
         if (not isinstance(prior, dict) or prior.get("status") != "OBSERVED UI CRITERION VERIFIED"
                 or prior.get("source") == HOST_TEXT_SOURCE or prior.get("actions") != record.get("actions")
+                or prior.get("jarvis_actions") != len(self.job.get("jarvis_actions") or [])
                 or not record.get("image_sha256") or not _text_visible(record, prior.get("expected_text"))):
             return
         self.job["verification"] = dict(prior, snapshot_id=record["snapshot_id"], image_sha256=record["image_sha256"],
@@ -1372,6 +1375,8 @@ class NaturalDesktopTask:
         if not isinstance(expected, str) or not 2 <= len(expected.strip()) <= 300: raise ValueError("Exact visible result text required")
         passed = bool(record["image_sha256"] and record["actions"] and _text_visible(record, expected))
         result = {"status": "OBSERVED UI CRITERION VERIFIED" if passed else "NOT VERIFIED", "actions": record["actions"],
+                  # Gemini review 8 Nov: a later recheck also needs no jarvis input since.
+                  "jarvis_actions": len(self.job.get("jarvis_actions") or []),
                   "expected_text": expected, "snapshot_id": record["snapshot_id"], "image_sha256": record["image_sha256"],
                   "at": time.time(), "scope": "visible exact UIA text after action; not proof of all user requirements"}
         self.job["verification"] = result

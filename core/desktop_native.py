@@ -26,7 +26,10 @@ DENIED_EXES = {"cmd.exe", "powershell.exe", "pwsh.exe", "windowsterminal.exe",
                # Live exam 7 Nov: under Tam Yetki the Claude desktop app was approved as a
                # target and observed. Other AI assistants' windows hold the user's private
                # conversations and can run actions themselves; never a control target.
-               "claude.exe", "copilot.exe", "cursor.exe", "windsurf.exe", "ollama app.exe"}
+               "claude.exe", "copilot.exe", "cursor.exe", "windsurf.exe", "ollama app.exe",
+               # Gemini review 8 Nov: other shells/terminals and password managers.
+               "wt.exe", "wsl.exe", "bash.exe", "mintty.exe", "alacritty.exe", "wezterm-gui.exe",
+               "keepassxc.exe"}
 SENSITIVE = re.compile(r"password|parola|şifre|sign.in|oturum aç|authentication|verify.*identity|"
                        r"user account control|kullanıcı hesabı denetimi|windows security", re.I)
 CRITICAL = re.compile(r"\b(delete|remove|overwrite|purchase|buy|pay|send|upload|save|sil|"
@@ -435,6 +438,9 @@ class NativeDesktopBackend:
                 raise ValueError("Only bounded literal single-line text is allowed")
             if item["type"] != "Edit":
                 raise PermissionError("Text can only go into an Edit control")
+            # Gemini review 8 Nov: same name rule as the ui and click paths.
+            if CRITICAL.search(item.get("name") or ""):
+                raise PermissionError("Consequential field; user confirmation required outside the agent")
             with self.controller._desktop() as desktop:
                 if CRITICAL.search(self.controller._window(desktop, target["handle"]).window_text()):
                     raise PermissionError("File/critical dialog requires a separate user decision")

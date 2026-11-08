@@ -77,6 +77,19 @@ class JarvisRegressionTests(unittest.TestCase):
             result=self.task.call('token-op',{'name':'jarvis_open_app','arguments':{'target':'calc'}})
         self.assertEqual(result['new_windows'],[]); self.assertIn('No new window',result['note'])
 
+    def test_open_app_keeps_waiting_while_the_window_list_cannot_be_read(self):
+        # Gemini review 8 Nov: with no before-list the wait ended after one 0.4 s sleep.
+        self.adv.smart_open=lambda target:'Attempted to open: calc'
+        late={**dict(self.backend.target),'handle':77,'title':'Hesap Makinesi'}
+        answers=[RuntimeError('busy'),RuntimeError('busy'),RuntimeError('busy'),[late]]
+        def windows():
+            answer=answers.pop(0) if len(answers)>1 else answers[0]
+            if isinstance(answer,Exception): raise answer
+            return answer
+        with patch.object(self.task.desktop,'windows',side_effect=windows), patch('core.natural_desktop.OPEN_WINDOW_WAIT',5):
+            result=self.task.call('token-op',{'name':'jarvis_open_app','arguments':{'target':'calc'}})
+        self.assertEqual([w['handle'] for w in result['open_windows']],[77])
+
     def test_missing_or_ambiguous_target_never_clicks_or_focuses(self):
         with self.assertRaises(ValueError):self.call('click',target_window='ABSENT',x=5,y=5)
         self.mouse.click.assert_not_called()
