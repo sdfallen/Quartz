@@ -52,14 +52,21 @@ def message_intent(text):
                              r'\bdemek\b.{0,60}\bm[ıiuü]\b|'
                              r'hakkında (?:ne düşün|konuş)|what (?:does|is).{0,80}mean|'
                              r'\bset theory\b')
+    # A bare "değerlendir?" about an idea stays a conversation; about code, files
+    # or the project it is still a review task. The context words are matched on
+    # folded text as stems, so Turkish suffixes ("kodu", "dosyayı", "modülü") count.
+    code_context = re.search(
+        r'\b(?:dosya|kod|proje|test|log|ekran|pencere|uygulama|modul|fonksiyon|sinif|metot|satir|hata|bug|'
+        r'commit|branch|todo)|\b[\w-]+\.(?:py|js|ts|md|json|txt|log|html|css)\b', turkish_fold(value))
     conceptual_question = re.compile(
-        r'^(?!.*\b(?:dosya|kod|proje|test|log|ekran|pencere|uygulama|modül|fonksiyon|sınıf|metot|satır|hata|bug|commit|dal|branch|todo)\b)'
-        r'(?!.*\b[\w-]+\.(?:py|js|ts|md|json|txt|log|html|css)\b)'
-        r'.*\b(?:degerlendir(?:in|iniz)?|gozden\s+gecir(?:in|iniz)?|getir(?:in)?|gecir(?:in)?)\s*\?$'
-    )
+        r'\b(?:degerlendir(?:in|iniz)?|gozden\s+gecir(?:in|iniz)?|getir(?:in)?|gecir(?:in)?)\s*\?$')
+    # Clauses split at commas too ("bu hata ne demek, düzelt" keeps "düzelt");
+    # sentence punctuation stays on its clause so a trailing "?" can be seen.
+    parts = [part.strip() for part in re.split(r'(?<=[.!?])(?=\s|$)|[;,\n]+', value)]
     value = '. '.join(
-        part for part in re.split(r'(?<=[.!?])\s+|[;\n]+', value)
-        if not explanation.search(part) and not conceptual_question.search(turkish_fold(part.strip()))
+        part.rstrip('.!?').strip() for part in parts
+        if part.rstrip('.!?').strip() and not explanation.search(part)
+        and not (not code_context and conceptual_question.search(turkish_fold(part)))
     )
     # Explanatory questions do not execute the operation being discussed.
     explicit = _directive_search(
