@@ -573,6 +573,29 @@ class NativePolicyTests(unittest.TestCase):
                     r"C:\Program Files\WindowsApps\Claude_4.23118.0.0_x64__pzs8sxrjxfjjc\app\claude.exe", "Copilot.exe"):
             with self.subTest(exe=exe), self.assertRaises(PermissionError):
                 NativeDesktopBackend.validate_target({"exe": exe, "title": "normal"})
+    def test_other_shells_and_password_managers_are_not_targets(self):
+        # Gemini review 8 Nov.
+        for exe in ("wt.exe", "wsl.exe", "bash.exe", "mintty.exe", "alacritty.exe", "wezterm-gui.exe", "KeePassXC.exe"):
+            with self.subTest(exe=exe), self.assertRaises(PermissionError):
+                NativeDesktopBackend.validate_target({"exe": exe, "title": "normal"})
+    def test_text_with_ref_refuses_a_consequential_field_name(self):
+        # Gemini review 8 Nov: the ui and click paths checked the name; text+ref did not.
+        backend = NativeDesktopBackend()
+        observation = {"ui": {"snapshot_id": "s1", "elements": [{"ref": "3", "name": "Kaydet adı", "type": "Edit"}]}}
+        @contextmanager
+        def scope(): yield MagicMock()
+        with patch.object(backend.controller, "_desktop", scope),              patch.object(backend.controller, "_window", return_value=MagicMock(window_text=lambda: "Form")),              patch.object(backend.controller, "action") as action,              patch.object(backend, "is_foreground", return_value=True),              patch.object(backend, "_safe_controls"):
+            with self.assertRaises(PermissionError):
+                backend.act({"handle": 1}, observation, {"action": "text", "ref": "3", "text": "x"})
+            action.assert_not_called()
+            observation["ui"]["elements"][0]["name"] = "Ad"
+            backend.act({"handle": 1}, observation, {"action": "text", "ref": "3", "text": "x"})
+            action.assert_called_once()
+    def test_mcp_schema_accepts_every_ui_operation_the_backend_runs(self):
+        from core.desktop_mcp import TOOLS
+        act = next(t for t in TOOLS if t["name"] == "desktop_act")
+        enum = act["inputSchema"]["properties"]["ui_action"]["enum"]
+        self.assertEqual(set(enum) - {None}, {"invoke", "select", "expand", "collapse", "focus"})
     def test_password_dialog_is_denied_even_for_allowed_process(self):
         with self.assertRaises(PermissionError): NativeDesktopBackend.validate_target({"exe": "app.exe", "title": "Enter password"})
     def test_normal_app_is_allowed(self):

@@ -481,6 +481,16 @@ class NaturalTaskTests(unittest.TestCase):
         self.call("desktop_observe")
         self.assertEqual(self.task.job["verification"]["status"],"NOT VERIFIED")
 
+    def test_a_jarvis_input_between_verify_and_look_withdraws_the_check(self):
+        # Gemini review 8 Nov: the recheck must also see jarvis inputs, not only broker actions.
+        self.approve(); self.notepad("Codex | Antigravity")
+        observed=self.call("desktop_focus")
+        observed=self.call("desktop_act",{"snapshot_id":observed["snapshot_id"],"action":"text","text":"Codex | Antigravity"})
+        self.call("desktop_verify",{"snapshot_id":observed["snapshot_id"],"expected_text":"Codex | Antigravity"})
+        self.task.job.setdefault("jarvis_actions",[]).append({"tool":"jarvis_input"})
+        self.call("desktop_observe")
+        self.assertEqual(self.task.job["verification"]["status"],"NOT VERIFIED")
+
     def test_input_after_verify_still_requires_a_new_verify(self):
         self.approve(); self.notepad("imza")
         observed=self.call("desktop_focus")

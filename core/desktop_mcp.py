@@ -37,7 +37,7 @@ TOOLS = [
                                     "y": {"type": ["integer", "null"], "description": "Window-relative Y pixel coordinate, or null for other actions"},
                                     "text": {"type": ["string", "null"], "maxLength": 2000},
                                     "key": {"type": ["string", "null"]}, "seconds": {"type": ["number", "null"], "maximum": 1},
-                                    "ref": {"type": ["string", "null"]}, "ui_action": {"type": ["string", "null"], "enum": ["invoke", "select", "expand", "collapse", None]}}}},
+                                    "ref": {"type": ["string", "null"]}, "ui_action": {"type": ["string", "null"], "enum": ["invoke", "select", "expand", "collapse", "focus", None]}}}},
     {"name": "jarvis_open_app", "description": "J.A.R.V.I.S. Smart Application, Folder, File & URL Launcher. Open any application (chrome, spotify, vscode, discord, steam, notepad, calc, explorer, etc.), folder, file, or website URL directly.",
      "inputSchema": {"type": "object", "properties": {"target": {"type": "string", "maxLength": 1000}, "mode": {"type": "string", "enum": ["smart_open", "url", "vscode_folder", "vscode_file", "steam"]}}, "required": ["target"], "additionalProperties": False}},
     {"name": "jarvis_media_web", "description": "Media, Audio & Web Controller. Play/search YouTube, search Google, control Spotify, adjust/read/mute system volume. Does not change Windows power plans or provide unimplemented application profiles.",

@@ -18,7 +18,7 @@ masaüstü asistanıdır. Temel mekanizmalar çalışıyor ve bugün canlı sın
 | Test takımı (main 89b83d0 + sınav kuralları) | 1493+ test geçti, 2 atlandı (paket derlemesinde) |
 | Paket doğrulaması | 88/88 kontrol, gizli veri denetimi temiz |
 | Kurulu sürüm | `c14b968d…` = main 71fa6fd (8 Kasım 01:50) |
-| Bağımsız inceleme | **Tamamlandı:** `docs/GEMINI_REVIEW_CLAUDE_20261108.md` (11 madde + 4 koşu sonrası oracle kuralı incelendi, 12 `BULGU:` raporlandı) |
+| Bağımsız inceleme | **Tamamlandı:** `docs/GEMINI_REVIEW_CLAUDE_20261108.md` (11 madde + 4 koşu sonrası oracle kuralı incelendi, 12 `BULGU:` raporlandı). Belgedeki test çıktısı yeniden üretilemedi (6 modül yok); 5 bulgu düzeltildi: `docs/CLAUDE_NOTE_ON_GEMINI_REVIEW_20261108.md` |
 | GitHub | Hiçbir şey gönderilmedi (kullanıcı talimatı) |
 
 ## 2. Kanıt seviyeleri
@@ -197,7 +197,7 @@ Ayrıca 7 Kasım'da şu iki hata düzeltildi:
 | exam-desk-09 | CANLI | Uzun yazmada Durdur | **FAILED**: Durdur sonrası girdi yok, ama tam kapanış 1 sn hedefinden uzun (4–7 sn) |
 | exam-prov-01 | TEST | 6 sağlayıcı hata sınıfı + süreç/kilit temizliği (`task_exam_runner.py`) | **VERIFIED** (1/1, 6 birim testi geçti, `cleanup_confirmed: true`) |
 | exam-code-04 | TEST | `parser.py` okunurluk iyileştirmesi + derleme/test + sahte VERIFIED üretmeme | **VERIFIED** (3/3: `command_passes`, `python_compiles`, `goal_verdict_not_verified_without_host_checks`) |
-| exam-code-06 | TEST | Gömülü diff içinde tohumlanmış hatayı `BULGU: <dosya>:<satır> — <neden>` biçiminde yakalama | **VERIFIED** (1/1: `finding_matches_seed` — `cache_store.py:4` off-by-one yakalandı) |
+| exam-code-06 | TEST | Gömülü diff içinde tohumlanmış hatayı `BULGU: <dosya>:<satır> — <neden>` biçiminde yakalama | **VERIFIED** (1/1: `finding_matches_seed` — `cache_store.py:4` off-by-one yakalandı). Tohumu sınava giren Gemini yazdı; kullanıcı varyantıyla tekrar gerekir |
 | exam-code-07 | TEST | 20 dosyada yeniden adlandırma sırasında Durdur + süreç temizliği + checkpoint geri yükleme | **VERIFIED** (5/5: `no_file_changes_after_stop`, `process_tree_gone_within_seconds`, `writer_claim_released`, `checkpoint_restores_original`, `stop_receipt_confirmed`) |
 | exam-code-08 | TEST | Gemini CLI erişilemezken grup değerlendirmesinde kısmi/başarısız durum ve dürüst kayıt | **VERIFIED** (3/3: `turn_status_in`, `goal_verdict_not`, `participants_record`) |
 | exam-code-03 | TEST | Codex özelliği yazar (`TODO.md`), Gemini salt okunur inceler | 4/4 makine kontrolü geçti (`command_passes`, `single_writer`, `review_message_present`, `reviewer_side_effects_none`); insan puanı bekliyor |
