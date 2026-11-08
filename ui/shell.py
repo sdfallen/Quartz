@@ -167,6 +167,7 @@ SHELL_MARKUP = r"""
                 <option value="ultra">ultra</option>
               </select>
             </div>
+          <dl class="lane-status" id="laneCodexStatus" aria-label="Görev durumu" aria-live="polite" hidden></dl>
           <div class="lane-title">Son adımlar</div>
           <ol class="lane-trail" id="laneCodexTrail"></ol>
           <p class="lane-empty">Çalışırken attığı adımlar burada akar.</p>
@@ -255,6 +256,7 @@ SHELL_MARKUP = r"""
                 <option value="max">max</option>
               </select>
             </div>
+          <dl class="lane-status" id="laneAgyStatus" aria-label="Görev durumu" aria-live="polite" hidden></dl>
           <div class="lane-title">Son adımlar</div>
           <ol class="lane-trail" id="laneAgyTrail"></ol>
           <p class="lane-empty">Çalışırken attığı adımlar burada akar.</p>

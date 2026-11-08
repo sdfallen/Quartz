@@ -116,6 +116,20 @@ body.screen-control-active #btnDesktopTaskStop { display: none; }
 .bubble.pending > div:first-child { display: flex; gap: 4px; height: 22px; align-items: center; font-size: 0; }
 .bubble.pending > div:first-child::before, .bubble.pending > div:first-child::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); }
 .msg-state { font-size: var(--text-xs); color: var(--text-3); margin-bottom: 4px; }
+/* Outcome badge: icon + word, tone from host evidence only (ok / warn / fail / stop / wait). */
+.msg-state[data-tone] { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-bottom: 6px; }
+.msg-badge { --tone: var(--text-3); display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 7px; border-radius: 999px; font-size: var(--text-xs); font-weight: 600; line-height: 1.5; white-space: nowrap; color: var(--tone); background: color-mix(in oklab, var(--tone) 13%, transparent); border: 1px solid color-mix(in oklab, var(--tone) 34%, transparent); }
+[data-tone="ok"] > .msg-badge, .msg-badge[data-tone="ok"] { --tone: var(--ok); }
+[data-tone="warn"] > .msg-badge, .msg-badge[data-tone="warn"] { --tone: var(--warn); }
+[data-tone="fail"] > .msg-badge, .msg-badge[data-tone="fail"] { --tone: var(--danger); }
+[data-tone="stop"] > .msg-badge, .msg-badge[data-tone="stop"], [data-tone="wait"] > .msg-badge, .msg-badge[data-tone="wait"] { --tone: var(--text-2); }
+.msg-badge-icon { width: 12px; height: 12px; flex: none; background: currentColor; -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat;
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 8v5M12 16.5v.5'/%3E%3C/svg%3E"); }
+[data-tone="ok"] .msg-badge-icon { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E"); }
+[data-tone="fail"] .msg-badge-icon { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round'%3E%3Cpath d='M6.5 6.5l11 11M17.5 6.5l-11 11'/%3E%3C/svg%3E"); }
+[data-tone="stop"] .msg-badge-icon { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='6' y='6' width='12' height='12' rx='2.5' fill='black'/%3E%3C/svg%3E"); }
+[data-tone="wait"] .msg-badge-icon { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7v5l3 2'/%3E%3C/svg%3E"); }
+.msg-state-note { color: var(--text-3); }
 .task-row { margin-bottom: 8px; }
 .task-meta { color: var(--text-3); }
 .msg-code { position: relative; margin: 10px 0; background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; }
@@ -539,7 +553,15 @@ body.sidebar-open .drawer-scrim { opacity: 1; visibility: visible; }
 .lane-trail li.now { color: var(--text); }
 .lane-trail li.now::before { background: var(--lane); box-shadow: 0 0 10px var(--lane); }
 .lane-empty { font-size: var(--text-xs); color: var(--text-3); }
-.lane-col.has-trail .lane-empty { display: none; }
+.lane-col.has-trail .lane-empty, .lane-col.has-status .lane-empty { display: none; }
+.lane-col:not(.has-trail) .lane-title { display: none; }
+/* Live status: task, last step, evidence, error. Host data only, never model text. */
+.lane-status { display: flex; flex-direction: column; gap: 8px; margin: 2px 0 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-md); background: color-mix(in oklab, var(--surface-1) 70%, transparent); }
+.lane-status[hidden] { display: none; }
+.lane-status-row { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.lane-status dt { font: 600 10.5px var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--text-3); }
+.lane-status dd { margin: 0; font-size: var(--text-xs); color: var(--text-2); overflow-wrap: anywhere; line-height: 1.4; }
+.lane-status .msg-badge { white-space: normal; }
 
 /* The crystal heads the stream; its beams reach out to both columns. */
 .stream-head { display: flex; align-items: center; padding: 6px 0 4px; flex: none; }
@@ -587,13 +609,19 @@ body.sidebar-open .drawer-scrim { opacity: 1; visibility: visible; }
 .dock { padding: 0 18px 16px; }
 .composer { border-radius: 22px; }
 
+/* 1366-wide laptops: slimmer columns give the conversation the room (GPT review 8 Nov). */
+@container (max-width: 1320px) {
+  .stage { grid-template-columns: minmax(170px, 200px) minmax(0, 1fr) minmax(170px, 200px); }
+  .lane-col { padding: 8px 10px 16px; }
+  .lane-card { padding: 10px 11px; gap: 9px; }
+}
 /* Narrow stage: the columns fold into two cards above the stream. */
 @container (max-width: 900px) {
   .stage { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "codex agy" "stream stream"; }
   .lane-col { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px 6px; overflow: visible; background: none; border: 0; }
   .lane-card { flex: 1 1 160px; padding: 9px 11px; }
   .lane-col .model-selector-pill { flex: 1 1 150px; flex-direction: row; }
-  .lane-title, .lane-trail, .lane-empty { display: none; }
+  .lane-title, .lane-trail, .lane-empty, .lane-status { display: none; }
   .lane-state { -webkit-line-clamp: 1; }
 }
 @container (max-width: 520px) { .lane-col .model-selector-pill select + select { display: none; } .crew-core { width: 96px; } }
