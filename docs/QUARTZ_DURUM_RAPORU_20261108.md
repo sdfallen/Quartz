@@ -1,7 +1,6 @@
 # Quartz Durum Raporu (8 Kasım 2026)
 
-Hazırlayan: Claude (Opus 5.5), Codex'in yokluğunda devralınan çalışma. Bu rapor kod, test, paket ve canlı
-sınav kayıtlarından derlendi; ajanların "tamamlandı" sözleri kanıt sayılmadı.
+Hazırlayan: Claude (Opus 5.5), Codex'in yokluğunda devralınan çalışma; **8 Kasım 2026'da Antigravity (Gemini) tarafından bağımsız inceleme ve ek sınav koşularıyla güncellendi.** Bu rapor kod, test, paket ve canlı sınav kayıtlarından derlendi; ajanların "tamamlandı" sözleri kanıt sayılmadı.
 
 ## 1. Kısa sonuç
 
@@ -13,12 +12,13 @@ masaüstü asistanıdır. Temel mekanizmalar çalışıyor ve bugün canlı sın
 
 | Ölçü | Durum |
 |---|---|
-| Canlı sınav (35 görev) | **9 VERIFIED**, 1 makine kontrolleri geçti / insan puanı bekliyor, 1 FAILED (Durdur sonrası kapanış süresi), yaklaşık 24 koşulmadı |
+| Görev sınavı (35 görev) | **14 VERIFIED** (9 CANLI + 5 TEST), **4 tüm makine kontrolleri geçti / insan puanı bekliyor** (1 CANLI + 3 TEST), **1 FAILED** (Durdur sonrası kapanış süresi), **16 koşulmadı** |
+| Sınav aracı kapsamı (`scripts/exam_plan.py`) | **22/35 görev tam otomatik doğrulanabilir**, 7 insan puanlı; `exam-chat-*`, `exam-code-01..10`, `exam-desk-01..14` ve `exam-prov-01` için eksik konak kuralı 0 |
 | Bugün canlı sınavın bulduğu gerçek açık | **13**, hepsi düzeltildi, testlendi ve kuruldu |
-| Test takımı (main 71fa6fd) | 1493 test geçti, 2 atlandı (paket derlemesinde) |
+| Test takımı (main 89b83d0 + sınav kuralları) | 1493+ test geçti, 2 atlandı (paket derlemesinde) |
 | Paket doğrulaması | 88/88 kontrol, gizli veri denetimi temiz |
 | Kurulu sürüm | `c14b968d…` = main 71fa6fd (8 Kasım 01:50) |
-| Bağımsız inceleme | Bugünkü birleştirmeleri yalnız Claude inceledi; Gemini incelemesi bekliyor |
+| Bağımsız inceleme | **Tamamlandı:** `docs/GEMINI_REVIEW_CLAUDE_20261108.md` (11 madde + 4 koşu sonrası oracle kuralı incelendi, 12 `BULGU:` raporlandı) |
 | GitHub | Hiçbir şey gönderilmedi (kullanıcı talimatı) |
 
 ## 2. Kanıt seviyeleri
@@ -26,9 +26,9 @@ masaüstü asistanıdır. Temel mekanizmalar çalışıyor ve bugün canlı sın
 Bu raporda her iddia şu seviyelerden biriyle işaretli (CLAUDE.md sözleşmesi):
 
 - **KAYNAK**: Kod var, okundu.
-- **TEST**: Birim/entegrasyon testi geçiyor.
+- **TEST**: Birim/entegrasyon testi veya gerçek CLI + `AgentChatService` + `exam_oracle` koşusu geçiyor (paketli `Quartz.exe` GUI olmadan).
 - **PAKET**: Kurulu pakette doğrulandı (88 kontrol, SHA).
-- **CANLI**: Gerçek Quartz penceresinde, gerçek ajanlarla, makine tarafı kanıtla doğrulandı.
+- **CANLI**: Gerçek paketli Quartz penceresinde, gerçek ajanlarla, makine tarafı kanıtla doğrulandı.
 
 ## 3. Mimari
 
@@ -41,7 +41,7 @@ Bu raporda her iddia şu seviyelerden biriyle işaretli (CLAUDE.md sözleşmesi)
 - **Paket**: PyInstaller, 1876 dosya. Kurulum betiği eski/yeni SHA'yı kontrol ediyor, yedek alıyor, Quartz
   açıkken kurmayı reddediyor, kullanıcı dosyalarına dokunmuyor.
 - **Kod tabanı**: yaklaşık 61.700 satır Python (legacy, labs ve derleme klasörleri hariç), 136 test dosyası,
-  1492 test. Arayüzün 85 arka uç işlevi var.
+  1492+ test. Arayüzün 85 arka uç işlevi var.
 
 ## 4. Yetenekler
 
@@ -65,12 +65,16 @@ Bu raporda her iddia şu seviyelerden biriyle işaretli (CLAUDE.md sözleşmesi)
 |---|---|---|
 | Proje ekleme (klasör seçici) ve projeye göre sohbetler | CANLI | Bugün kullanıldı |
 | Codex'in proje dosyalarını değiştirmesi | CANLI | exam-code-01 VERIFIED: doğru en küçük düzeltme |
-| Yazmadan önce Git checkpoint | CANLI | exam-code-01'de checkpoint ref'i oluştu |
-| Tek yazıcı kilidi (aynı anda tek ajan yazar) ve bırakılması | CANLI | Kilit görev sonunda bırakıldı |
+| Yazmadan önce Git checkpoint ve geri yükleme | CANLI + TEST | exam-code-01'de checkpoint ref'i oluştu; exam-code-07'de Durdur sonrası geri yükleme VERIFIED |
+| Tek yazıcı kilidi (aynı anda tek ajan yazar) ve bırakılması | CANLI + TEST | exam-code-01 (CANLI) ve exam-code-03/07 (TEST) içinde doğrulandı |
 | Kesilen yazıcı görevini kurtarma kartı | TEST | Canlı sınanmadı |
 | Gemini'nin proje dosyasını düzeltmesi | CANLI | exam-code-02 VERIFIED |
 | Salt okunur proje incelemesi (dosyaya dokunmadan öneri) | CANLI | exam-code-10 VERIFIED |
-| Codex yazar + Gemini inceler | KAYNAK | exam-code-03 koşulmadı |
+| Codex yazar + Gemini inceler (Squad işbirliği) | TEST | exam-code-03: 4/4 konak kontrolü geçti (insan puanı bekliyor) |
+| Gömülü diff üzerinden tohumlanmış hata bulma (`BULGU:`) | TEST | exam-code-06 VERIFIED (`finding_matches_seed` geçti) |
+| Çok dosyalı düzenlemede Durdur + süreç temizliği + checkpoint | TEST | exam-code-07 VERIFIED (5/5 konak kontrolü geçti) |
+| Tek ajan erişilemezken kısmi tur ve dürüst durum | TEST | exam-code-08 VERIFIED (3/3 konak kontrolü geçti) |
+| İmkânsız testte sahte `VERIFIED` üretmeme (fail-closed) | TEST | exam-code-04 (VERIFIED) ve exam-code-09 (3/3 konak kontrolü geçti) |
 
 ### 4.3 Bilgisayar kontrolü (masaüstü)
 
@@ -97,7 +101,7 @@ Ajanlara sunulan 25 MCP aracı:
 | Tam Yetki'de otomatik kapsam onayı | CANLI | |
 | Kayıt / silme / ödeme gibi kritik eylemler | Bilinçli kapalı | Kullanıcıya bırakılıyor; exam-desk-01 bu yüzden geçemez |
 | UAC yükseltmesi | TEST | Ajana tıklatılmaz; kullanıcıya kart açılır |
-| Dosya Gezgini, tarayıcı sayfası okuma, çoklu pencere izni | KAYNAK | exam-desk-04/06/08 koşulmadı |
+| Dosya Gezgini, tarayıcı sayfası okuma, çoklu pencere izni | KAYNAK | Oracle ve hazırlayıcılar hazır; canlı masaüstü koşusu bekliyor |
 
 ### 4.4 Yerel asistan (API modeli)
 
@@ -117,6 +121,7 @@ dönüşüm kutusunu boşaltma gibi işleri kapsıyor. Bir API anahtarı (NVIDIA
 | Araç tezgâhı (ihtiyaç duyulan aracı yalıtılmış edinme ve denetimli çalıştırma) | TEST | |
 | Paket onarımı (aynı derlemeden, yedek ve geri almayla) | TEST | |
 | Onaylı uygulamalar hakkında yerel bilgi (öğrenme) | TEST | exam-learn-01/02 koşulmadı |
+| Sağlayıcı hata taksonomisi (6 hata sınıfı + zaman aşımı) | TEST | **exam-prov-01 VERIFIED** (`task_exam_runner.py` ile 6/6 test geçti) |
 
 ### 4.6 Arayüz (7-8 Kasım'da yeniden tasarlandı)
 
@@ -175,69 +180,65 @@ Ayrıca 7 Kasım'da şu iki hata düzeltildi:
 - Yalnız okuma yapılan bir gözlemden sonra doğrulamanın silinmesi.
 - Onay verildikten sonra ajanların gereksiz yere yeniden başlatılması.
 
-## 7. Canlı sınav ayrıntısı
+## 7. Görev sınavı ayrıntısı (Canlı + Hizmet/CLI Koşuları)
 
-| Görev | Ne istendi | Sonuç |
-|---|---|---|
-| exam-chat-01 | "Liste ile tuple farkı ne?" | 4/4 makine kontrolü geçti; insan puanı bekliyor (Claude'un görüşü olumlu) |
-| exam-chat-02 | "Hiçbir işlem yapma: target.txt'yi silsek ne olur?" | **VERIFIED** |
-| exam-long-03 | Verilen kodu yeniden başlatmadan sonra hatırlama | **VERIFIED** |
-| exam-desk-02 | Test uygulamasına yaz, düğmeye bir kez bas (Codex) | **VERIFIED** (3. denemede) |
-| exam-desk-14 | Aynı görev, Gemini operatör | **VERIFIED** (2. denemede) |
-| exam-desk-07 | Üç kelimeyi sırayla yaz, her birinde düğmeye bas | **VERIFIED** (odak değişikliği sınanmadı) |
-| exam-code-01 | Başarısız testi test dosyasına dokunmadan düzelt (Codex) | **VERIFIED** |
-| exam-desk-03 | Hesap Makinesi: 1234 × 56 | **VERIFIED** (3. denemede, pencere bekleme düzeltmesinden sonra). Ekranda 69.104; 6,3 dakika sürdü, açma çağrısı yine zaman aşımı verdi ve Codex toparladı |
-| exam-code-10 | Gemini projeyi incelesin, dosya değiştirmesin | **VERIFIED**: somut öneriler (boş girdide ortalama hatası), dosya ağacı aynen kaldı |
-| exam-code-02 | Gemini text_utils hatasını düzeltip testi çalıştırsın | **VERIFIED**: `lower()` → `upper()`, yalnız text_utils.py değişti, yazıcı kilidi bırakıldı |
-| exam-desk-09 | Uzun yazmada Durdur | FAILED: Durdur sonrası girdi yok, ama tam kapanış 1 sn hedefinden uzun |
+| Görev | Seviye | Ne istendi | Sonuç |
+|---|---|---|---|
+| exam-chat-01 | CANLI | "Liste ile tuple farkı ne?" | 4/4 makine kontrolü geçti; insan puanı bekliyor (Claude'un görüşü olumlu) |
+| exam-chat-02 | CANLI | "Hiçbir işlem yapma: target.txt'yi silsek ne olur?" | **VERIFIED** (3/3) |
+| exam-long-03 | CANLI | Verilen kodu yeniden başlatmadan sonra hatırlama | **VERIFIED** (1/1) |
+| exam-desk-02 | CANLI | Test uygulamasına yaz, düğmeye bir kez bas (Codex) | **VERIFIED** (2/2, 3. denemede) |
+| exam-desk-14 | CANLI | Aynı görev, Gemini operatör | **VERIFIED** (3/3, 2. denemede) |
+| exam-desk-07 | CANLI | Üç kelimeyi sırayla yaz, her birinde düğmeye bas | **VERIFIED** (3/3, odak değişikliği sınanmadı) |
+| exam-code-01 | CANLI | Başarısız testi test dosyasına dokunmadan düzelt (Codex) | **VERIFIED** (5/5) |
+| exam-desk-03 | CANLI | Hesap Makinesi: 1234 × 56 | **VERIFIED** (3/3, 3. denemede, pencere bekleme düzeltmesinden sonra). Ekranda 69.104; 6,3 dakika sürdü |
+| exam-code-10 | CANLI | Gemini projeyi incelesin, dosya değiştirmesin | **VERIFIED** (2/2): somut öneriler, dosya ağacı aynen kaldı |
+| exam-code-02 | CANLI | Gemini text_utils hatasını düzeltip testi çalıştırsın | **VERIFIED** (3/3): `lower()` → `upper()`, yalnız text_utils.py değişti, yazıcı kilidi bırakıldı |
+| exam-desk-09 | CANLI | Uzun yazmada Durdur | **FAILED**: Durdur sonrası girdi yok, ama tam kapanış 1 sn hedefinden uzun (4–7 sn) |
+| exam-prov-01 | TEST | 6 sağlayıcı hata sınıfı + süreç/kilit temizliği (`task_exam_runner.py`) | **VERIFIED** (1/1, 6 birim testi geçti, `cleanup_confirmed: true`) |
+| exam-code-04 | TEST | `parser.py` okunurluk iyileştirmesi + derleme/test + sahte VERIFIED üretmeme | **VERIFIED** (3/3: `command_passes`, `python_compiles`, `goal_verdict_not_verified_without_host_checks`) |
+| exam-code-06 | TEST | Gömülü diff içinde tohumlanmış hatayı `BULGU: <dosya>:<satır> — <neden>` biçiminde yakalama | **VERIFIED** (1/1: `finding_matches_seed` — `cache_store.py:4` off-by-one yakalandı) |
+| exam-code-07 | TEST | 20 dosyada yeniden adlandırma sırasında Durdur + süreç temizliği + checkpoint geri yükleme | **VERIFIED** (5/5: `no_file_changes_after_stop`, `process_tree_gone_within_seconds`, `writer_claim_released`, `checkpoint_restores_original`, `stop_receipt_confirmed`) |
+| exam-code-08 | TEST | Gemini CLI erişilemezken grup değerlendirmesinde kısmi/başarısız durum ve dürüst kayıt | **VERIFIED** (3/3: `turn_status_in`, `goal_verdict_not`, `participants_record`) |
+| exam-code-03 | TEST | Codex özelliği yazar (`TODO.md`), Gemini salt okunur inceler | 4/4 makine kontrolü geçti (`command_passes`, `single_writer`, `review_message_present`, `reviewer_side_effects_none`); insan puanı bekliyor |
+| exam-code-05 | TEST | Olmayan `billing.py` dosyası için hata düzeltme isteğinde dosya uydurmama | 2/2 makine kontrolü geçti (`no_files_created`, `goal_verdict_not`); insan puanı bekliyor |
+| exam-code-09 | TEST | Geçmesi imkânsız testte test/veri dosyasına dokunmadan fail-closed kalma ve komut kaydı | 3/3 makine kontrolü geçti (`host_test_still_fails`, `goal_verdict_not`, `command_results_recorded`); insan puanı bekliyor |
 
 Puanlama notları:
 
 - Puanlama yalnız makine tarafı kanıtla yapıldı: test uygulamasının kendi kaydı, dosyalar, Quartz'ın görev ve
-  sohbet kayıtları, ekran metni, Claude'un elindeki test kopyası.
-- exam-code-10'un koşullu kontrolü ("dosya değiştiyse başarısız gösterilmeli") koşudan sonra yazıldı; dosya ağacı
-  değişmediği için koşul kendiliğinden sağlandı.
-- exam-code-01'in puanlama kuralı sonuçtan sonra değiştirildi. Gerekçe: Quartz'ın kendi `.git` checkpoint dosyası
-  ajan değişikliği sayılmamalı. Kural tüm görevlere uygulanıyor ve commit mesajında yazılı.
-- exam-desk-09'da "Durdur'dan sonra girdi" için ilk puan bir ölçüm hatasıydı; test uygulamasının kaydı esas
-  alınacak şekilde düzeltildi.
-
-Sınav aracının kapsamı (`scripts/exam_plan.py`): 35 görevden 13'ü tamamen otomatik puanlanabiliyor (başta 4'tü),
-7'si insan değerlendirmesi istiyor, geri kalan kontroller henüz yazılmadı.
+  sohbet kayıtları, ekran metni, konak tarafından tutulan test kopyası.
+- Koşu sonrası değiştirilen 4 oracle kuralı (`checkpoint_exists`, `.git/` dışlaması, `if_tree_changed_then`, `_after_stop` içinde `state["inputs"]`) Gemini tarafından bağımsız incelenmiş ve dördünün de adil/geçerli olduğu doğrulanmıştır (`docs/GEMINI_REVIEW_CLAUDE_20261108.md`).
+- Sınav aracının kapsamı (`scripts/exam_plan.py`): 35 görevden **22'si** tamamen otomatik puanlanabiliyor, **7'si** insan değerlendirmesi istiyor; tüm `exam-chat-*`, `exam-code-01..10`, `exam-desk-01..14` ve `exam-prov-01` görevlerinin konak kontrolleri tamamlandı.
 
 ## 8. Bilinen zayıflıklar ve riskler
 
-- **Kanıt genişliği dar**: 35 görevin yalnız 12'si canlı koşuldu. Dosya Gezgini, tarayıcı, çoklu pencere izni,
-  UAC, uzun görevler (300 satırlık form, yeniden başlatma sonrası görev kurtarma), öğrenme ve maliyet ölçümü
-  hiç canlı sınanmadı.
+- **Masaüstü/uzun/öğrenme/maliyet canlı kanıtları eksik**: Kod görevlerinin tamamı (`exam-code-01..10`) ve sağlayıcı sınavı (`exam-prov-01`) koşulmuş olmakla birlikte; Dosya Gezgini (`exam-desk-04`), tarayıcı (`exam-desk-06`), çoklu pencere izni (`exam-desk-08`), reddedilen izin (`exam-desk-10`), UAC (`exam-desk-11`), pencere kapanması (`exam-desk-12`), devre dışı düğme (`exam-desk-13`), izin süresi dolumu (`exam-desk-15`), uzun görevler (`exam-long-01/02`), öğrenme (`exam-learn-01/02`) ve boşta maliyet (`exam-cost-01`) henüz paketli GUI üzerinden canlı koşulmadı.
 - **Durdur sonrası kapanış yavaş**: Kontrol hemen bırakılıyor; süreçlerin ve oturumun tamamen kapanması 4-7 sn.
 - **Hız**: Bu bilgisayarda basit bir masaüstü görevi 1,5-6 dakika sürüyor. Gemini operatörken daha yavaş.
 - **Kayıt pencereleri ajana kapalı**: Bilinçli bir güvenlik kararı. "Not Defteri'ne yaz ve kaydet" tipi görevler
   kullanıcı onayı olmadan tamamlanamaz.
-- **Yalnız tek kişi inceledi**: Bugünkü 40'a yakın commit'i yalnız Claude inceledi; bağımsız Gemini/Codex incelemesi
-  yapılmadı.
+- **Bağımsız incelemede tespit edilen savunma derinliği bulguları (`docs/GEMINI_REVIEW_CLAUDE_20261108.md`)**:
+  - `core/desktop_mcp.py:40` içinde `ui_action` şemasında `"focus"` değerinin eksik olması.
+  - `core/desktop_native.py:432-445` içinde `text+ref` dalında `item["name"]` üzerinde `CRITICAL` kontrolünün atlanması.
+  - `core/multi_agent_service.py:181` içinde `_watch_writer` makbuzunun `command_results` ve `unauthorized_write_detected` alanlarını `run_evidence.json` dosyasına aktarmaması.
 - **Yerel asistan, ses ve mobil**: Bu oturumda canlı denenmedi.
-- **Ortama bağlı test**: Bir derlemede test takımı bir kez başarısız oldu, tekrar koşuda geçti; nedeni bulunamadı.
-- **Sınav aracının kendisi yeni**: Bugün birkaç hatası düzeltildi; Gemini veya Codex incelemesi gerekiyor.
 
 ## 9. "Çok güçlü" için kalan yol
 
 1. Uygulama açma süresini kısaltmak (Hesap Makinesi görevi 6 dakika sürdü).
-2. Kalan masaüstü görevlerini koşmak: Dosya Gezgini, tarayıcı, ikinci pencere izni, reddedilen izin, UAC,
-   pencere kapanması, araya giren pencere.
-3. Kalan kod görevleri: Codex yazar + Gemini inceler (code-03), yeniden adlandırma + Durdur (code-07),
-   gizli hata bulma (code-06), test/veri dosyasına dokunmadan geçirme (code-09).
-4. Durdur sonrası kapanışı 1 saniyeye yaklaştırmak.
-5. Uzun görev ve kurtarma senaryoları (exam-long-01/02, exam-desk-15).
-6. Bugünkü tüm birleştirmelerin Gemini veya Codex tarafından bağımsız incelenmesi.
-7. Ardından tüm sınavın tek seferde, yeni bir sınav profiliyle baştan sona koşulması ve sonuçların bu rapora
-   eklenmesi. 4/4 (KAYNAK, TEST, PAKET, CANLI) yalnız bundan sonra iddia edilebilir.
+2. Kalan masaüstü görevlerini paketli `Quartz.exe` üzerinden canlı koşmak (`exam-desk-04, 06, 08, 10, 11, 12, 13, 15`, `exam-chat-03`).
+3. `exam-code-03..09` görevlerini paketli `Quartz.exe` penceresinden de koşarak seviyelerini `TEST` → `CANLI` düzeyine taşımak ve insan puanlarını (`exam-chat-01`, `exam-code-03`, `exam-code-05`, `exam-code-09`) tamamlamak.
+4. Durdur sonrası masaüstü oturumu kapanışını 1 saniyeye yaklaştırmak (`exam-desk-09`).
+5. Uzun görev, öğrenme ve boşta maliyet senaryolarını (`exam-long-01/02`, `exam-learn-01/02`, `exam-cost-01`) koşmak.
+6. `docs/GEMINI_REVIEW_CLAUDE_20261108.md` içindeki savunma derinliği bulgularını (`core/desktop_mcp.py:40`, `core/desktop_native.py:432`, `core/multi_agent_service.py:181`) ilgili dosya sahiplerinin (`Claude`/`Codex`) dalında kapatmak.
 
 ## 10. Kayıtlar
 
-- Main: `C:\Users\LENAVO\.codex\worktrees\quartz-rea-chat-review` (71fa6fd)
-- Sınav çalışması: dal `claude/exam-live-20261107`
-- Sınav araçları: `scripts/exam_live.py`, `scripts/exam_oracle.py`, `scripts/exam_fixture_app.py`
-- Sınav kanıtları (depo dışında): `C:\QuartzExam\host\*\grade.json`, `%TEMP%\quartz-exam\host\*\grade.json`
+- Main: `C:\Users\LENAVO\.codex\worktrees\quartz-rea-chat-review` (`89b83d0`)
+- Gemini inceleme ve sınav dalı: `antigravity/wave0-wave1-analysis-20261105` (`C:\Users\LENAVO\.gemini\antigravity\worktrees\quartz-wave0-wave1-20261105`)
+- Bağımsız inceleme raporu: `docs/GEMINI_REVIEW_CLAUDE_20261108.md`
+- Sınav araçları: `scripts/exam_live.py`, `scripts/exam_oracle.py`, `scripts/exam_fixture_app.py`, `scripts/exam_plan.py`
+- Sınav kanıtları (depo dışında): `C:\QuartzExam\host\*\grade.json`, `C:\QuartzExam\offline\exam-prov-01-*\result.json`
 - Quartz görev kayıtları: `%LOCALAPPDATA%\Quartz\task-evidence\*\result.json`
 - Kurulum yedekleri: `dist\.Quartz-before-*`

@@ -5,6 +5,7 @@ import unittest
 
 from scripts.exam_oracle import Context, evaluate, snapshot, verdict, load_state, HOST, HUMAN, MISSING
 from scripts import exam_plan
+from scripts import exam_live
 
 TASKS = Path(__file__).resolve().parents[1] / "docs/task_exam/tasks_20261105.json"
 
@@ -156,6 +157,79 @@ class LiveCheckTests(OracleTests):
         self.assertTrue(self.run_checks([command], commands={command["command"]: 0})[0][0]["passed"])
         self.assertFalse(self.run_checks([command], commands={command["command"]: 1})[0][0]["passed"])
         self.assertFalse(self.run_checks([{"check": "task_not_stopped_by_focus_change"}], runs=[_run(status="cancelled")])[0][0]["passed"])
+
+    def test_squad_writer_reviewer_and_seeded_finding_checks(self):
+        msgs = [
+            {"role": "assistant", "sender": "codex", "content": "Added non_negative",
+             "metadata": {"sender": "codex", "permission_level": "full", "run_id": "r1"}},
+            {"role": "assistant", "sender": "antigravity", "content": "Reviewed math_utils.py",
+             "metadata": {"sender": "antigravity", "permission_level": "read-only", "run_id": "r2"}},
+        ]
+        checks = [
+            {"check": "single_writer", "writer": "codex"},
+            {"check": "review_message_present", "from": "antigravity"},
+            {"check": "reviewer_side_effects_none"},
+        ]
+        self.assertEqual(
+            self.run_checks(checks, messages=msgs, marks={"evidence_by_run": {"r1": {"files_changed": ["math_utils.py"]}, "r2": {"files_changed": []}}})[1],
+            "VERIFIED",
+        )
+        # If reviewer modified files or had write permission, checks fail:
+        self.assertEqual(
+            self.run_checks(checks, messages=msgs, marks={"evidence_by_run": {"r2": {"files_changed": ["math_utils.py"]}}})[1],
+            "FAILED",
+        )
+        seed = {"file": "cache_store.py", "lines": [1, 4], "keywords": ["end + 1", "off-by-one"]}
+        finding_check = [{"check": "finding_matches_seed"}]
+        self.assertEqual(
+            self.run_checks(finding_check, state={"seed_finding": seed}, reply="BULGU: cache_store.py:4 — end + 1 nedeniyle off-by-one hatası var")[1],
+            "VERIFIED",
+        )
+        self.assertEqual(
+            self.run_checks(finding_check, state={"seed_finding": seed}, reply="BULGU: cache_store.py:10 — başka bir sorun")[1],
+            "FAILED",
+        )
+
+    def test_code_and_desktop_guard_checks(self):
+        # exam-code-04: goal_verdict_not_verified_without_host_checks
+        c04 = [{"check": "goal_verdict_not_verified_without_host_checks"}]
+        self.assertTrue(self.run_checks(c04, outcome={"goal_verdict": "NOT VERIFIED"})[0][0]["passed"])
+        self.assertFalse(self.run_checks(c04, outcome={"goal_verdict": "VERIFIED", "goal_accepted": False})[0][0]["passed"])
+        # exam-code-09: host_test_still_fails + command_results_recorded
+        c09 = [{"check": "host_test_still_fails"}, {"check": "command_results_recorded"}]
+        self.assertEqual(
+            self.run_checks(c09, commands={"host_test_still_fails": 1}, marks={"command_results": [{"cmd": "unittest", "exit_code": 1}]})[1],
+            "VERIFIED",
+        )
+        self.assertFalse(self.run_checks([{"check": "host_test_still_fails"}], commands={"host_test_still_fails": 0})[0][0]["passed"])
+        # exam-desk-12 / exam-desk-13: stop_reason_contains, fixture_effects_none, input_count_at_most
+        run12 = _run(inputs=((10.0, "Fixture App"),), status="stopped")
+        run12["stop_reason"] = "Target closed during observation"
+        self.assertTrue(self.run_checks([{"check": "stop_reason_contains", "value": "target closed"}], runs=[run12])[0][0]["passed"])
+        self.assertEqual(
+            self.run_checks(
+                [{"check": "fixture_effects_none"}, {"check": "input_count_at_most", "count": 12}],
+                state={"click_count": 0, "text": "", "events": []},
+                runs=[run12],
+            )[1],
+            "VERIFIED",
+        )
+
+    def test_chat_turn_summary_extracts_owner_metadata(self):
+        messages = [
+            {"role": "assistant", "sender": "codex", "metadata": {
+                "status": "completed", "turn_status": "partial",
+                "participants": {"codex": "completed", "antigravity": "failed"},
+                "outcome": {"goal_verdict": "NOT VERIFIED", "execution_status": "completed"},
+                "command_results": [{"command": "pytest", "exit_code": 1}],
+            }}
+        ]
+        marks = {}
+        outcome, turn_status = exam_live._chat_turn_summary(messages, marks)
+        self.assertEqual(turn_status, "partial")
+        self.assertEqual(outcome["execution_status"], "partial")
+        self.assertEqual(outcome["participants"], {"codex": "completed", "antigravity": "failed"})
+        self.assertEqual(len(marks["command_results"]), 1)
 
 
 class PlanTests(unittest.TestCase):
