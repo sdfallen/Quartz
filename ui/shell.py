@@ -93,6 +93,7 @@ SHELL_MARKUP = r"""
         <select class="project-picker" id="mainProjectSelect" title="Aktif proje" aria-label="Aktif proje"></select>
         <button type="button" class="icon-btn" id="btnAddProject" title="Windows klasör seçicisiyle proje ekle" aria-label="Proje ekle">@@i:plus@@</button>
       </div>
+      <button type="button" class="project-chats-delete" id="btnRemoveProject" title="Proje klasörü ve dosyaları silinmez">Projeyi listeden kaldır</button>
     </div>
     <div class="side-section grow">
       <div class="workspace-nav-title">Sohbetler</div>

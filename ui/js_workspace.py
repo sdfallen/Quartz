@@ -137,6 +137,43 @@ JAVASCRIPT = r"""
   document.getElementById('btnDeleteProjectChats').addEventListener('click', () =>
     requestChatDeletion(navigationConversations.filter(c=>(c.project_id||'squad-pilot')===mainProjectSelect.value), mainProjectSelect.value));
 
+  // Remove a project from the list. Only Quartz's registration and the project's
+  // chats go (chats keep a local recovery copy); the folder is never touched.
+  const btnRemoveProject = document.getElementById('btnRemoveProject');
+  function syncRemoveProjectButton() {
+    if (btnRemoveProject) btnRemoveProject.hidden = !mainProjectSelect.value || mainProjectSelect.value === 'squad-pilot';
+  }
+  mainProjectSelect.addEventListener('change', syncRemoveProjectButton);
+  if (typeof MutationObserver === 'function')
+    new MutationObserver(syncRemoveProjectButton).observe(mainProjectSelect, {childList: true});
+  syncRemoveProjectButton();
+  btnRemoveProject?.addEventListener('click', async () => {
+    const projectId = mainProjectSelect.value;
+    if (!projectId || projectId === 'squad-pilot' || deletionPending || thinking) return;
+    const name = mainProjectSelect.selectedOptions[0]?.textContent || 'Seçili proje';
+    const chats = navigationConversations.filter(c => (c.project_id || 'squad-pilot') === projectId);
+    const confirmed = await requestUiConfirm(
+      `“${name}” listeden kaldırılsın mı?\n` +
+      (chats.length ? `Bu projenin ${chats.length} sohbeti de silinir; yerel kurtarma yedeği tutulur.\n` : '') +
+      'Proje klasörü ve dosyaları silinmez. Klasörü + ile yeniden ekleyebilirsiniz.',
+      {title: 'Projeyi kaldırma onayı', confirmLabel: 'Kaldır', danger: true});
+    if (!confirmed) return;
+    deletionPending = true;
+    try {
+      const result = await window.pywebview.api.project_remove(projectId, chats.map(c => c.id), true);
+      if (!result || result.status !== 'ok') throw new Error(result?.data || 'Proje kaldırılamadı');
+      if (chatPollInterval) { clearInterval(chatPollInterval); chatPollInterval = null; }
+      activeBotBubble = null;
+      await loadActiveConversation();
+      logLine(`“${name}” listeden kaldırıldı; ${result.data.deleted_count} sohbet silindi. Proje dosyaları silinmedi.`);
+    } catch (error) {
+      appendMsg('err', 'QUARTZ', String(error.message || error));
+    } finally {
+      deletionPending = false;
+      syncRemoveProjectButton();
+    }
+  });
+
   const dayGreeting = () => {
     const hour = new Date().getHours();
     return hour < 6 ? 'İyi geceler.' : hour < 12 ? 'Günaydın.' : hour < 18 ? 'İyi günler.' : 'İyi akşamlar.';
