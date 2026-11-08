@@ -551,16 +551,20 @@ class NaturalDesktopTask:
                 except (ValueError, OSError, PermissionError): continue
         return found[:24]
 
-    def _context(self, provider):
+    def _context(self, provider, *, windows_snapshot=None):
         knowledge = self.application_learning.context() if self.application_learning else []
         if knowledge and all(k['state'] not in {'queued','running'} for k in knowledge):
             self._learning_seen.add(provider)
         messages = [m for m in self.squad.receive(self.agent_ids[provider]) if m.get("task_id") == self.job["task_id"]]
+        if provider == self.job["roles"]["operator"]:
+            windows_meta = self.desktop.windows() if windows_snapshot is None else windows_snapshot
+        else:
+            windows_meta = []
         return {"task_id": self.job["id"], "squad_task_id": self.job["task_id"],
                 "role": "operator" if provider == self.job["roles"]["operator"] else "collaborator",
                 "requested_file_mode":self.job.get('requested_permission_level','read-only'),
                 "capability_mode":"scoped-mcp", "runtime_filesystem":"read-only",
-                "windows_metadata_only": self.desktop.windows() if provider == self.job["roles"]["operator"] else [],
+                "windows_metadata_only": windows_meta,
                 "project_logs_metadata_only": self._log_candidates(), "approved_logs": list(self.approved_logs),
                 "pending_permission": self.pending, "desktop_active": self.broker.status()["active"],
                 "colleague_messages": messages, "recent_notes": self.notes[-12:],
@@ -1216,21 +1220,25 @@ class NaturalDesktopTask:
             return self._jarvis_call(token, request)
         with self.changed:
             provider = self._provider(token)
+            job = self.job
             tool, args = request.get("name"), request.get("arguments") or {}
             if tool == "task_wait":
                 # Bounded server wait, not model busy polling. Stop wakes it immediately.
                 self.changed.wait(timeout=20)
                 self._provider(token)
-                return self._context(provider)
-            if tool == "task_context": return self._context(provider)
-            if tool == "task_message":
+                is_op = (provider == self.job["roles"]["operator"])
+                self._inflight_calls += 1
+            elif tool == "task_context":
+                is_op = (provider == self.job["roles"]["operator"])
+                self._inflight_calls += 1
+            elif tool == "task_message":
                 if _placeholder_message(args.get("text")):
                     raise ValueError("Placeholder message not delivered; send a real finding or nothing")
                 self._message(provider, args.get("text"))
                 return {"delivered_via": "Squad", "task_id": self.job["task_id"]}
-            if tool == "desktop_request_access":
+            elif tool == "desktop_request_access":
                 return self._request(provider, args.get("handles", []), args.get("log_paths", []), args.get("reason", ""))
-            if tool == "task_read_log":
+            elif tool == "task_read_log":
                 path = args.get("path")
                 if not path and isinstance(args.get("log_paths"), list) and args.get("log_paths"):
                     path = args.get("log_paths")[0]
@@ -1245,33 +1253,76 @@ class NaturalDesktopTask:
                 result = self.approved_logs[path].read()
                 self.job.setdefault("log_reads", []).append({k: v for k, v in result.items() if k != "text"})
                 return {"untrusted_log": result, "path": path}
-            if provider != self.job["roles"]["operator"]: raise PermissionError("Collaborator cannot control or observe the desktop")
-            self._assert_unpaused()
-            if self._control_inflight: raise PermissionError('Kontrol çağrısı sürüyor; task_wait kullanın')
-            if not self.connection and self.job.get("requested_permission_level") == "full" and not self.warband:
+            else:
+                if provider != self.job["roles"]["operator"]: raise PermissionError("Collaborator cannot control or observe the desktop")
+                self._assert_unpaused()
+                if self._control_inflight: raise PermissionError('Kontrol çağrısı sürüyor; task_wait kullanın')
+                if tool == "desktop_verify":
+                    if not self.connection: raise PermissionError("Request inline access first; no input authority exists")
+                    return self._verify(args)
+                need_auto_grant = (not self.connection and self.job.get("requested_permission_level") == "full" and not self.warband)
+                if not need_auto_grant and not self.connection:
+                    raise PermissionError("Request inline access first; no input authority exists")
+                if not need_auto_grant and tool == "desktop_act" and (not self.latest or not self.latest.get("image_sha256")):
+                    raise PermissionError("No real screenshot available; do not act from guessed coordinates or UIA alone")
+                self._control_inflight += 1
+                self._inflight_calls += 1
+        if tool in {"task_wait", "task_context"}:
+            try:
+                wins = self.desktop.windows() if is_op else []
+                with self.changed:
+                    if self.job is not job or self.stopped.is_set():
+                        raise PermissionError("Task stopped or expired")
+                    self._provider(token)
+                    return self._context(provider, windows_snapshot=wins)
+            finally:
+                with self.changed:
+                    self._inflight_calls -= 1
+                    self.changed.notify_all()
+        # Desktop observation/action calls never hold the Stop lock across UIA/ImageGrab,
+        # so Stop revokes authority immediately (< 1 s) even during a slow capture.
+        try:
+            if need_auto_grant:
                 avail = self.desktop.windows()[:12]
-                if avail:
-                    self._request(provider, [w["handle"] for w in avail], [], "Tam Yetki kapsamında otomatik masaüstü erişimi")
-            if not self.connection: raise PermissionError("Request inline access first; no input authority exists")
-            if tool == "desktop_verify": return self._verify(args)
-            if tool == "desktop_act" and (not self.latest or not self.latest.get("image_sha256")):
-                raise PermissionError("No real screenshot available; do not act from guessed coordinates or UIA alone")
-            if tool in {"desktop_focus", "desktop_switch", "desktop_act", "desktop_launch", "desktop_observe"}:
-                # An input may have happened even if its post-action capture fails.
-                # Never let the older observation certify that unknown outcome.
-                self.latest = None
-                self._prior_criterion = self.job.get("verification")
-                self.job["verification"] = {"status":"NOT VERIFIED", "reason":"fresh observation required"}
-            result = self.broker.call(self.connection["token"], request)
-            if "observation" in result:
-                self._capture(tool, result)
-                if self.job["verification"].get("source") == HOST_TEXT_SOURCE:
-                    result = dict(result, host_verification={
-                        "status": self.job["verification"]["status"],
-                        "expected_text": self.job["verification"]["expected_text"],
-                        "next": "Quartz verified the text quoted in the user's request in its own observation. "
-                                "Do not call more tools: reply to the user in one short Turkish sentence and end your turn."})
-            return result
+                with self.changed:
+                    if self.job is not job or self.stopped.is_set():
+                        raise PermissionError("Task stopped or expired")
+                    self._assert_unpaused()
+                    if not self.connection and avail:
+                        self._request(provider, [w["handle"] for w in avail], [], "Tam Yetki kapsamında otomatik masaüstü erişimi")
+            with self.changed:
+                if self.job is not job or self.stopped.is_set():
+                    raise PermissionError("Task stopped or expired")
+                self._assert_unpaused()
+                if not self.connection:
+                    raise PermissionError("Request inline access first; no input authority exists")
+                if tool == "desktop_act" and (not self.latest or not self.latest.get("image_sha256")):
+                    raise PermissionError("No real screenshot available; do not act from guessed coordinates or UIA alone")
+                if tool in {"desktop_focus", "desktop_switch", "desktop_act", "desktop_launch", "desktop_observe"}:
+                    # An input may have happened even if its post-action capture fails.
+                    # Never let the older observation certify that unknown outcome.
+                    self.latest = None
+                    self._prior_criterion = self.job.get("verification")
+                    self.job["verification"] = {"status":"NOT VERIFIED", "reason":"fresh observation required"}
+                conn_token = self.connection["token"]
+            result = self.broker.call(conn_token, request)
+            with self.changed:
+                if self.job is not job or self.stopped.is_set():
+                    raise PermissionError("Task stopped or expired")
+                if "observation" in result:
+                    self._capture(tool, result)
+                    if self.job["verification"].get("source") == HOST_TEXT_SOURCE:
+                        result = dict(result, host_verification={
+                            "status": self.job["verification"]["status"],
+                            "expected_text": self.job["verification"]["expected_text"],
+                            "next": "Quartz verified the text quoted in the user's request in its own observation. "
+                                    "Do not call more tools: reply to the user in one short Turkish sentence and end your turn."})
+                return result
+        finally:
+            with self.changed:
+                self._inflight_calls -= 1
+                self._control_inflight -= 1
+                self.changed.notify_all()
 
     def _host_text_check(self, record):
         # The expected text comes only from the user's own message, never from a

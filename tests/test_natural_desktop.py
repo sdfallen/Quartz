@@ -741,5 +741,50 @@ class NaturalTaskTests(unittest.TestCase):
             self.assertEqual(task.job["verification"]["status"],"NOT VERIFIED")
         finally:task.stop()
 
+    def test_stop_revokes_within_one_second_during_slow_broker_observation_and_records_cleanup_durations(self):
+        # Live 8 Nov (exam-desk-09): a 5 s post-action backend.observe() held self.changed
+        # and self.broker._lock, delaying stop() and finished_at by 4-7 seconds.
+        self.approve()
+        first = self.call("desktop_focus")
+        obs_entered = threading.Event()
+        obs_release = threading.Event()
+        image = base64.b64encode(b"fixture-image").decode()
+
+        def slow_observe(_target):
+            obs_entered.set()
+            obs_release.wait(timeout=3.0)
+            return {"ui": {"elements": []}, "image_base64": image}
+
+        self.backend.observe = slow_observe
+        call_errors = []
+
+        def run_slow_act():
+            try:
+                self.call("desktop_act", {"snapshot_id": first["snapshot_id"], "action": "key", "key": "tab"})
+            except PermissionError as exc:
+                call_errors.append(str(exc))
+
+        worker = threading.Thread(target=run_slow_act, daemon=True)
+        worker.start()
+        self.assertTrue(obs_entered.wait(timeout=1.0))
+
+        stop_at = time.time()
+        t0 = time.monotonic()
+        self.task.stop("cancelled")
+        stop_elapsed = time.monotonic() - t0
+        obs_release.set()
+        worker.join(timeout=2.0)
+
+        self.assertLess(stop_elapsed, 0.5)
+        self.assertLessEqual(self.task.job["finished_at"] - stop_at, 0.5)
+        self.assertFalse(self.broker.status()["active"])
+        self.assertEqual(len(call_errors), 1)
+        steps = self.task.job["cleanup"]["steps"]
+        self.assertTrue(steps)
+        for step in steps:
+            self.assertIn("duration_ms", step)
+            self.assertIsInstance(step["duration_ms"], (int, float))
+            self.assertGreaterEqual(step["duration_ms"], 0.0)
+
 
 if __name__ == "__main__":unittest.main()

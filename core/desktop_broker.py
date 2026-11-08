@@ -48,6 +48,7 @@ class DesktopBroker:
         self.clock = clock
         self._lock = threading.RLock()
         self._session = None
+        self._busy = False
         self._server = None
         self._lease = None
         self.audit = []
@@ -181,6 +182,7 @@ class DesktopBroker:
             had_session = self._session is not None
             self.stop_reason = reason
             self._session = None  # revoke before waiting for the CLI to exit
+            self._busy = False
             if self._lease:
                 self._lease.close()
                 self._lease = None
@@ -274,6 +276,8 @@ class DesktopBroker:
     def _call(self, token, request):
         with self._lock:
             s = self._check(token)
+            if self._busy:
+                raise PermissionError("Another desktop operation is in flight; wait for it to finish")
             tool = request.get("name")
             args = request.get("arguments") or {}
             recovered = s.pop("focus_recovered", False)
@@ -390,7 +394,21 @@ class DesktopBroker:
             else:
                 raise ValueError("Unknown desktop tool")
             self._check(token)
-            data = self.backend.observe(s["target"])
+            target_snapshot = dict(s["target"])
+            session_id = s["id"]
+            self._busy = True
+        # Read-only post-action observation runs without holding the broker lock,
+        # so Stop can revoke the session immediately (< 50 ms) instead of blocking
+        # on a multi-second UIA/screenshot capture (live exam 8 Nov: exam-desk-09).
+        try:
+            data = self.backend.observe(target_snapshot)
+        finally:
+            with self._lock:
+                self._busy = False
+        with self._lock:
+            if not self._session or self._session["id"] != session_id or not hmac.compare_digest(str(token), self._session["token"]):
+                raise PermissionError("Desktop capability is missing or revoked")
+            s = self._session
             snapshot_id = uuid.uuid4().hex
             s["snapshot"] = {"id": snapshot_id, "at": self.clock(), "data": data}
             self.audit.append({"at": time.time(), "session": s["id"], "provider": s["provider"],
