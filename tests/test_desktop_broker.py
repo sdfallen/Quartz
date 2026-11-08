@@ -608,3 +608,30 @@ class NativePolicyTests(unittest.TestCase):
         self.assertTrue(_same_application(os.getpid(), os.getppid()))  # child of the target
         self.assertFalse(_same_application(os.getppid(), os.getpid()))  # the parent is not the child's app
         self.assertFalse(_same_application(999999999, os.getpid()))
+
+    def test_get_descendants_preserves_deep_password_and_critical_controls_before_slicing(self):
+        # Step 2.5a: when native descendants fill max_elements, a deep password or
+        # critical control found by _wrapper_aware_scan must not be sliced off.
+        from core.desktop_control import DesktopController
+
+        def make_el(rid, name="", control_type="Button", is_password=False):
+            el = MagicMock()
+            el.element_info.runtime_id = (rid,)
+            el.element_info.name = name
+            el.element_info.control_type = control_type
+            el.element_info.is_password = is_password
+            el.element_info.element = None
+            el.is_visible.return_value = True
+            el.is_enabled.return_value = True
+            return el
+
+        native_items = [make_el(i, f"Item {i}") for i in range(1, 6)]
+        deep_pwd = make_el(99, "Secret Field", "Edit", is_password=True)
+        deep_crit = make_el(100, "Kalıcı olarak sil", "Button", is_password=False)
+        win = MagicMock()
+        win.descendants.return_value = native_items
+        with patch.object(DesktopController, "_wrapper_aware_scan", return_value=[deep_pwd, deep_crit]):
+            result = DesktopController._get_descendants(win, max_depth=4, max_elements=5)
+        self.assertEqual(len(result), 5)
+        self.assertIn(deep_pwd, result)
+        self.assertIn(deep_crit, result)

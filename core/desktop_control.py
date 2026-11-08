@@ -1,6 +1,7 @@
 """Window-scoped Windows UI Automation with expiring observation references."""
 
 import json
+import re
 import threading
 import time
 import uuid
@@ -12,6 +13,13 @@ _PASS_THROUGH = {"Pane", "Group", "Custom"}
 _FRAME_CLASSES = {"Chrome_WidgetWin_0", "Chrome_WidgetWin_1", "Chrome_RenderWidgetHostHWND", "BrowserRootView",
                   "NonClientView", "EmbeddedBrowserFrameView", "BrowserView", "View"}
 _ABSOLUTE_UIA_DEPTH = 24
+_SENSITIVE_OR_CRITICAL = re.compile(
+    r"password|parola|şifre|sign.in|oturum aç|authentication|verify.*identity|"
+    r"user account control|kullanıcı hesabı denetimi|windows security|"
+    r"\b(?:delete|remove|overwrite|purchase|buy|pay|send|upload|save|sil|"
+    r"kaydet|üzerine yaz|satın al|öde|gönder|yükle|izin ver|allow|install)\b",
+    re.I,
+)
 
 
 class DesktopController:
@@ -110,8 +118,32 @@ class DesktopController:
             native = []
         deep = DesktopController._wrapper_aware_scan(win, max_depth, max_elements)
         known = {DesktopController._identity_key(e) for e in native}
-        merged = native + [e for e in deep if DesktopController._identity_key(e) not in known]
+        extra = [e for e in deep if DesktopController._identity_key(e) not in known]
+        # Gemini review 8 Nov: if native already filled max_elements, slicing
+        # merged[:max_elements] dropped deep password/sensitive/critical controls.
+        # Keep security-relevant controls ahead of non-critical overflow.
+        priority = [e for e in extra if DesktopController._is_priority_control(e)]
+        ordinary = [e for e in extra if not DesktopController._is_priority_control(e)]
+        if priority and len(native) + len(priority) > max_elements:
+            keep_native = max(0, max_elements - len(priority))
+            merged = native[:keep_native] + priority
+        else:
+            merged = native + priority + ordinary
         return merged[:max_elements]
+
+    @staticmethod
+    def _is_priority_control(element):
+        try:
+            info = element.element_info
+            native = getattr(info, "element", None)
+            password = (bool(native.CurrentIsPassword) if native is not None
+                        else bool(getattr(info, "is_password", False)))
+            if password:
+                return True
+            name = str(info.name or "")
+            return bool(name and _SENSITIVE_OR_CRITICAL.search(name))
+        except Exception:
+            return False
 
     @staticmethod
     def focused_control(win, scanned=None):

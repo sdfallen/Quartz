@@ -624,6 +624,82 @@ global.window={screen:{availWidth:1920,availHeight:1040},outerWidth:1920,outerHe
         result = _node(code)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_sync_conversation_messages_prunes_stale_revealed_length_entries(self):
+        source = _js(gui._HTML, "  const revealedLength = new Map();", "  function renderAgentLive(")
+        sync_fn = _js(gui._HTML, "  function syncConversationMessages(", "  function setThinking(")
+        code = r'''
+const assert=require('node:assert/strict');
+const chatEl={
+  scrollTop:0,
+  set innerHTML(v){},
+  querySelectorAll:()=>[],
+  querySelector:()=>null
+};
+let userPinnedToBottom=true, unreadWhileScrolledUp=0, programmaticScroll=false;
+function updateJumpBottomBtn(){}
+function isNearBottom(){return true;}
+function scrollToBottom(){}
+function formatMessageLabel(){return 'CODEX';}
+function formatModelTagText(){return '';}
+function appendMsg(kind,label,content,msgId){
+  revealedLength.set(msgId, (content||'').length);
+  return {dataset:{msgId}};
+}
+''' + source + sync_fn + r'''
+revealedLength.set('old-msg-1', 42);
+revealedLength.set('old-msg-2', 99);
+syncConversationMessages([{id:'new-msg-1',role:'assistant',sender:'codex',content:'Merhaba'}], true);
+assert.equal(revealedLength.has('old-msg-1'), false);
+assert.equal(revealedLength.has('old-msg-2'), false);
+assert.equal(revealedLength.get('new-msg-1'), 7);
+'''
+        result = _node(code)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_model_selector_preserves_human_readable_labels_when_fallback_catalog_uses_raw_ids(self):
+        source = _js(gui._HTML, "  function populateSelectOptions(", "  async function saveAgentModelSelection(")
+        code = r'''
+const assert=require('node:assert/strict');
+function makeSelect(initialPairs){
+  const sel={
+    dataset:{},
+    value:'',
+    options:initialPairs.map(([v,t])=>({value:v,textContent:t,title:''})),
+    set innerHTML(v){if(v==='')this.options=[];},
+    appendChild(opt){this.options.push(opt);}
+  };
+  if(sel.options.length) sel.value=sel.options[0].value;
+  return sel;
+}
+const document={
+  activeElement:null,
+  createElement:()=>({value:'',textContent:'',title:''})
+};
+const agyModelSelect=makeSelect([
+  ['gemini-3.8-flash-medium','Gemini 3.8 Flash (Medium)'],
+  ['gemini-3.8-pro-high','Gemini 3.8 Pro (High)']
+]);
+const agyEffortSelect=makeSelect([['medium','Medium']]);
+const codexModelSelect=makeSelect([['gpt-6.1-sol','GPT-6.1-Sol']]);
+const codexEffortSelect=makeSelect([['medium','Medium']]);
+''' + source + r'''
+// Cold-start fallback catalog sends raw id as label before CLI probe completes.
+syncModelCatalogAndSelection(
+  {
+    antigravity:{models:[{id:'gemini-3.8-flash-medium',label:'gemini-3.8-flash-medium'}],efforts:[{id:'medium',label:'Medium'}]},
+    codex:{models:[{id:'gpt-6.1-sol',label:'gpt-6.1-sol'}],efforts:[{id:'medium',label:'Medium'}]}
+  },
+  {
+    antigravity:{model:'gemini-3.8-flash-medium',effort:'medium'},
+    codex:{model:'gpt-6.1-sol',effort:'medium'}
+  }
+);
+assert.equal(agyModelSelect.options[0].textContent,'Gemini 3.8 Flash (Medium)');
+assert.equal(codexModelSelect.options[0].textContent,'GPT-6.1-Sol');
+'''
+        result = _node(code)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

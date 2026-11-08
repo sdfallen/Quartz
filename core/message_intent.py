@@ -52,7 +52,22 @@ def message_intent(text):
                              r'\bdemek\b.{0,60}\bm[ıiuü]\b|'
                              r'hakkında (?:ne düşün|konuş)|what (?:does|is).{0,80}mean|'
                              r'\bset theory\b')
-    value = '. '.join(part for part in re.split(r'[.!?;,\n]+',value) if not explanation.search(part))
+    # A bare "değerlendir?" about an idea stays a conversation; about code, files
+    # or the project it is still a review task. The context words are matched on
+    # folded text as stems, so Turkish suffixes ("kodu", "dosyayı", "modülü") count.
+    code_context = re.search(
+        r'\b(?:dosya|kod|proje|test|log|ekran|pencere|uygulama|modul|fonksiyon|sinif|metot|satir|hata|bug|'
+        r'commit|branch|todo)|\b[\w-]+\.(?:py|js|ts|md|json|txt|log|html|css)\b', turkish_fold(value))
+    conceptual_question = re.compile(
+        r'\b(?:degerlendir(?:in|iniz)?|gozden\s+gecir(?:in|iniz)?|getir(?:in)?|gecir(?:in)?)\s*\?$')
+    # Clauses split at commas too ("bu hata ne demek, düzelt" keeps "düzelt");
+    # sentence punctuation stays on its clause so a trailing "?" can be seen.
+    parts = [part.strip() for part in re.split(r'(?<=[.!?])(?=\s|$)|[;,\n]+', value)]
+    value = '. '.join(
+        part.rstrip('.!?').strip() for part in parts
+        if part.rstrip('.!?').strip() and not explanation.search(part)
+        and not (not code_context and conceptual_question.search(turkish_fold(part)))
+    )
     # Explanatory questions do not execute the operation being discussed.
     explicit = _directive_search(
         r'\b(?:incele(?:yin|yiniz|yip|yerek)?|düzelt(?:in|iniz)?|derle(?:yin)?|geliştir(?:in)?|'
@@ -65,8 +80,9 @@ def message_intent(text):
         r'çal(?:ın)?|oynat(?:ın)?|durdur(?:un)?|duraklat(?:ın)?|kıs(?:ın)?|artır(?:ın)?|yükselt(?:in)?|büyüt(?:ün)?|küçült(?:ün)?|'
         r'ara(?:yın)?|izle(?:yin)?|dinle(?:yin)?|uygula(?:yın)?|tamamla(?:yın)?|bitir(?:in)?|harekete\s+geç(?:in)?|'
         # Live exam 7 Nov: "parse fonksiyonunu daha okunur hale getir" was read as chat.
-        r'getir(?:in)?|iyileştir(?:in)?|sadeleştir(?:in)?|dönüştür(?:ün)?|adlandır(?:ın)?|refactor\s+et|'
-        r'geçir(?:in)?|değerlendir(?:in|iniz)?|'
+        r'(?:hale\s+|yerine\s+|bir\s+araya\s+|geri\s+)?getir(?:in)?|'
+        r'iyileştir(?:in)?|sadeleştir(?:in)?|dönüştür(?:ün)?|adlandır(?:ın)?|refactor\s+et|'
+        r'gözden\s+geçir(?:in|iniz)?|geçir(?:in)?|değerlendir(?:in|iniz)?|'
         r'analiz\s+(?:et|edin|ediniz|yap|yapın)|'
         r'test (?:et|edin|ediniz)|kontrol (?:et|edin|ediniz)|test edip|kontrol edip|debug yap|test yap|bi(?:r)? test bakalım|dene(?:yin)?|bul|tara|yaz|güncelle|değiştir|çöz(?:ün)?|kapat(?:ın)?|öğren(?:in)?|bilgi\s+(?:al|topla))\b', value)
     polite = _directive_search(

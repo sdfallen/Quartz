@@ -34,8 +34,26 @@ class MessageIntentTests(unittest.TestCase):
                 self.assertIsNone(desktop_intent(text))
         for text in ('Hesap makinesini aç', 'calc aç'):
             with self.subTest(text=text): self.assertEqual(desktop_intent(text), 'task')
-        for text in ('Bugün nasıl geçirdin?', 'Bu kodu nasıl değerlendirirsin?', 'Bu ne getirir?'):
+        for text in ('Bugün nasıl geçirdin?', 'Bu kodu nasıl değerlendirirsin?', 'Bu ne getirir?',
+                     'Mikroservis mimarisinin avantajlarını değerlendir?',
+                     'Bu yaklaşımın olası risklerini gözden geçir?',
+                     'Yapay zeka geleceğe ne getir?',
+                     'Zamanı verimli geçir?'):
             with self.subTest(text=text): self.assertEqual(message_intent(text), 'conversation')
+
+    def test_a_command_after_an_explanation_and_a_comma_is_still_a_task(self):
+        # Claude review 8 Nov: the conceptual-question change dropped comma splitting,
+        # so the explanation clause swallowed the command that followed it.
+        for text in ('bu hata ne demek, düzelt', 'set theory nedir, anlat ve sonra kodu düzelt',
+                     'hakkında ne düşünüyorsun, sonra testleri çalıştır', 'bu ne demek, şunu düzelt'):
+            with self.subTest(text=text): self.assertEqual(message_intent(text), 'task')
+
+    def test_a_review_question_about_code_or_files_is_still_a_task(self):
+        # Context words carry Turkish suffixes and letters ("modülü", "sınıfı", "satırı").
+        for text in ('Kodu değerlendir?', 'Bu dosyayı değerlendir?', 'Bu modülü değerlendir?',
+                     'Bu sınıfı gözden geçir?', 'Bu satırı değerlendir?', 'Projeyi gözden geçir?',
+                     'parser.py gözden geçir?'):
+            with self.subTest(text=text): self.assertEqual(message_intent(text), 'task')
 
     def test_real_requests_are_tasks(self):
         for text in ('Bu warband modunu inceleyin', 'Dosyayı güncelle', 'Kaynakları incele ve düzelt',
