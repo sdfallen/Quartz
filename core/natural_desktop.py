@@ -1217,6 +1217,7 @@ class NaturalDesktopTask:
                 except OSError: pass
             self._assert_jarvis_generation(job)
             job.setdefault("jarvis_actions", []).append(record)
+            job["last_step"] = {"tool": tool, "at": time.time()}
             if not is_readonly_info: job["verification"] = {
                 "status": "NOT VERIFIED",
                 "tool": tool,
@@ -1416,6 +1417,7 @@ class NaturalDesktopTask:
                   "observation": observation, "image_sha256": image_hash, "actions": self.broker.status()["actions"]}
         stem.with_suffix(".json").write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
         self.latest = record
+        self.job["last_step"] = {"tool": tool, "at": record["at"]}  # shown in the operator column
         target_exe = (result.get("target") or {}).get("exe") if isinstance(result.get("target"), dict) else None
         if self.application_learning and target_exe:
             self.application_learning.note_operation(target_exe, focus_verified=(tool in {"desktop_focus", "desktop_switch"}), observation_verified=bool(image_hash))

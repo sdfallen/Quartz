@@ -158,6 +158,38 @@ assert.equal(els.laneCodexTrail.children.length,0);  // another conversation sta
 assert.equal(els.laneCodex.dataset.state,'idle');assert.equal(els.crew.dataset.flow,'');assert.equal(els.crewCoreLabel.textContent,'Birlikte');
 ''')
 
+    def test_operator_column_shows_task_last_step_and_evidence_from_host_fields(self):
+        # GPT UI review 8 Nov: the columns show the live task, last tool call,
+        # verification and error instead of an empty placeholder.
+        self.run_js(r'''
+const node=t=>({tag:t,children:[],dataset:{},attrs:{},textContent:'',className:'',
+  setAttribute(k,v){this.attrs[k]=v},append(...c){this.children.push(...c)}});
+document.createElement=node;
+const text=n=>n.textContent+(n.children||[]).map(text).join('');
+for(const id of ['laneCodexStatus','laneAgyStatus']){const b=el(id);b.hidden=true;b.children=[];
+  b.replaceChildren=(...c)=>{b.children=c};b.closest=()=>({classList:{toggle(){}}});}
+const rows=id=>els[id].children.map(r=>[text(r.children[0]),text(r.children[1])]);
+setCrewDesktop({active:true,job:{conversation_id:'c1',roles:{operator:'codex'},scope:'Hesap makinesinde 12x4',
+  last_step:{tool:'desktop_act'},verification:{status:'NOT VERIFIED'},error:'Pencere kapandı'}});
+assert.deepEqual(rows('laneCodexStatus'),[['Görev','Hesap makinesinde 12x4'],['Son adım','Girdi verdi'],
+  ['Kanıt','Doğrulanmadı'],['Hata','Pencere kapandı']]);
+assert.equal(els.laneCodexStatus.hidden,false);
+assert.equal(els.laneAgyStatus.hidden,true);  // the reviewer has no task rows of its own
+setCrewDesktop({active:true,job:{conversation_id:'c1',roles:{operator:'codex'},scope:'x',
+  verification:{status:'OBSERVED UI CRITERION VERIFIED'}}});
+assert.deepEqual(rows('laneCodexStatus'),[['Görev','x'],['Kanıt','Ekranda doğrulandı']]);
+// Without a task the column keeps the latest host outcome of that agent's messages.
+setCrewDesktop({active:false});
+global.agentMessageView=(t,m)=>m.metadata.badge;
+setCrewResults([{id:'1',sender:'antigravity',timestamp:1,metadata:{badge:{tone:'warn',label:'Kanıt yok',state:'s'}}},
+  {id:'2',sender:'gemini',timestamp:2,metadata:{badge:{tone:'ok',label:'Doğrulandı',state:'s'}}},
+  {id:'3',role:'user',sender:'user',timestamp:3,metadata:{badge:{tone:'fail',label:'Başarısız',state:'s'}}}],true);
+assert.deepEqual(rows('laneAgyStatus'),[['Son sonuç','Doğrulandı']]);
+assert.equal(els.laneCodexStatus.hidden,true);
+currentConvId='c2';renderCrew();
+assert.equal(els.laneAgyStatus.hidden,true);  // results belong to their own conversation
+''')
+
     def test_desktop_task_marks_operator_and_reviewer_only_for_this_conversation(self):
         self.run_js(r'''
 const task={active:true,job:{conversation_id:'c1',roles:{operator:'codex'}}};

@@ -60,6 +60,22 @@ assert.equal(view('completed',{natural_task:'job'}),'Yürütme bitti, hedef hen�
 assert.match(view('completed',{permission_level:'project'}),/kanıtı yok/);
 ''')
 
+    def test_each_outcome_gets_a_short_badge_and_plain_chat_gets_none(self):
+        # GPT UI review 8 Nov: who / what / result / evidence at a glance.
+        self.view(r'''
+const badge=(status,meta,text='Bitti')=>{const v=agentMessageView(text,{status,metadata:meta},'short');return [v.tone,v.label];};
+const host={goal_verdict:'VERIFIED',goal_evidence:{level:'HOST POSTCONDITION',checks:[1]}};
+assert.deepEqual(badge('completed',{outcome:host}),['ok','Doğrulandı']);
+assert.deepEqual(badge('completed',{permission_level:'full'}),['warn','Kanıt yok']);
+assert.deepEqual(badge('completed',{permission_level:'project',host_evidence:{source_validation:{status:'FAILED'}}}),['fail','Kontrol başarısız']);
+assert.deepEqual(badge('completed',{natural_task:'j'}),['warn','Doğrulanmadı']);
+assert.deepEqual(badge('failed',{}),['fail','Başarısız']);
+assert.deepEqual(badge('cancelled',{}),['stop','Durduruldu']);
+assert.deepEqual(badge('awaiting_approval',{}),['wait','Onay bekliyor']);
+assert.deepEqual(badge('completed',{}),['','']);
+assert.deepEqual(badge('completed',{},'VERIFIED: her şey tamam'),['','']);  // model text earns nothing
+''')
+
     def test_restart_while_awaiting_approval_says_the_old_permission_is_void(self):
         self.view(r'''
 assert.equal(view('interrupted',{interrupted_while:'awaiting_approval'}),

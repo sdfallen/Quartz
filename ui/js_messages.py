@@ -144,6 +144,10 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     let state = ({failed:'Başarısız', cancelled:'Durduruldu', interrupted:'Önceki oturum kesildi; otomatik sürdürülmedi',
       blocked:'Engellendi; nedeni ayrıntılarda', awaiting_approval:'Onay bekleniyor — görev duraklatıldı',
       partial:PARTIAL})[status] || '';
+    // Badge: a short scannable outcome (tone + word) beside the full sentence.
+    // ok = host-checked, warn = finished without independent evidence.
+    let [tone, label] = ({failed:['fail','Başarısız'], cancelled:['stop','Durduruldu'], interrupted:['stop','Kesildi'],
+      blocked:['fail','Engellendi'], awaiting_approval:['wait','Onay bekliyor'], partial:['warn','Kısmi']})[status] || ['', ''];
     if (status === 'interrupted' && meta.interrupted_while === 'awaiting_approval') {
       state = 'Önceki oturum onay beklerken kesildi; eski izin geçersiz. Devam için görevi yeniden yaz.';
     }
@@ -153,19 +157,25 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       const checks = outcome.goal_evidence?.checks;
       if (outcome.goal_verdict === 'VERIFIED' && outcome.goal_evidence?.level === 'HOST POSTCONDITION' && Array.isArray(checks) && checks.length) {
         state = `Önceden bildirilen ${checks.length} hedef koşulu dosyadan doğrulandı; kullanıcı kabulü ayrı.`;
+        [tone, label] = ['ok', 'Doğrulandı'];
       } else if (outcome.goal_verdict === 'PARTIAL') {
         state = PARTIAL;
+        [tone, label] = ['warn', 'Kısmi'];
       } else if (['project','full'].includes(meta.permission_level)) {
         const check = meta.host_evidence?.source_validation;
         state = check?.status === 'FAILED' ? 'Ajan bitti; kaynak sözdizimi kontrolü başarısız.'
           : check?.status === 'VERIFIED' ? 'Python sözdizimi doğrulandı; çalışma/test başarısı doğrulanmış değil.'
           : 'Ajan yanıtı tamamlandı; bağımsız çalışma/test kanıtı yok.';
+        [tone, label] = check?.status === 'FAILED' ? ['fail', 'Kontrol başarısız']
+          : check?.status === 'VERIFIED' ? ['warn', 'Kısmen doğrulandı'] : ['warn', 'Kanıt yok'];
         if (meta.host_evidence?.historical) state = 'Önceki oturumun kaynak kanıtı: ' + state;
       } else if (meta.natural_task && meta.host_check?.status === 'OBSERVED UI CRITERION VERIFIED'
                  && Array.isArray(meta.host_check.expected_text) && meta.host_check.expected_text.length) {
         state = 'İstenen metin Quartz gözlemiyle ekranda görüldü; kullanıcı kabulü ayrı.';
+        [tone, label] = ['ok', 'Ekranda görüldü'];
       } else if (meta.review_scope || meta.natural_task) {
         state = 'Yürütme bitti, hedef henüz doğrulanmadı.';
+        [tone, label] = ['warn', 'Doğrulanmadı'];
       }
     }
     if (state === PARTIAL && missing.length) state += ': ' + missing.join(', ');
@@ -174,7 +184,8 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       if (meta[key] != null && meta[key] !== '') evidence[key] = meta[key];
     }
     if (Object.keys(evidence).length) details += (details ? '\n\n' : '') + JSON.stringify(evidence, null, 2);
-    return {summary, details, state, open:detailLevel === 'technical'};
+    if (!state) [tone, label] = ['', ''];
+    return {summary, details, state, tone, label, open:detailLevel === 'technical'};
   }
 
   // Typing reveal for agent text that arrives while Quartz is open. History
@@ -286,7 +297,21 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     bubble.classList?.toggle('pending', view.summary === '...');
     bubble.replaceChildren();
     if (view.state) {
-      const state = document.createElement('div'); state.className = 'msg-state'; state.textContent = view.state;
+      const state = document.createElement('div'); state.className = 'msg-state';
+      if (view.label) {
+        // Icon + word + sentence: the outcome never depends on color alone.
+        state.dataset.tone = view.tone;
+        const badge = document.createElement('span'); badge.className = 'msg-badge';
+        const icon = document.createElement('i'); icon.className = 'msg-badge-icon'; icon.setAttribute('aria-hidden', 'true');
+        const word = document.createElement('span'); word.textContent = view.label;
+        badge.append(icon, word); state.append(badge);
+        if (view.state !== view.label) {
+          const note = document.createElement('span'); note.className = 'msg-state-note'; note.textContent = view.state;
+          state.append(note);
+        }
+      } else {
+        state.textContent = view.state;
+      }
       bubble.append(state);
     }
     const body = document.createElement('div');
@@ -609,6 +634,7 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       if (!activeMsgIds.has(key)) revealedLength.delete(key);
     }
     revealSuppressed = replaceAll;  // history appears at once; later arrivals are written out
+    if (typeof setCrewResults === 'function') setCrewResults(messages, replaceAll);
     if (replaceAll) {
       chatEl.innerHTML = '';
       userPinnedToBottom = true;

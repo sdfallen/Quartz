@@ -170,12 +170,78 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
   // and the desktop task status: memory only, never evidence.
   const crewEl = document.getElementById('crew');
   const CREW_LANES = {
-    codex: {col: 'laneColCodex', card: 'laneCodex', state: 'laneCodexState', trail: 'laneCodexTrail'},
-    antigravity: {col: 'laneColAgy', card: 'laneAgy', state: 'laneAgyState', trail: 'laneAgyTrail'},
+    codex: {col: 'laneColCodex', card: 'laneCodex', state: 'laneCodexState', trail: 'laneCodexTrail', status: 'laneCodexStatus'},
+    antigravity: {col: 'laneColAgy', card: 'laneAgy', state: 'laneAgyState', trail: 'laneAgyTrail', status: 'laneAgyStatus'},
   };
   let crewProgress = {};
   let crewTrail = {};  // Last run's steps per agent; kept after the run so the column is not blank.
   let crewDesktop = null;
+  let crewResult = {};  // Latest host outcome badge per agent in this conversation (from message metadata).
+  const CREW_TOOL_LABELS = {desktop_observe: 'Ekranı okudu', desktop_act: 'Girdi verdi', desktop_focus: 'Pencereye odaklandı',
+    desktop_switch: 'Pencere değiştirdi', desktop_launch: 'Uygulama başlattı', jarvis_open_app: 'Uygulama açtı',
+    jarvis_input: 'Klavye/fare girdisi', jarvis_system_info: 'Sistem bilgisi okudu', jarvis_media_web: 'Medya/web işlemi'};
+  function crewEvidenceBadge(verification) {
+    const status = String(verification?.status || 'NOT VERIFIED');
+    if (status === 'OBSERVED UI CRITERION VERIFIED') return ['ok', 'Ekranda doğrulandı'];
+    if (status === 'VERIFIED') return ['ok', 'Doğrulandı'];
+    if (status === 'LIVE OBSERVED') return ['warn', 'Gözlendi, doğrulanmadı'];
+    return ['warn', 'Doğrulanmadı'];
+  }
+  function crewStatusRows(agent) {
+    const job = crewDesktop && crewDesktop.operator === agent ? crewDesktop.job : null;
+    if (job) {
+      const rows = [['Görev', String(job.scope || '').trim().slice(0, 90) || 'Masaüstü görevi']];
+      const tool = job.last_step?.tool;
+      if (tool) rows.push(['Son adım', CREW_TOOL_LABELS[tool] || String(tool)]);
+      rows.push(['Kanıt', crewEvidenceBadge(job.verification)]);
+      if (job.error) rows.push(['Hata', String(job.error).slice(0, 140)]);
+      return rows;
+    }
+    const last = crewResult[agent];
+    return last ? [['Son sonuç', [last.tone, last.label], last.note]] : [];
+  }
+  function renderLaneStatus(agent, lane) {
+    const box = document.getElementById(lane.status);
+    if (!box) return;
+    const rows = crewStatusRows(agent);
+    const key = JSON.stringify(rows);
+    if (box.dataset.key === key) return;
+    box.dataset.key = key;
+    box.replaceChildren(...rows.map(([name, value, note]) => {
+      const row = document.createElement('div'); row.className = 'lane-status-row';
+      const term = document.createElement('dt'); term.textContent = name;
+      const desc = document.createElement('dd');
+      if (Array.isArray(value)) {
+        const badge = document.createElement('span'); badge.className = 'msg-badge'; badge.dataset.tone = value[0];
+        const icon = document.createElement('i'); icon.className = 'msg-badge-icon'; icon.setAttribute('aria-hidden', 'true');
+        const word = document.createElement('span'); word.textContent = value[1];
+        badge.append(icon, word); desc.append(badge);
+        if (note) badge.title = note;
+      } else {
+        desc.textContent = value;
+      }
+      row.append(term, desc);
+      return row;
+    }));
+    box.hidden = rows.length === 0;
+    box.closest?.('.lane-col')?.classList.toggle('has-status', rows.length > 0);
+  }
+  function setCrewResults(messages, replaceAll) {
+    // Claim the conversation first so renderCrew does not wipe what this call stores.
+    if (crewTrailConversation !== currentConvId) { crewTrail = {}; crewResult = {}; crewTrailConversation = currentConvId; }
+    if (replaceAll) crewResult = {};
+    for (const m of messages || []) {
+      if (!m || m.role === 'user' || typeof agentMessageView !== 'function') continue;
+      let agent = String(m.sender || '').toLowerCase();
+      if (agent === 'gemini') agent = 'antigravity';
+      if (!CREW_LANES[agent]) continue;
+      const view = agentMessageView(m.content, m, 'short');
+      const at = Number(m.timestamp || 0);
+      if (view.label && (!crewResult[agent] || at >= crewResult[agent].at))
+        crewResult[agent] = {tone: view.tone, label: view.label, note: view.state, at};
+    }
+    renderCrew();
+  }
   const crewSeg = agent => document.querySelector(`.agent-seg-btn[data-agent="${agent}"]`);
   function renderCrewTrail(lane, steps, live) {
     const list = document.getElementById(lane.trail);
@@ -209,7 +275,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     if (!crewEl) return;
     // Steps belong to the conversation they came from (live exam 8 Nov: a code
     // task's steps stayed in the columns of the next, unrelated conversation).
-    if (crewTrailConversation !== currentConvId) { crewTrail = {}; crewTrailConversation = currentConvId; }
+    if (crewTrailConversation !== currentConvId) { crewTrail = {}; crewResult = {}; crewTrailConversation = currentConvId; }
     const focus = ['codex', 'antigravity', 'collaboration'].find(a => crewSeg(a)?.classList.contains('active')) || 'antigravity';
     const control = document.body.classList.contains('screen-control-active');
     const flow = [];
@@ -228,6 +294,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       const col = document.getElementById(lane.col);
       if (col) { col.dataset.state = view.state; col.dataset.included = card.dataset.included; }
       renderCrewTrail(lane, crewTrail[agent] || [], crewProgress[agent]?.status === 'running');
+      renderLaneStatus(agent, lane);
     }
     const flowText = flow.join(' ');
     crewEl.dataset.focus = focus;
@@ -260,7 +327,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     const job = state && state.active ? state.job : null;
     const operator = job?.roles?.operator;
     if (!job || job.conversation_id !== currentConvId || !CREW_LANES[operator]) crewDesktop = null;
-    else crewDesktop = {operator, observer: operator === 'codex' ? 'antigravity' : 'codex'};
+    else crewDesktop = {operator, observer: operator === 'codex' ? 'antigravity' : 'codex', job};
     renderCrew();
   }
   for (const id of ['laneCodex', 'laneAgy', 'crewCore']) {
