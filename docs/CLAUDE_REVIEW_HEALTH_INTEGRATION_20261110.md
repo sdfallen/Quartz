@@ -44,4 +44,6 @@ sürümü (`git checkout --theirs`). Doğrulama dalında böyle çözüldü.
 
 - Hedefli: `tests.test_environment_health tests.test_chat_environment_health tests.test_environment_health_card
   tests.test_key_sequence` doğrulama dalında OK; kart testleri düzeltme dalında 7 test OK.
-- Tam takım sonucu commit mesajında / teslim raporunda. BUILT ve LIVE değil.
+- Tam takım, doğrulama dalı `ee937b6` (Codex + Gemini + bu düzeltme): `python -B scripts/run_safe_tests.py` →
+  `Ran 1618 tests`, `OK (skipped=14)`, exit 0. Sözdizimi 347 dosya OK, gömülü JS exit 0.
+  (Codex 5c7d36f üzerinde 2 atlama gördü; farkın nedeni incelenmedi.) BUILT ve LIVE değil.
