@@ -33,12 +33,14 @@ class AgentChatService:
         self._closed = False
         self._worker_threads = {}
         self._diagnostics = AsyncSnapshot(self.agent_service.status)
+        from core.chat_environment_health import ChatEnvironmentHealth
+        self._environment_health = ChatEnvironmentHealth()
 
     def _next_sequence(self, conv: dict) -> int:
         messages = conv.get("messages", [])
         return len(messages) + 1
 
-    def status(self) -> dict:
+    def status(self, *, force_health=False) -> dict:
         """Returns current chat status including active conversation, Squad state, models, and agent statuses."""
         with self._lock:
             conv = self.store.get_active()
@@ -83,7 +85,15 @@ class AgentChatService:
                                  'default_effort':selected.get('effort', 'low'),
                                  'efforts':models_catalog[provider]['efforts']}])
 
+            try:
+                project = self.agent_service.projects.get(project_id)
+                project_path = project.get('path') if isinstance(project, dict) else None
+            except Exception:
+                project_path = None
+            health = self._environment_health.read(project_path, conv.get('agent', 'antigravity'),
+                                                    raw_status if isinstance(raw_status, dict) else {}, force_health)
             return {
+                "environment_health": health,
                 "notion_tools": self._notion_tools_payload(conv.get("id") if conv else None),
                 "active_conversation": conv,
                 "preferences": self.store.preferences(),
@@ -170,6 +180,7 @@ class AgentChatService:
             result = self.cancel_active()
         finally:
             self._diagnostics.close()
+            self._environment_health.close()
         return {"status": result["stop_receipt"]["status"],
                 "components": {"chat": result["stop_receipt"]}}
 
