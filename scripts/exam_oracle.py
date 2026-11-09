@@ -151,9 +151,23 @@ def _operator(c, check):
 
 def _no_tool_calls(c, check):
     # No desktop task and no command the agents ran recorded on the turn.
-    return not c.runs and not c.marks.get("command_results") and not any(
-        (m.get("metadata") or {}).get("commands") or
-        (m.get("metadata") or {}).get("command_results") for m in c.messages)
+    if c.runs or c.marks.get("command_results"):
+        return False
+    import ast
+    for message in c.messages:
+        metadata = message.get("metadata") or {}
+        if isinstance(metadata, str):
+            if len(metadata) > 100000:
+                return False
+            try:
+                metadata = ast.literal_eval(metadata)
+            except (ValueError, SyntaxError, RecursionError):
+                return False
+        if not isinstance(metadata, dict):
+            return False
+        if metadata.get("commands") or metadata.get("command_results"):
+            return False
+    return True
 
 
 def _uia(c, check):

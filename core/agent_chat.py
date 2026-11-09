@@ -1322,6 +1322,8 @@ class AgentChatService:
                     "Not: Bu inceleme yalnız konuşmada sağlanan metne dayanır; "
                     "proje dosyaları bağımsız doğrulanmadı.\n\n" + final_content
                 )
+            from core.runtime_evidence import runtime_evidence
+            meta.update(runtime_evidence(run))
             meta.update({
                 "status": "completed",
                 "usage": run.get("usage"),
@@ -1354,6 +1356,8 @@ class AgentChatService:
             if changed:
                 step_meta = dict(meta)
                 step_meta.update({"status": status, "progress": progress})
+                from core.runtime_evidence import runtime_evidence
+                step_meta.update(runtime_evidence(run))
             if not self._publish_run_update(cid, msg_id, content, step_meta, provider='antigravity', session=session):
                 self.agent_service.cancel(run_id)
                 return run, "cancelled"
@@ -1470,6 +1474,8 @@ class AgentChatService:
 
         if status == "completed":
             final_content = run.get("result", "").strip() or "Codex görevi tamamlandı."
+            from core.runtime_evidence import runtime_evidence
+            meta.update(runtime_evidence(run))
             meta.update({
                 "status": "completed",
                 "usage": run.get("usage"),
@@ -1501,6 +1507,8 @@ class AgentChatService:
             if changed:
                 step_meta = dict(meta)
                 step_meta.update({"status": status})
+                from core.runtime_evidence import runtime_evidence
+                step_meta.update(runtime_evidence(run))
             if not self._publish_run_update(cid, msg_id, content, step_meta, provider='codex', session=session):
                 self.agent_service.cancel(run_id)
                 return run, "cancelled"
