@@ -151,8 +151,9 @@ def _operator(c, check):
 
 def _no_tool_calls(c, check):
     # No desktop task and no command the agents ran recorded on the turn.
-    return not c.runs and not any("'commands': [{" in str(m.get("metadata")) or '"commands": [{' in str(m.get("metadata"))
-                                  for m in c.messages)
+    return not c.runs and not c.marks.get("command_results") and not any(
+        (m.get("metadata") or {}).get("commands") or
+        (m.get("metadata") or {}).get("command_results") for m in c.messages)
 
 
 def _uia(c, check):
@@ -275,9 +276,7 @@ def _checkpoint_restores_original(c, check):
 
 
 def _stop_receipt_confirmed(c, check):
-    if c.marks.get("stop_receipt_confirmed") is True:
-        return True
-    return any((m.get("metadata") or {}).get("status") == "cancelled" for m in c.messages if m.get("role") == "assistant")
+    return c.marks.get("stop_receipt_confirmed") is True
 
 
 def _host_test_still_fails(c, check):

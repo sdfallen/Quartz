@@ -1337,7 +1337,8 @@ class NaturalDesktopTask:
                             "status": self.job["verification"]["status"],
                             "expected_text": self.job["verification"]["expected_text"],
                             "next": "Quartz verified the text quoted in the user's request in its own observation. "
-                                    "Do not call more tools: reply to the user in one short Turkish sentence and end your turn."})
+                                    "This verifies only the quoted text. Continue any remaining user requirements. "
+                                    "If none remain, summarize the observed result and end your turn."})
                 return result
         finally:
             with self.changed:
