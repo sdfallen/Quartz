@@ -133,8 +133,12 @@ assert.equal(els.crew.dataset.focus,'antigravity');
 assert.equal(els.laneAgy.attrs['aria-pressed'],'true');assert.equal(els.laneCodex.attrs['aria-pressed'],'false');
 assert.equal(els.laneCodex.dataset.included,'false');
 assert.equal(els.laneColCodex.dataset.included,'false');
+// Idle, the crystal names the selected mode instead of always saying "Birlikte" (live exam 9 Nov).
+assert.equal(els.crewCoreLabel.textContent,'Yalnız Antigravity');assert.equal(els.crewCoreLabel.lang,'en');
+assert.match(els.crewCore.attrs.title,/^Birlikte moduna geç/);
 els.crewCore.click();
 assert.equal(seg.collaboration.clicks,1);assert.equal(els.crew.dataset.focus,'collaboration');
+assert.equal(els.crewCoreLabel.textContent,'Birlikte');assert.equal(els.crewCoreLabel.lang,'tr');assert.match(els.crewCore.attrs.title,/^Birlikte: /);
 assert.equal(els.crewCore.attrs['aria-pressed'],'true');assert.equal(els.laneCodex.dataset.included,'true');
 seg.codex.disabled=true;renderCrew();
 assert.equal(els.laneCodex.disabled,true);assert.equal(els.laneCodexState.textContent,'Bağlı değil');
@@ -155,7 +159,7 @@ assert.equal(els.laneCodexTrail.children.length,3);  // The last run's steps sta
 assert.equal(els.laneCodexTrail.children[2].className,'');  // ...but nothing is marked as happening now.
 currentConvId='c2';renderCrew();
 assert.equal(els.laneCodexTrail.children.length,0);  // another conversation starts with empty columns
-assert.equal(els.laneCodex.dataset.state,'idle');assert.equal(els.crew.dataset.flow,'');assert.equal(els.crewCoreLabel.textContent,'Birlikte');
+assert.equal(els.laneCodex.dataset.state,'idle');assert.equal(els.crew.dataset.flow,'');assert.equal(els.crewCoreLabel.textContent,'Yalnız Antigravity');
 ''')
 
     def test_operator_column_shows_task_last_step_and_evidence_from_host_fields(self):
