@@ -1,6 +1,16 @@
 # Quartz paralel görev ve dosya sahipliği
 
-## AKTİF — 6 Kasım geçici devir: Codex'in işleri Claude'da
+## AKTİF — 9 Kasım üçlü çalışma (Codex + Gemini + Claude)
+
+Kullanıcı kararı (9 Kasım 2026 akşamı): Codex döndü; Quartz'ı üç ajan paralel geliştirir. Hedef ve iş bölümü:
+[THREE_AGENT_WEEK_PLAN_20261109.md](THREE_AGENT_WEEK_PLAN_20261109.md).
+
+- 6 Kasım geçici devri **bitti**: Codex dosyaları, `main` birleştirme ve kullanıcı onaylı kurulum yeniden Codex'te.
+- Codex, Claude'un `0fb2b2e` sonrası üç birleşimini (`826f846`, `095e71c`, `cb962b7`) geriye dönük inceler; öncelik `cb962b7`.
+- Hiçbir ajan kendi üretim kodunu kendisi kabul etmez; her üretim dalı diğer ikisinden birinin incelemesinden sonra birleşir.
+- Gerçek masaüstünde aynı anda tek operatör (varsayılan Claude). GitHub gönderimi yalnız kullanıcı onayıyla.
+
+## TARİHSEL — 6 Kasım geçici devir: Codex'in işleri Claude'da (9 Kasım'da bitti)
 
 Kullanıcı kararı (6 Kasım 2026): Codex yaklaşık üç gün yok; bu sürede Codex'in bütün görevleri ve dosya sahipliği
 Claude'dadır. Buna `main`'e birleştirme ve kullanıcı onaylı paket kurulumu dahildir.
