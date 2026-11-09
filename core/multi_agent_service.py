@@ -174,12 +174,14 @@ class MultiAgentService:
             while runtime.get(run_id)["status"] not in runtime.TERMINAL:
                 time.sleep(0.15)
             terminal_observed = True
+            from core.runtime_evidence import runtime_evidence
+            observed_runtime = runtime_evidence(runtime.get(run_id))
             after = snapshot_workspace_files(project_path)
             changed, warning = changed_workspace_files(project_path, before, after)
             validation = verify_changed_python(project_path, changed, warning=warning)
             with self._lock:
                 receipt = {"files_changed": changed, "evidence_warning": warning,
-                    "source_validation": validation}
+                    "source_validation": validation, **observed_runtime}
                 self._file_changes[run_id] = receipt
             try:
                 self._evidence_store.put(run_id, receipt)

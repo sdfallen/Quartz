@@ -343,11 +343,12 @@ class AgentChatService:
                         or (others[0] if others else None))
             if fallback is None:
                 raise ValueError("Son proje listeden kaldırılamaz.")
-            deleted = (self.store.delete_many(current, fallback_project_id=fallback["id"])
-                       if current else {"deleted_count": 0})
+            with self.store.rollback_on_failure():
+                deleted = (self.store.delete_many(current, fallback_project_id=fallback["id"])
+                           if current else {"deleted_count": 0})
+                registry.remove(project["id"], fallback["id"])
             if self._active_turn and self._active_turn.get("conversation_id") in current:
                 self._active_turn = None
-            registry.remove(project["id"], fallback["id"])
             active = self.store.get_active()
             if (active.get("project_id") or "squad-pilot") == project["id"]:
                 active = self.store.create(title="Yeni Sohbet", agent=active.get("agent", "antigravity"),
@@ -1322,6 +1323,8 @@ class AgentChatService:
                     "Not: Bu inceleme yalnız konuşmada sağlanan metne dayanır; "
                     "proje dosyaları bağımsız doğrulanmadı.\n\n" + final_content
                 )
+            from core.runtime_evidence import runtime_evidence
+            meta.update(runtime_evidence(run))
             meta.update({
                 "status": "completed",
                 "usage": run.get("usage"),
@@ -1354,6 +1357,8 @@ class AgentChatService:
             if changed:
                 step_meta = dict(meta)
                 step_meta.update({"status": status, "progress": progress})
+                from core.runtime_evidence import runtime_evidence
+                step_meta.update(runtime_evidence(run))
             if not self._publish_run_update(cid, msg_id, content, step_meta, provider='antigravity', session=session):
                 self.agent_service.cancel(run_id)
                 return run, "cancelled"
@@ -1470,6 +1475,8 @@ class AgentChatService:
 
         if status == "completed":
             final_content = run.get("result", "").strip() or "Codex görevi tamamlandı."
+            from core.runtime_evidence import runtime_evidence
+            meta.update(runtime_evidence(run))
             meta.update({
                 "status": "completed",
                 "usage": run.get("usage"),
@@ -1501,6 +1508,8 @@ class AgentChatService:
             if changed:
                 step_meta = dict(meta)
                 step_meta.update({"status": status})
+                from core.runtime_evidence import runtime_evidence
+                step_meta.update(runtime_evidence(run))
             if not self._publish_run_update(cid, msg_id, content, step_meta, provider='codex', session=session):
                 self.agent_service.cancel(run_id)
                 return run, "cancelled"

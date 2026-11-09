@@ -116,11 +116,16 @@ class ProjectRegistry:
             project = dict(self._get(project_id))
             if fallback_id == project["id"] or fallback_id not in self._projects:
                 raise ValueError("Kaldırmadan önce geçilecek başka bir proje gerekli.")
-            del self._projects[project["id"]]
-            self._removed.add(project["id"])
-            if self._selected == project["id"]:
-                self._selected = fallback_id
-            self._save()
+            before = (dict(self._projects), set(self._removed), self._selected)
+            try:
+                del self._projects[project["id"]]
+                self._removed.add(project["id"])
+                if self._selected == project["id"]:
+                    self._selected = fallback_id
+                self._save()
+            except Exception:
+                self._projects, self._removed, self._selected = before
+                raise
             return project
 
     def list(self) -> list[dict]:
