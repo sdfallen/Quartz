@@ -80,7 +80,16 @@ SAFE_KEYS = {
     *{chr(c) for c in range(ord("a"), ord("z") + 1)},
     *{str(d) for d in range(10)},
     *{f"f{i}" for i in range(1, 13)},
+    # Calculator/number-pad symbols (single characters, no chords).
+    "+", "-", "*", "/", "=", ".", ",",
 }
+# One desktop_act key action may carry a short space-separated sequence of SAFE_KEYS,
+# e.g. "1 2 3 4 * 5 6 enter". Live exam 9 Nov (exam-desk-03): eight single-key actions,
+# each with its own observation and model turn, took 4 minutes for 1234 x 56.
+MAX_KEY_SEQUENCE = 24
+# pyautogui sends symbols by the US layout; on this PC's Turkish Q keyboard "*" would
+# arrive as another character. Number-pad keys are layout independent.
+NUMPAD_KEYS = {"*": "multiply", "+": "add", "-": "subtract", "/": "divide", ".": "decimal", "=": "enter"}
 
 
 def _uia_operation(method):
@@ -510,14 +519,24 @@ class NativeDesktopBackend:
         elif action in {"key", "hold"}:
             key = args.get("key")
             key = key.strip().lower() if isinstance(key, str) else key  # "Tab" and "tab" are the same key
-            if key not in SAFE_KEYS: raise PermissionError("Key/chord is outside the bounded operator profile")
+            keys = key.split() if action == "key" and isinstance(key, str) else [key]
+            if not keys or len(keys) > MAX_KEY_SEQUENCE or any(k not in SAFE_KEYS for k in keys):
+                raise PermissionError("Key/chord is outside the bounded operator profile")
             with self.controller._desktop() as desktop:
                 win = self.controller._window(desktop, target["handle"])
                 focused = [c for c in [self.controller.focused_control(win)] if c is not None]
                 if any(CRITICAL.search(self.controller._describe(c)["name"]) for c in focused):
                     raise PermissionError("Focused consequential control requires user handoff")
             self._before_input(target)
-            if action == "key": pyautogui.press(key)
+            if action == "key":
+                cancelled = getattr(self, "input_cancelled", None)
+                for index, step in enumerate(keys):
+                    # Stop or a foreground change ends the sequence; remaining keys are never sent.
+                    if callable(cancelled) and cancelled():
+                        raise PermissionError(f"Stopped after {index} of {len(keys)} keys; remaining keys not sent")
+                    if index and not self.is_foreground(target):
+                        raise PermissionError(f"Foreground changed after {index} of {len(keys)} keys; remaining keys not sent")
+                    pyautogui.press(NUMPAD_KEYS.get(step, step))
             else:
                 duration = args.get("seconds", 0.1)
                 if type(duration) not in {int, float} or not 0 < duration <= 1:
