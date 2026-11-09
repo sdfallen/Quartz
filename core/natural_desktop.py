@@ -551,7 +551,7 @@ class NaturalDesktopTask:
                 except (ValueError, OSError, PermissionError): continue
         return found[:24]
 
-    def _context(self, provider, *, windows_snapshot=None):
+    def _context(self, provider, *, windows_snapshot=None, desktop_active=None):
         knowledge = self.application_learning.context() if self.application_learning else []
         if knowledge and all(k['state'] not in {'queued','running'} for k in knowledge):
             self._learning_seen.add(provider)
@@ -566,7 +566,8 @@ class NaturalDesktopTask:
                 "capability_mode":"scoped-mcp", "runtime_filesystem":"read-only",
                 "windows_metadata_only": windows_meta,
                 "project_logs_metadata_only": self._log_candidates(), "approved_logs": list(self.approved_logs),
-                "pending_permission": self.pending, "desktop_active": self.broker.status()["active"],
+                "pending_permission": self.pending,
+                "desktop_active": self.broker.status()["active"] if desktop_active is None else desktop_active,
                 "colleague_messages": messages, "recent_notes": self.notes[-12:],
                 "agents": {p:r.get(rid)["status"] for p,(r,rid) in self.runs.items()},
                 "verification": self.job["verification"], "expires_at": self.job["expires_at"],
@@ -1291,11 +1292,12 @@ class NaturalDesktopTask:
         if tool in {"task_wait", "task_context"}:
             try:
                 wins = self.desktop.windows() if is_op else []
+                desktop_active = self.broker.status()["active"]  # outside the task lock (see status())
                 with self.changed:
                     if self.job is not job or self.stopped.is_set():
                         raise PermissionError("Task stopped or expired")
                     self._provider(token)
-                    return self._context(provider, windows_snapshot=wins)
+                    return self._context(provider, windows_snapshot=wins, desktop_active=desktop_active)
             finally:
                 with self.changed:
                     self._inflight_calls -= 1
@@ -1478,12 +1480,17 @@ class NaturalDesktopTask:
                     self.stop("expired"); break
                 if self.job.get("stalled"):
                     self.stop("blocked: stalled: repeated action"); break
+                # Broker calls stay outside the task lock (see status()).
+                connection = self.connection
+                broker_active = None
+                if connection:
+                    self.broker.renew(connection["token"])
+                    broker_active = self.broker.status()["active"]
                 with self.changed:
-                    if self.connection:
-                        self.broker.renew(self.connection["token"])
                     if self.pending and time.time() >= self.pending["expires_at"]:
                         self.stop("permission expired"); break
-                    if self.connection and not self.broker.status()["active"]:
+                    if (self.connection and self.connection is connection
+                            and broker_active is False and not stopped.is_set()):
                         self.stop("blocked: " + self.broker.stop_reason); break
                     for p, (runtime, rid) in list(self.runs.items()):
                         run = runtime.get(rid)
@@ -1531,11 +1538,16 @@ class NaturalDesktopTask:
             if not self.job: return {"active": False}
             stopping = self.stopped.is_set() and (self._inflight_calls > 0 or not self._cleanup_done.is_set()
                                                   or self.thread is not None and self.thread.is_alive())
-            return {"active": not self.stopped.is_set() or stopping, "stopping": stopping, "job": dict(self.job), "pending": self.pending,
-                    "squad": dict(self.squad_info) if self.squad_info else None,
-                    "warband":self.warband.context() if self.warband else None,
-                    "operator": {"session": self.broker.status()},
-                    "runs": {p: {k: r.get(rid).get(k) for k in ("status", "pid", "model", "effort")} for p, (r, rid) in self.runs.items()}}
+            out = {"active": not self.stopped.is_set() or stopping, "stopping": stopping, "job": dict(self.job), "pending": self.pending,
+                   "squad": dict(self.squad_info) if self.squad_info else None,
+                   "warband":self.warband.context() if self.warband else None}
+            runs = list(self.runs.items())
+        # An in-flight input holds the broker lock for the whole action. Reading the
+        # broker while holding the task lock made Stop wait for that action to end
+        # (live exam 9 Nov, exam-desk-09: 1.72 s from the HUD click to Stop).
+        out["operator"] = {"session": self.broker.status()}
+        out["runs"] = {p: {k: r.get(rid).get(k) for k in ("status", "pid", "model", "effort")} for p, (r, rid) in runs}
+        return out
 
     def stop(self, reason="cancelled", *, expected_job=None):
         with self.changed:
