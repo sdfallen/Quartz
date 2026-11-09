@@ -76,6 +76,24 @@ assert.deepEqual(badge('completed',{}),['','']);
 assert.deepEqual(badge('completed',{},'VERIFIED: her şey tamam'),['','']);  // model text earns nothing
 ''')
 
+    def test_desktop_task_progress_lines_get_no_outcome_badge(self):
+        # Live exam 9 Nov: "Görev hazırlanıyor" carried "Yürütme bitti, hedef henüz doğrulanmadı".
+        self.view(r'''
+const badge=(status,meta,text='Bitti')=>{const v=agentMessageView(text,{status,metadata:meta},'short');return [v.tone,v.label,v.state];};
+for (const s of ['starting','running','waiting_for_inline_permission'])
+  assert.deepEqual(badge('completed',{natural_task:'j',task_status:s}),['','','']);
+assert.deepEqual(badge('completed',{natural_task:'j',task_status:'cancelled'}).slice(0,2),['stop','Durduruldu']);
+assert.deepEqual(badge('completed',{natural_task:'j',task_status:'failed'}).slice(0,2),['fail','Başarısız']);
+assert.deepEqual(badge('completed',{natural_task:'j',task_status:'expired'}).slice(0,2),['fail','Başarısız']);
+assert.deepEqual(badge('completed',{natural_task:'j',task_status:'blocked: stalled'}).slice(0,2),['fail','Engellendi']);
+assert.deepEqual(badge('completed',{natural_task:'j',task_status:'permission expired'}).slice(0,2),['fail','Engellendi']);
+assert.deepEqual(badge('completed',{natural_task:'j',task_status:'completed'}).slice(0,2),['warn','Doğrulanmadı']);
+const ok={status:'OBSERVED UI CRITERION VERIFIED',expected_text:['deneme']};
+assert.deepEqual(badge('completed',{natural_task:'j',task_status:'completed',host_check:ok}).slice(0,2),['ok','Ekranda görüldü']);
+// task_status only counts on a desktop task's own lines
+assert.deepEqual(badge('completed',{task_status:'running'}).slice(0,2),['','']);
+''')
+
     def test_restart_while_awaiting_approval_says_the_old_permission_is_void(self):
         self.view(r'''
 assert.equal(view('interrupted',{interrupted_while:'awaiting_approval'}),

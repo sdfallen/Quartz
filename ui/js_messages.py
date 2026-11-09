@@ -138,7 +138,17 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     const summary = match ? text.slice(0, match.index).trimEnd() : text;
     let details = match ? text.slice(match.index + match[0].length) : '';
     // Execution, evidence and goal are separate host fields; model text never earns a badge.
-    const status = msg?.status || meta.status;
+    let status = msg?.status || meta.status;
+    // A desktop task posts progress lines while it runs. Their chat status only says the
+    // line was delivered; the task's own state decides the badge (live exam 9 Nov:
+    // "Görev hazırlanıyor" showed "Yürütme bitti, hedef henüz doğrulanmadı").
+    const taskStatus = meta.natural_task ? String(meta.task_status || '') : '';
+    const inProgress = ['starting', 'running', 'waiting_for_inline_permission'].includes(taskStatus);
+    if (taskStatus && !inProgress && status === 'completed') {
+      status = taskStatus === 'expired' ? 'failed'
+        : /^(blocked|permission)/.test(taskStatus) ? 'blocked'
+        : ['failed', 'cancelled', 'partial'].includes(taskStatus) ? taskStatus : status;
+    }
     const outcome = meta.outcome || {};
     const PARTIAL = 'Kısmi — istenen ajanlardan biri tamamlayamadı';
     let state = ({failed:'Başarısız', cancelled:'Durduruldu', interrupted:'Önceki oturum kesildi; otomatik sürdürülmedi',
@@ -184,6 +194,7 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       if (meta[key] != null && meta[key] !== '') evidence[key] = meta[key];
     }
     if (Object.keys(evidence).length) details += (details ? '\n\n' : '') + JSON.stringify(evidence, null, 2);
+    if (inProgress) state = '';
     if (!state) [tone, label] = ['', ''];
     return {summary, details, state, tone, label, open:detailLevel === 'technical'};
   }
