@@ -399,6 +399,10 @@ class IPCServer:
         if action == "chat_status":
             return {"status": "ok", "data": self._get_agent_chat().status()}
 
+        if action == "environment_health":
+            force = (req.get('data') or {}).get('force') is True
+            return {"status": "ok", "data": self._get_agent_chat().status(force_health=force)['environment_health']}
+
         if action == 'chat_prepare_resume':
             data = req.get('data') or {}
             return {'status':'ok', 'data':self._get_agent_chat().prepare_resume(data.get('conversation_id'), data.get('message_id'))}

@@ -205,6 +205,14 @@ SHELL_MARKUP = r"""
     </div>
 
           <div class="dock">
+            <section class="env-health" id="envHealth" data-status="ok" aria-label="Ortam sağlık kontrolü" hidden>
+              <div class="env-health-head">
+                <span class="msg-badge" id="envHealthBadge" data-tone="warn"><i class="msg-badge-icon" aria-hidden="true"></i><span id="envHealthTitle" role="status">Ortamda uyarı var</span></span>
+                <button type="button" class="env-health-btn" id="envHealthToggle" aria-expanded="false" aria-controls="envHealthList">Ayrıntılar</button>
+                <button type="button" class="env-health-btn" id="envHealthRecheck">Yeniden kontrol et</button>
+              </div>
+              <ul class="env-health-list" id="envHealthList" hidden></ul>
+            </section>
             <div class="thinking-row" id="thinkingRow">
         <div class="thinking-dots" aria-hidden="true"><div class="d"></div><div class="d"></div><div class="d"></div></div>
         <span id="thinkingText">işleniyor...</span>

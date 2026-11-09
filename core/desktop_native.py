@@ -522,20 +522,28 @@ class NativeDesktopBackend:
             keys = key.split() if action == "key" and isinstance(key, str) else [key]
             if not keys or len(keys) > MAX_KEY_SEQUENCE or any(k not in SAFE_KEYS for k in keys):
                 raise PermissionError("Key/chord is outside the bounded operator profile")
-            with self.controller._desktop() as desktop:
-                win = self.controller._window(desktop, target["handle"])
-                focused = [c for c in [self.controller.focused_control(win)] if c is not None]
-                if any(CRITICAL.search(self.controller._describe(c)["name"]) for c in focused):
-                    raise PermissionError("Focused consequential control requires user handoff")
-            self._before_input(target)
+            def guard(sent):
+                # Every key gets the same checks a single key gets: a key such as Tab can move
+                # focus onto Pay/Delete/Send, and the next key must not press it (Codex review
+                # 9 Nov, IR-KEY-SEQUENCE-CRITICAL-01).
+                with self.controller._desktop() as desktop:
+                    win = self.controller._window(desktop, target["handle"])
+                    focused = [c for c in [self.controller.focused_control(win)] if c is not None]
+                    if any(CRITICAL.search(self.controller._describe(c)["name"]) for c in focused):
+                        raise PermissionError("Focused consequential control requires user handoff"
+                                              + (f"; stopped after {sent} of {len(keys)} keys" if sent else ""))
+                self._before_input(target)
+            guard(0)
             if action == "key":
                 cancelled = getattr(self, "input_cancelled", None)
                 for index, step in enumerate(keys):
                     # Stop or a foreground change ends the sequence; remaining keys are never sent.
                     if callable(cancelled) and cancelled():
                         raise PermissionError(f"Stopped after {index} of {len(keys)} keys; remaining keys not sent")
-                    if index and not self.is_foreground(target):
-                        raise PermissionError(f"Foreground changed after {index} of {len(keys)} keys; remaining keys not sent")
+                    if index:
+                        if not self.is_foreground(target):
+                            raise PermissionError(f"Foreground changed after {index} of {len(keys)} keys; remaining keys not sent")
+                        guard(index)
                     pyautogui.press(NUMPAD_KEYS.get(step, step))
             else:
                 duration = args.get("seconds", 0.1)
