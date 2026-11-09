@@ -148,7 +148,8 @@ assert.match(els.crewCore.attrs.title,/^Birlikte moduna geç/);
 seg.collaboration.click();renderCrew();
 seg.codex.disabled=true;renderCrew();
 assert.equal(els.laneCodex.disabled,true);assert.equal(els.laneCodexState.textContent,'Bağlı değil');
-els.laneCodex.click();assert.equal(seg.codex.clicks,0);  // A disconnected agent is never chosen.
+const clicksBeforeDisabled = seg.codex.clicks;
+els.laneCodex.click();assert.equal(seg.codex.clicks,clicksBeforeDisabled);  // A disconnected agent is never chosen.
 ''')
 
     def test_working_agent_lights_its_lane_and_rail_and_clears_when_done(self):
