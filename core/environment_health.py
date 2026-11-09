@@ -5,10 +5,11 @@ Acceptance gate 1 of docs/THREE_AGENT_WEEK_PLAN_20261109.md.
 
 Rules:
 - Read-only: never modifies the environment, PATH, user settings, or project files.
-- Bounded budget: each subprocess has <= 2.0s timeout; total budget <= 3.0s; no network calls.
+- Bounded budget: total budget <= 3.0s (`deadline = time.monotonic() + 3.0`); each subprocess
+  timeout is capped by `min(2.0, remaining)`; no network calls; no runtime CLI probes on default path.
 - Bounded texts: summary_tr <= 120 chars, fix_tr <= 160 chars, detail <= 500 chars.
 - No secrets, tokens, account names, or full environment dumps in output fields.
-- 60s cache keyed by normalized (project_path, mode, write, desktop, squad/agents snapshot);
+- 60s cache keyed by normalized (project_path, mode, write, desktop, squad/agents status fields);
   force=True bypasses the cache.
 """
 
@@ -26,6 +27,7 @@ import time
 
 
 CACHE_TTL_SECONDS = 60.0
+TOTAL_BUDGET_SECONDS = 3.0
 SUBPROCESS_TIMEOUT_SECONDS = 1.5
 MAX_SUMMARY_LEN = 120
 MAX_FIX_LEN = 160
@@ -73,6 +75,20 @@ def _make_check(
     }
 
 
+def _budget_exceeded_check(check_id: str, extra_evidence: dict | None = None) -> dict:
+    ev = {"budget_exceeded": True, "elapsed_ms": 0.0}
+    if extra_evidence:
+        ev.update(extra_evidence)
+    return _make_check(
+        check_id,
+        "unknown",
+        "Kontrol süre bütçesini aştı.",
+        "'Yeniden kontrol et' düğmesiyle tekrar deneyin.",
+        "Toplam 3 sn kontrol bütçesi doldu.",
+        ev,
+    )
+
+
 def _worst_status(checks: list[dict]) -> str:
     statuses = {c.get("status") for c in checks}
     if "blocked" in statuses:
@@ -110,7 +126,50 @@ def _is_windows_store_alias(path_str: str | None) -> bool:
     return "\\microsoft\\windowsapps\\" in norm or "pythonsoftwarefoundation.python." in norm
 
 
-def _run_subprocess(cmd: list[str], *, cwd: str | None = None, env: dict | None = None, timeout: float = SUBPROCESS_TIMEOUT_SECONDS, runner=None) -> dict:
+def _probe_environment(base_env: dict | None = None) -> dict:
+    """Build a key-free environment with Quartz's managed PATH order."""
+    env = dict(base_env) if base_env is not None else os.environ.copy()
+    if base_env is None:
+        try:
+            from core.cli_installer import managed_root
+            mroot = managed_root()
+            env["PATH"] = os.pathsep.join([str(mroot / "node"), str(mroot), env.get("PATH", "")])
+        except Exception:
+            pass
+    for key in list(env.keys()):
+        upper = key.upper()
+        if any(tok in upper for tok in ("API_KEY", "SECRET", "TOKEN", "PASSWORD")):
+            env.pop(key, None)
+    return env
+
+
+def _remaining_seconds(deadline: float | None) -> float:
+    if deadline is None:
+        return SUBPROCESS_TIMEOUT_SECONDS
+    return deadline - time.monotonic()
+
+
+def _run_subprocess(
+    cmd: list[str],
+    *,
+    cwd: str | None = None,
+    env: dict | None = None,
+    timeout: float = SUBPROCESS_TIMEOUT_SECONDS,
+    deadline: float | None = None,
+    runner=None,
+) -> dict:
+    remaining = _remaining_seconds(deadline)
+    if remaining <= 0.0:
+        return {
+            "ok": False,
+            "exit_code": None,
+            "stdout": "",
+            "stderr": "Kontrol süre bütçesini aştı.",
+            "elapsed_ms": 0.0,
+            "timed_out": True,
+            "budget_exceeded": True,
+        }
+    effective_timeout = min(2.0, float(timeout), remaining)
     run_fn = runner or subprocess.run
     t0 = time.monotonic()
     try:
@@ -123,11 +182,21 @@ def _run_subprocess(cmd: list[str], *, cwd: str | None = None, env: dict | None 
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=min(2.0, max(0.1, float(timeout))),
+            timeout=effective_timeout,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             check=False,
         )
         elapsed_ms = round((time.monotonic() - t0) * 1000.0, 1)
+        if deadline is not None and time.monotonic() > deadline:
+            return {
+                "ok": False,
+                "exit_code": completed.returncode,
+                "stdout": str(completed.stdout or "").strip(),
+                "stderr": "Kontrol süre bütçesini aştı.",
+                "elapsed_ms": elapsed_ms,
+                "timed_out": True,
+                "budget_exceeded": True,
+            }
         return {
             "ok": completed.returncode == 0,
             "exit_code": int(completed.returncode),
@@ -135,16 +204,19 @@ def _run_subprocess(cmd: list[str], *, cwd: str | None = None, env: dict | None 
             "stderr": str(completed.stderr or "").strip(),
             "elapsed_ms": elapsed_ms,
             "timed_out": False,
+            "budget_exceeded": False,
         }
     except subprocess.TimeoutExpired:
         elapsed_ms = round((time.monotonic() - t0) * 1000.0, 1)
+        budget_hit = deadline is not None and time.monotonic() >= deadline
         return {
             "ok": False,
             "exit_code": None,
             "stdout": "",
-            "stderr": "Alt süreç zaman aşımına uğradı.",
+            "stderr": "Kontrol süre bütçesini aştı." if budget_hit else "Alt süreç zaman aşımına uğradı.",
             "elapsed_ms": elapsed_ms,
             "timed_out": True,
+            "budget_exceeded": budget_hit,
         }
     except OSError as exc:
         elapsed_ms = round((time.monotonic() - t0) * 1000.0, 1)
@@ -155,10 +227,13 @@ def _run_subprocess(cmd: list[str], *, cwd: str | None = None, env: dict | None 
             "stderr": str(exc),
             "elapsed_ms": elapsed_ms,
             "timed_out": False,
+            "budget_exceeded": False,
         }
 
 
-def _check_project_folder(project_path: str | Path | None) -> tuple[dict, Path | None]:
+def _check_project_folder(project_path: str | Path | None, *, deadline: float | None = None) -> tuple[dict, Path | None]:
+    if _remaining_seconds(deadline) <= 0.0:
+        return _budget_exceeded_check("project_folder"), None
     t0 = time.monotonic()
     raw = str(project_path or "").strip()
     if not raw:
@@ -179,7 +254,6 @@ def _check_project_folder(project_path: str | Path | None) -> tuple[dict, Path |
         exists = resolved.exists()
         is_dir = resolved.is_dir()
         readable = False
-        detail = str(resolved)
         if exists and is_dir:
             with os.scandir(resolved) as it:
                 next(it, None)
@@ -223,7 +297,15 @@ def _check_project_folder(project_path: str | Path | None) -> tuple[dict, Path |
         )
 
 
-def _check_python(env: dict | None = None, *, runner=None, which_fn=None) -> dict:
+def _check_python(
+    env: dict | None = None,
+    *,
+    deadline: float | None = None,
+    runner=None,
+    which_fn=None,
+) -> dict:
+    if _remaining_seconds(deadline) <= 0.0:
+        return _budget_exceeded_check("python")
     path_env = (env or os.environ).get("PATH")
     resolve_which = which_fn or (lambda name: shutil.which(name, path=path_env))
     which_python = resolve_which("python")
@@ -231,8 +313,11 @@ def _check_python(env: dict | None = None, *, runner=None, which_fn=None) -> dic
     res = _run_subprocess(
         [python_cmd, "-c", "import sys; print(sys.executable); print(sys.version.split()[0])"],
         env=env,
+        deadline=deadline,
         runner=runner,
     )
+    if res.get("budget_exceeded"):
+        return _budget_exceeded_check("python", {"elapsed_ms": res["elapsed_ms"]})
     lines = [line.strip() for line in res["stdout"].splitlines() if line.strip()]
     exe_out = lines[0] if lines else (which_python or "")
     ver_out = lines[1] if len(lines) > 1 else ""
@@ -283,11 +368,23 @@ def _check_python(env: dict | None = None, *, runner=None, which_fn=None) -> dic
     )
 
 
-def _check_git(project_dir: Path | None, *, write: bool = False, env: dict | None = None, runner=None, which_fn=None) -> dict:
+def _check_git(
+    project_dir: Path | None,
+    *,
+    write: bool = False,
+    env: dict | None = None,
+    deadline: float | None = None,
+    runner=None,
+    which_fn=None,
+) -> dict:
+    if _remaining_seconds(deadline) <= 0.0:
+        return _budget_exceeded_check("git")
     path_env = (env or os.environ).get("PATH")
     resolve_which = which_fn or (lambda name: shutil.which(name, path=path_env))
     git_exe = resolve_which("git")
-    ver_res = _run_subprocess(["git", "--version"], env=env, runner=runner)
+    ver_res = _run_subprocess(["git", "--version"], env=env, deadline=deadline, runner=runner)
+    if ver_res.get("budget_exceeded"):
+        return _budget_exceeded_check("git", {"elapsed_ms": ver_res["elapsed_ms"]})
     if not ver_res["ok"]:
         status = "blocked" if write else "warn"
         summary = (
@@ -325,12 +422,17 @@ def _check_git(project_dir: Path | None, *, write: bool = False, env: dict | Non
                 "elapsed_ms": ver_res["elapsed_ms"],
             },
         )
+    if _remaining_seconds(deadline) <= 0.0:
+        return _budget_exceeded_check("git", {"elapsed_ms": ver_res["elapsed_ms"]})
     repo_res = _run_subprocess(
         ["git", "-C", str(project_dir), "rev-parse", "--is-inside-work-tree"],
         env=env,
+        deadline=deadline,
         runner=runner,
     )
     total_ms = round(ver_res["elapsed_ms"] + repo_res["elapsed_ms"], 1)
+    if repo_res.get("budget_exceeded"):
+        return _budget_exceeded_check("git", {"elapsed_ms": total_ms})
     is_repo = repo_res["ok"] and repo_res["stdout"].strip().lower() == "true"
     evidence = {
         "executable": git_exe or "git",
@@ -359,17 +461,41 @@ def _check_git(project_dir: Path | None, *, write: bool = False, env: dict | Non
     )
 
 
-def _probe_squad_fallback(project_dir: Path | None) -> dict:
+def _probe_squad_fallback(
+    project_dir: Path | None,
+    *,
+    env: dict | None = None,
+    deadline: float | None = None,
+    runner=None,
+) -> dict:
     if project_dir is None:
         return {"installed": False, "initialized": False, "connected": False, "error": "Proje klasörü yok."}
+    if _remaining_seconds(deadline) <= 0.0:
+        return {"budget_exceeded": True}
     try:
         from core.squad_adapter import SquadAdapter
-        adapter = SquadAdapter(project_dir, timeout=2)
-        st = adapter.status()
-        connected = bool(st.get("installed")) and bool(st.get("initialized")) and not st.get("error")
-        return {**st, "connected": connected}
+        exe = SquadAdapter._find_executable()
     except Exception as exc:
         return {"installed": False, "initialized": False, "connected": False, "error": str(exc)}
+    squad_root = project_dir / ".squad"
+    initialized = (squad_root / "messages.db").is_file() or (
+        (squad_root / "roles").is_dir() and (squad_root / "teams").is_dir()
+    )
+    res = _run_subprocess([exe, "--version"], env=env, deadline=deadline, runner=runner)
+    if res.get("budget_exceeded"):
+        return {"budget_exceeded": True, "elapsed_ms": res["elapsed_ms"]}
+    installed = bool(res["ok"])
+    err = "" if installed else (res["stderr"] or "Squad CLI başlatılamadı.")
+    return {
+        "installed": installed,
+        "version": res["stdout"],
+        "executable": exe,
+        "workspace": str(project_dir),
+        "initialized": initialized,
+        "database": str(squad_root / "messages.db"),
+        "connected": installed and initialized and not err,
+        "error": err,
+    }
 
 
 def _check_squad(
@@ -378,10 +504,21 @@ def _check_squad(
     mode: str,
     desktop: bool,
     squad_info: dict | None,
+    env: dict | None = None,
+    deadline: float | None = None,
+    runner=None,
 ) -> dict:
+    if _remaining_seconds(deadline) <= 0.0:
+        return _budget_exceeded_check("squad")
     t0 = time.monotonic()
-    info = dict(squad_info) if isinstance(squad_info, dict) else _probe_squad_fallback(project_dir)
+    info = (
+        dict(squad_info)
+        if isinstance(squad_info, dict)
+        else _probe_squad_fallback(project_dir, env=env, deadline=deadline, runner=runner)
+    )
     elapsed_ms = round((time.monotonic() - t0) * 1000.0, 1)
+    if info.get("budget_exceeded"):
+        return _budget_exceeded_check("squad", {"elapsed_ms": elapsed_ms})
     squad_mode = str(info.get("mode") or "project")
     installed = bool(info.get("installed", True if info.get("connected") or info.get("ready") else False))
     initialized = bool(info.get("initialized", True if info.get("connected") else False))
@@ -441,25 +578,32 @@ def _extract_agent_diag(provider: str, agents: dict | None) -> dict | None:
     return None
 
 
-def _probe_agent_fallback(provider: str) -> dict:
-    try:
-        if provider == "codex":
-            from core.codex_runtime import CodexRuntime
-            return CodexRuntime().probe()
-        from core.antigravity_runtime import AntigravityRuntime
-        return AntigravityRuntime().probe()
-    except Exception as exc:
-        return {"installed": False, "authenticated": False, "ready": False, "error": str(exc)}
-
-
-def _check_cli_agent(provider: str, *, selected: bool, agents: dict | None) -> dict:
+def _check_cli_agent(
+    provider: str,
+    *,
+    selected: bool,
+    agents: dict | None,
+    deadline: float | None = None,
+) -> dict:
     check_id = f"{provider}_cli"
     label = "Codex CLI" if provider == "codex" else "Antigravity CLI"
+    if _remaining_seconds(deadline) <= 0.0:
+        return _budget_exceeded_check(check_id, {"selected": selected})
     t0 = time.monotonic()
     info = _extract_agent_diag(provider, agents)
-    if info is None:
-        info = _probe_agent_fallback(provider)
     elapsed_ms = round((time.monotonic() - t0) * 1000.0, 1)
+
+    # P2: Never run CodexRuntime().probe() or AntigravityRuntime().probe() on the default path.
+    # Callers pass existing diagnostics from chat_status / raw_status; if absent, report unknown.
+    if info is None:
+        return _make_check(
+            check_id,
+            "unknown",
+            f"{label} durumu henüz okunmadı.",
+            "Durum yoklaması tamamlanınca 'Yeniden kontrol et' düğmesine basın.",
+            "Tanılama verisi (agents) henüz sağlanmadı.",
+            {"selected": selected, "ready": None, "elapsed_ms": elapsed_ms},
+        )
 
     if not info and not selected:
         return _make_check(
@@ -506,9 +650,7 @@ def _check_cli_agent(provider: str, *, selected: bool, agents: dict | None) -> d
     status = "blocked" if selected else "warn"
     if not installed:
         summary = f"{label} kurulu değil." if selected else f"{label} kurulu değil (bu görevde seçili değil)."
-        fix = (
-            f"Quartz kurulum ekranından veya terminalden {label} kurulumunu tamamlayın."
-        )
+        fix = f"Quartz kurulum ekranından veya terminalden {label} kurulumunu tamamlayın."
     elif not authenticated:
         summary = (
             f"{label} oturumu açık değil."
@@ -527,6 +669,33 @@ def _check_cli_agent(provider: str, *, selected: bool, agents: dict | None) -> d
     return _make_check(check_id, status, summary, fix, detail, evidence)
 
 
+def _agent_status_tuple(provider: str, agents: dict | None) -> tuple | None:
+    diag = _extract_agent_diag(provider, agents)
+    if diag is None:
+        return None
+    return (
+        bool(diag.get("installed")),
+        bool(diag.get("authenticated", diag.get("ready"))),
+        bool(diag.get("ready")),
+        bool(diag.get("checking")),
+        str(diag.get("error") or "").strip(),
+    )
+
+
+def _squad_status_tuple(squad: dict | None) -> tuple | None:
+    if not isinstance(squad, dict):
+        return None
+    return (
+        str(squad.get("mode") or "project"),
+        bool(squad.get("installed")),
+        bool(squad.get("initialized")),
+        bool(squad.get("connected")),
+        bool(squad.get("ready")),
+        bool(squad.get("checking")),
+        str(squad.get("error") or "").strip(),
+    )
+
+
 def _cache_signature(
     project_path: str,
     mode: str,
@@ -536,21 +705,14 @@ def _cache_signature(
     squad: dict | None,
     path_value: str,
 ) -> tuple:
-    try:
-        agents_sig = json.dumps(agents or {}, sort_keys=True, default=str)
-    except Exception:
-        agents_sig = str(agents)
-    try:
-        squad_sig = json.dumps(squad or {}, sort_keys=True, default=str)
-    except Exception:
-        squad_sig = str(squad)
     return (
         os.path.normcase(str(project_path or "")),
         mode,
         bool(write),
         bool(desktop),
-        agents_sig,
-        squad_sig,
+        _agent_status_tuple("codex", agents),
+        _agent_status_tuple("antigravity", agents),
+        _squad_status_tuple(squad),
         path_value,
     )
 
@@ -570,6 +732,7 @@ def check(
     write: bool = False,
     desktop: bool = False,
     force: bool = False,
+    budget_seconds: float = TOTAL_BUDGET_SECONDS,
     env: dict | None = None,
     runner=None,
     which_fn=None,
@@ -583,13 +746,7 @@ def check(
     if resolved_squad is None and isinstance(agents, dict) and isinstance(agents.get("squad"), dict):
         resolved_squad = agents["squad"]
 
-    effective_env = env
-    if effective_env is None:
-        try:
-            from core.cli_installer import cli_environment
-            effective_env = cli_environment()
-        except Exception:
-            effective_env = os.environ.copy()
+    effective_env = _probe_environment(env)
 
     raw_project = str(project_path or "").strip()
     cache_key = _cache_signature(
@@ -599,7 +756,7 @@ def check(
         desktop,
         agents,
         resolved_squad,
-        str((effective_env or os.environ).get("PATH") or ""),
+        str(effective_env.get("PATH") or ""),
     )
     now_mono = time.monotonic()
     if not force:
@@ -608,17 +765,39 @@ def check(
             if cached is not None and (now_mono - cached[0]) < CACHE_TTL_SECONDS:
                 return deepcopy(cached[1])
 
-    folder_check, resolved_dir = _check_project_folder(project_path)
-    python_check = _check_python(effective_env, runner=runner, which_fn=which_fn)
-    git_check = _check_git(resolved_dir, write=bool(write), env=effective_env, runner=runner, which_fn=which_fn)
+    deadline = time.monotonic() + min(TOTAL_BUDGET_SECONDS, max(0.05, float(budget_seconds)))
+
+    folder_check, resolved_dir = _check_project_folder(project_path, deadline=deadline)
+    python_check = _check_python(effective_env, deadline=deadline, runner=runner, which_fn=which_fn)
+    git_check = _check_git(
+        resolved_dir,
+        write=bool(write),
+        env=effective_env,
+        deadline=deadline,
+        runner=runner,
+        which_fn=which_fn,
+    )
     squad_check = _check_squad(
         resolved_dir,
         mode=norm_mode,
         desktop=bool(desktop),
         squad_info=resolved_squad,
+        env=effective_env,
+        deadline=deadline,
+        runner=runner,
     )
-    codex_check = _check_cli_agent("codex", selected=("codex" in selected), agents=agents)
-    agy_check = _check_cli_agent("antigravity", selected=("antigravity" in selected), agents=agents)
+    codex_check = _check_cli_agent(
+        "codex",
+        selected=("codex" in selected),
+        agents=agents,
+        deadline=deadline,
+    )
+    agy_check = _check_cli_agent(
+        "antigravity",
+        selected=("antigravity" in selected),
+        agents=agents,
+        deadline=deadline,
+    )
 
     checks = [
         python_check,

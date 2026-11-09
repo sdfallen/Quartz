@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -258,6 +259,104 @@ class EnvironmentHealthContractTests(unittest.TestCase):
         by_id = self._by_id(res)
         self.assertEqual(by_id["python"]["status"], "warn")
         self.assertEqual(by_id["git"]["status"], "warn")
+
+    def test_no_agents_passed_never_probes_runtimes_and_returns_unknown(self):
+        py_exe = r"C:\Users\LENAVO\AppData\Local\Programs\Python\Python313\python.exe"
+        runner, calls = _fake_runner(python_out=f"{py_exe}\n3.13.17\n")
+        which = lambda name: py_exe if name == "python" else (r"C:\Program Files\Git\cmd\git.exe" if name == "git" else None)
+
+        with patch("core.codex_runtime.CodexRuntime.probe", side_effect=AssertionError("CodexRuntime.probe must not be called")), patch(
+            "core.antigravity_runtime.AntigravityRuntime.probe",
+            side_effect=AssertionError("AntigravityRuntime.probe must not be called"),
+        ):
+            res = environment_health.check(
+                self.root,
+                mode="collaboration",
+                agents=None,
+                squad=None,
+                runner=runner,
+                which_fn=which,
+                force=True,
+            )
+
+        by_id = self._by_id(res)
+        self.assertEqual(by_id["codex_cli"]["status"], "unknown")
+        self.assertEqual(by_id["antigravity_cli"]["status"], "unknown")
+        self.assertIsNone(by_id["codex_cli"]["evidence"].get("ready"))
+        self.assertIsNone(by_id["antigravity_cli"]["evidence"].get("ready"))
+        self.assertIn("henüz okunmadı", by_id["codex_cli"]["summary_tr"])
+        self.assertIn("henüz okunmadı", by_id["antigravity_cli"]["summary_tr"])
+        self.assertEqual(res["status"], "blocked")  # squad is missing in collaboration mode -> blocked
+        # None of the subprocess calls may be codex or agy probes.
+        for cmd in calls:
+            self.assertNotIn(Path(cmd[0]).stem.lower(), {"codex", "antigravity", "agy"})
+
+    def test_five_second_sleeping_fallback_is_capped_by_total_three_second_budget(self):
+        def slow_five_second_runner(cmd, **kwargs):
+            timeout = float(kwargs.get("timeout", 2.0))
+            if timeout < 5.0:
+                time.sleep(min(timeout, 0.35))
+                raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
+            time.sleep(5.0)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        t0 = time.monotonic()
+        res = environment_health.check(
+            self.root,
+            mode="codex",
+            agents=None,
+            squad=None,
+            force=True,
+            budget_seconds=0.5,
+            runner=slow_five_second_runner,
+            which_fn=lambda name: f"C:\\fake\\{name}.exe",
+        )
+        elapsed = time.monotonic() - t0
+        self.assertLessEqual(elapsed, 3.0)
+
+        by_id = self._by_id(res)
+        # Once the total budget is exhausted, remaining checks must become unknown with budget_exceeded=True.
+        budget_exceeded_ids = [
+            cid
+            for cid, item in by_id.items()
+            if item["status"] == "unknown" and item["evidence"].get("budget_exceeded") is True
+        ]
+        self.assertGreaterEqual(len(budget_exceeded_ids), 1, by_id)
+        for cid in budget_exceeded_ids:
+            self.assertIn("Kontrol süre bütçesini aştı", by_id[cid]["summary_tr"])
+
+    def test_cache_ignores_volatile_timestamps_and_probe_env_strips_secrets(self):
+        py_exe = r"C:\Users\LENAVO\AppData\Local\Programs\Python\Python313\python.exe"
+        runner, calls = _fake_runner(python_out=f"{py_exe}\n3.13.17\n")
+        which = lambda name: py_exe
+
+        agents1 = _ready_agents()
+        agents1["codex"]["checked_at"] = 1000.0
+        first = environment_health.check(self.root, mode="codex", agents=agents1, runner=runner, which_fn=which)
+        count1 = len(calls)
+
+        agents2 = _ready_agents()
+        agents2["codex"]["checked_at"] = 9999.9
+        agents2["codex"]["pid"] = 42424
+        second = environment_health.check(self.root, mode="codex", agents=agents2, runner=runner, which_fn=which)
+        self.assertEqual(len(calls), count1)
+        self.assertEqual(first["checked_at"], second["checked_at"])
+
+        cleaned_env = environment_health._probe_environment(
+            {
+                "PATH": r"C:\Windows\System32",
+                "SYSTEMROOT": r"C:\Windows",
+                "OPENAI_API_KEY": "sk-secret1234567890",
+                "GITHUB_TOKEN": "ghp_secret",
+                "DB_PASSWORD": "pw",
+                "AWS_SECRET_ACCESS_KEY": "aws_sec",
+            }
+        )
+        self.assertIn("PATH", cleaned_env)
+        self.assertNotIn("OPENAI_API_KEY", cleaned_env)
+        self.assertNotIn("GITHUB_TOKEN", cleaned_env)
+        self.assertNotIn("DB_PASSWORD", cleaned_env)
+        self.assertNotIn("AWS_SECRET_ACCESS_KEY", cleaned_env)
 
 
 if __name__ == "__main__":
