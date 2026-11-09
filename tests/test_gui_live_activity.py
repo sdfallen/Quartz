@@ -140,9 +140,16 @@ els.crewCore.click();
 assert.equal(seg.collaboration.clicks,1);assert.equal(els.crew.dataset.focus,'collaboration');
 assert.equal(els.crewCoreLabel.textContent,'Birlikte');assert.equal(els.crewCoreLabel.lang,'tr');assert.match(els.crewCore.attrs.title,/^Birlikte: /);
 assert.equal(els.crewCore.attrs['aria-pressed'],'true');assert.equal(els.laneCodex.dataset.included,'true');
+seg.codex.click();renderCrew();
+assert.equal(els.crewCoreLabel.textContent,'Yalnız Codex');
+assert.equal(els.crewCoreLabel.lang,'tr');
+assert.equal(els.crewCore.attrs['aria-pressed'],'false');
+assert.match(els.crewCore.attrs.title,/^Birlikte moduna geç/);
+seg.collaboration.click();renderCrew();
 seg.codex.disabled=true;renderCrew();
 assert.equal(els.laneCodex.disabled,true);assert.equal(els.laneCodexState.textContent,'Bağlı değil');
-els.laneCodex.click();assert.equal(seg.codex.clicks,0);  // A disconnected agent is never chosen.
+const clicksBeforeDisabled = seg.codex.clicks;
+els.laneCodex.click();assert.equal(seg.codex.clicks,clicksBeforeDisabled);  // A disconnected agent is never chosen.
 ''')
 
     def test_working_agent_lights_its_lane_and_rail_and_clears_when_done(self):
