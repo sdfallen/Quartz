@@ -1,8 +1,8 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-import os
 
 from core.squad_adapter import SquadAdapter
 
@@ -61,6 +61,85 @@ class SquadAdapterTests(unittest.TestCase):
         args = checked.call_args.args[0]
         self.assertEqual(args[:4], ["task", "create", "manager", "worker"])
         self.assertIn("body", args)
+
+    def test_initialize_does_not_pollute_project_root_and_hides_squad_dir(self):
+        project = Path(self.tmp.name) / "clean_proj"
+        project.mkdir()
+        (project / ".git" / "info").mkdir(parents=True)
+        (project / "CLAUDE.md").write_bytes(b"# Original Claude instructions\n")
+        adapter = SquadAdapter(project, executable=self.exe)
+
+        def fake_run(args, **_kwargs):
+            if args == ["init"]:
+                (project / ".squad" / "roles").mkdir(parents=True, exist_ok=True)
+                (project / ".squad" / "teams").mkdir(parents=True, exist_ok=True)
+                (project / ".gitignore").write_text(".squad/\n", encoding="utf-8")
+                (project / "AGENTS.md").write_text("## Squad Collaboration\n", encoding="utf-8")
+                (project / "CLAUDE.md").write_text("## Overwritten by squad init\n", encoding="utf-8")
+                (project / "GEMINI.md").write_text("## Squad Collaboration\n", encoding="utf-8")
+                return {"ok": True, "returncode": 0, "stdout": "Initialized", "stderr": "", "error": ""}
+            if args == ["agents", "--json"]:
+                (project / ".squad" / "messages.db").touch()
+                return {"ok": True, "returncode": 0, "stdout": "", "stderr": "", "error": ""}
+            return {"ok": True, "returncode": 0, "stdout": "", "stderr": "", "error": ""}
+
+        with patch.object(adapter, "_run", side_effect=fake_run):
+            res = adapter.initialize()
+        self.assertTrue(res["initialized"])
+        self.assertFalse(res["existing"])
+        self.assertTrue((project / ".squad" / "messages.db").is_file())
+        self.assertFalse((project / ".gitignore").exists())
+        self.assertFalse((project / "AGENTS.md").exists())
+        self.assertFalse((project / "GEMINI.md").exists())
+        self.assertEqual((project / "CLAUDE.md").read_bytes(), b"# Original Claude instructions\n")
+        self.assertIn(".squad/", (project / ".git" / "info" / "exclude").read_text(encoding="utf-8"))
+        if os.name == "nt":
+            import ctypes
+            attrs = ctypes.windll.kernel32.GetFileAttributesW(str(project / ".squad"))
+            self.assertTrue(bool(attrs & 0x02))
+
+    def test_corrupted_messages_db_is_detected_and_repaired(self):
+        project = Path(self.tmp.name) / "corrupt_proj"
+        (project / ".squad").mkdir(parents=True)
+        corrupt_db = project / ".squad" / "messages.db"
+        corrupt_db.write_bytes(b"corrupted text data " * 20)
+        adapter = SquadAdapter(project, executable=self.exe)
+
+        self.assertTrue(SquadAdapter._is_db_corrupt(corrupt_db))
+        self.assertFalse(adapter.initialized)
+
+        def fake_subprocess_run(cmd, **_kwargs):
+            from types import SimpleNamespace
+            sub = cmd[1] if len(cmd) > 1 else ""
+            if sub == "init":
+                (project / ".squad" / "roles").mkdir(parents=True, exist_ok=True)
+                (project / ".squad" / "teams").mkdir(parents=True, exist_ok=True)
+                return SimpleNamespace(returncode=0, stdout="Initialized", stderr="")
+            if sub == "agents":
+                if SquadAdapter._is_db_corrupt(corrupt_db):
+                    return SimpleNamespace(
+                        returncode=1,
+                        stdout="",
+                        stderr="Error: database disk image is malformed\nCaused by:\n  Error code 11: The database disk image is malformed",
+                    )
+                import sqlite3
+                conn = sqlite3.connect(str(corrupt_db))
+                conn.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT);")
+                conn.commit()
+                conn.close()
+                return SimpleNamespace(returncode=0, stdout='{"id":"worker","role":"worker","status":"active"}\n', stderr="")
+            if sub == "--version":
+                return SimpleNamespace(returncode=0, stdout="squad 0.7.6\n", stderr="")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch("core.squad_adapter.subprocess.run", side_effect=fake_subprocess_run):
+            rows = adapter.agents()
+            st = adapter.status()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["id"], "worker")
+        self.assertFalse(SquadAdapter._is_db_corrupt(corrupt_db))
+        self.assertTrue(adapter.initialized)
+        self.assertTrue(st["initialized"])
 
 
 if __name__ == "__main__":

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -18,6 +20,16 @@ _TASK_ID = re.compile(r"^[0-9a-fA-F-]{36}$")
 _TASK_HEADER = re.compile(r"^\[task ([0-9a-fA-F-]{36})\] (\S+)$")
 _HISTORY = re.compile(
     r"^\*?\s*\[([^]]+)]\s+([^ ]+)\s+->\s+([^:]+):\s?(.*)$"
+)
+_ROOT_POLLUTION_FILES = (".gitignore", "AGENTS.md", "CLAUDE.md", "GEMINI.md")
+_SQLITE_HEADER = b"SQLite format 3\x00"
+_FILE_ATTRIBUTE_HIDDEN = 0x02
+_INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF
+_CORRUPT_DB_TOKENS = (
+    "database disk image is malformed",
+    "file is not a database",
+    "not a database file",
+    "no such table",
 )
 
 
@@ -51,31 +63,165 @@ class SquadAdapter:
                 return str(Path(candidate).resolve())
         raise FileNotFoundError("Squad CLI was not found")
 
+    @staticmethod
+    def _is_db_corrupt(db_path: Path) -> bool:
+        """Return True if messages.db exists as a real file (>=100 bytes) with a corrupt SQLite image."""
+        try:
+            if not db_path.is_file():
+                return False
+            size = db_path.stat().st_size
+            # Unit tests may touch 0-byte or tiny placeholder files (e.g. b'fixture') with mocked CLI calls.
+            if size < 100:
+                return False
+            with db_path.open("rb") as fh:
+                header = fh.read(16)
+            if header != _SQLITE_HEADER:
+                return True
+            uri = f"file:{db_path.as_posix()}?mode=ro"
+            conn = sqlite3.connect(uri, uri=True, timeout=0.5)
+            try:
+                rows = conn.execute("PRAGMA quick_check(1);").fetchall()
+            finally:
+                conn.close()
+            if not rows or str(rows[0][0]).strip().lower() != "ok":
+                return True
+            return False
+        except sqlite3.DatabaseError:
+            return True
+        except OSError:
+            return False
+
+    def _snapshot_root_files(self) -> dict[str, tuple[bytes, int, int] | None]:
+        snapshot: dict[str, tuple[bytes, int, int] | None] = {}
+        for name in _ROOT_POLLUTION_FILES:
+            target = self.project_path / name
+            try:
+                if target.is_file():
+                    st = target.stat()
+                    snapshot[name] = (target.read_bytes(), st.st_atime_ns, st.st_mtime_ns)
+                else:
+                    snapshot[name] = None
+            except OSError:
+                snapshot[name] = None
+        return snapshot
+
+    def _restore_root_files(self, snapshot: dict[str, tuple[bytes, int, int] | None]) -> None:
+        """Prevent `squad init` from polluting the project root with untracked CLAUDE.md/AGENTS.md/GEMINI.md/.gitignore."""
+        for name, state in snapshot.items():
+            target = self.project_path / name
+            try:
+                if state is None:
+                    if target.is_file():
+                        target.unlink(missing_ok=True)
+                else:
+                    raw, atime_ns, mtime_ns = state
+                    if not target.is_file() or target.read_bytes() != raw:
+                        target.write_bytes(raw)
+                    os.utime(target, ns=(atime_ns, mtime_ns))
+            except OSError:
+                pass
+        git_exclude = self.project_path / ".git" / "info" / "exclude"
+        try:
+            if git_exclude.parent.is_dir():
+                existing = git_exclude.read_text(encoding="utf-8", errors="replace") if git_exclude.is_file() else ""
+                lines = {line.strip() for line in existing.splitlines()}
+                if ".squad/" not in lines and ".squad" not in lines:
+                    prefix = "" if (not existing or existing.endswith("\n")) else "\n"
+                    git_exclude.write_text(existing + prefix + ".squad/\n", encoding="utf-8")
+        except OSError:
+            pass
+
+    def _hide_squad_dir(self) -> None:
+        """Mark .squad as hidden on Windows (matching .git) so recursive shell globs skip it."""
+        if os.name != "nt":
+            return
+        squad_root = self.project_path / ".squad"
+        if not squad_root.is_dir():
+            return
+        try:
+            kernel32 = ctypes.windll.kernel32
+            attrs = kernel32.GetFileAttributesW(str(squad_root))
+            if attrs != _INVALID_FILE_ATTRIBUTES and not (attrs & _FILE_ATTRIBUTE_HIDDEN):
+                kernel32.SetFileAttributesW(str(squad_root), attrs | _FILE_ATTRIBUTE_HIDDEN)
+        except Exception:
+            pass
+
+    def _remove_corrupt_db_files(self) -> None:
+        squad_root = self.project_path / ".squad"
+        for suffix in ("messages.db", "messages.db-wal", "messages.db-shm"):
+            try:
+                (squad_root / suffix).unlink(missing_ok=True)
+            except OSError:
+                pass
+
     @property
     def initialized(self) -> bool:
         squad_root = self.project_path / ".squad"
-        return (squad_root / "messages.db").is_file() or (
+        db_path = squad_root / "messages.db"
+        if self._is_db_corrupt(db_path):
+            return False
+        return db_path.is_file() or (
             (squad_root / "roles").is_dir() and (squad_root / "teams").is_dir()
         )
 
+    def _repair_workspace(self) -> bool:
+        """Rebuild a corrupted or partially-initialized .squad directory in place."""
+        with self._DB_LOCK:
+            self._remove_corrupt_db_files()
+            snap = self._snapshot_root_files()
+            try:
+                init_res = self._run(["init"], require_workspace=False, _allow_repair=False)
+            finally:
+                self._restore_root_files(snap)
+            if not init_res.get("ok"):
+                return False
+            self._hide_squad_dir()
+            db_path = self.project_path / ".squad" / "messages.db"
+            if not db_path.is_file():
+                self._run(["agents", "--json"], require_workspace=False, _allow_repair=False)
+            self._hide_squad_dir()
+            return self.initialized
+
     def initialize(self) -> dict:
-        if self.initialized:
-            return {"initialized": True, "existing": True}
-        result = self._run(["init"], require_workspace=False)
-        if not result["ok"]:
-            raise SquadCommandError(result["error"] or "Squad init failed", args=["init"],
-                                    returncode=result["returncode"])
-        return {"initialized": self.initialized, "existing": False, "output": result["stdout"]}
+        with self._DB_LOCK:
+            squad_root = self.project_path / ".squad"
+            db_path = squad_root / "messages.db"
+            if self._is_db_corrupt(db_path):
+                self._remove_corrupt_db_files()
+            if self.initialized and db_path.is_file():
+                self._hide_squad_dir()
+                return {"initialized": True, "existing": True}
+            snap = self._snapshot_root_files()
+            try:
+                result = self._run(["init"], require_workspace=False, _allow_repair=False)
+            finally:
+                self._restore_root_files(snap)
+            if not result["ok"]:
+                raise SquadCommandError(result["error"] or "Squad init failed", args=["init"],
+                                        returncode=result["returncode"])
+            self._hide_squad_dir()
+            if not db_path.is_file():
+                # `squad init` only creates roles/ and teams/; running `agents --json` materializes messages.db.
+                self._run(["agents", "--json"], require_workspace=False, _allow_repair=False)
+            self._hide_squad_dir()
+            return {"initialized": self.initialized, "existing": False, "output": result["stdout"]}
 
     def status(self) -> dict:
-        result = self._run(["--version"], require_workspace=False)
+        squad_root = self.project_path / ".squad"
+        db_path = squad_root / "messages.db"
+        if squad_root.is_dir():
+            if self._is_db_corrupt(db_path):
+                self._repair_workspace()
+            else:
+                self._hide_squad_dir()
+        result = self._run(["--version"], require_workspace=False, _allow_repair=False)
         return {
             "installed": result["ok"],
             "version": result["stdout"].strip(),
             "executable": self.executable,
             "workspace": str(self.project_path),
             "initialized": self.initialized,
-            "database": str(self.project_path / ".squad" / "messages.db"),
+            "database": str(db_path),
             "error": result["error"],
         }
 
@@ -179,9 +325,12 @@ class SquadAdapter:
                 })
         return rows
 
-    def _run(self, args, *, require_workspace=True, timeout=None) -> dict:
+    def _run(self, args, *, require_workspace=True, timeout=None, _allow_repair=True) -> dict:
         if require_workspace and not self.initialized:
-            raise SquadCommandError(f"Squad is not initialized in {self.project_path}")
+            if _allow_repair and (self.project_path / ".squad").is_dir():
+                self._repair_workspace()
+            if not self.initialized:
+                raise SquadCommandError(f"Squad is not initialized in {self.project_path}")
         command = [self.executable, *map(str, args)]
         env = os.environ.copy()
         env.setdefault("HOME", str(Path.home()))
@@ -209,6 +358,9 @@ class SquadAdapter:
             if last_result["ok"]:
                 return last_result
             combined_lower = (stderr + " " + completed.stdout).lower()
+            if _allow_repair and attempt == 0 and any(tok in combined_lower for tok in _CORRUPT_DB_TOKENS):
+                if self._repair_workspace():
+                    continue
             if ("locked" in combined_lower or "unable to open database" in combined_lower) and attempt < 2:
                 time.sleep(0.15 * (attempt + 1))
                 continue

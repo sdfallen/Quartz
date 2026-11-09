@@ -116,6 +116,8 @@ def _selected_agents(mode: str) -> set[str]:
         return {"codex"}
     if mode == "antigravity":
         return {"antigravity"}
+    if mode == "notion":
+        return set()
     return {"codex", "antigravity"}
 
 
@@ -218,7 +220,7 @@ def _run_subprocess(
             "timed_out": True,
             "budget_exceeded": budget_hit,
         }
-    except OSError as exc:
+    except (OSError, ValueError, TypeError) as exc:
         elapsed_ms = round((time.monotonic() - t0) * 1000.0, 1)
         return {
             "ok": False,
@@ -475,24 +477,33 @@ def _probe_squad_fallback(
     try:
         from core.squad_adapter import SquadAdapter
         exe = SquadAdapter._find_executable()
+        if not exe or not isinstance(exe, str):
+            return {"installed": False, "initialized": False, "connected": False, "error": "Squad CLI bulunamadı."}
     except Exception as exc:
         return {"installed": False, "initialized": False, "connected": False, "error": str(exc)}
     squad_root = project_dir / ".squad"
-    initialized = (squad_root / "messages.db").is_file() or (
-        (squad_root / "roles").is_dir() and (squad_root / "teams").is_dir()
+    db_path = squad_root / "messages.db"
+    corrupt = SquadAdapter._is_db_corrupt(db_path)
+    initialized = (not corrupt) and (
+        db_path.is_file() or ((squad_root / "roles").is_dir() and (squad_root / "teams").is_dir())
     )
     res = _run_subprocess([exe, "--version"], env=env, deadline=deadline, runner=runner)
     if res.get("budget_exceeded"):
         return {"budget_exceeded": True, "elapsed_ms": res["elapsed_ms"]}
     installed = bool(res["ok"])
-    err = "" if installed else (res["stderr"] or "Squad CLI başlatılamadı.")
+    if not installed:
+        err = res["stderr"] or "Squad CLI başlatılamadı."
+    elif corrupt:
+        err = "Squad veritabanı (.squad/messages.db) bozuk; yeniden başlatılmalı."
+    else:
+        err = ""
     return {
         "installed": installed,
         "version": res["stdout"],
         "executable": exe,
         "workspace": str(project_dir),
         "initialized": initialized,
-        "database": str(squad_root / "messages.db"),
+        "database": str(db_path),
         "connected": installed and initialized and not err,
         "error": err,
     }

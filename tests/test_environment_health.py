@@ -358,6 +358,45 @@ class EnvironmentHealthContractTests(unittest.TestCase):
         self.assertNotIn("DB_PASSWORD", cleaned_env)
         self.assertNotIn("AWS_SECRET_ACCESS_KEY", cleaned_env)
 
+    def test_notion_mode_does_not_mark_codex_or_antigravity_as_selected_blocked(self):
+        py_exe = r"C:\Users\LENAVO\AppData\Local\Programs\Python\Python313\python.exe"
+        runner, _ = _fake_runner(python_out=f"{py_exe}\n3.13.17\n")
+        which = lambda name: py_exe
+        agents = {
+            "codex": {"installed": False, "authenticated": False, "ready": False},
+            "antigravity": {"installed": False, "authenticated": False, "ready": False},
+            "squad": {"installed": True, "initialized": True, "connected": True},
+        }
+        res = environment_health.check(
+            self.root, mode="notion", agents=agents, runner=runner, which_fn=which, force=True
+        )
+        by_id = self._by_id(res)
+        self.assertEqual(by_id["codex_cli"]["status"], "warn")
+        self.assertEqual(by_id["antigravity_cli"]["status"], "warn")
+        self.assertFalse(by_id["codex_cli"]["evidence"]["selected"])
+        self.assertFalse(by_id["antigravity_cli"]["evidence"]["selected"])
+        self.assertEqual(res["status"], "warn")
+
+    def test_invalid_squad_executable_and_corrupt_db_in_fallback(self):
+        with patch("core.squad_adapter.SquadAdapter._find_executable", return_value=None):
+            info = environment_health._probe_squad_fallback(self.root)
+        self.assertFalse(info["connected"])
+        self.assertIn("Squad CLI", info["error"])
+
+        sub_res = environment_health._run_subprocess([None, "--version"])  # type: ignore[list-item]
+        self.assertFalse(sub_res["ok"])
+
+        (self.root / ".squad").mkdir(exist_ok=True)
+        (self.root / ".squad" / "messages.db").write_bytes(b"corrupt sqlite image " * 20)
+        with patch("core.squad_adapter.SquadAdapter._find_executable", return_value=r"C:\squad\squad.exe"):
+            info_corrupt = environment_health._probe_squad_fallback(
+                self.root,
+                runner=lambda cmd, **_kw: SimpleNamespace(returncode=0, stdout="squad 0.7.6\n", stderr=""),
+            )
+        self.assertFalse(info_corrupt["initialized"])
+        self.assertFalse(info_corrupt["connected"])
+        self.assertIn("bozuk", info_corrupt["error"])
+
 
 if __name__ == "__main__":
     unittest.main()
