@@ -392,6 +392,16 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
   }
   function renderEnvironmentHealth(result) {
     if (!envHealth) return;
+    // Codex's snapshot answers with a placeholder until the first real check lands
+    // (diagnostics.age_seconds null). That is not a warning: keep the current view.
+    // A failed load with no result yet says so instead of "kontrol ediliyor" forever.
+    const diag = result?.diagnostics;
+    if (diag && diag.age_seconds == null) {
+      if (!diag.error) return;
+      result = {status: 'warn', checks: [{id: 'environment_health', status: 'unknown',
+        summary_tr: 'Ortam kontrolü yapılamadı.', fix_tr: "'Yeniden kontrol et' ile tekrar deneyin.",
+        detail: String(diag.error)}]};
+    }
     const checks = Array.isArray(result?.checks) ? result.checks : [];
     const problems = checks.filter(c => c && c.status && c.status !== 'ok');
     const status = result?.status === 'blocked' ? 'blocked' : problems.length ? 'warn' : 'ok';
