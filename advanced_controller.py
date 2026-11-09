@@ -22,7 +22,6 @@ import json
 import pyperclip
 from difflib import SequenceMatcher
 from pathlib import Path
-from itertools import islice
 from typing import Optional
 
 from logger import get_logger
@@ -622,22 +621,26 @@ def _search_dir_limited(
         directory: Path,
         pattern: str,
         name_lower: str,
-        max_items: int = 200,
+        max_items: int = 2000,
+        seconds: float = 1.5,
 ) -> Optional[Path]:
     """
-    Search a directory for a matching file
-    with a hard limit on items checked.
-    Prevents 30-second hangs on large dirs.
+    Search a directory for a matching file with a hard limit on the work done.
+
+    Live exam 9 Nov (exam-desk-03): the old limit counted only matches, so a miss
+    walked the whole Desktop (13 s idle on this PC, past the 25 s tool timeout
+    under load). Both the files examined and the elapsed time are bounded now.
     """
+    deadline = time.monotonic() + seconds
     try:
-        candidates = (
-            f for f in directory.rglob(pattern)
-            if name_lower in f.stem.lower()
-        )
-        return next(
-            islice(candidates, max_items), None)
+        for index, f in enumerate(directory.rglob(pattern)):
+            if index >= max_items or time.monotonic() >= deadline:
+                return None
+            if name_lower in f.stem.lower():
+                return f
     except Exception:
         return None
+    return None
 
 
 def smart_open(app_name: str) -> str:
@@ -691,6 +694,20 @@ def smart_open(app_name: str) -> str:
         "disk cleanup":   "cleanmgr",
         "device manager": "devmgmt.msc",
     }
+
+    # Agents usually send the command itself ("calc", "notepad") or the Turkish
+    # name; both resolve here instead of falling through to a folder search.
+    aliases = {"hesap makinesi": "calc", "not defteri": "notepad", "dosya gezgini": "explorer",
+               "görev yöneticisi": "taskmgr", "denetim masası": "control", "ayarlar": "ms-settings:"}
+    if name_lower.endswith(".exe") and name_lower[:-4] in builtin.values():
+        name_lower = name_lower[:-4]
+    if name_lower in aliases or name_lower in builtin.values():
+        cmd = aliases.get(name_lower, name_lower)
+        if cmd.startswith("ms-"):
+            os.startfile(cmd)
+        else:
+            launch_normal(cmd)
+        return f"Opened {app_name}"
 
     if name_lower in builtin:
         cmd = builtin[name_lower]
@@ -769,16 +786,14 @@ def smart_open(app_name: str) -> str:
 
         # Search .lnk shortcuts first (faster)
         found = _search_dir_limited(
-            directory, "*.lnk",
-            name_lower, max_items=100)
+            directory, "*.lnk", name_lower)
         if found:
             os.startfile(str(found))
             return f"Opened shortcut: {found.stem}"
 
         # Search .exe files
         found = _search_dir_limited(
-            directory, "*.exe",
-            name_lower, max_items=100)
+            directory, "*.exe", name_lower)
         if found:
             launch_normal(found)
             return f"Found and opened: {found}"
