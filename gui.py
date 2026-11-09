@@ -788,6 +788,13 @@ class Api:
     def chat_status(self) -> dict:
         return ipc_send("chat_status")
 
+    def environment_health(self, force: bool = False) -> dict:
+        """Read-only environment check (integration request 9 Nov); the backend action is Codex's."""
+        try:
+            return ipc_send("environment_health", {"force": force is True})
+        except Exception as exc:
+            return {"status": "error", "data": str(exc)}
+
     def chat_prepare_resume(self, conversation_id, message_id):
         try:
             self._chat_delete_guard()

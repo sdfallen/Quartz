@@ -376,6 +376,78 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
   }
 
   let writerRecoveryKey = '';
+  // Environment health card. The host decides ok/warn/blocked (Gemini's environment_health,
+  // wired by Codex); this only shows it. Live exam 9 Nov: a Store Python alias and an
+  // unconnected Squad broke tasks without telling the user why.
+  const envHealth = document.getElementById('envHealth');
+  const envHealthList = document.getElementById('envHealthList');
+  const envHealthToggle = document.getElementById('envHealthToggle');
+  const envHealthRecheck = document.getElementById('envHealthRecheck');
+  let envHealthKey = '';
+  function setEnvHealthOpen(open) {
+    if (!envHealthList || !envHealthToggle) return;
+    envHealthList.hidden = !open;
+    envHealthToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    envHealthToggle.textContent = open ? 'Gizle' : 'Ayrıntılar';
+  }
+  function renderEnvironmentHealth(result) {
+    if (!envHealth) return;
+    const checks = Array.isArray(result?.checks) ? result.checks : [];
+    const problems = checks.filter(c => c && c.status && c.status !== 'ok');
+    const status = result?.status === 'blocked' ? 'blocked' : problems.length ? 'warn' : 'ok';
+    const key = JSON.stringify([status, problems.map(c => [c.id, c.status, c.summary_tr, c.fix_tr, c.detail])]);
+    if (key === envHealthKey) return;
+    envHealthKey = key;
+    envHealth.dataset.status = status;
+    envHealth.hidden = status === 'ok';
+    if (status === 'ok') return;
+    const blocked = problems.filter(c => c.status === 'blocked').length;
+    document.getElementById('envHealthBadge').dataset.tone = status === 'blocked' ? 'fail' : 'warn';
+    document.getElementById('envHealthTitle').textContent = status === 'blocked'
+      ? `Görev başlatılamaz: ${blocked} engel${problems.length > blocked ? `, ${problems.length - blocked} uyarı` : ''}`
+      : `Ortamda ${problems.length} uyarı var`;
+    envHealthList.replaceChildren(...problems.map(c => {
+      const item = document.createElement('li');
+      item.dataset.status = String(c.status);
+      const summary = document.createElement('strong');
+      summary.textContent = String(c.summary_tr || c.id || 'Bilinmeyen kontrol');
+      item.append(summary);
+      if (c.fix_tr) {
+        const fix = document.createElement('span');
+        fix.className = 'env-health-fix';
+        fix.textContent = String(c.fix_tr);
+        item.append(fix);
+      }
+      if (c.detail) {
+        const more = document.createElement('details');
+        const label = document.createElement('summary');
+        label.textContent = 'Teknik ayrıntılar';
+        const text = document.createElement('code');
+        text.textContent = String(c.detail);
+        more.append(label, text);
+        item.append(more);
+      }
+      return item;
+    }));
+    setEnvHealthOpen(status === 'blocked');  // a blocked task explains itself without a click
+  }
+  envHealthToggle?.addEventListener('click', () => setEnvHealthOpen(envHealthList.hidden));
+  envHealthRecheck?.addEventListener('click', async () => {
+    if (envHealthRecheck.disabled) return;
+    envHealthRecheck.disabled = true;
+    envHealthRecheck.textContent = 'Kontrol ediliyor…';
+    try {
+      const resp = await window.pywebview.api.environment_health(true);
+      if (resp?.status === 'ok') renderEnvironmentHealth(resp.data);
+      else logLine('Ortam kontrolü yapılamadı: ' + String(resp?.data || 'bilinmeyen hata'));
+    } catch (error) {
+      logLine('Ortam kontrolü yapılamadı: ' + String(error?.message || error));
+    } finally {
+      envHealthRecheck.disabled = false;
+      envHealthRecheck.textContent = 'Yeniden kontrol et';
+    }
+  });
+
   function renderWriterRecovery(data) {
     data = data || {};
     const key = JSON.stringify(data); if (key === writerRecoveryKey) return;
@@ -426,6 +498,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       if (resp.status !== 'ok') return false;
       const data = resp.data;
       renderWriterRecovery(data.writer_recovery);
+      if ('environment_health' in data) renderEnvironmentHealth(data.environment_health);
       document.getElementById('responseDetail').value = data.preferences?.response_detail || 'short';
       savedResponseDetail = document.getElementById('responseDetail').value;
       updateAntigravitySafety(data.agents?.antigravity);
