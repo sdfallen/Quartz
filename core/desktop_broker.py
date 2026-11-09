@@ -49,6 +49,9 @@ class DesktopBroker:
         self._lock = threading.RLock()
         self._session = None
         self._busy = False
+        # Set by stop() without waiting for the broker lock, so an in-flight key
+        # sequence ends at its next key (the lock is held for the whole action).
+        self._input_cancel = threading.Event()
         self._server = None
         self._lease = None
         self.audit = []
@@ -71,6 +74,7 @@ class DesktopBroker:
             if self._session and self.clock() < self._session["expires"]:
                 raise RuntimeError("Another desktop operator owns the input lease")
             self.stop()
+            self._input_cancel.clear()
             handles = handle if isinstance(handle, (list, tuple)) else [handle]
             if not 1 <= len(handles) <= 12 or len(set(map(int, handles))) != len(handles):
                 raise ValueError("Select 1..12 distinct windows")
@@ -178,6 +182,7 @@ class DesktopBroker:
 
     def stop(self, reason="user/owner stopped"):
         had_session = False
+        self._input_cancel.set()
         with self._lock:
             had_session = self._session is not None
             self.stop_reason = reason
@@ -389,6 +394,7 @@ class DesktopBroker:
                 if s.pop("focus_recovered", False):
                     raise PermissionError("Odak yeniden alındı; eski eylem uygulanmadı. desktop_observe ile yeni görüntü alın.")
                 self.backend.validate_input_session()
+                self.backend.input_cancelled = self._input_cancel.is_set
                 self.backend.act(s["target"], observation["data"], args)
                 s["actions"] += 1
             else:
