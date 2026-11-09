@@ -343,11 +343,12 @@ class AgentChatService:
                         or (others[0] if others else None))
             if fallback is None:
                 raise ValueError("Son proje listeden kaldırılamaz.")
-            deleted = (self.store.delete_many(current, fallback_project_id=fallback["id"])
-                       if current else {"deleted_count": 0})
+            with self.store.rollback_on_failure():
+                deleted = (self.store.delete_many(current, fallback_project_id=fallback["id"])
+                           if current else {"deleted_count": 0})
+                registry.remove(project["id"], fallback["id"])
             if self._active_turn and self._active_turn.get("conversation_id") in current:
                 self._active_turn = None
-            registry.remove(project["id"], fallback["id"])
             active = self.store.get_active()
             if (active.get("project_id") or "squad-pilot") == project["id"]:
                 active = self.store.create(title="Yeni Sohbet", agent=active.get("agent", "antigravity"),

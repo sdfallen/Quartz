@@ -95,6 +95,18 @@ class ProjectRemoveTests(unittest.TestCase):
             self.assertEqual(api.project_remove('p', [], True)['status'], 'error')
             send.assert_not_called()
 
+    def test_registry_write_failure_restores_chats_and_memory(self):
+        chat = self.store.create('Keep', project_id=self.project['id'])
+        before = self.registry_path.read_bytes()
+        with patch.object(self.registry, '_save', side_effect=OSError('disk failure')):
+            with self.assertRaises(OSError):
+                self.service.remove_project(self.project['id'], [chat['id']], confirmed=True)
+        self.assertEqual(self.store.get(chat['id'])['title'], 'Keep')
+        self.assertEqual(self.registry.get(self.project['id'])['id'], self.project['id'])
+        self.assertEqual(self.registry_path.read_bytes(), before)
+        from core.conversation_store import ConversationStore
+        self.assertEqual(ConversationStore(self.store.path).get(chat['id'])['title'], 'Keep')
+
     def test_ui_offers_removal_with_confirmation_and_hides_it_for_the_default(self):
         self.assertIn('id="btnRemoveProject"', gui._HTML)
         self.assertIn("window.pywebview.api.project_remove(projectId, chats.map(c => c.id), true)", gui._HTML)

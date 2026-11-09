@@ -171,7 +171,7 @@ class LiveCheckTests(OracleTests):
             {"check": "reviewer_side_effects_none"},
         ]
         self.assertEqual(
-            self.run_checks(checks, messages=msgs, marks={"evidence_by_run": {"r1": {"files_changed": ["math_utils.py"]}, "r2": {"files_changed": []}}})[1],
+            self.run_checks(checks, messages=msgs, marks={"evidence_by_run": {"r1": {"files_changed": ["math_utils.py"]}, "r2": {"files_changed": [], "unauthorized_write_detected": False}}})[1],
             "VERIFIED",
         )
         # If reviewer modified files or had write permission, checks fail:

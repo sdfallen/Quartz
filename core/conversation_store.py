@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 
@@ -42,6 +43,22 @@ class ConversationStore:
                 "effort": str(entry.get("effort") or defaults["effort"]).strip().lower(),
             }
         return out
+
+    @contextmanager
+    def rollback_on_failure(self):
+        """Keep chat state recoverable when a companion registry write fails."""
+        with self._lock:
+            before = deepcopy({'active_id': self._active_id,
+                               'conversations': self._conversations,
+                               'preferences': self._preferences})
+            try:
+                yield
+            except Exception:
+                atomic_write_json(self.path, before)
+                self._active_id = before['active_id']
+                self._conversations = before['conversations']
+                self._preferences = before['preferences']
+                raise
 
     def _load(self):
         with self._lock:
