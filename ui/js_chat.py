@@ -307,8 +307,18 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       core.disabled = !!crewSeg('collaboration')?.disabled;
     }
     const label = document.getElementById('crewCoreLabel');
-    const coreText = control ? 'Kontrolde' : flow.length === 2 ? 'İkisi çalışıyor' : flow.length ? 'Yönlendiriyor' : 'Birlikte';
+    // Idle, the crystal names the selected mode (live exam 9 Nov: it said "Birlikte" while
+    // only Antigravity was selected, and a two-agent exam ran with one agent).
+    const idleText = focus === 'collaboration' ? 'Birlikte' : focus === 'codex' ? 'Yalnız Codex' : 'Yalnız Antigravity';
+    const coreText = control ? 'Kontrolde' : flow.length === 2 ? 'İkisi çalışıyor' : flow.length ? 'Yönlendiriyor' : idleText;
     if (label && label.textContent !== coreText) label.textContent = coreText;
+    // The label is upper-cased by CSS; in Turkish "Antigravity" would become "ANTİGRAVİTY".
+    if (label) label.lang = coreText.includes('Antigravity') ? 'en' : 'tr';
+    if (core) {
+      const coreTitle = focus === 'collaboration' ? 'Birlikte: Codex ve Antigravity aynı görevde'
+        : 'Birlikte moduna geç: Codex ve Antigravity aynı görevde';
+      if (core.getAttribute?.('title') !== coreTitle) core.setAttribute('title', coreTitle);
+    }
   }
   function setCrewProgress(progress) {
     const next = {};
