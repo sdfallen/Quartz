@@ -131,3 +131,59 @@ CACHED_MS: 0.78
 
 - Soğuk kontrol süresi: **619,4 ms – 685,0 ms** (3000 ms bütçesinin çok altında).
 - 60 sn önbellekten okuma süresi: **0,78 ms**.
+
+---
+
+## 4. P2 ve P3 Düzeltmesi (`docs/CLAUDE_REVIEW_ENVIRONMENT_HEALTH_20261109.md`)
+
+Claude'un `87aa8c3` (`claude/verify-health-20261109`) incelemesindeki P2 ve P3 bulguları `core/environment_health.py` ve `tests/test_environment_health.py` içinde kapatıldı:
+
+1. **P2.1 — Toplam 3 sn tavan bütçesi (`deadline = time.monotonic() + min(3.0, budget_seconds)`):**
+   - Her alt süreç çağrısının (`python`, `git --version`, `git rev-parse`, yedek `squad --version`) `timeout` değeri kalan süre bütçesiyle (`min(2.0, timeout, remaining)`) sınırlandı.
+   - Bütçe dolduğunda kalan kontroller çalıştırılmadan `status="unknown"` ve `summary_tr="Kontrol süre bütçesini aştı."` (`evidence={"budget_exceeded": True, ...}`) döndürür.
+2. **P2.2 — Varsayılan yolda ajan CLI yoklaması (`CodexRuntime.probe` / `AntigravityRuntime.probe`) kaldırıldı:**
+   - `_probe_agent_fallback` tamamen kaldırıldı. `agents` parametresi verilmediğinde veya ilgili ajan anahtarı olmadığında `codex_cli` ve `antigravity_cli` `0,0 ms` içinde `status="unknown"` (`"... durumu henüz okunmadı."`) döndürür.
+3. **P2.3 — Negatif süre bütçesi ve yoklama yasağı birim testleri eklendi:**
+   - `test_no_agents_passed_never_probes_runtimes_and_returns_unknown`
+   - `test_five_second_sleeping_fallback_is_capped_by_total_three_second_budget`
+   - `test_cache_ignores_volatile_timestamps_and_probe_env_strips_secrets`
+4. **P3.1 & P3.2 — Alt süreç ortam temizliği ve önbellek anahtarı:**
+   - `_probe_environment()` alt süreçlere geçirilen ortamdan `API_KEY`, `SECRET`, `TOKEN`, `PASSWORD` içeren anahtarları çıkarır.
+   - `_cache_signature()` ham JSON yerine yalnız durum alanlarını (`installed`, `authenticated`, `ready`, `connected`, `checking`, `error`, `mode`) özetler; zaman damgası veya PID değişimleri 60 sn önbelleği bozmaz.
+
+### 4.1 Doğrulama ve Canlı Yedek Yol (`agents=None`) Ölçümü
+
+Komut:
+```powershell
+$py = "C:\Users\LENAVO\AppData\Local\Programs\Python\Python313\python.exe"; Set-Location "C:\Users\LENAVO\.gemini\antigravity\worktrees\quartz-wave0-wave1-20261105"; & $py scripts/check_python_syntax.py; & $py -B -m unittest tests.test_environment_health -v; & $py -B -c "import time, sys; sys.stdout.reconfigure(encoding='utf-8'); from core import environment_health; t0=time.perf_counter(); r=environment_health.check('.', force=True); ms=round((time.perf_counter()-t0)*1000,1); print('FALLBACK_NO_AGENTS_MS:', ms, 'OVERALL:', r['status']); [print(' ', c['id'], c['status'], c['evidence'].get('elapsed_ms'), c['summary_tr']) for c in r['checks']]"
+```
+
+Çıktı:
+```text
+Published Python syntax: 344 files OK
+test_all_green_environment_returns_ok_and_contract_fields (tests.test_environment_health.EnvironmentHealthContractTests.test_all_green_environment_returns_ok_and_contract_fields) ... ok
+test_cache_ignores_volatile_timestamps_and_probe_env_strips_secrets (tests.test_environment_health.EnvironmentHealthContractTests.test_cache_ignores_volatile_timestamps_and_probe_env_strips_secrets) ... ok
+test_cache_reuses_result_for_60_seconds_unless_forced (tests.test_environment_health.EnvironmentHealthContractTests.test_cache_reuses_result_for_60_seconds_unless_forced) ... ok
+test_cli_issue_blocks_selected_agent_and_warns_unselected_agent (tests.test_environment_health.EnvironmentHealthContractTests.test_cli_issue_blocks_selected_agent_and_warns_unselected_agent) ... ok
+test_five_second_sleeping_fallback_is_capped_by_total_three_second_budget (tests.test_environment_health.EnvironmentHealthContractTests.test_five_second_sleeping_fallback_is_capped_by_total_three_second_budget) ... ok
+test_git_missing_blocks_writer_and_warns_read_only_and_non_repo_warns (tests.test_environment_health.EnvironmentHealthContractTests.test_git_missing_blocks_writer_and_warns_read_only_and_non_repo_warns) ... ok
+test_missing_python_warns_and_never_blocks (tests.test_environment_health.EnvironmentHealthContractTests.test_missing_python_warns_and_never_blocks) ... ok
+test_no_agents_passed_never_probes_runtimes_and_returns_unknown (tests.test_environment_health.EnvironmentHealthContractTests.test_no_agents_passed_never_probes_runtimes_and_returns_unknown) ... ok
+test_project_folder_missing_blocks (tests.test_environment_health.EnvironmentHealthContractTests.test_project_folder_missing_blocks) ... ok
+test_squad_unconnected_blocks_collaboration_and_desktop_but_warns_single_agent (tests.test_environment_health.EnvironmentHealthContractTests.test_squad_unconnected_blocks_collaboration_and_desktop_but_warns_single_agent) ... ok
+test_subprocess_timeout_is_caught_within_budget (tests.test_environment_health.EnvironmentHealthContractTests.test_subprocess_timeout_is_caught_within_budget) ... ok
+test_unknown_status_rolls_up_to_at_most_warn_and_text_bounds_are_enforced (tests.test_environment_health.EnvironmentHealthContractTests.test_unknown_status_rolls_up_to_at_most_warn_and_text_bounds_are_enforced) ... ok
+test_windows_store_python_alias_warns_even_when_exit_code_is_zero (tests.test_environment_health.EnvironmentHealthContractTests.test_windows_store_python_alias_warns_even_when_exit_code_is_zero) ... ok
+
+----------------------------------------------------------------------
+Ran 13 tests in 0.767s
+
+OK
+FALLBACK_NO_AGENTS_MS: 697.4 OVERALL: blocked
+  python warn 221.7 Python Microsoft Store takma adı; ajanlarda aralıklı başarısız olabilir.
+  git ok 195.3 Git ve proje deposu hazır.
+  project_folder ok 0.8 Proje klasörü erişilebilir.
+  squad blocked 99.6 Squad bağlı değil; Birlikte modu ve masaüstü görevleri Squad gerektirir.
+  codex_cli unknown 0.0 Codex CLI durumu henüz okunmadı.
+  antigravity_cli unknown 0.0 Antigravity CLI durumu henüz okunmadı.
+```
