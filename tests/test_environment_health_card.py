@@ -72,6 +72,22 @@ assert.equal(els.envHealthTitle.textContent,'Görev başlatılamaz: 1 engel, 2 u
 assert.equal(els.envHealthList.hidden,false);assert.equal(els.envHealthList.children[0].dataset.status,'blocked');
 ''')
 
+    def test_backend_placeholder_is_not_a_warning(self):
+        # core/chat_environment_health.py returns this seed until the first check lands.
+        self.assertJs(r'''
+const seed={status:'warn',checks:[{id:'environment_health',status:'unknown',summary_tr:'Ortam kontrol ediliyor.'}],
+  diagnostics:{refreshing:true,error:'',stale:true,age_seconds:null}};
+renderEnvironmentHealth(seed);assert.equal(els.envHealth.hidden,true);
+renderEnvironmentHealth({status:'blocked',checks:[{id:'squad',status:'blocked',summary_tr:'Squad yok.'}],
+  diagnostics:{refreshing:false,error:'',stale:false,age_seconds:1}});
+assert.equal(els.envHealth.dataset.status,'blocked');
+renderEnvironmentHealth(seed);  // a forced re-check keeps the last real view
+assert.equal(els.envHealth.hidden,false);assert.equal(els.envHealth.dataset.status,'blocked');
+renderEnvironmentHealth({...seed,diagnostics:{refreshing:false,error:'loader boom',stale:true,age_seconds:null}});
+assert.equal(els.envHealth.dataset.status,'warn');assert.match(text(els.envHealthList),/Ortam kontrolü yapılamadı/);
+assert.match(text(els.envHealthList),/loader boom/);assert.doesNotMatch(text(els.envHealthList),/kontrol ediliyor/);
+''')
+
     def test_host_text_is_never_html(self):
         self.assertJs(r'''
 renderEnvironmentHealth({status:'warn',checks:[{id:'x',status:'warn',summary_tr:'<img src=x onerror=alert(1)>'}]});
