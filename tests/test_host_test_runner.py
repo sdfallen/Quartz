@@ -123,6 +123,39 @@ class HostRunnerTests(unittest.TestCase):
         self.assertFalse(runner.cleanup_pending)
         self.assertFalse(psutil.pid_exists(int((self.root/'child.pid').read_text())))
 
+    # Full-suite build 11 Nov: a validated pass raised WinError 32 while TemporaryDirectory
+    # removed a still-locked output.log. A locked scratch file must not change the result.
+    @unittest.skipUnless(os.name == 'nt', 'Windows Job Object runner')
+    def test_locked_scratch_folder_does_not_turn_a_pass_into_an_error(self):
+        real_rmtree, calls, seen = shutil.rmtree, [], []
+        def flaky(path, *args, **kwargs):
+            if 'quartz-host-unittest-' in str(path):
+                seen.append(str(path)); calls.append(1)
+                if len(calls) <= 3:
+                    raise PermissionError(32, 'locked by another process', str(path))
+            return real_rmtree(path, *args, **kwargs)
+        with patch('shutil.rmtree', side_effect=flaky):
+            result = self.adapter()(threading.Event())
+        self.assertEqual((result.exit_code, result.tests_run, result.passed), (0, 1, True))
+        self.assertGreater(len(calls), 3)  # retried, then removed
+        self.assertFalse(os.path.exists(seen[-1]))
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows Job Object runner')
+    def test_scratch_folder_that_stays_locked_is_left_without_error(self):
+        seen = []
+        def locked(path, *args, **kwargs):
+            if 'quartz-host-unittest-' in str(path):
+                seen.append(str(path))
+                raise PermissionError(32, 'locked by another process', str(path))
+            raise AssertionError('unexpected rmtree')
+        with patch('shutil.rmtree', side_effect=locked), patch('core.host_test_runner.time.sleep'):
+            runner = self.adapter()
+            result = runner(threading.Event())
+        self.assertTrue(result.passed)
+        self.assertFalse(runner.cleanup_pending)
+        self.assertTrue(seen and os.path.isdir(seen[-1]))
+        shutil.rmtree(seen[-1])  # the test owns this leftover
+
     @unittest.skipUnless(os.name == 'nt', 'Windows Job Object runner')
     def test_skip_and_timeout_are_not_passes(self):
         (self.root/'test_value.py').write_text(PASS.replace(' def test_value', ' @unittest.skip("fixture")\n def test_value'), encoding='utf-8')

@@ -3,6 +3,7 @@
 Capture is passive and must occur before the first writer dispatch. No arbitrary
 shell command or agent-provided test count is accepted by this adapter.
 """
+import contextlib
 import hashlib
 import hmac
 import json
@@ -40,6 +41,35 @@ def _run_host_tests():
 
 _run_host_tests()
 '''
+
+
+def _remove_scratch_dir(path, *, attempts=20, delay=.1):
+    """Best-effort, bounded (~2 s) removal of the adapter's own temp folder.
+
+    A folder that is still locked is left in %TEMP% (only test output and the receipt);
+    it never fails or alters an already validated observation.
+    """
+    import shutil
+    for attempt in range(attempts):
+        try:
+            shutil.rmtree(path)
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError:
+            if attempt + 1 < attempts:
+                time.sleep(delay)
+    return not os.path.exists(path)
+
+
+@contextlib.contextmanager
+def _scratch_dir(prefix):
+    """Like TemporaryDirectory, but removal is bounded and never raises (see __call__)."""
+    path = tempfile.mkdtemp(prefix=prefix)
+    try:
+        yield path
+    finally:
+        _remove_scratch_dir(path)
 
 
 def _active_job_count(handle):
@@ -161,7 +191,10 @@ class HostUnittestAdapter:
             if self.cleanup_pending: raise RuntimeError('Previous host test cleanup unconfirmed')
             self.validate_baseline()
             if stop.is_set(): raise RuntimeError('Host test cancelled before start')
-            with tempfile.TemporaryDirectory(prefix='quartz-host-unittest-') as directory:
+            # Scratch removal must not turn a verified result into an error: on Windows the
+            # just-closed output.log can stay locked briefly (handle teardown, AV scan) under
+            # load. Process ownership is proven by the job accounting above, not by this.
+            with _scratch_dir('quartz-host-unittest-') as directory:
                 receipt = Path(directory) / 'result.json'
                 nonce = secrets.token_hex(32)
                 with (Path(directory) / 'output.log').open('w+b') as output:
