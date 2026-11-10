@@ -149,6 +149,12 @@ class ScriptAndApiContractTests(unittest.TestCase):
         self.assertEqual(SCRIPT_BLOCK.findall(SCRIPT_DOCUMENT), shipped)
         self.assertEqual(SCRIPT_BLOCK.findall(source), [])
         self.assertEqual(len(SCRIPT_PARTS), 9)
+        # One shared scope: a second top-level `function x` silently replaces the first.
+        # Gemini review 10 Nov caught renderRepairPlan defined in two fragments.
+        names = [n for part in SCRIPT_PARTS
+                 for n in re.findall(r"^ {2}(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(", part, re.M)]
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        self.assertEqual(dupes, [], "top-level functions defined more than once in the shared script")
         self.assertTrue(all(part.strip() for part in SCRIPT_PARTS))
         self.assertEqual(APPLICATION_JS, "".join(SCRIPT_PARTS))
 

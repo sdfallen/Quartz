@@ -161,9 +161,23 @@ JAVASCRIPT = r"""
     }
   }
 
+  // A preview belongs to one conversation and one agent; switching either retires it.
+  function repairPreviewStale() {
+    return !!repairPreview && (repairPreview.conversation_id !== currentConvId
+      || repairPreview.provider !== repairAgent());
+  }
+  function retireStaleRepairPreview() {
+    if (!repairPreviewStale()) return false;
+    invalidateRepairPreview();
+    setRepairError('Sohbet veya ajan değişti; planı yeniden önizleyin.');
+    return true;
+  }
+
   async function registerRepairPlan() {
     const btn = rp('rpRegister');
     if (btn.disabled || !repairPreview) return;
+    // Checked before any IPC: never register c1's preview while the user is on c2 or another agent.
+    if (retireStaleRepairPreview()) return;
     btn.disabled = true;
     btn.textContent = 'Kaydediliyor…';
     const previewId = repairPreview.preview_id;
@@ -180,7 +194,7 @@ JAVASCRIPT = r"""
       }
       setRepairError('');
       invalidateRepairPreview();
-      renderRepairPlan(resp.data || null, cid);
+      renderRepairPlanChip(resp.data || null, cid);
       setRepairPanelOpen(false);
       logLine('Onarım planı kaydedildi; görev mesajını gönderince kullanılacak.');
     } catch (error) {
@@ -193,8 +207,11 @@ JAVASCRIPT = r"""
   }
 
   // cid: the conversation the host reported this plan for (status payload or the registering one).
-  function renderRepairPlan(plan, cid) {
+  function renderRepairPlanChip(plan, cid) {
     if (!repairChip) return;
+    // Every status poll lands here, so a conversation or agent switch retires an open preview.
+    retireStaleRepairPreview();
+    if (repairPlanPanel && !repairPlanPanel.hidden) syncRepairAgent();
     const valid = !!plan && typeof plan === 'object' && !!cid;
     const key = JSON.stringify([valid ? cid : null, valid ? plan : null]);
     if (key === repairPlanKey) return;
@@ -222,7 +239,7 @@ JAVASCRIPT = r"""
     try {
       const resp = await window.pywebview.api.repair_plan_clear(target);
       if (repairPlanCid !== target) return;
-      if (resp?.status === 'ok') renderRepairPlan(null, target);
+      if (resp?.status === 'ok') renderRepairPlanChip(null, target);
       else logLine('Onarım planı kaldırılamadı: ' + String(resp?.data || 'bilinmeyen hata'));
     } catch (error) {
       logLine('Onarım planı kaldırılamadı: ' + String(error?.message || error));
