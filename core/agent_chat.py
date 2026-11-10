@@ -34,6 +34,7 @@ class AgentChatService:
         self._worker_threads = {}
         self._repair_plans = {}
         self._repair_events = {}
+        self._repair_message_ids = {}  # turn_id -> message a running host repair writes into
         self._host_test_adapters = {}
         from core.repair_plan_entry import RepairPlanEntry
         self.repair_plan_entry = RepairPlanEntry(self)
@@ -103,6 +104,7 @@ class AgentChatService:
                 raise PermissionError('Repair model changed since host registration')
             root = self.agent_service.projects.get(project_id)['path']
             self._repair_events[turn_id] = stop
+            self._repair_message_ids[turn_id] = msg_id
 
         def fence():
             if self._is_turn_cancelled(msg_id):
@@ -186,6 +188,7 @@ class AgentChatService:
         finally:
             with self._lock:
                 self._repair_events.pop(turn_id, None)
+                self._repair_message_ids.pop(turn_id, None)
                 self.repair_plan_entry.plans.pop(cid, None)
 
     def status(self, *, force_health=False) -> dict:
@@ -901,10 +904,15 @@ class AgentChatService:
                 # Persistence and publication revocation share the same ownership lock.
                 cid = turn.get("conversation_id")
                 mids = turn.get("all_message_ids") or turn.get("message_ids") or []
-                for mid in mids:
+                # A host repair keeps working in a message whose first answer already completed;
+                # Stop then cancels that one message (its content stays), never older finished ones.
+                repair_mid = self._repair_message_ids.get(task_id) if repair_stop is not None else None
+                for mid in dict.fromkeys([*mids, *([repair_mid] if repair_mid else [])]):
                     conv = self.store.get(cid)
                     msg = next((m for m in conv.get("messages", []) if m["id"] == mid), None)
-                    if not msg or (msg.get("metadata") or {}).get("status") in {"completed", "failed", "cancelled"}:
+                    status = (msg.get("metadata") or {}).get("status") if msg else None
+                    if not msg or (status in {"completed", "failed", "cancelled"}
+                                   and not (mid == repair_mid and status == "completed")):
                         continue
                     existing = (msg.get("content") or "").strip()
                     text = (existing + "\n\n⏹️ *İşlem kullanıcı tarafından iptal edildi.*").strip()

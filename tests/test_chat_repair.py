@@ -54,6 +54,37 @@ class ChatRepairTests(unittest.TestCase):
         self.assertIn('Host testleri geçti; bağımsız kod incelemesi bekleniyor.', content)
         self.assertIn('kabul edilmiş sayılmaz', content)
 
+    # Codex owner review 11 Nov (P2): Stop during the host test, after the first answer had
+    # completed, left the message "completed" while the repair cycle said "cancelled".
+    def test_stop_during_host_test_cancels_the_repair_message_but_not_older_ones(self):
+        older = self.chat.store.append_message(self.cid, 'assistant', 'Older finished answer',
+                                               metadata={'status': 'completed'})['id']
+        current = self.chat.store.append_message(self.cid, 'assistant', 'First answer',
+                                                 metadata={'status': 'completed'})['id']
+        self.mid = current
+        manifest = (('test_invoice.py', 'a' * 64),)
+        def test_and_stop(stop):
+            self.chat.cancel_active()  # the user presses Stop while host tests run
+            return TestObservation(1, 8, 'fail', manifest)
+        self.prepare(test_and_stop)
+        self.chat._active_turn['message_ids'] = [older, current]
+        with patch.object(self.chat, '_execute_codex_bubble') as writer, \
+             patch.object(self.chat, '_refresh_stop_receipt'):
+            try:
+                self.invoke()
+            except RuntimeError:
+                pass  # cancelled repairs raise after recording the result
+        writer.assert_not_called()
+        messages = {m['id']: m for m in self.chat.store.get(self.cid)['messages']}
+        repaired = messages[current]
+        self.assertEqual(repaired['metadata']['status'], 'cancelled')
+        self.assertEqual(repaired['metadata']['outcome']['execution_status'], 'cancelled')
+        self.assertIn('First answer', repaired['content'])
+        self.assertIn('iptal edildi', repaired['content'])
+        self.assertEqual(repaired['metadata']['repair_cycle']['status'], 'cancelled')
+        self.assertEqual(messages[older]['metadata']['status'], 'completed')
+        self.assertNotIn('iptal', messages[older]['content'])
+
     def test_suspicious_diff_adds_advisory_without_changing_test_result(self):
         self.prepare(lambda stop: TestObservation(0,8,test_manifest=(('test.py','a'*64),)))
         review={'status':'suspicious','signals':[{'file':'invoice.py','signal':'__main__'}],
