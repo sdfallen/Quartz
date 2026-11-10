@@ -17,7 +17,7 @@ const node=(id,extra={})=>Object.assign({id,hidden:true,dataset:{},attrs:{},text
   setAttribute(k,v){this.attrs[k]=String(v)},append(...c){this.children.push(...c)},
   replaceChildren(...c){this.children=c},addEventListener(t,f){this.listeners[t]=f},focus(){}},extra);
 const ids=['repairPlan','btnRepairPlan','repairChip','repairChipText','repairChipClear','repairChipBadge','rpProvider',
-  'rpTests','rpSupport','rpExpected','rpPython','rpPythonList','rpMax','rpError','rpPreviewOut','rpPreviewBtn',
+  'rpTests','rpSupport','rpExpected','rpPython','rpSitePackages','rpPythonList','rpMax','rpError','rpPreviewOut','rpPreviewBtn',
   'rpRegister','rpClose'];
 const els={};for(const id of ids)els[id]=node(id);
 els.rpProvider.value='codex';els.rpMax.value='2';els.rpRegister.disabled=true;
@@ -66,7 +66,7 @@ assert.equal(calls.length,0);assert.match(els.rpError.textContent,/sohbet/);
 fill();previewReply=okPreview;
 await els.rpPreviewBtn.listeners.click();
 assert.deepEqual(calls[0],['preview',{conversation_id:'c1',provider:'codex',test_files:['tests/test_invoice.py'],
-  support_files:['fixtures/expected.json'],expected_tests:8,python_executable:null,max_repairs:2}]);
+  support_files:['fixtures/expected.json'],expected_tests:8,python_executable:null,max_repairs:2,python_site_packages:null}]);
 assert.equal(els.rpRegister.disabled,false);assert.equal(els.rpPreviewOut.hidden,false);
 const out=text(els.rpPreviewOut);
 assert.match(out,/1 test dosyası, 1 destek dosyası/);assert.match(out,/\(gpt-6\.1 · medium\)/);assert.match(out,/aaaaaaaaaaaa/);assert.doesNotMatch(out,/a{13}/);
@@ -226,6 +226,23 @@ els.rpMax.value='3';els.rpExpected.value=' 12 ';await els.rpPreviewBtn.listeners
 assert.equal(calls[0][1].expected_tests,12);assert.equal(calls[0][1].max_repairs,3);
 ''')
 
+    # Gate 4 (11 Nov): isolated host tests can use a user-approved dependency folder.
+    def test_dependency_folder_is_sent_shown_and_invalidates_the_preview(self):
+        self.assertJs(r'''
+fill();els.rpSitePackages.value='  C:\\venv\\Lib\\site-packages  ';
+previewReply={status:'ok',data:{...okPreview.data,python_site_packages:'C:\\venv\\Lib\\site-packages'}};
+await els.rpPreviewBtn.listeners.click();
+assert.equal(calls[0][1].python_site_packages,'C:\\venv\\Lib\\site-packages');
+assert.match(text(els.rpPreviewOut),/Bağımlılık klasörü: C:\\venv\\Lib\\site-packages/);
+assert.equal(els.rpRegister.disabled,false);
+els.rpSitePackages.value='D:\\other';els.rpSitePackages.listeners.input();
+assert.equal(els.rpRegister.disabled,true);
+els.rpSitePackages.value='   ';await els.rpPreviewBtn.listeners.click();
+assert.equal(calls.at(-1)[1].python_site_packages,null);
+''')
+        self.assertIn('id="rpSitePackages"', gui._HTML)
+        self.assertIn('for="rpSitePackages"', gui._HTML)
+
     def test_shell_wiring(self):
         for snippet in ('id="repairPlan"', 'aria-controls="repairPlan"', 'id="repairChip"', 'for="rpTests"'):
             self.assertIn(snippet, gui._HTML)
@@ -238,7 +255,7 @@ assert.equal(calls[0][1].expected_tests,12);assert.equal(calls[0][1].max_repairs
         api = gui.Api()
         good = {"conversation_id": "c1", "provider": "antigravity", "test_files": [" a.py ", ""],
                 "support_files": ["  ", "fx.json"], "expected_tests": 8, "python_executable": "  ",
-                "max_repairs": 3, "extra": "drop me"}
+                "max_repairs": 3, "python_site_packages": " C:\\venv\\Lib\\site-packages ", "extra": "drop me"}
         with patch.object(gui, "ipc_send", return_value={"status": "ok", "data": {}}) as send:
             api.repair_plan_preview(good)
             api.repair_plan_preview({k: v for k, v in good.items() if k != "support_files"})
@@ -247,7 +264,8 @@ assert.equal(calls[0][1].expected_tests,12);assert.equal(calls[0][1].max_repairs
             api.repair_plan_clear("c1")
         self.assertEqual(send.call_args_list[0].args, ("repair_plan_preview", {
             "conversation_id": "c1", "provider": "antigravity", "test_files": ["a.py"], "support_files": ["fx.json"],
-            "expected_tests": 8, "python_executable": None, "max_repairs": 3}))
+            "expected_tests": 8, "python_executable": None, "max_repairs": 3,
+            "python_site_packages": "C:\\venv\\Lib\\site-packages"}))
         self.assertEqual(send.call_args_list[1].args[1]["support_files"], [])  # omitted optional list
         self.assertEqual(send.call_args_list[2].args, ("repair_plan_register", {"preview_id": "pv1", "confirm": False}))
         self.assertEqual(send.call_args_list[3].args, ("repair_plan_register", {"preview_id": "pv1", "confirm": True}))
@@ -265,7 +283,8 @@ assert.equal(calls[0][1].expected_tests,12);assert.equal(calls[0][1].max_repairs
                {**good, "support_files": "x"}, {**good, "support_files": [f"s{i}.json" for i in range(65)]},
                {**good, "support_files": ["ok.json", None]}, {**good, "expected_tests": "8"},
                {**good, "expected_tests": True}, {**good, "expected_tests": 0}, {**good, "expected_tests": 1.5},
-               {**good, "max_repairs": 9}, {**good, "python_executable": 5}]
+               {**good, "max_repairs": 9}, {**good, "python_executable": 5},
+               {**good, "python_site_packages": 5}, {**good, "python_site_packages": ["C:/x"]}]
         with patch.object(gui, "ipc_send") as send:
             for values in bad:
                 result = api.repair_plan_preview(values)

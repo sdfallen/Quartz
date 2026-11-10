@@ -227,6 +227,9 @@ SHELL_MARKUP = r"""
                 <input id="rpPython" type="text" list="rpPythonList" spellcheck="false" aria-describedby="rpPythonHelp" placeholder="Önizleme bulur">
                 <datalist id="rpPythonList"></datalist>
                 <span class="rp-help" id="rpPythonHelp">Boş bırakırsanız önizleme bulduğu yolu önerir.</span>
+                <label for="rpSitePackages">Bağımlılık klasörü</label>
+                <input id="rpSitePackages" type="text" spellcheck="false" aria-describedby="rpSitePackagesHelp" placeholder="İsteğe bağlı: …\Lib\site-packages">
+                <span class="rp-help" id="rpSitePackagesHelp">Testler üçüncü parti paket istiyorsa, proje dışındaki site-packages klasörü. İçeriği korunmaz; yalnız güvendiğiniz klasörü girin.</span>
                 <label for="rpMax">En çok onarım</label>
                 <select id="rpMax"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select>
               </div>

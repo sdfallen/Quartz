@@ -43,6 +43,8 @@ JAVASCRIPT = r"""
       expected_tests: repairInt(rp('rpExpected')?.value, 1, 100000),
       python_executable: String(rp('rpPython')?.value || '').trim() || null,
       max_repairs: repairInt(rp('rpMax')?.value, 1, 3),
+      // Optional, user-approved dependency folder (gate 4, 11 Nov); empty stays null.
+      python_site_packages: String(rp('rpSitePackages')?.value || '').trim() || null,
     };
   }
   function repairLocalError(v) {
@@ -110,6 +112,12 @@ JAVASCRIPT = r"""
       py.className = 'rp-python';
       py.textContent = 'Python: ' + String(data.python_executable);
       parts.push(py);
+    }
+    if (data?.python_site_packages) {
+      const site = document.createElement('p');
+      site.className = 'rp-python';
+      site.textContent = 'Bağımlılık klasörü: ' + String(data.python_site_packages);
+      parts.push(site);
     }
     for (const w of (Array.isArray(data?.warnings) ? data.warnings : [])) {
       const warn = document.createElement('p');
@@ -266,7 +274,7 @@ JAVASCRIPT = r"""
   rp('rpPreviewBtn')?.addEventListener('click', previewRepairPlan);
   rp('rpRegister')?.addEventListener('click', registerRepairPlan);
   rp('repairChipClear')?.addEventListener('click', clearRepairPlan);
-  for (const id of ['rpProvider', 'rpTests', 'rpSupport', 'rpExpected', 'rpPython', 'rpMax']) {
+  for (const id of ['rpProvider', 'rpTests', 'rpSupport', 'rpExpected', 'rpPython', 'rpSitePackages', 'rpMax']) {
     rp(id)?.addEventListener('input', invalidateRepairPreview);
   }
   repairPlanPanel?.addEventListener('keydown', e => {

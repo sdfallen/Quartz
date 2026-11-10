@@ -831,6 +831,9 @@ class Api:
         python = values.get("python_executable")
         if python is not None and not isinstance(python, str):
             refuse("Python yolu geçersiz.")
+        site = values.get("python_site_packages")
+        if site is not None and not isinstance(site, str):
+            refuse("Bağımlılık klasörü geçersiz.")
         return {
             "conversation_id": cid,
             "provider": provider,
@@ -839,6 +842,7 @@ class Api:
             "expected_tests": expected,
             "python_executable": python.strip() if python and python.strip() else None,
             "max_repairs": max_repairs,
+            "python_site_packages": site.strip() if site and site.strip() else None,
         }
 
     def repair_plan_preview(self, values) -> dict:
