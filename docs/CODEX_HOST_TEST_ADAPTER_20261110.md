@@ -1,5 +1,7 @@
 # Gerçek host unittest runner/adaptörü — 10 Kasım 2026
 
+> Düzeltme kaydı: Bu sürüm Claude incelemesinde P1 makbuz sahtelemesi nedeniyle reddedildi. Sonuçlar tarihsel test kapsamıdır; güvenlik kabulü değildir. Güncel düzeltme: CODEX_HOST_RECEIPT_REVIEW_FIX_20261110.md (e50f265).
+
 Dal: codex/repair-loop-20261109. Üretim kodu: 31c2309d73caa114ddc0956754ea6c4f3484ff23 + 51e0ed1a26aca7c07e61a1fd6c84e826294147f5.
 Önceki manifest zorunluluğu ve içerik koruma düzeltmesi c2cbadb korunur.
 
