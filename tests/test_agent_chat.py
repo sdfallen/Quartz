@@ -248,6 +248,8 @@ class AgentChatServiceTests(unittest.TestCase):
         conv = self.chat.store.get(res["conversation_id"])
         bot_msg = conv["messages"][-1]
         self.assertEqual(bot_msg["metadata"]["status"], "cancelled")
+        # Live gate 3 (11 Nov): the outcome still said "running" after Stop.
+        self.assertEqual(bot_msg["metadata"]["outcome"]["execution_status"], "cancelled")
         self.assertNotIn("Hata", bot_msg["content"])
         self.assertIn("iptal edildi", bot_msg["content"])
 

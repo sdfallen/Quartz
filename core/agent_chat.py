@@ -908,7 +908,9 @@ class AgentChatService:
                         continue
                     existing = (msg.get("content") or "").strip()
                     text = (existing + "\n\n⏹️ *İşlem kullanıcı tarafından iptal edildi.*").strip()
-                    self.store.update_message_content(cid, mid, text, metadata={"status":"cancelled"})
+                    # Replace the last running outcome too (live gate 3: it stayed "running").
+                    self.store.update_message_content(cid, mid, text, metadata={
+                        "status":"cancelled", "outcome":execution_outcome("cancelled")})
             except Exception as exc:
                 turn["stop_receipt"]["history_error_type"] = type(exc).__name__
                 log.warning("Stop history persistence failed (%s)", type(exc).__name__)
