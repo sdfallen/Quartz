@@ -509,7 +509,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       const data = resp.data;
       renderWriterRecovery(data.writer_recovery);
       if ('environment_health' in data) renderEnvironmentHealth(data.environment_health);
-      if ('repair_plan' in data) renderRepairPlan(data.repair_plan);
+      if ('repair_plan' in data) renderRepairPlan(data.repair_plan, data.active_conversation?.id);
       document.getElementById('responseDetail').value = data.preferences?.response_detail || 'short';
       savedResponseDetail = document.getElementById('responseDetail').value;
       updateAntigravitySafety(data.agents?.antigravity);
