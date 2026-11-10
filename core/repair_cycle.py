@@ -88,7 +88,7 @@ class RepairCycle:
             history.append({'attempt': attempt, 'exit_code': observed.exit_code,
                             'tests_run': observed.tests_run, 'elapsed_seconds': time.monotonic() - started})
             if observed.passed:
-                return result('tests_passed', 'Reviewed tests passed; whole goal acceptance remains separate')
+                return result('tests_passed', 'Host tests passed; independent code review and whole goal acceptance remain pending')
             if attempt == self.max_repairs:
                 return result('failed', 'Repair budget exhausted')
             try:

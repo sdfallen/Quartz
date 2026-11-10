@@ -4,10 +4,12 @@ Capture is passive and must occur before the first writer dispatch. No arbitrary
 shell command or agent-provided test count is accepted by this adapter.
 """
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path, PureWindowsPath
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -20,12 +22,18 @@ from core.repair_cycle import TestObservation
 _WORKER = r'''
 import json, sys, unittest
 from pathlib import Path
-root, modules, receipt = sys.argv[1:]
+root, modules = sys.argv[1:]
+control = json.loads(sys.stdin.readline())
+sys.stdin.close()
+receipt, nonce = control['receipt'], control['nonce']
+del control
+# Do not expose the receipt path through project-visible command arguments.
+sys.argv = [root]
 sys.path.insert(0, root)
 suite = unittest.defaultTestLoader.loadTestsFromNames(json.loads(modules))
 result = unittest.TextTestRunner(verbosity=2).run(suite)
 code = 0 if result.wasSuccessful() else 1
-Path(receipt).write_text(json.dumps({'tests_run': result.testsRun,
+Path(receipt).write_text(json.dumps({'nonce': nonce, 'tests_run': result.testsRun,
     'skipped': len(result.skipped), 'exit_code': code}), encoding='utf-8')
 sys.exit(code)
 '''
@@ -49,26 +57,28 @@ def _active_job_count(handle):
 
 
 class HostUnittestAdapter:
-    def __init__(self, project_root, test_files, *, expected_tests, python_executable=None,
+    def __init__(self, project_root, test_files, *, expected_tests, support_files=(), python_executable=None,
                  timeout=30, max_output_bytes=256 * 1024):
         if type(expected_tests) is not int or expected_tests <= 0:
             raise ValueError('Positive host test count required')
         if not 0 < timeout <= 600 or not 1024 <= max_output_bytes <= 1024 * 1024:
             raise ValueError('Invalid test resource budget')
         self.root = Path(project_root).resolve(strict=True)
-        if not self.root.is_dir() or not isinstance(test_files, (tuple, list)) or not 1 <= len(test_files) <= 64:
+        if (not self.root.is_dir() or not isinstance(test_files, (tuple, list)) or not 1 <= len(test_files) <= 64
+                or not isinstance(support_files, (tuple, list)) or len(support_files) > 64):
             raise ValueError('Explicit bounded test file list required')
         files = []
-        for name in test_files:
+        for name in (*test_files, *support_files):
             path = Path(name)
             if path.is_absolute() or PureWindowsPath(name).drive or '..' in path.parts or ':' in str(name):
                 raise ValueError('Root-relative test path required')
-            if path.suffix != '.py' or any(not re.fullmatch(r'[A-Za-z_]\w*', p) for p in path.with_suffix('').parts):
+            if name in test_files and (path.suffix != '.py' or any(not re.fullmatch(r'[A-Za-z_]\w*', p) for p in path.with_suffix('').parts)):
                 raise ValueError('Importable Python test module required')
             files.append(path.as_posix())
-        if len(set(files)) != len(files):
+        if len({p.casefold() for p in files}) != len(files):
             raise ValueError('Duplicate host test file')
-        self.files = tuple(sorted(files))
+        self.files = tuple(sorted(Path(p).as_posix() for p in test_files))
+        self.manifest_files = tuple(sorted(files))
         self.expected_tests = expected_tests
         self.timeout, self.max_output_bytes = timeout, max_output_bytes
         executable = python_executable or (None if getattr(sys, 'frozen', False) else sys.executable)
@@ -87,7 +97,7 @@ class HostUnittestAdapter:
 
     def _manifest(self):
         result, total = [], 0
-        for name in self.files:
+        for name in self.manifest_files:
             candidate = self.root / name
             for part in (candidate, *candidate.parents):
                 if part == self.root: break
@@ -150,12 +160,13 @@ class HostUnittestAdapter:
             if stop.is_set(): raise RuntimeError('Host test cancelled before start')
             with tempfile.TemporaryDirectory(prefix='quartz-host-unittest-') as directory:
                 receipt = Path(directory) / 'result.json'
+                nonce = secrets.token_hex(32)
                 with (Path(directory) / 'output.log').open('w+b') as output:
                     args = [self.python, '-I', '-B', '-u', '-X', 'utf8', '-c', _WORKER,
-                            str(self.root), json.dumps([p[:-3].replace('/', '.') for p in self.files]), str(receipt)]
+                            str(self.root), json.dumps([p[:-3].replace('/', '.') for p in self.files])]
                     env = {k: v for k, v in os.environ.items() if k.upper() in {
                         'PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP'}}
-                    proc = subprocess.Popen(args, cwd=self.root, stdin=subprocess.DEVNULL, stdout=output,
+                    proc = subprocess.Popen(args, cwd=self.root, stdin=subprocess.PIPE, stdout=output,
                                             stderr=subprocess.STDOUT, env=env,
                                             creationflags=CREATE_SUSPENDED | getattr(subprocess, 'CREATE_NO_WINDOW', 0))
                     with self._lock:
@@ -164,6 +175,8 @@ class HostUnittestAdapter:
                     try:
                         if not bind_kill_on_close_job(proc, resume=True):
                             raise RuntimeError('Host test Job Object ownership unavailable')
+                        proc.stdin.write((json.dumps({'receipt': str(receipt), 'nonce': nonce})+'\n').encode('utf-8'))
+                        proc.stdin.close()
                         deadline = time.monotonic() + self.timeout
                         while proc.poll() is None:
                             if stop.is_set(): raise RuntimeError('Host test cancelled')
@@ -185,6 +198,9 @@ class HostUnittestAdapter:
                         if len(data) > 4096:
                             raise RuntimeError('Host unittest receipt too large')
                         observed = json.loads(data.decode('utf-8'))
+                        if (not isinstance(observed, dict) or not isinstance(observed.get('nonce'), str)
+                                or not hmac.compare_digest(observed['nonce'], nonce)):
+                            raise RuntimeError('Host unittest receipt authentication failed')
                         if (type(observed.get('tests_run')) is not int or observed['tests_run'] < self.expected_tests
                                 or observed.get('skipped') != 0 or type(observed.get('exit_code')) is not int
                                 or code != observed['exit_code'] or code not in (0, 1)):
@@ -192,8 +208,16 @@ class HostUnittestAdapter:
                         self.validate_baseline()
                         output.seek(0)
                         text = output.read(self.max_output_bytes).decode('utf-8', errors='replace')
+                        counts = re.findall(r'^Ran (\d+) tests? in [^\r\n]+\r?$', text, re.MULTILINE)
+                        if not counts or int(counts[-1]) != observed['tests_run']:
+                            raise RuntimeError('Host unittest output/receipt count inconsistent')
                         observation = TestObservation(code, observed['tests_run'], text, self._baseline)
                     finally:
+                        if proc.stdin is not None and not proc.stdin.closed:
+                            try:
+                                proc.stdin.close()
+                            except OSError:
+                                pass
                         if not self.cleanup(): raise RuntimeError('Host test process cleanup unconfirmed')
                 return observation
         finally:

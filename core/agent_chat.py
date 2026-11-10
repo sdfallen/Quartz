@@ -44,7 +44,7 @@ class AgentChatService:
         return len(messages) + 1
 
     def register_host_unittest_plan(self, conversation_id, *, project_id, provider,
-                                    test_files, expected_tests, python_executable=None,
+                                    test_files, expected_tests, support_files=(), python_executable=None,
                                     timeout=30, max_repairs=2):
         """Capture host test hashes BEFORE any writer starts; no IPC/MCP entry."""
         from core.host_test_runner import HostUnittestAdapter
@@ -58,7 +58,7 @@ class AgentChatService:
             if previous is not None and previous.cleanup_pending:
                 raise RuntimeError('Previous host test cleanup unconfirmed')
             adapter = HostUnittestAdapter(project['path'], test_files, expected_tests=expected_tests,
-                                           python_executable=python_executable, timeout=timeout)
+                                           support_files=support_files, python_executable=python_executable, timeout=timeout)
             self.register_repair_plan(conversation_id, project_id=project_id, provider=provider,
                                       test=adapter, expected_tests=expected_tests, max_repairs=max_repairs)
             self._host_test_adapters[conversation_id] = adapter
@@ -660,8 +660,9 @@ class AgentChatService:
                 raise RuntimeError("Önceki görevin çalışanı kapanıyor; yeni görev henüz başlatılamaz.")
             if self._active_turn and self._active_turn.get("status") == "running":
                 return self._queue_instruction(text, agent, conversation_id, write, full_access)
-            if any(a.cleanup_pending for a in self._host_test_adapters.values()):
-                raise RuntimeError('Previous host test process cleanup unconfirmed')
+            pending_host = [cid for cid, a in self._host_test_adapters.items() if a.cleanup_pending]
+            if pending_host:
+                raise RuntimeError('Önceki host test sürecinin kapanışı doğrulanmadı; sohbet: ' + ', '.join(pending_host))
             if self._active_turn and (self._active_turn.get("status") == "cancelling" or
                     self._active_turn.get("stop_receipt", {}).get("status") in {"pending", "failed"}):
                 raise RuntimeError("Önceki ajan süreçlerinin durduğu henüz doğrulanmadı.")

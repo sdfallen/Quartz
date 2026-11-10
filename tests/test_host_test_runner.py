@@ -40,6 +40,22 @@ class HostRunnerTests(unittest.TestCase):
             with self.subTest(files=files), self.assertRaises(ValueError):
                 HostUnittestAdapter(self.root, files, expected_tests=1)
 
+    def test_support_files_are_hashed_sorted_and_never_imported(self):
+        (self.root/'expected.json').write_text('{"total":118}', encoding='utf-8')
+        (self.root/'helper.py').write_text('raise AssertionError("not a test module")', encoding='utf-8')
+        runner = self.adapter(support_files=['helper.py','expected.json'])
+        self.assertEqual([p for p,_ in runner.baseline_manifest], ['expected.json','helper.py','test_value.py'])
+        self.assertEqual(runner.files, ('test_value.py',))
+        (self.root/'expected.json').write_text('{"total":0}', encoding='utf-8')
+        with patch('core.host_test_runner.subprocess.Popen') as launch:
+            with self.assertRaises(RuntimeError): runner.validate_baseline()
+        launch.assert_not_called()
+
+    def test_support_file_escape_and_case_duplicate_are_rejected(self):
+        for files in (['../expected.json'], ['test_value.py'], ['TEST_VALUE.py']):
+            with self.subTest(files=files), self.assertRaises(ValueError):
+                self.adapter(support_files=files)
+
     def test_changed_tests_are_rejected_before_any_process(self):
         runner = self.adapter()
         (self.root/'test_value.py').write_text(PASS.replace('2,2','True,True'), encoding='utf-8')
@@ -149,3 +165,48 @@ class HostRunnerTests(unittest.TestCase):
         runner = HostUnittestAdapter(self.root,['test_invoice.py'],expected_tests=8)
         result = runner(threading.Event())
         self.assertEqual((result.exit_code,result.tests_run),(1,8))
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows Job Object runner')
+    def test_production_module_cannot_forge_argv_receipt(self):
+        (self.root/'invoice.py').write_text(
+            "import os,sys,json\nfrom pathlib import Path\n"
+            "Path(sys.argv[3]).write_text(json.dumps({'tests_run':1,'skipped':0,'exit_code':0}))\nos._exit(0)\n",
+            encoding='utf-8')
+        (self.root/'test_value.py').write_text('import invoice\n'+PASS, encoding='utf-8')
+        runner = self.adapter()
+        baseline = runner.baseline_manifest
+        try:
+            result = runner(threading.Event())
+        except RuntimeError:
+            pass
+        else:
+            self.assertFalse(result.passed, 'Production code forged a passing receipt')
+        self.assertEqual(runner.baseline_manifest, baseline)
+        self.assertFalse(runner.cleanup_pending)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows Job Object runner')
+    def test_missing_or_wrong_nonce_is_blocked_even_with_exit_zero(self):
+        from core.host_test_runner import _WORKER
+        for payload in ({'tests_run':1,'skipped':0,'exit_code':0},
+                        {'nonce':'wrong','tests_run':1,'skipped':0,'exit_code':0}):
+            worker = _WORKER.replace('sys.path.insert(0, root)',
+                'import os\nPath(receipt).write_text('+repr(__import__('json').dumps(payload))+')\nos._exit(0)\nsys.path.insert(0, root)')
+            runner = self.adapter()
+            with self.subTest(payload=payload), patch('core.host_test_runner._WORKER',worker):
+                with self.assertRaisesRegex(RuntimeError, 'authentication'): runner(threading.Event())
+            self.assertFalse(runner.cleanup_pending)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows Job Object runner')
+    def test_receipt_count_must_match_unittest_output(self):
+        from core.host_test_runner import _WORKER
+        worker = _WORKER.replace("'tests_run': result.testsRun", "'tests_run': result.testsRun+1")
+        with patch('core.host_test_runner._WORKER',worker):
+            with self.assertRaisesRegex(RuntimeError,'output/receipt'): self.adapter()(threading.Event())
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows Job Object runner')
+    def test_extra_tests_above_host_floor_are_reported(self):
+        (self.root/'test_value.py').write_text(PASS+' def test_other(self): self.assertTrue(True)\n', encoding='utf-8')
+        (self.root/'expected.csv').write_text('total,118\n', encoding='utf-8')
+        result = self.adapter(support_files=['expected.csv'])(threading.Event())
+        self.assertEqual(result.tests_run,2)
+        self.assertTrue(result.passed)
