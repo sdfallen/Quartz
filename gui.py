@@ -795,6 +795,44 @@ class Api:
         except Exception as exc:
             return {"status": "error", "data": str(exc)}
 
+    # User-approved repair plan (docs/INTEGRATION_REQUEST_REPAIR_PLAN_UI_20261110.md); the host
+    # actions are Codex's. Only whitelisted, type-checked fields cross the bridge.
+    def repair_plan_preview(self, values) -> dict:
+        try:
+            values = values if isinstance(values, dict) else {}
+            def paths(key):
+                items = values.get(key)
+                if not isinstance(items, list) or len(items) > 64:
+                    return []
+                return [s.strip() for s in items if isinstance(s, str) and s.strip()][:64]
+            expected = values.get("expected_tests")
+            max_repairs = values.get("max_repairs")
+            python = values.get("python_executable")
+            payload = {
+                "conversation_id": str(values.get("conversation_id") or ""),
+                "provider": "antigravity" if values.get("provider") == "antigravity" else "codex",
+                "test_files": paths("test_files"),
+                "support_files": paths("support_files"),
+                "expected_tests": expected if type(expected) is int else 0,
+                "python_executable": python.strip() if isinstance(python, str) and python.strip() else None,
+                "max_repairs": max_repairs if type(max_repairs) is int and 1 <= max_repairs <= 3 else 2,
+            }
+            return ipc_send("repair_plan_preview", payload)
+        except Exception as exc:
+            return {"status": "error", "data": str(exc)}
+
+    def repair_plan_register(self, preview_id, confirm=False) -> dict:
+        try:
+            return ipc_send("repair_plan_register", {"preview_id": str(preview_id or ""), "confirm": confirm is True})
+        except Exception as exc:
+            return {"status": "error", "data": str(exc)}
+
+    def repair_plan_clear(self, conversation_id) -> dict:
+        try:
+            return ipc_send("repair_plan_clear", {"conversation_id": str(conversation_id or "")})
+        except Exception as exc:
+            return {"status": "error", "data": str(exc)}
+
     def chat_prepare_resume(self, conversation_id, message_id):
         try:
             self._chat_delete_guard()

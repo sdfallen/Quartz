@@ -115,7 +115,7 @@ class PackagingContractTests(unittest.TestCase):
         self.assertIn("ui.document", imported(ROOT / "gui.py"))
         self.assertIn("ui.app_js", imported(ROOT / "gui.py"))
         self.assertIn("ui.styles", imported(ROOT / "ui" / "document.py"))
-        self.assertEqual({"ui.js_setup", "ui.js_messages", "ui.js_chat", "ui.js_desktop",
+        self.assertEqual({"ui.js_setup", "ui.js_messages", "ui.js_chat", "ui.js_repair_plan", "ui.js_desktop",
                           "ui.js_diagnostics", "ui.js_advanced", "ui.js_workspace", "ui.js_lifecycle"},
                          imported(ROOT / "ui" / "app_js.py"))
 
@@ -148,7 +148,7 @@ class ScriptAndApiContractTests(unittest.TestCase):
         self.assertEqual(shipped, [APPLICATION_JS])
         self.assertEqual(SCRIPT_BLOCK.findall(SCRIPT_DOCUMENT), shipped)
         self.assertEqual(SCRIPT_BLOCK.findall(source), [])
-        self.assertEqual(len(SCRIPT_PARTS), 8)
+        self.assertEqual(len(SCRIPT_PARTS), 9)
         self.assertTrue(all(part.strip() for part in SCRIPT_PARTS))
         self.assertEqual(APPLICATION_JS, "".join(SCRIPT_PARTS))
 

@@ -652,3 +652,31 @@ body.compact .agent-seg-group { display: inline-flex; }
 .env-health-list code { display: block; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-3); font-size: var(--text-xs); }
 @media (prefers-reduced-motion: no-preference) { .env-health:not([hidden]) { animation: env-health-in .18s ease-out; } }
 @keyframes env-health-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* User-approved repair plan (integration request 10 Nov). Reuses the health card's language. */
+.repair-plan { width: min(var(--measure), 100%); margin: 0 0 8px; padding: 10px 12px; border-radius: var(--r-lg);
+  border: 1px solid var(--line-strong); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.repair-plan-head { display: flex; align-items: center; gap: 8px; }
+.repair-plan-head h2 { margin: 0 auto 0 0; font-size: var(--text-sm); font-weight: 600; }
+.rp-intro { margin: 4px 0 8px; color: var(--text-2); font-size: var(--text-xs); line-height: 1.5; }
+.rp-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 10px; align-items: start; }
+.rp-grid label { padding-top: 5px; font-size: var(--text-xs); color: var(--text-2); }
+.rp-grid textarea, .rp-grid input, .rp-grid select { width: 100%; min-height: 30px; box-sizing: border-box; padding: 4px 8px;
+  border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--text); font: inherit; font-size: var(--text-sm); }
+.rp-grid textarea { resize: vertical; font-family: var(--font-mono, monospace); }
+.rp-grid textarea:focus-visible, .rp-grid input:focus-visible, .rp-grid select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rp-help { grid-column: 2; margin-top: -2px; color: var(--text-3); font-size: var(--text-xs); }
+.rp-error { margin: 8px 0 0; color: var(--danger); font-size: var(--text-xs); }
+.rp-preview { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); font-size: var(--text-xs); }
+.rp-preview p { margin: 0 0 4px; }
+.rp-files { list-style: none; margin: 4px 0; padding: 0; display: grid; gap: 2px; }
+.rp-files li { display: grid; grid-template-columns: 48px minmax(0, 1fr) max-content; gap: 8px; align-items: baseline; }
+.rp-files code { overflow-wrap: anywhere; }
+.rp-role, .rp-hash, .rp-note { color: var(--text-3); }
+.rp-hash { font-family: var(--font-mono, monospace); font-variant-numeric: tabular-nums; }
+.rp-warning { color: var(--warn); }
+.rp-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.rp-primary:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.repair-chip { width: min(var(--measure), 100%); margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
+.repair-chip .msg-badge { margin-right: auto; }
+@media (max-width: 560px) { .rp-grid { grid-template-columns: minmax(0, 1fr); } .rp-help { grid-column: 1; } }
