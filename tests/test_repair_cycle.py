@@ -59,3 +59,23 @@ class RepairCycleTests(unittest.TestCase):
         cycle.run(**args)
         with self.assertRaises(RuntimeError):
             cycle.run(**args)
+
+    def test_deleted_tests_cannot_pass(self):
+        result = self.run_cycle(iter([TestObservation(1, 8), TestObservation(0, 1)]))
+        self.assertEqual(result['status'], 'blocked')
+        self.assertEqual(result['reason'], 'Host test count decreased')
+
+    def test_manifest_change_cannot_pass(self):
+        result = self.run_cycle(iter([TestObservation(1, 8, test_manifest=(('test.py', 'old'),)),
+                                      TestObservation(0, 8, test_manifest=(('test.py', 'new'),))]))
+        self.assertEqual(result['status'], 'blocked')
+
+    def test_stop_exception_is_cancelled_in_both_callbacks(self):
+        for phase in ('test', 'repair'):
+            with self.subTest(phase=phase):
+                stop = threading.Event()
+                def interrupted(*args):
+                    stop.set()
+                    raise RuntimeError('cancelled owned process')
+                result = self.run_cycle(iter([TestObservation(1, 2)]), stop=stop, **{phase: interrupted})
+                self.assertEqual(result['status'], 'cancelled')
