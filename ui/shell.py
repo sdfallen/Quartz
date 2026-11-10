@@ -205,6 +205,41 @@ SHELL_MARKUP = r"""
     </div>
 
           <div class="dock">
+            <section class="repair-plan" id="repairPlan" aria-labelledby="repairPlanTitle" hidden>
+              <div class="repair-plan-head">
+                <h2 id="repairPlanTitle">Onarım planı</h2>
+                <button type="button" class="env-health-btn" id="rpClose" aria-label="Onarım planını kapat">Kapat</button>
+              </div>
+              <p class="rp-intro">Testler başarısız olursa aynı ajan en çok seçtiğiniz sayıda yeniden dener. Hangi testlerin sayılacağını siz belirlersiniz; ajan değiştiremez.</p>
+              <div class="rp-grid">
+                <label for="rpProvider">Ajan</label>
+                <select id="rpProvider"><option value="codex">Codex</option><option value="antigravity">Antigravity</option></select>
+                <label for="rpTests">Test dosyaları</label>
+                <textarea id="rpTests" rows="2" spellcheck="false" aria-describedby="rpTestsHelp" placeholder="tests/test_invoice.py"></textarea>
+                <span class="rp-help" id="rpTestsHelp">Satır başına bir dosya, proje klasörüne göre.</span>
+                <label for="rpSupport">Destek dosyaları</label>
+                <textarea id="rpSupport" rows="2" spellcheck="false" aria-describedby="rpSupportHelp" placeholder="tests/fixtures/expected.json"></textarea>
+                <span class="rp-help" id="rpSupportHelp">İsteğe bağlı: testlerin okuduğu beklenen değerler ve örnek veriler. Çalıştırılmaz, yalnız korunur.</span>
+                <label for="rpExpected">En az test sayısı</label>
+                <input id="rpExpected" type="number" min="1" max="100000" inputmode="numeric" required>
+                <label for="rpPython">Python</label>
+                <input id="rpPython" type="text" list="rpPythonList" spellcheck="false" aria-describedby="rpPythonHelp" placeholder="Önizleme bulur">
+                <datalist id="rpPythonList"></datalist>
+                <span class="rp-help" id="rpPythonHelp">Boş bırakırsanız önizleme bulduğu yolu önerir.</span>
+                <label for="rpMax">En çok onarım</label>
+                <select id="rpMax"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select>
+              </div>
+              <p class="rp-error" id="rpError" role="alert" hidden></p>
+              <div class="rp-preview" id="rpPreviewOut" aria-live="polite" hidden></div>
+              <div class="rp-actions">
+                <button type="button" class="env-health-btn" id="rpPreviewBtn">Önizle</button>
+                <button type="button" class="env-health-btn rp-primary" id="rpRegister" disabled>Onayla ve kaydet</button>
+              </div>
+            </section>
+            <div class="repair-chip" id="repairChip" data-status="ready" hidden>
+              <span class="msg-badge" id="repairChipBadge" data-tone="ok"><i class="msg-badge-icon" aria-hidden="true"></i><span id="repairChipText" role="status">Onarım planı hazır</span></span>
+              <button type="button" class="env-health-btn" id="repairChipClear">Kaldır</button>
+            </div>
             <section class="env-health" id="envHealth" data-status="ok" aria-label="Ortam sağlık kontrolü" hidden>
               <div class="env-health-head">
                 <span class="msg-badge" id="envHealthBadge" data-tone="warn"><i class="msg-badge-icon" aria-hidden="true"></i><span id="envHealthTitle" role="status">Ortamda uyarı var</span></span>
@@ -228,6 +263,7 @@ SHELL_MARKUP = r"""
             <button type="button" class="agent-seg-btn" data-agent="collaboration">Birlikte</button>
           </div>
                 <div class="composer-spacer"></div>
+                <button type="button" class="chat-tool-btn" id="btnRepairPlan" aria-expanded="false" aria-controls="repairPlan" title="Testler başarısız olursa ajanın yeniden denemesi için plan kur">Onarım planı</button>
                 <button type="button" class="chat-tool-btn" id="btnContinueCollab" style="display:none" title="Birlikte modunda ajanlar arası tartışmayı 1 tur daha sürdür">@@i:loop:sm@@ 1 tur daha</button>
           <button type="button" class="icon-btn mic" id="btnMic" title="Konuş (bas-konuş)" aria-label="Sesle yaz">@@i:mic@@</button>
           <button type="button" class="send-btn send" id="btnSend" title="Gönder (Enter)" aria-label="Gönder">@@i:send@@</button>
