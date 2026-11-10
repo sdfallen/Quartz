@@ -95,6 +95,38 @@ class MultiAgentServiceTests(unittest.TestCase):
         agy.get.return_value = {"id": "agy-nolink", "status": "completed"}
         self.assertNotIn("checkpoint", service.get_run("agy-nolink"))
 
+    # S4 integration request (10 Nov): a reset or positively corrupt workspace is rebuilt on
+    # the write paths that call check_squad_connection; nothing happens without the CLI.
+    def test_check_squad_connection_initializes_an_uninitialized_workspace(self):
+        service, _, _ = self.make_service()
+        squad = MagicMock()
+        squad.status.side_effect = [{"installed": True, "initialized": False, "database": "db"},
+                                    {"installed": True, "initialized": True, "database": "db"}]
+        with patch.object(service, "_squad", return_value=squad), patch.object(service, "_ensure_agent"):
+            result = service.check_squad_connection(force=True)
+        squad.initialize.assert_called_once()
+        self.assertTrue(result["connected"])
+
+    def test_check_squad_connection_does_not_initialize_without_cli_or_when_ready(self):
+        service, _, _ = self.make_service()
+        for status in ({"installed": False, "initialized": False}, {"installed": True, "initialized": True}):
+            squad = MagicMock()
+            squad.status.return_value = status
+            with self.subTest(status=status), patch.object(service, "_squad", return_value=squad), \
+                 patch.object(service, "_ensure_agent"):
+                service.check_squad_connection(force=True)
+                squad.initialize.assert_not_called()
+
+    def test_check_squad_connection_reports_a_failed_rebuild(self):
+        service, _, _ = self.make_service()
+        squad = MagicMock()
+        squad.status.return_value = {"installed": True, "initialized": False}
+        squad.initialize.side_effect = RuntimeError("Corrupt Squad database could not be quarantined")
+        with patch.object(service, "_squad", return_value=squad):
+            result = service.check_squad_connection(force=True)
+        self.assertFalse(result["connected"])
+        self.assertIn("quarantined", result["error"])
+
     def test_dispatch_links_squad_task_and_real_runtime(self):
         service, runtime, _ = self.make_service()
         squad = MagicMock()

@@ -407,6 +407,14 @@ class MultiAgentService:
             if project.get("workflow") == "warband":
                 return {**self._task_squad_status(squad), "connected": False}
             st = squad.status()
+            # S4 (integration request 10 Nov): a reset fixture or a positively corrupt DB is
+            # repaired on these write paths (add/dispatch/send); status() itself stays read-only.
+            if st.get("installed") and not st.get("initialized"):
+                try:
+                    squad.initialize()
+                    st = squad.status()
+                except Exception as exc:
+                    st = {**st, "error": str(exc)}
             if not st.get("initialized") or not st.get("installed"):
                 res = {
                     "connected": False,

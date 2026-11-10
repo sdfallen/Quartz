@@ -395,6 +395,9 @@ class NaturalDesktopTask:
                 if not self.squad.initialized: self.squad.initialize()
             else:
                 self.squad = self.squad_factory(str(root))
+                # S4: a reset/corrupt workspace is rebuilt before refusing the task.
+                if not self.squad.initialized:
+                    self.squad.initialize()
             if not self.squad.initialized:
                 raise RuntimeError("Seçili projenin mevcut Squad bağlantısı hazır değil")
             self.agent_ids = {p: "quartz-" + p + "-" + task_id[:10] for p in selected}
