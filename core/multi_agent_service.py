@@ -813,6 +813,18 @@ class MultiAgentService:
                        any(item.get("id") == claim_id for item in recovery.get("claims", [])))
         return sorted(pending)
 
+    def record_repair_result(self, run_id, result):
+        """Host-only terminal evidence; never grants another writer claim."""
+        from copy import deepcopy
+        if self.pending_writer_runs([run_id]) or self.get_run(run_id).get('process_exit_confirmed') is not True:
+            raise RuntimeError('Repair receipt requires confirmed writer exit')
+        with self._lock:
+            if run_id not in self._links:
+                raise KeyError('Unknown repair run')
+            receipt = {**self.run_evidence(run_id), 'repair_cycle': deepcopy(result)}
+            self._evidence_store.put(run_id, receipt)
+            self._file_changes[run_id] = receipt
+
     def run_evidence(self, run_id):
         """Read-only receipt; no runtime probe, command or implicit retest."""
         from copy import deepcopy
