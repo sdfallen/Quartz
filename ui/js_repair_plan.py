@@ -70,6 +70,8 @@ JAVASCRIPT = r"""
     if (!repairPlanPanel || !repairPlanBtn) return;
     repairPlanPanel.hidden = !open;
     repairPlanBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    // The empty-state greeting would otherwise peek out above the open panel.
+    document.body?.classList?.toggle('repair-plan-open', !!open);
     if (open) { syncRepairAgent(); rp('rpTests')?.focus(); }
   }
 
@@ -228,6 +230,17 @@ JAVASCRIPT = r"""
         + `en çok ${Number(plan.max_repairs) || 0} onarım · ajan ${plan.provider === 'antigravity' ? 'Antigravity' : 'Codex'}`;
     rp('repairChipClear').hidden = running;
     repairChip.hidden = false;
+  }
+
+  // Live gate 3 (11 Nov): chat_status is not polled while a turn runs, so the chip stayed "hazır".
+  // Purely a display hint; the host's next status (running/null) replaces it.
+  function markRepairPlanRunning(on) {
+    if (!on || !repairChip || repairChip.hidden || repairPlanCid !== currentConvId) return;
+    repairPlanKey = '';  // let the next host status repaint whatever is true
+    repairChip.dataset.status = 'running';
+    rp('repairChipBadge').dataset.tone = 'wait';
+    rp('repairChipText').textContent = 'Onarım döngüsü çalışıyor';
+    rp('repairChipClear').hidden = true;
   }
 
   async function clearRepairPlan() {
