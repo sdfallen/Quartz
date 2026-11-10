@@ -114,6 +114,9 @@ assert.match(logs.pop(),/backend yok/);
         self.assertIn('id="envHealth"', gui._HTML)
         self.assertIn('aria-controls="envHealthList"', gui._HTML)
         self.assertIn("if ('environment_health' in data) renderEnvironmentHealth(data.environment_health);", gui._HTML)
+        # Live 10 Nov: the startup read is still pending, so the periodic poll must render too.
+        self.assertIn("if ('environment_health' in st.data) renderEnvironmentHealth(st.data.environment_health);",
+                      gui._HTML)
         api = gui.Api()
         with patch.object(gui, "ipc_send", return_value={"status": "ok", "data": {}}) as send:
             api.environment_health(True)
