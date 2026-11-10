@@ -768,19 +768,27 @@ class MultiAgentService:
 
     def get_run(self, run_id: str) -> dict:
         with self._lock:
-            provider = self._links.get(run_id, {}).get("provider")
+            link = dict(self._links.get(run_id, {}))
+            provider = link.get("provider")
             evidence = dict(self._file_changes.get(run_id, {}))
         if provider == "notion":
             return self.notion.get(run_id)
+
+        # The pre-write checkpoint lives on the link, not on the runtime record. Live gate 3
+        # (11 Nov): without it the repair diff scan always reported "unknown".
+        def with_checkpoint(run):
+            if link.get("checkpoint") is not None and run.get("checkpoint") is None:
+                run["checkpoint"] = link["checkpoint"]
+            return run
         if provider == "antigravity" and self.antigravity:
             run = self.antigravity.get(run_id)
-            return self._project_goal_outcome(run, evidence)
+            return with_checkpoint(self._project_goal_outcome(run, evidence))
         if self.codex:
             try:
-                return self._project_goal_outcome(self.codex.get(run_id), evidence)
+                return with_checkpoint(self._project_goal_outcome(self.codex.get(run_id), evidence))
             except KeyError:
                 if self.antigravity:
-                    return self._project_goal_outcome(self.antigravity.get(run_id), evidence)
+                    return with_checkpoint(self._project_goal_outcome(self.antigravity.get(run_id), evidence))
                 raise
 
     @staticmethod

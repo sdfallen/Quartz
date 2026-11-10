@@ -79,6 +79,22 @@ class MultiAgentServiceTests(unittest.TestCase):
         self.assertEqual(service.get_run("codex-write")["files_changed"],
                          [str(Path(project["path"]) / "created.txt")])
 
+    # Live gate 3 (11 Nov): the repair diff scan reads get_run()["checkpoint"]; the runtime
+    # record never carries it, so the scan always said "unknown".
+    def test_get_run_carries_the_linked_pre_write_checkpoint(self):
+        service, codex, agy = self.make_service()
+        checkpoint = {"status": "snapshot", "complete": True, "archive": "before.zip"}
+        codex.get.return_value = {"id": "codex-write", "status": "completed"}
+        agy.get.return_value = {"id": "agy-write", "status": "completed", "checkpoint": {"own": True}}
+        with service._lock:
+            service._links["codex-write"] = {"provider": "codex", "checkpoint": checkpoint}
+            service._links["agy-write"] = {"provider": "antigravity", "checkpoint": checkpoint}
+            service._links["agy-nolink"] = {"provider": "antigravity"}
+        self.assertEqual(service.get_run("codex-write")["checkpoint"], checkpoint)
+        self.assertEqual(service.get_run("agy-write")["checkpoint"], {"own": True})  # runtime value wins
+        agy.get.return_value = {"id": "agy-nolink", "status": "completed"}
+        self.assertNotIn("checkpoint", service.get_run("agy-nolink"))
+
     def test_dispatch_links_squad_task_and_real_runtime(self):
         service, runtime, _ = self.make_service()
         squad = MagicMock()
