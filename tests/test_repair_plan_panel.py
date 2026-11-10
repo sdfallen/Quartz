@@ -171,6 +171,31 @@ els.btnRepairPlan.listeners.click();assert.equal(els.rpProvider.value,'codex');
 mainAgentSelect.value='antigravity';renderRepairPlanChip(null,'c1');assert.equal(els.rpProvider.value,'antigravity');
 ''')
 
+    # Live gate 3 (11 Nov): the chip said "hazır" for the whole turn.
+    def test_chip_shows_running_during_a_turn_and_host_status_wins_after(self):
+        self.assertJs(r'''
+const ready={status:'ready',provider:'antigravity',files_count:2,support_count:1,expected_tests:8,max_repairs:2};
+markRepairPlanRunning(true);assert.equal(els.repairChip.hidden,true);  // no plan: nothing to show
+renderRepairPlanChip(ready,'c1');markRepairPlanRunning(true);
+assert.equal(els.repairChipText.textContent,'Onarım döngüsü çalışıyor');assert.equal(els.repairChipClear.hidden,true);
+assert.equal(els.repairChipBadge.dataset.tone,'wait');
+renderRepairPlanChip(ready,'c1');assert.match(els.repairChipText.textContent,/hazır/);  // same host data repaints
+renderRepairPlanChip(null,'c1');assert.equal(els.repairChip.hidden,true);
+renderRepairPlanChip(ready,'c1');currentConvId='c2';markRepairPlanRunning(true);
+assert.match(els.repairChipText.textContent,/hazır/);  // another conversation's turn
+''')
+        self.assertIn("if (typeof markRepairPlanRunning === 'function') markRepairPlanRunning(!!v);", gui._HTML)
+
+    def test_panel_is_opaque_and_scrolls_with_sticky_actions(self):
+        from pathlib import Path
+        css = (Path(__file__).resolve().parents[1] / "assets" / "workspace.css").read_text(encoding="utf-8")
+        block = css[css.index(".repair-plan {"):css.index(".repair-plan-head")]
+        self.assertIn("overflow-y: auto", block)
+        self.assertIn("max-height:", block)
+        self.assertNotIn("transparent)", block.split("--rp-bg:")[1].split(";")[0])
+        actions = css[css.index(".rp-actions {"):]
+        self.assertIn("position: sticky", actions.split("}")[0])
+
     def test_late_preview_and_clear_answers_stay_in_their_conversation(self):
         self.assertJs(r'''
 fill();let release;previewReply=new Promise(r=>{release=r;});

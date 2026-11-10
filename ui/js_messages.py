@@ -735,6 +735,8 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     if (btnCont) btnCont.disabled = v;
     setOrb(v ? 'thinking' : 'idle');
     cancelBtn.style.display = v ? 'inline-block' : 'none';
+    // The status poll pauses during a turn; show a ready repair plan as running meanwhile.
+    if (typeof markRepairPlanRunning === 'function') markRepairPlanRunning(!!v);
     if (v) {
       requestStarted = Date.now();
       clearInterval(requestTimer);
