@@ -49,6 +49,10 @@ class ChatRepairTests(unittest.TestCase):
         result = self.chat.store.get(self.cid)['messages'][-1]['metadata']['repair_cycle']
         self.assertEqual(result['status'], 'tests_passed')
         self.assertFalse(result['user_accepted'])
+        content = self.chat.store.get(self.cid)['messages'][-1]['content']
+        self.assertIn('Initial output', content)
+        self.assertIn('Host testleri geçti; bağımsız kod incelemesi bekleniyor.', content)
+        self.assertIn('kabul edilmiş sayılmaz', content)
 
     def test_missing_exit_receipt_blocks_before_test(self):
         callback = MagicMock(return_value=TestObservation(0, 8))

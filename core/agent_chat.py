@@ -152,7 +152,11 @@ class AgentChatService:
             with self._lock:
                 if self._active_turn and self._active_turn.get('turn_id') == turn_id:
                     msg = next(m for m in self.store.get(cid)['messages'] if m['id'] == msg_id)
-                    self.store.update_message_content(cid, msg_id, msg['content'], metadata={'repair_cycle': result})
+                    content = msg['content']
+                    if result['status'] == 'tests_passed':
+                        content += ('\n\nHost testleri geçti; bağımsız kod incelemesi bekleniyor. '
+                                    'Onarım farkı başka bir ajan veya kullanıcı incelemeden kabul edilmiş sayılmaz.')
+                    self.store.update_message_content(cid, msg_id, content, metadata={'repair_cycle': result})
                     final_run = self._active_turn.get('run_id')
                 else:
                     final_run = None
