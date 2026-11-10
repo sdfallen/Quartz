@@ -149,6 +149,19 @@ class AgentChatService:
             cycle = RepairCycle(task_id=turn_id, writer_id=provider, max_repairs=plan[4])
             result = cycle.run(stop=stop, test=test, checkpoint=lambda: create_checkpoint(root),
                                repair=repair, expected_tests=plan[3], require_manifest=True)
+            from core.repair_review import review_writer_changes
+            reviews = []
+            for rid in list((self._active_turn or {}).get('run_ids', [])):
+                try:
+                    review = review_writer_changes(root, self.agent_service.get_run(rid))
+                except Exception:
+                    review = {'status': 'unknown', 'signals': [], 'independent_review_required': True}
+                reviews.append(review)
+            signals = [item for review in reviews for item in review['signals']]
+            result['code_review'] = {
+                'status': 'suspicious' if signals else ('unknown' if not reviews or any(r['status'] == 'unknown' for r in reviews) else 'clear'),
+                'signals': signals, 'independent_review_required': True,
+            }
             with self._lock:
                 if self._active_turn and self._active_turn.get('turn_id') == turn_id:
                     msg = next(m for m in self.store.get(cid)['messages'] if m['id'] == msg_id)
@@ -156,6 +169,10 @@ class AgentChatService:
                     if result['status'] == 'tests_passed':
                         content += ('\n\nHost testleri geçti; bağımsız kod incelemesi bekleniyor. '
                                     'Onarım farkı başka bir ajan veya kullanıcı incelemeden kabul edilmiş sayılmaz.')
+                    if result['code_review']['status'] == 'suspicious':
+                        content += '\nŞüpheli — inceleme zorunlu: onarım farkında test altyapısına erişim işaretleri var.'
+                    elif result['code_review']['status'] == 'unknown':
+                        content += '\nOnarım farkının işaret taraması tamamlanamadı; bağımsız inceleme zorunlu.'
                     self.store.update_message_content(cid, msg_id, content, metadata={'repair_cycle': result})
                     final_run = self._active_turn.get('run_id')
                 else:

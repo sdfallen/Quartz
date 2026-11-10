@@ -185,12 +185,35 @@ class HostRunnerTests(unittest.TestCase):
         self.assertFalse(runner.cleanup_pending)
 
     @unittest.skipUnless(os.name == 'nt', 'Windows Job Object runner')
+    def test_main_globals_receipt_forgery_is_blocked(self):
+        (self.root/'invoice.py').write_text(
+            "import __main__,json,os\nfrom pathlib import Path\n"
+            "try:\n Path(__main__.receipt).write_text(json.dumps({'nonce':__main__.nonce,'tests_run':1,'skipped':0,'exit_code':0}))\n"
+            "except AttributeError:\n os._exit(0)\n"
+            "print('Ran 1 test in 0.001s', flush=True)\nos._exit(0)\n", encoding='utf-8')
+        (self.root/'test_value.py').write_text('import invoice\n'+PASS, encoding='utf-8')
+        runner = self.adapter()
+        baseline = runner.baseline_manifest
+        with self.assertRaisesRegex(RuntimeError,'receipt unavailable'):
+            runner(threading.Event())
+        self.assertEqual(runner.baseline_manifest, baseline)
+        self.assertFalse(runner.cleanup_pending)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows Job Object runner')
+    def test_worker_control_is_local_and_stdin_closed_before_import(self):
+        (self.root/'test_value.py').write_text(
+            'import __main__,sys\n'
+            'assert not any(hasattr(__main__,name) for name in ("nonce","receipt","control","root","modules","result"))\n'
+            'assert sys.stdin.closed and len(sys.argv)==1\n'+PASS, encoding='utf-8')
+        self.assertTrue(self.adapter()(threading.Event()).passed)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows Job Object runner')
     def test_missing_or_wrong_nonce_is_blocked_even_with_exit_zero(self):
         from core.host_test_runner import _WORKER
         for payload in ({'tests_run':1,'skipped':0,'exit_code':0},
                         {'nonce':'wrong','tests_run':1,'skipped':0,'exit_code':0}):
-            worker = _WORKER.replace('sys.path.insert(0, root)',
-                'import os\nPath(receipt).write_text('+repr(__import__('json').dumps(payload))+')\nos._exit(0)\nsys.path.insert(0, root)')
+            worker = _WORKER.replace('    sys.path.insert(0, root)',
+                '    import os\n    Path(receipt).write_text('+repr(__import__('json').dumps(payload))+')\n    os._exit(0)\n    sys.path.insert(0, root)')
             runner = self.adapter()
             with self.subTest(payload=payload), patch('core.host_test_runner._WORKER',worker):
                 with self.assertRaisesRegex(RuntimeError, 'authentication'): runner(threading.Event())

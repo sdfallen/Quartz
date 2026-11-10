@@ -54,6 +54,27 @@ class ChatRepairTests(unittest.TestCase):
         self.assertIn('Host testleri geçti; bağımsız kod incelemesi bekleniyor.', content)
         self.assertIn('kabul edilmiş sayılmaz', content)
 
+    def test_suspicious_diff_adds_advisory_without_changing_test_result(self):
+        self.prepare(lambda stop: TestObservation(0,8,test_manifest=(('test.py','a'*64),)))
+        review={'status':'suspicious','signals':[{'file':'invoice.py','signal':'__main__'}],
+                'independent_review_required':True}
+        with patch('core.repair_review.review_writer_changes',return_value=review):
+            self.invoke()
+        message=self.chat.store.get(self.cid)['messages'][-1]
+        self.assertIn('Şüpheli — inceleme zorunlu',message['content'])
+        self.assertEqual(message['metadata']['repair_cycle']['status'],'tests_passed')
+        self.assertEqual(message['metadata']['repair_cycle']['code_review']['status'],'suspicious')
+        self.assertFalse(message['metadata']['repair_cycle']['user_accepted'])
+
+    def test_advisory_read_failure_is_unknown_not_a_test_failure(self):
+        self.prepare(lambda stop: TestObservation(0,8,test_manifest=(('test.py','a'*64),)))
+        with patch('core.repair_review.review_writer_changes',side_effect=OSError('unavailable')):
+            self.invoke()
+        message=self.chat.store.get(self.cid)['messages'][-1]
+        self.assertEqual(message['metadata']['repair_cycle']['status'],'tests_passed')
+        self.assertEqual(message['metadata']['repair_cycle']['code_review']['status'],'unknown')
+        self.assertIn('taraması tamamlanamadı',message['content'])
+
     def test_missing_exit_receipt_blocks_before_test(self):
         callback = MagicMock(return_value=TestObservation(0, 8))
         self.prepare(callback)

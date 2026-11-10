@@ -20,22 +20,25 @@ from core.process_tree import CREATE_SUSPENDED, bind_kill_on_close_job, close_pr
 from core.repair_cycle import TestObservation
 
 _WORKER = r'''
-import json, sys, unittest
-from pathlib import Path
-root, modules = sys.argv[1:]
-control = json.loads(sys.stdin.readline())
-sys.stdin.close()
-receipt, nonce = control['receipt'], control['nonce']
-del control
-# Do not expose the receipt path through project-visible command arguments.
-sys.argv = [root]
-sys.path.insert(0, root)
-suite = unittest.defaultTestLoader.loadTestsFromNames(json.loads(modules))
-result = unittest.TextTestRunner(verbosity=2).run(suite)
-code = 0 if result.wasSuccessful() else 1
-Path(receipt).write_text(json.dumps({'nonce': nonce, 'tests_run': result.testsRun,
-    'skipped': len(result.skipped), 'exit_code': code}), encoding='utf-8')
-sys.exit(code)
+def _run_host_tests():
+    import json, sys, unittest
+    from pathlib import Path
+    root, modules = sys.argv[1:]
+    control = json.loads(sys.stdin.readline())
+    sys.stdin.close()
+    receipt, nonce = control['receipt'], control['nonce']
+    del control
+    # Do not expose the receipt path through project-visible command arguments.
+    sys.argv = [root]
+    sys.path.insert(0, root)
+    suite = unittest.defaultTestLoader.loadTestsFromNames(json.loads(modules))
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    code = 0 if result.wasSuccessful() else 1
+    Path(receipt).write_text(json.dumps({'nonce': nonce, 'tests_run': result.testsRun,
+        'skipped': len(result.skipped), 'exit_code': code}), encoding='utf-8')
+    sys.exit(code)
+
+_run_host_tests()
 '''
 
 
