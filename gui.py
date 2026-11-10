@@ -796,40 +796,74 @@ class Api:
             return {"status": "error", "data": str(exc)}
 
     # User-approved repair plan (docs/INTEGRATION_REQUEST_REPAIR_PLAN_UI_20261110.md); the host
-    # actions are Codex's. Only whitelisted, type-checked fields cross the bridge.
+    # actions are Codex's. Only whitelisted, type-checked fields cross the bridge, and anything
+    # malformed is refused here (fail closed) instead of being reshaped into a different plan.
+    @staticmethod
+    def _repair_plan_payload(values):
+        def refuse(text):
+            raise ValueError(text)
+        if not isinstance(values, dict):
+            refuse("Onarım planı alanları okunamadı.")
+        def paths(key, required):
+            items = values.get(key)
+            if items is None and not required:
+                return []
+            if not isinstance(items, list) or not all(isinstance(s, str) for s in items):
+                refuse("Dosya listesi geçersiz; satır başına bir dosya yazın.")
+            cleaned = [s.strip() for s in items if s.strip()]
+            if len(cleaned) > 64:
+                refuse("En çok 64 dosya yazılabilir.")
+            if required and not cleaned:
+                refuse("En az bir test dosyası yazın.")
+            return cleaned
+        cid = values.get("conversation_id")
+        if not isinstance(cid, str) or not cid:
+            refuse("Önce bir sohbet seçin.")
+        provider = values.get("provider")
+        if provider not in ("codex", "antigravity"):
+            refuse("Onarım planı tek ajanla çalışır; önce Codex veya Antigravity seçin.")
+        expected = values.get("expected_tests")
+        if type(expected) is not int or not 1 <= expected <= 100000:
+            refuse("En az test sayısı 1 ile 100000 arasında bir tam sayı olmalı.")
+        max_repairs = values.get("max_repairs")
+        if type(max_repairs) is not int or not 1 <= max_repairs <= 3:
+            refuse("En çok onarım 1, 2 veya 3 olmalı.")
+        python = values.get("python_executable")
+        if python is not None and not isinstance(python, str):
+            refuse("Python yolu geçersiz.")
+        return {
+            "conversation_id": cid,
+            "provider": provider,
+            "test_files": paths("test_files", True),
+            "support_files": paths("support_files", False),
+            "expected_tests": expected,
+            "python_executable": python.strip() if python and python.strip() else None,
+            "max_repairs": max_repairs,
+        }
+
     def repair_plan_preview(self, values) -> dict:
         try:
-            values = values if isinstance(values, dict) else {}
-            def paths(key):
-                items = values.get(key)
-                if not isinstance(items, list) or len(items) > 64:
-                    return []
-                return [s.strip() for s in items if isinstance(s, str) and s.strip()][:64]
-            expected = values.get("expected_tests")
-            max_repairs = values.get("max_repairs")
-            python = values.get("python_executable")
-            payload = {
-                "conversation_id": str(values.get("conversation_id") or ""),
-                "provider": "antigravity" if values.get("provider") == "antigravity" else "codex",
-                "test_files": paths("test_files"),
-                "support_files": paths("support_files"),
-                "expected_tests": expected if type(expected) is int else 0,
-                "python_executable": python.strip() if isinstance(python, str) and python.strip() else None,
-                "max_repairs": max_repairs if type(max_repairs) is int and 1 <= max_repairs <= 3 else 2,
-            }
+            payload = self._repair_plan_payload(values)
+        except ValueError as exc:
+            return {"status": "error", "data": str(exc)}
+        try:
             return ipc_send("repair_plan_preview", payload)
         except Exception as exc:
             return {"status": "error", "data": str(exc)}
 
     def repair_plan_register(self, preview_id, confirm=False) -> dict:
+        if not isinstance(preview_id, str) or not preview_id:
+            return {"status": "error", "data": "Önizleme kimliği yok; yeniden önizleyin."}
         try:
-            return ipc_send("repair_plan_register", {"preview_id": str(preview_id or ""), "confirm": confirm is True})
+            return ipc_send("repair_plan_register", {"preview_id": preview_id, "confirm": confirm is True})
         except Exception as exc:
             return {"status": "error", "data": str(exc)}
 
     def repair_plan_clear(self, conversation_id) -> dict:
+        if not isinstance(conversation_id, str) or not conversation_id:
+            return {"status": "error", "data": "Önce bir sohbet seçin."}
         try:
-            return ipc_send("repair_plan_clear", {"conversation_id": str(conversation_id or "")})
+            return ipc_send("repair_plan_clear", {"conversation_id": conversation_id})
         except Exception as exc:
             return {"status": "error", "data": str(exc)}
 

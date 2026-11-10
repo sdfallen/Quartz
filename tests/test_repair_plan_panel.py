@@ -30,7 +30,7 @@ const window={pywebview:{api:{
   repair_plan_register:async (id,c)=>{calls.push(['register',id,c]);return registerReply;},
   repair_plan_clear:async id=>{calls.push(['clear',id]);return clearReply;}}}};
 const text=n=>(n.textContent||'')+(n.children||[]).map(text).join('');
-const okPreview={status:'ok',data:{preview_id:'pv1',provider:'codex',model:{model:'gpt-6.1',effort:'medium'},expected_tests:8,
+const okPreview={status:'ok',data:{preview_id:'pv1',conversation_id:'c1',provider:'codex',model:{model:'gpt-6.1',effort:'medium'},expected_tests:8,
   python_executable:'C:\\Python313\\python.exe',python_candidates:['C:\\Python313\\python.exe'],warnings:[],
   files:[{path:'tests/test_invoice.py',role:'test',sha256:'a'.repeat(64)},{path:'fixtures/expected.json',role:'support',sha256:'b'.repeat(64)}]}};
 function fill(){els.rpTests.value='tests/test_invoice.py\n';els.rpSupport.value=' fixtures/expected.json ';els.rpExpected.value='8';}
@@ -113,16 +113,16 @@ assert.match(els.rpError.textContent,/değişti/);assert.equal(els.rpRegister.di
 
     def test_chip_follows_host_state_and_clear(self):
         self.assertJs(r'''
-renderRepairPlan({status:'running',provider:'antigravity',files_count:1,support_count:0,expected_tests:8,max_repairs:1});
+renderRepairPlan({status:'running',provider:'antigravity',files_count:1,support_count:0,expected_tests:8,max_repairs:1},'c1');
 assert.equal(els.repairChipText.textContent,'Onarım döngüsü çalışıyor');assert.equal(els.repairChipClear.hidden,true);
 assert.equal(els.repairChipBadge.dataset.tone,'wait');
-renderRepairPlan({status:'ready',provider:'antigravity',files_count:3,support_count:2,expected_tests:8,max_repairs:1});
+renderRepairPlan({status:'ready',provider:'antigravity',files_count:3,support_count:2,expected_tests:8,max_repairs:1},'c1');
 assert.equal(els.repairChipClear.hidden,false);assert.match(els.repairChipText.textContent,/ajan Antigravity/);
 assert.match(els.repairChipText.textContent,/ 3 dosya /);  // files_count is already the total
 clearReply={status:'ok',data:null};
 await els.repairChipClear.listeners.click();
 assert.deepEqual(calls.at(-1),['clear','c1']);assert.equal(els.repairChip.hidden,true);
-renderRepairPlan(null);assert.equal(els.repairChip.hidden,true);
+renderRepairPlan(null,'c1');assert.equal(els.repairChip.hidden,true);
 ''')
 
     def test_host_text_is_never_html(self):
@@ -134,27 +134,101 @@ assert.match(text(els.rpPreviewOut),/<img src=x onerror=alert\(1\)>/);assert.mat
 ''')
         self.assertNotIn("innerHTML", PANEL)
 
-    def test_shell_wiring_and_bridge_whitelist(self):
+    # Codex review 10 Nov (P2-1): a late answer must not paint or clear another conversation.
+    def test_late_register_answer_does_not_paint_another_conversation(self):
+        self.assertJs(r'''
+fill();previewReply=okPreview;await els.rpPreviewBtn.listeners.click();
+let release;registerReply=new Promise(r=>{release=r;});
+const pending=els.rpRegister.listeners.click();
+currentConvId='c2';renderRepairPlan(null,'c2');
+release({status:'ok',data:{status:'ready',provider:'codex',files_count:2,support_count:1,expected_tests:8,max_repairs:2}});
+await pending;
+assert.equal(els.repairChip.hidden,true);assert.equal(els.rpError.hidden,true);
+release=null;currentConvId='c1';fill();await els.rpPreviewBtn.listeners.click();
+registerReply=new Promise(r=>{release=r;});const p2=els.rpRegister.listeners.click();
+currentConvId='c2';release({status:'error',data:'eski hata'});await p2;
+assert.equal(els.rpError.textContent,'');
+''')
+
+    def test_late_preview_and_clear_answers_stay_in_their_conversation(self):
+        self.assertJs(r'''
+fill();let release;previewReply=new Promise(r=>{release=r;});
+const pending=els.rpPreviewBtn.listeners.click();currentConvId='c2';release(okPreview);await pending;
+assert.equal(els.rpRegister.disabled,true);assert.equal(els.rpPreviewOut.hidden,true);
+currentConvId='c1';
+renderRepairPlan({status:'ready',provider:'codex',files_count:1,support_count:0,expected_tests:8,max_repairs:2},'c1');
+currentConvId='c2';await els.repairChipClear.listeners.click();
+assert.equal(calls.filter(c=>c[0]==='clear').length,0);  // chip is c1's, the user is on c2
+currentConvId='c1';clearReply=new Promise(r=>{release=r;});const p=els.repairChipClear.listeners.click();
+renderRepairPlan({status:'ready',provider:'codex',files_count:1,support_count:0,expected_tests:9,max_repairs:2},'c3');
+release({status:'ok',data:null});await p;
+assert.deepEqual(calls.at(-1),['clear','c1']);assert.equal(els.repairChip.hidden,false);  // c3's chip survives
+''')
+
+    # Codex review 10 Nov (P2-2): counts are whole numbers or refused, never rounded.
+    def test_count_must_be_a_plain_whole_number(self):
+        self.assertJs(r'''
+fill();previewReply=okPreview;
+for(const bad of ['1e2','1.9','-3','8x','0','100001',' ']){
+  els.rpExpected.value=bad;await els.rpPreviewBtn.listeners.click();
+  assert.match(els.rpError.textContent,/tam sayı/,bad);
+}
+els.rpExpected.value='8';els.rpMax.value='2.5';await els.rpPreviewBtn.listeners.click();
+assert.match(els.rpError.textContent,/1, 2 veya 3/);
+assert.equal(calls.length,0);
+els.rpMax.value='3';els.rpExpected.value=' 12 ';await els.rpPreviewBtn.listeners.click();
+assert.equal(calls[0][1].expected_tests,12);assert.equal(calls[0][1].max_repairs,3);
+''')
+
+    def test_shell_wiring(self):
         for snippet in ('id="repairPlan"', 'aria-controls="repairPlan"', 'id="repairChip"', 'for="rpTests"'):
             self.assertIn(snippet, gui._HTML)
-        self.assertIn("if ('repair_plan' in st.data) renderRepairPlan(st.data.repair_plan);", gui._HTML)
-        self.assertIn("if ('repair_plan' in data) renderRepairPlan(data.repair_plan);", gui._HTML)
+        self.assertIn("if ('repair_plan' in st.data) renderRepairPlan(st.data.repair_plan, st.data.active_conversation?.id);",
+                      gui._HTML)
+        self.assertIn("if ('repair_plan' in data) renderRepairPlan(data.repair_plan, data.active_conversation?.id);",
+                      gui._HTML)
+
+    def test_bridge_sends_only_valid_whitelisted_fields(self):
         api = gui.Api()
+        good = {"conversation_id": "c1", "provider": "antigravity", "test_files": [" a.py ", ""],
+                "support_files": ["  ", "fx.json"], "expected_tests": 8, "python_executable": "  ",
+                "max_repairs": 3, "extra": "drop me"}
         with patch.object(gui, "ipc_send", return_value={"status": "ok", "data": {}}) as send:
-            api.repair_plan_preview({"conversation_id": "c1", "provider": "evil", "test_files": ["a.py", 3, " "],
-                                     "support_files": "x", "expected_tests": "8", "python_executable": "  ",
-                                     "max_repairs": 9, "extra": "drop me"})
+            api.repair_plan_preview(good)
+            api.repair_plan_preview({k: v for k, v in good.items() if k != "support_files"})
             api.repair_plan_register("pv1", "yes")
             api.repair_plan_register("pv1", True)
             api.repair_plan_clear("c1")
         self.assertEqual(send.call_args_list[0].args, ("repair_plan_preview", {
-            "conversation_id": "c1", "provider": "codex", "test_files": ["a.py"], "support_files": [],
-            "expected_tests": 0, "python_executable": None, "max_repairs": 2}))
-        self.assertEqual(send.call_args_list[1].args, ("repair_plan_register", {"preview_id": "pv1", "confirm": False}))
-        self.assertEqual(send.call_args_list[2].args, ("repair_plan_register", {"preview_id": "pv1", "confirm": True}))
-        self.assertEqual(send.call_args_list[3].args, ("repair_plan_clear", {"conversation_id": "c1"}))
+            "conversation_id": "c1", "provider": "antigravity", "test_files": ["a.py"], "support_files": ["fx.json"],
+            "expected_tests": 8, "python_executable": None, "max_repairs": 3}))
+        self.assertEqual(send.call_args_list[1].args[1]["support_files"], [])  # omitted optional list
+        self.assertEqual(send.call_args_list[2].args, ("repair_plan_register", {"preview_id": "pv1", "confirm": False}))
+        self.assertEqual(send.call_args_list[3].args, ("repair_plan_register", {"preview_id": "pv1", "confirm": True}))
+        self.assertEqual(send.call_args_list[4].args, ("repair_plan_clear", {"conversation_id": "c1"}))
         with patch.object(gui, "ipc_send", side_effect=RuntimeError("down")):
-            self.assertEqual(api.repair_plan_preview({})["status"], "error")
+            self.assertEqual(api.repair_plan_preview(good)["status"], "error")
+
+    # Codex review 10 Nov (P2-3): malformed input is refused before IPC, not turned into another plan.
+    def test_bridge_fails_closed_without_ipc(self):
+        api = gui.Api()
+        good = {"conversation_id": "c1", "provider": "codex", "test_files": ["a.py"], "support_files": [],
+                "expected_tests": 8, "python_executable": None, "max_repairs": 2}
+        bad = [None, "x", {**good, "provider": "evil"}, {**good, "conversation_id": ""},
+               {**good, "test_files": []}, {**good, "test_files": ["a.py", 3]}, {**good, "test_files": "a.py"},
+               {**good, "support_files": "x"}, {**good, "support_files": [f"s{i}.json" for i in range(65)]},
+               {**good, "support_files": ["ok.json", None]}, {**good, "expected_tests": "8"},
+               {**good, "expected_tests": True}, {**good, "expected_tests": 0}, {**good, "expected_tests": 1.5},
+               {**good, "max_repairs": 9}, {**good, "python_executable": 5}]
+        with patch.object(gui, "ipc_send") as send:
+            for values in bad:
+                result = api.repair_plan_preview(values)
+                self.assertEqual(result["status"], "error", values)
+                self.assertIsInstance(result["data"], str)
+            self.assertEqual(api.repair_plan_register("", True)["status"], "error")
+            self.assertEqual(api.repair_plan_register(None, True)["status"], "error")
+            self.assertEqual(api.repair_plan_clear(None)["status"], "error")
+        send.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -13,6 +13,14 @@ JAVASCRIPT = r"""
   const rp = id => document.getElementById(id);
   let repairPreview = null;   // last valid host preview for the current form values
   let repairPlanKey = '';
+  let repairPlanCid = null;   // conversation the chip belongs to (host-reported, not inferred)
+  // Strict whole numbers only: "1e2", "1.9", "08x" are refused, never rounded into another count.
+  function repairInt(value, min, max) {
+    const raw = String(value ?? '').trim();
+    if (!/^[0-9]{1,6}$/.test(raw)) return NaN;
+    const n = Number(raw);
+    return Number.isSafeInteger(n) && n >= min && n <= max ? n : NaN;
+  }
 
   function repairLines(id) {
     return String(rp(id)?.value || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
@@ -27,15 +35,14 @@ JAVASCRIPT = r"""
     if (rp('rpProvider')) rp('rpProvider').value = agent || 'codex';
   }
   function repairFormValues() {
-    const expected = Number.parseInt(String(rp('rpExpected')?.value || ''), 10);
     return {
       conversation_id: currentConvId,
       provider: repairAgent() || 'codex',
       test_files: repairLines('rpTests'),
       support_files: repairLines('rpSupport'),
-      expected_tests: Number.isFinite(expected) ? expected : 0,
+      expected_tests: repairInt(rp('rpExpected')?.value, 1, 100000),
       python_executable: String(rp('rpPython')?.value || '').trim() || null,
-      max_repairs: Math.min(3, Math.max(1, Number.parseInt(String(rp('rpMax')?.value || '2'), 10) || 2)),
+      max_repairs: repairInt(rp('rpMax')?.value, 1, 3),
     };
   }
   function repairLocalError(v) {
@@ -43,7 +50,8 @@ JAVASCRIPT = r"""
     if (!repairAgent()) return 'Onarım planı tek ajanla çalışır; önce Codex veya Antigravity seçin.';
     if (!v.test_files.length) return 'En az bir test dosyası yazın.';
     if (v.test_files.length > 64 || v.support_files.length > 64) return 'En çok 64 dosya yazılabilir.';
-    if (!(v.expected_tests > 0)) return 'Beklenen test sayısı 1 veya daha büyük olmalı.';
+    if (!Number.isSafeInteger(v.expected_tests)) return 'En az test sayısı 1 ile 100000 arasında bir tam sayı olmalı (örnek: 8).';
+    if (!Number.isSafeInteger(v.max_repairs)) return 'En çok onarım 1, 2 veya 3 olmalı.';
     return '';
   }
   function setRepairError(text) {
@@ -134,6 +142,8 @@ JAVASCRIPT = r"""
     btn.textContent = 'Önizleniyor…';
     try {
       const resp = await window.pywebview.api.repair_plan_preview(values);
+      // A late answer for another conversation must not touch this one's form.
+      if (currentConvId !== values.conversation_id) return;
       if (resp?.status !== 'ok' || !resp.data?.preview_id) {
         setRepairError(String(resp?.data || 'Önizleme yapılamadı.'));
         return;
@@ -144,7 +154,7 @@ JAVASCRIPT = r"""
       renderRepairPreview(resp.data);
       rp('rpRegister').disabled = false;
     } catch (error) {
-      setRepairError('Önizleme yapılamadı: ' + String(error?.message || error));
+      if (currentConvId === values.conversation_id) setRepairError('Önizleme yapılamadı: ' + String(error?.message || error));
     } finally {
       btn.disabled = false;
       btn.textContent = 'Önizle';
@@ -157,8 +167,12 @@ JAVASCRIPT = r"""
     btn.disabled = true;
     btn.textContent = 'Kaydediliyor…';
     const previewId = repairPreview.preview_id;
+    const cid = repairPreview.conversation_id || currentConvId;
+    // Only the conversation that asked may show the answer; the next status poll reports the truth.
+    const stillHere = () => currentConvId === cid;
     try {
       const resp = await window.pywebview.api.repair_plan_register(previewId, true);
+      if (!stillHere()) return;
       if (resp?.status !== 'ok') {
         setRepairError(String(resp?.data || 'Plan kaydedilemedi.'));
         invalidateRepairPreview();
@@ -166,10 +180,11 @@ JAVASCRIPT = r"""
       }
       setRepairError('');
       invalidateRepairPreview();
-      renderRepairPlan(resp.data || null);
+      renderRepairPlan(resp.data || null, cid);
       setRepairPanelOpen(false);
       logLine('Onarım planı kaydedildi; görev mesajını gönderince kullanılacak.');
     } catch (error) {
+      if (!stillHere()) return;
       setRepairError('Plan kaydedilemedi: ' + String(error?.message || error));
       invalidateRepairPreview();
     } finally {
@@ -177,12 +192,15 @@ JAVASCRIPT = r"""
     }
   }
 
-  function renderRepairPlan(plan) {
+  // cid: the conversation the host reported this plan for (status payload or the registering one).
+  function renderRepairPlan(plan, cid) {
     if (!repairChip) return;
-    const key = JSON.stringify(plan || null);
+    const valid = !!plan && typeof plan === 'object' && !!cid;
+    const key = JSON.stringify([valid ? cid : null, valid ? plan : null]);
     if (key === repairPlanKey) return;
     repairPlanKey = key;
-    if (!plan || typeof plan !== 'object') { repairChip.hidden = true; return; }
+    repairPlanCid = valid ? cid : null;
+    if (!valid) { repairChip.hidden = true; return; }
     const running = plan.status === 'running';
     repairChip.dataset.status = running ? 'running' : 'ready';
     rp('repairChipBadge').dataset.tone = running ? 'wait' : 'ok';
@@ -197,11 +215,14 @@ JAVASCRIPT = r"""
 
   async function clearRepairPlan() {
     const btn = rp('repairChipClear');
-    if (btn.disabled || !currentConvId) return;
+    const target = repairPlanCid;
+    // Never aim "Kaldır" at a conversation other than the one whose chip is shown.
+    if (btn.disabled || !target || target !== currentConvId) return;
     btn.disabled = true;
     try {
-      const resp = await window.pywebview.api.repair_plan_clear(currentConvId);
-      if (resp?.status === 'ok') renderRepairPlan(null);
+      const resp = await window.pywebview.api.repair_plan_clear(target);
+      if (repairPlanCid !== target) return;
+      if (resp?.status === 'ok') renderRepairPlan(null, target);
       else logLine('Onarım planı kaldırılamadı: ' + String(resp?.data || 'bilinmeyen hata'));
     } catch (error) {
       logLine('Onarım planı kaldırılamadı: ' + String(error?.message || error));
