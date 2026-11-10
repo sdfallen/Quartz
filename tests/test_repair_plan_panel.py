@@ -113,16 +113,16 @@ assert.match(els.rpError.textContent,/değişti/);assert.equal(els.rpRegister.di
 
     def test_chip_follows_host_state_and_clear(self):
         self.assertJs(r'''
-renderRepairPlan({status:'running',provider:'antigravity',files_count:1,support_count:0,expected_tests:8,max_repairs:1},'c1');
+renderRepairPlanChip({status:'running',provider:'antigravity',files_count:1,support_count:0,expected_tests:8,max_repairs:1},'c1');
 assert.equal(els.repairChipText.textContent,'Onarım döngüsü çalışıyor');assert.equal(els.repairChipClear.hidden,true);
 assert.equal(els.repairChipBadge.dataset.tone,'wait');
-renderRepairPlan({status:'ready',provider:'antigravity',files_count:3,support_count:2,expected_tests:8,max_repairs:1},'c1');
+renderRepairPlanChip({status:'ready',provider:'antigravity',files_count:3,support_count:2,expected_tests:8,max_repairs:1},'c1');
 assert.equal(els.repairChipClear.hidden,false);assert.match(els.repairChipText.textContent,/ajan Antigravity/);
 assert.match(els.repairChipText.textContent,/ 3 dosya /);  // files_count is already the total
 clearReply={status:'ok',data:null};
 await els.repairChipClear.listeners.click();
 assert.deepEqual(calls.at(-1),['clear','c1']);assert.equal(els.repairChip.hidden,true);
-renderRepairPlan(null,'c1');assert.equal(els.repairChip.hidden,true);
+renderRepairPlanChip(null,'c1');assert.equal(els.repairChip.hidden,true);
 ''')
 
     def test_host_text_is_never_html(self):
@@ -140,14 +140,35 @@ assert.match(text(els.rpPreviewOut),/<img src=x onerror=alert\(1\)>/);assert.mat
 fill();previewReply=okPreview;await els.rpPreviewBtn.listeners.click();
 let release;registerReply=new Promise(r=>{release=r;});
 const pending=els.rpRegister.listeners.click();
-currentConvId='c2';renderRepairPlan(null,'c2');
+currentConvId='c2';renderRepairPlanChip(null,'c2');
 release({status:'ok',data:{status:'ready',provider:'codex',files_count:2,support_count:1,expected_tests:8,max_repairs:2}});
 await pending;
-assert.equal(els.repairChip.hidden,true);assert.equal(els.rpError.hidden,true);
+assert.equal(els.repairChip.hidden,true);assert.match(els.rpError.textContent,/yeniden önizleyin/);  // poll retired it, reply ignored
 release=null;currentConvId='c1';fill();await els.rpPreviewBtn.listeners.click();
 registerReply=new Promise(r=>{release=r;});const p2=els.rpRegister.listeners.click();
 currentConvId='c2';release({status:'error',data:'eski hata'});await p2;
 assert.equal(els.rpError.textContent,'');
+''')
+
+    # Gemini review 10 Nov (P2-1): the context is checked BEFORE the register IPC, not only after.
+    def test_register_refuses_a_preview_from_another_conversation_or_agent(self):
+        self.assertJs(r'''
+fill();previewReply=okPreview;await els.rpPreviewBtn.listeners.click();
+currentConvId='c2';await els.rpRegister.listeners.click();
+assert.equal(calls.filter(c=>c[0]==='register').length,0);assert.equal(els.rpRegister.disabled,true);
+assert.match(els.rpError.textContent,/Sohbet veya ajan değişti/);
+currentConvId='c1';await els.rpPreviewBtn.listeners.click();assert.equal(els.rpRegister.disabled,false);
+mainAgentSelect.value='antigravity';await els.rpRegister.listeners.click();
+assert.equal(calls.filter(c=>c[0]==='register').length,0);
+mainAgentSelect.value='codex';await els.rpPreviewBtn.listeners.click();
+mainAgentSelect.value='collaboration';renderRepairPlanChip(null,'c1');  // a poll after the switch
+assert.equal(els.rpRegister.disabled,true);assert.equal(els.rpPreviewOut.hidden,true);
+''')
+
+    def test_open_panel_follows_the_agent_on_each_poll(self):
+        self.assertJs(r'''
+els.btnRepairPlan.listeners.click();assert.equal(els.rpProvider.value,'codex');
+mainAgentSelect.value='antigravity';renderRepairPlanChip(null,'c1');assert.equal(els.rpProvider.value,'antigravity');
 ''')
 
     def test_late_preview_and_clear_answers_stay_in_their_conversation(self):
@@ -156,11 +177,11 @@ fill();let release;previewReply=new Promise(r=>{release=r;});
 const pending=els.rpPreviewBtn.listeners.click();currentConvId='c2';release(okPreview);await pending;
 assert.equal(els.rpRegister.disabled,true);assert.equal(els.rpPreviewOut.hidden,true);
 currentConvId='c1';
-renderRepairPlan({status:'ready',provider:'codex',files_count:1,support_count:0,expected_tests:8,max_repairs:2},'c1');
+renderRepairPlanChip({status:'ready',provider:'codex',files_count:1,support_count:0,expected_tests:8,max_repairs:2},'c1');
 currentConvId='c2';await els.repairChipClear.listeners.click();
 assert.equal(calls.filter(c=>c[0]==='clear').length,0);  // chip is c1's, the user is on c2
 currentConvId='c1';clearReply=new Promise(r=>{release=r;});const p=els.repairChipClear.listeners.click();
-renderRepairPlan({status:'ready',provider:'codex',files_count:1,support_count:0,expected_tests:9,max_repairs:2},'c3');
+renderRepairPlanChip({status:'ready',provider:'codex',files_count:1,support_count:0,expected_tests:9,max_repairs:2},'c3');
 release({status:'ok',data:null});await p;
 assert.deepEqual(calls.at(-1),['clear','c1']);assert.equal(els.repairChip.hidden,false);  // c3's chip survives
 ''')
@@ -183,9 +204,9 @@ assert.equal(calls[0][1].expected_tests,12);assert.equal(calls[0][1].max_repairs
     def test_shell_wiring(self):
         for snippet in ('id="repairPlan"', 'aria-controls="repairPlan"', 'id="repairChip"', 'for="rpTests"'):
             self.assertIn(snippet, gui._HTML)
-        self.assertIn("if ('repair_plan' in st.data) renderRepairPlan(st.data.repair_plan, st.data.active_conversation?.id);",
+        self.assertIn("if ('repair_plan' in st.data) renderRepairPlanChip(st.data.repair_plan, st.data.active_conversation?.id);",
                       gui._HTML)
-        self.assertIn("if ('repair_plan' in data) renderRepairPlan(data.repair_plan, data.active_conversation?.id);",
+        self.assertIn("if ('repair_plan' in data) renderRepairPlanChip(data.repair_plan, data.active_conversation?.id);",
                       gui._HTML)
 
     def test_bridge_sends_only_valid_whitelisted_fields(self):
