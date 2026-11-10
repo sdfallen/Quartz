@@ -17,11 +17,20 @@ JAVASCRIPT = r"""
   function repairLines(id) {
     return String(rp(id)?.value || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
   }
+  // The host never switches agent or model for a plan: it must be the conversation's single agent.
+  function repairAgent() {
+    const agent = typeof mainAgentSelect !== 'undefined' && mainAgentSelect ? mainAgentSelect.value : '';
+    return agent === 'codex' || agent === 'antigravity' ? agent : '';
+  }
+  function syncRepairAgent() {
+    const agent = repairAgent();
+    if (rp('rpProvider')) rp('rpProvider').value = agent || 'codex';
+  }
   function repairFormValues() {
     const expected = Number.parseInt(String(rp('rpExpected')?.value || ''), 10);
     return {
       conversation_id: currentConvId,
-      provider: rp('rpProvider')?.value === 'antigravity' ? 'antigravity' : 'codex',
+      provider: repairAgent() || 'codex',
       test_files: repairLines('rpTests'),
       support_files: repairLines('rpSupport'),
       expected_tests: Number.isFinite(expected) ? expected : 0,
@@ -31,6 +40,7 @@ JAVASCRIPT = r"""
   }
   function repairLocalError(v) {
     if (!v.conversation_id) return 'Önce bir sohbet seçin.';
+    if (!repairAgent()) return 'Onarım planı tek ajanla çalışır; önce Codex veya Antigravity seçin.';
     if (!v.test_files.length) return 'En az bir test dosyası yazın.';
     if (v.test_files.length > 64 || v.support_files.length > 64) return 'En çok 64 dosya yazılabilir.';
     if (!(v.expected_tests > 0)) return 'Beklenen test sayısı 1 veya daha büyük olmalı.';
@@ -52,17 +62,22 @@ JAVASCRIPT = r"""
     if (!repairPlanPanel || !repairPlanBtn) return;
     repairPlanPanel.hidden = !open;
     repairPlanBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    if (open) rp('rpTests')?.focus();
+    if (open) { syncRepairAgent(); rp('rpTests')?.focus(); }
   }
 
   function renderRepairPreview(data) {
     const out = rp('rpPreviewOut');
     const files = Array.isArray(data?.files) ? data.files : [];
+    // The host sends model as {model, effort}; older drafts sent a string.
+    const m = data?.model;
+    const modelText = m && typeof m === 'object'
+      ? [m.model, m.effort].filter(Boolean).map(String).join(' · ')
+      : (m ? String(m) : '');
     const head = document.createElement('p');
     head.className = 'rp-preview-head';
     head.textContent = `${files.filter(f => f?.role === 'test').length} test dosyası, `
       + `${files.filter(f => f?.role === 'support').length} destek dosyası · en az ${Number(data?.expected_tests) || 0} test · `
-      + `ajan ${data?.provider === 'antigravity' ? 'Antigravity' : 'Codex'}${data?.model ? ' (' + String(data.model) + ')' : ''}`;
+      + `ajan ${data?.provider === 'antigravity' ? 'Antigravity' : 'Codex'}${modelText ? ' (' + modelText + ')' : ''}`;
     const list = document.createElement('ul');
     list.className = 'rp-files';
     for (const f of files) {
@@ -174,7 +189,7 @@ JAVASCRIPT = r"""
     rp('repairChipText').textContent = running
       ? 'Onarım döngüsü çalışıyor'
       : `Onarım planı hazır — en az ${Number(plan.expected_tests) || 0} test · `
-        + `${(Number(plan.files_count) || 0) + (Number(plan.support_count) || 0)} dosya · `
+        + `${Number(plan.files_count) || 0} dosya · `  // host total: tests + support files
         + `en çok ${Number(plan.max_repairs) || 0} onarım · ajan ${plan.provider === 'antigravity' ? 'Antigravity' : 'Codex'}`;
     rp('repairChipClear').hidden = running;
     repairChip.hidden = false;

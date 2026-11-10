@@ -23,14 +23,14 @@ const els={};for(const id of ids)els[id]=node(id);
 els.rpProvider.value='codex';els.rpMax.value='2';els.rpRegister.disabled=true;
 const document={getElementById:id=>els[id]||null,createElement:t=>node(t,{tag:t})};
 const logs=[];const logLine=m=>logs.push(m);
-let currentConvId='c1';
+let currentConvId='c1';const mainAgentSelect={value:'codex'};
 const calls=[];let previewReply,registerReply,clearReply={status:'ok',data:{}};
 const window={pywebview:{api:{
   repair_plan_preview:async v=>{calls.push(['preview',v]);return previewReply;},
   repair_plan_register:async (id,c)=>{calls.push(['register',id,c]);return registerReply;},
   repair_plan_clear:async id=>{calls.push(['clear',id]);return clearReply;}}}};
 const text=n=>(n.textContent||'')+(n.children||[]).map(text).join('');
-const okPreview={status:'ok',data:{preview_id:'pv1',provider:'codex',model:'gpt-6.1',expected_tests:8,
+const okPreview={status:'ok',data:{preview_id:'pv1',provider:'codex',model:{model:'gpt-6.1',effort:'medium'},expected_tests:8,
   python_executable:'C:\\Python313\\python.exe',python_candidates:['C:\\Python313\\python.exe'],warnings:[],
   files:[{path:'tests/test_invoice.py',role:'test',sha256:'a'.repeat(64)},{path:'fixtures/expected.json',role:'support',sha256:'b'.repeat(64)}]}};
 function fill(){els.rpTests.value='tests/test_invoice.py\n';els.rpSupport.value=' fixtures/expected.json ';els.rpExpected.value='8';}
@@ -54,7 +54,10 @@ await els.rpPreviewBtn.listeners.click();
 assert.equal(calls.length,0);assert.match(els.rpError.textContent,/test dosyası/);assert.equal(els.rpError.hidden,false);
 els.rpTests.value='tests/test_invoice.py';await els.rpPreviewBtn.listeners.click();
 assert.equal(calls.length,0);assert.match(els.rpError.textContent,/test sayısı/);
-currentConvId=null;els.rpExpected.value='8';await els.rpPreviewBtn.listeners.click();
+els.rpExpected.value='8';mainAgentSelect.value='collaboration';await els.rpPreviewBtn.listeners.click();
+assert.equal(calls.length,0);assert.match(els.rpError.textContent,/tek ajanla/);
+mainAgentSelect.value='antigravity';els.btnRepairPlan.listeners.click();assert.equal(els.rpProvider.value,'antigravity');
+currentConvId=null;await els.rpPreviewBtn.listeners.click();
 assert.equal(calls.length,0);assert.match(els.rpError.textContent,/sohbet/);
 ''')
 
@@ -66,7 +69,7 @@ assert.deepEqual(calls[0],['preview',{conversation_id:'c1',provider:'codex',test
   support_files:['fixtures/expected.json'],expected_tests:8,python_executable:null,max_repairs:2}]);
 assert.equal(els.rpRegister.disabled,false);assert.equal(els.rpPreviewOut.hidden,false);
 const out=text(els.rpPreviewOut);
-assert.match(out,/1 test dosyası, 1 destek dosyası/);assert.match(out,/aaaaaaaaaaaa/);assert.doesNotMatch(out,/a{13}/);
+assert.match(out,/1 test dosyası, 1 destek dosyası/);assert.match(out,/\(gpt-6\.1 · medium\)/);assert.match(out,/aaaaaaaaaaaa/);assert.doesNotMatch(out,/a{13}/);
 assert.match(out,/hiçbir kod çalıştırmadı/);assert.equal(els.rpPython.value,'C:\\Python313\\python.exe');
 assert.equal(els.rpPreviewBtn.disabled,false);assert.equal(els.rpPreviewBtn.textContent,'Önizle');
 ''')
@@ -92,7 +95,7 @@ assert.equal(calls.filter(c=>c[0]==='register').length,0);
         self.assertJs(r'''
 fill();previewReply=okPreview;await els.rpPreviewBtn.listeners.click();
 els.repairPlan.hidden=false;
-registerReply={status:'ok',data:{status:'ready',provider:'codex',files_count:1,support_count:1,expected_tests:8,max_repairs:2}};
+registerReply={status:'ok',data:{status:'ready',provider:'codex',files_count:2,support_count:1,expected_tests:8,max_repairs:2}};
 await els.rpRegister.listeners.click();
 assert.deepEqual(calls.at(-1),['register','pv1',true]);
 assert.equal(els.repairChip.hidden,false);assert.equal(els.repairPlan.hidden,true);
@@ -113,8 +116,10 @@ assert.match(els.rpError.textContent,/değişti/);assert.equal(els.rpRegister.di
 renderRepairPlan({status:'running',provider:'antigravity',files_count:1,support_count:0,expected_tests:8,max_repairs:1});
 assert.equal(els.repairChipText.textContent,'Onarım döngüsü çalışıyor');assert.equal(els.repairChipClear.hidden,true);
 assert.equal(els.repairChipBadge.dataset.tone,'wait');
-renderRepairPlan({status:'ready',provider:'antigravity',files_count:1,support_count:0,expected_tests:8,max_repairs:1});
+renderRepairPlan({status:'ready',provider:'antigravity',files_count:3,support_count:2,expected_tests:8,max_repairs:1});
 assert.equal(els.repairChipClear.hidden,false);assert.match(els.repairChipText.textContent,/ajan Antigravity/);
+assert.match(els.repairChipText.textContent,/ 3 dosya /);  // files_count is already the total
+clearReply={status:'ok',data:null};
 await els.repairChipClear.listeners.click();
 assert.deepEqual(calls.at(-1),['clear','c1']);assert.equal(els.repairChip.hidden,true);
 renderRepairPlan(null);assert.equal(els.repairChip.hidden,true);

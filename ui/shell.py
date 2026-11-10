@@ -213,7 +213,8 @@ SHELL_MARKUP = r"""
               <p class="rp-intro">Testler başarısız olursa aynı ajan en çok seçtiğiniz sayıda yeniden dener. Hangi testlerin sayılacağını siz belirlersiniz; ajan değiştiremez.</p>
               <div class="rp-grid">
                 <label for="rpProvider">Ajan</label>
-                <select id="rpProvider"><option value="codex">Codex</option><option value="antigravity">Antigravity</option></select>
+                <select id="rpProvider" disabled aria-describedby="rpProviderHelp"><option value="codex">Codex</option><option value="antigravity">Antigravity</option></select>
+                <span class="rp-help" id="rpProviderHelp">Sohbette seçili ajan. Birlikte modunda önce tek ajan seçin.</span>
                 <label for="rpTests">Test dosyaları</label>
                 <textarea id="rpTests" rows="2" spellcheck="false" aria-describedby="rpTestsHelp" placeholder="tests/test_invoice.py"></textarea>
                 <span class="rp-help" id="rpTestsHelp">Satır başına bir dosya, proje klasörüne göre.</span>
