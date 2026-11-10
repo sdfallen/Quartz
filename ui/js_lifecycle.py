@@ -122,6 +122,8 @@ JAVASCRIPT = r"""  let lastUserActivityAt = Date.now();
           if (st.status === 'ok' && st.data) {
             updateAntigravitySafety(st.data.agents?.antigravity);
             if (st.data.squad) updateSquadBadge(st.data.squad, st.data.active_conversation?.id);
+            // The first check lands after startup; without this the card stays hidden.
+            if ('environment_health' in st.data) renderEnvironmentHealth(st.data.environment_health);
             const conv = st.data.active_conversation;
             if (conv) {
               const switched = currentConvId !== conv.id;
