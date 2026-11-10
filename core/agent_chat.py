@@ -126,7 +126,7 @@ class AgentChatService:
         try:
             cycle = RepairCycle(task_id=turn_id, writer_id=provider, max_repairs=plan[4])
             result = cycle.run(stop=stop, test=test, checkpoint=lambda: create_checkpoint(root),
-                               repair=repair, expected_tests=plan[3])
+                               repair=repair, expected_tests=plan[3], require_manifest=True)
             with self._lock:
                 if self._active_turn and self._active_turn.get('turn_id') == turn_id:
                     msg = next(m for m in self.store.get(cid)['messages'] if m['id'] == msg_id)
@@ -1204,6 +1204,10 @@ class AgentChatService:
             with self._lock:
                 target_mid = (self._active_turn or {}).get("message_id") or msg_id
                 if self._finish_turn(msg_id, "failed"):
+                    previous = next((m for m in self.store.get(cid)['messages'] if m['id'] == target_mid), {})
+                    if (previous.get('metadata') or {}).get('repair_cycle'):
+                        content = previous.get('content') or ''
+                        err_text = (content + '\n\n---\nOnarım sonucu:\n' + err_text).strip()
                     self.store.update_message_content(
                         cid, target_mid, err_text, metadata={"status": "failed", "error": str(exc)}
                     )

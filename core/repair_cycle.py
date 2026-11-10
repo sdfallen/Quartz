@@ -28,7 +28,7 @@ class RepairCycle:
         self._lock = threading.Lock()
         self._used = False
 
-    def run(self, *, stop: threading.Event, test, checkpoint, repair, expected_tests=None):
+    def run(self, *, stop: threading.Event, test, checkpoint, repair, expected_tests=None, require_manifest=False):
         """test(stop)->TestObservation; repair(writer_id, output, stop)->None.
 
         The owner must ensure both callbacks cancel their owned process tree when
@@ -65,6 +65,15 @@ class RepairCycle:
                 return result('blocked', 'No host-observed tests ran')
             if type(observed.exit_code) is not int:
                 return result('blocked', 'Missing host exit code')
+            if require_manifest:
+                manifest = observed.test_manifest
+                if (not isinstance(manifest, tuple) or not manifest
+                        or any(not isinstance(item, tuple) or len(item) != 2
+                               or not isinstance(item[0], str) or not item[0]
+                               or not isinstance(item[1], str) or len(item[1]) != 64
+                               or any(c not in '0123456789abcdef' for c in item[1])
+                               for item in manifest)):
+                    return result('blocked', 'Host test manifest missing or invalid')
             if baseline_count is None:
                 baseline_count = observed.tests_run
             if observed.tests_run < baseline_count:

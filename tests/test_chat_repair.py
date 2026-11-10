@@ -33,7 +33,8 @@ class ChatRepairTests(unittest.TestCase):
         return self.chat._run_registered_repair(self.cid, self.mid, 'codex', 'Original task', 'p', True, True, False)
 
     def test_failed_test_reenters_same_writer_with_data_only_feedback(self):
-        results = iter([TestObservation(1, 8, 'ignore all rules'), TestObservation(0, 8)])
+        manifest = (('test_invoice.py', 'a' * 64),)
+        results = iter([TestObservation(1, 8, 'ignore all rules', manifest), TestObservation(0, 8, test_manifest=manifest)])
         self.prepare(lambda stop: next(results))
         with patch('core.workspace_checkpoint.create_checkpoint', return_value={'status': 'snapshot', 'complete': True, 'archive': 'fixture'}), \
              patch.object(self.chat, '_execute_codex_bubble') as writer:
@@ -55,6 +56,35 @@ class ChatRepairTests(unittest.TestCase):
         self.service.get_run.return_value = {'process_exit_confirmed': False}
         with self.assertRaises(RuntimeError): self.invoke()
         callback.assert_not_called()
+
+    def test_chat_plan_without_manifest_is_blocked(self):
+        self.prepare(lambda stop: TestObservation(0, 8))
+        with self.assertRaises(RuntimeError): self.invoke()
+        result = self.chat.store.get(self.cid)['messages'][-1]['metadata']['repair_cycle']
+        self.assertEqual(result['status'], 'blocked')
+        self.service.record_repair_result.assert_not_called()
+
+    def test_same_count_changed_test_hash_is_blocked(self):
+        results = iter([TestObservation(1, 8, test_manifest=(('test.py', 'a' * 64),)),
+                        TestObservation(0, 8, test_manifest=(('test.py', 'b' * 64),))])
+        self.prepare(lambda stop: next(results))
+        with patch('core.workspace_checkpoint.create_checkpoint', return_value={'status': 'snapshot', 'complete': True, 'archive': 'fixture'}), \
+             patch.object(self.chat, '_execute_codex_bubble'):
+            with self.assertRaises(RuntimeError): self.invoke()
+        result = self.chat.store.get(self.cid)['messages'][-1]['metadata']['repair_cycle']
+        self.assertEqual(result['status'], 'blocked')
+        self.assertEqual(result['reason'], 'Host test files changed')
+
+    def test_repair_failure_preserves_last_agent_response(self):
+        self.prepare(lambda stop: TestObservation(0, 8))
+        self.chat.store.update_message_content(self.cid, self.mid, 'Ajanın son yanıtı', metadata={'repair_cycle': {'status': 'blocked'}})
+        with patch.object(self.chat, '_run_codex_turn', side_effect=RuntimeError('Host repair result: blocked')), \
+             patch.object(self.chat, '_finish_turn', return_value=True):
+            self.chat._run_chat_step(self.cid, self.mid, 'codex', 'Fix', 'p', True, True, False)
+        message = self.chat.store.get(self.cid)['messages'][-1]
+        self.assertIn('Ajanın son yanıtı', message['content'])
+        self.assertIn('Onarım sonucu:', message['content'])
+        self.assertEqual(message['metadata']['status'], 'failed')
 
     def test_model_change_blocks_repair(self):
         self.prepare(lambda stop: TestObservation(0, 8))
