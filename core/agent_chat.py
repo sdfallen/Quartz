@@ -34,6 +34,7 @@ class AgentChatService:
         self._worker_threads = {}
         self._repair_plans = {}
         self._repair_events = {}
+        self._host_test_adapters = {}
         self._diagnostics = AsyncSnapshot(self.agent_service.status)
         from core.chat_environment_health import ChatEnvironmentHealth
         self._environment_health = ChatEnvironmentHealth()
@@ -41,6 +42,27 @@ class AgentChatService:
     def _next_sequence(self, conv: dict) -> int:
         messages = conv.get("messages", [])
         return len(messages) + 1
+
+    def register_host_unittest_plan(self, conversation_id, *, project_id, provider,
+                                    test_files, expected_tests, python_executable=None,
+                                    timeout=30, max_repairs=2):
+        """Capture host test hashes BEFORE any writer starts; no IPC/MCP entry."""
+        from core.host_test_runner import HostUnittestAdapter
+        with self._lock:
+            if self._closed or (self._active_turn and self._active_turn.get('status') in {'running', 'cancelling'}):
+                raise RuntimeError('Host test baseline must precede writer execution')
+            project = self.agent_service.projects.get(project_id)
+            if project.get('protected') or project.get('workflow') == 'warband':
+                raise PermissionError('Protected workflow does not support this host adapter')
+            previous = self._host_test_adapters.get(conversation_id)
+            if previous is not None and previous.cleanup_pending:
+                raise RuntimeError('Previous host test cleanup unconfirmed')
+            adapter = HostUnittestAdapter(project['path'], test_files, expected_tests=expected_tests,
+                                           python_executable=python_executable, timeout=timeout)
+            self.register_repair_plan(conversation_id, project_id=project_id, provider=provider,
+                                      test=adapter, expected_tests=expected_tests, max_repairs=max_repairs)
+            self._host_test_adapters[conversation_id] = adapter
+            return adapter
 
     def register_repair_plan(self, conversation_id, *, project_id, provider, test,
                              expected_tests, max_repairs=2):
@@ -348,6 +370,7 @@ class AgentChatService:
                 states[rid] = {"process_exit_confirmed":False, "error_type":type(exc).__name__}
         receipt["worker_pending"] = bool(turn.get("worker_pending"))
         receipt["unresolved_dispatch"] = list(turn.get("unresolved_dispatch", []))
+        receipt['host_test_cleanup_pending'] = any(a.cleanup_pending for a in self._host_test_adapters.values())
         receipt["writer_pending"] = []
         if turn.get("run_ids"):
             try:
@@ -358,7 +381,8 @@ class AgentChatService:
             except Exception as exc:
                 receipt["writer_pending"] = list(turn["run_ids"])
                 receipt["writer_error_type"] = type(exc).__name__
-        stopped = (not receipt["worker_pending"] and not receipt["writer_pending"] and not receipt["unresolved_dispatch"] and
+        stopped = (not receipt["worker_pending"] and not receipt["writer_pending"] and not receipt["unresolved_dispatch"]
+            and not receipt['host_test_cleanup_pending'] and
             all(states.get(rid, {}).get("process_exit_confirmed") is True
                 for rid in turn.get("run_ids", [])))
         receipt["process_exit_confirmed"] = stopped
@@ -636,6 +660,8 @@ class AgentChatService:
                 raise RuntimeError("Önceki görevin çalışanı kapanıyor; yeni görev henüz başlatılamaz.")
             if self._active_turn and self._active_turn.get("status") == "running":
                 return self._queue_instruction(text, agent, conversation_id, write, full_access)
+            if any(a.cleanup_pending for a in self._host_test_adapters.values()):
+                raise RuntimeError('Previous host test process cleanup unconfirmed')
             if self._active_turn and (self._active_turn.get("status") == "cancelling" or
                     self._active_turn.get("stop_receipt", {}).get("status") in {"pending", "failed"}):
                 raise RuntimeError("Önceki ajan süreçlerinin durduğu henüz doğrulanmadı.")
@@ -658,6 +684,10 @@ class AgentChatService:
                                 or not write or confirm_write is not True
                                 or self.store.get_agent_model(cid, selected_agent) != repair_plan[5]):
                 raise PermissionError('Host repair plan does not match this task scope')
+            if repair_plan:
+                baseline_check = getattr(repair_plan[2], 'validate_baseline', None)
+                if callable(baseline_check):
+                    baseline_check()
 
             task_id = "turn-" + uuid.uuid4().hex
             user_seq = self._next_sequence(conv)
