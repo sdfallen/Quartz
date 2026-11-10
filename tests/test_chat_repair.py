@@ -3,7 +3,7 @@ import threading
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-from core.agent_chat import AgentChatService
+from core.agent_chat import AgentChatService, _writer_failed
 from core.repair_cycle import TestObservation
 
 
@@ -31,6 +31,61 @@ class ChatRepairTests(unittest.TestCase):
 
     def invoke(self):
         return self.chat._run_registered_repair(self.cid, self.mid, 'codex', 'Original task', 'p', True, True, False)
+
+    def test_timed_out_writer_verifies_changes_once_without_retry(self):
+        manifest = (('test_invoice.py', 'a' * 64),)
+        for code in (0, 1):
+            with self.subTest(exit_code=code):
+                callback = MagicMock(return_value=TestObservation(code, 8, test_manifest=manifest))
+                self.prepare(callback)
+                self.service.get_run.return_value = {
+                    'process_exit_confirmed': True, 'files_changed': ['invoice.py']}
+                self.service.observed_writer_changes.return_value = ('invoice.py',)
+                timeout = _writer_failed('Task timed out after 600s', {
+                    'error_events': [{'source': 'process', 'kind': 'timeout'}]}, 'r')
+                with patch.object(self.chat, '_run_codex_turn', side_effect=timeout), \
+                     patch.object(self.chat, '_execute_codex_bubble') as writer:
+                    self.chat._run_chat_step(self.cid, self.mid, 'codex', 'Fix', 'p', True, True)
+                callback.assert_called_once()
+                writer.assert_not_called()
+                self.service.record_repair_result.assert_not_called()
+                self.assertNotIn(self.cid, self.chat._repair_plans)
+                message = self.chat.store.get(self.cid)['messages'][-1]
+                self.assertEqual(message['metadata']['outcome']['execution_status'], 'failed')
+                self.assertEqual(message['metadata']['status'], 'failed')
+                cycle = message['metadata']['repair_cycle']
+                self.assertTrue(cycle['verification_only'])
+                self.assertEqual(cycle['writer_status'], 'timed_out')
+                self.assertEqual(cycle['status'], 'tests_passed' if code == 0 else 'failed')
+                self.assertIn('Yazar zaman aşımına uğradı', message['content'])
+                self.assertIn('Initial output', message['content'])
+
+    def test_timed_out_writer_requires_changes_and_confirmed_exit(self):
+        # A runtime claim alone is insufficient. A changed file also cannot bypass cleanup.
+        for exit_confirmed, observed in ((True, ()), (False, ('invoice.py',))):
+            run = {'process_exit_confirmed': exit_confirmed, 'files_changed': ['invoice.py']}
+            with self.subTest(run=run):
+                callback = MagicMock()
+                self.prepare(callback)
+                self.service.get_run.return_value = run
+                self.service.observed_writer_changes.return_value = observed
+                timeout = _writer_failed('Task timed out', {
+                    'error_events': [{'source': 'process', 'kind': 'timeout'}]}, 'r')
+                with patch.object(self.chat, '_run_codex_turn', side_effect=timeout):
+                    self.chat._run_chat_step(self.cid, self.mid, 'codex', 'Fix', 'p', True, True)
+                callback.assert_not_called()
+                self.assertNotIn(self.cid, self.chat._repair_plans)
+                message = self.chat.store.get(self.cid)['messages'][-1]
+                self.assertEqual(message['metadata']['repair_cycle']['status'], 'blocked')
+
+    def test_failed_writer_text_cannot_trigger_timeout_verification(self):
+        callback = MagicMock()
+        self.prepare(callback)
+        error = _writer_failed('Task timed out after 600s', {
+            'error_events': [{'source': 'tool', 'kind': 'timeout'}]}, 'r')
+        with patch.object(self.chat, '_run_codex_turn', side_effect=error):
+            self.chat._run_chat_step(self.cid, self.mid, 'codex', 'Fix', 'p', True, True)
+        callback.assert_not_called()
 
     def test_failed_test_reenters_same_writer_with_data_only_feedback(self):
         manifest = (('test_invoice.py', 'a' * 64),)

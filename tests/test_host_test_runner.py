@@ -26,6 +26,30 @@ class HostRunnerTests(unittest.TestCase):
     def adapter(self, **kwargs):
         return HostUnittestAdapter(self.root, ['test_value.py'], expected_tests=1, **kwargs)
 
+    @unittest.skipUnless(os.name == 'nt', 'Windows Job Object runner')
+    def test_explicit_external_site_packages_with_isolation_and_no_pth(self):
+        with tempfile.TemporaryDirectory() as external:
+            site_dir = Path(external) / 'site-packages'
+            site_dir.mkdir()
+            (site_dir / 'quartz_test_dependency.py').write_text('VALUE = 2', encoding='utf-8')
+            (site_dir / 'side_effect.pth').write_text(
+                'import sys; sys.quartz_pth_ran = True\n', encoding='utf-8')
+            (self.root / 'test_value.py').write_text(
+                'import sys, quartz_test_dependency\n'
+                'from pathlib import Path\n'
+                'assert Path.home().name == "profile" and Path.home().is_dir()\n'
+                'assert sys.flags.isolated and not hasattr(sys, "quartz_pth_ran")\n'
+                'assert quartz_test_dependency.VALUE == 2\n' + PASS, encoding='utf-8')
+            self.assertFalse(self.adapter()(threading.Event()).passed)
+            result = self.adapter(python_site_packages=str(site_dir))(threading.Event())
+            self.assertTrue(result.passed)
+
+    def test_project_local_site_packages_is_rejected(self):
+        site_dir = self.root / 'site-packages'
+        site_dir.mkdir()
+        with self.assertRaises(ValueError):
+            self.adapter(python_site_packages=str(site_dir))
+
     def test_manifest_is_sorted_tuple_and_stable_before_execution(self):
         (self.root/'test_alpha.py').write_text(PASS, encoding='utf-8')
         runner = HostUnittestAdapter(self.root, ['test_value.py','test_alpha.py'], expected_tests=2)

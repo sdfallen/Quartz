@@ -401,7 +401,7 @@ class IPCServer:
 
         if action in {'repair_plan_preview', 'repair_plan_register', 'repair_plan_clear'}:
             permitted = {
-                'repair_plan_preview': {'conversation_id','provider','test_files','support_files','expected_tests','python_executable','max_repairs'},
+                'repair_plan_preview': {'conversation_id','provider','test_files','support_files','expected_tests','python_executable','max_repairs','python_site_packages'},
                 'repair_plan_register': {'preview_id','confirm'},
                 'repair_plan_clear': {'conversation_id'},
             }

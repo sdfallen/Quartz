@@ -78,6 +78,8 @@ class MultiAgentServiceTests(unittest.TestCase):
                 time.sleep(.01)
         self.assertEqual(service.get_run("codex-write")["files_changed"],
                          [str(Path(project["path"]) / "created.txt")])
+        self.assertEqual(service.observed_writer_changes('codex-write'),
+                         (str(Path(project['path']) / 'created.txt'),))
 
     # Live gate 3 (11 Nov): the repair diff scan reads get_run()["checkpoint"]; the runtime
     # record never carries it, so the scan always said "unknown".

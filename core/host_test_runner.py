@@ -28,7 +28,11 @@ def _run_host_tests():
     control = json.loads(sys.stdin.readline())
     sys.stdin.close()
     receipt, nonce = control['receipt'], control['nonce']
+    dependency_path = control.get('python_site_packages')
     del control
+    if dependency_path:
+        # Explicit path only: site.addsitedir would execute .pth directives.
+        sys.path.append(dependency_path)
     # Do not expose the receipt path through project-visible command arguments.
     sys.argv = [root]
     sys.path.insert(0, root)
@@ -46,7 +50,7 @@ _run_host_tests()
 def _remove_scratch_dir(path, *, attempts=20, delay=.1):
     """Best-effort, bounded (~2 s) removal of the adapter's own temp folder.
 
-    A folder that is still locked is left in %TEMP% (only test output and the receipt);
+    A folder that is still locked is left in %TEMP% with its test scratch data;
     it never fails or alters an already validated observation.
     """
     import shutil
@@ -91,7 +95,7 @@ def _active_job_count(handle):
 
 class HostUnittestAdapter:
     def __init__(self, project_root, test_files, *, expected_tests, support_files=(), python_executable=None,
-                 timeout=30, max_output_bytes=256 * 1024):
+                 timeout=30, max_output_bytes=256 * 1024, python_site_packages=None):
         if type(expected_tests) is not int or expected_tests <= 0:
             raise ValueError('Positive host test count required')
         if not 0 < timeout <= 600 or not 1024 <= max_output_bytes <= 1024 * 1024:
@@ -118,6 +122,17 @@ class HostUnittestAdapter:
         if not executable or not Path(executable).is_absolute() or not Path(executable).is_file():
             raise ValueError('Host Python executable required')
         self.python = str(Path(executable).resolve())
+        self.python_site_packages = None
+        self.dependency_identity = None
+        if python_site_packages is not None:
+            if not isinstance(python_site_packages, str) or not Path(python_site_packages).is_absolute():
+                raise ValueError('Mutlak site-packages yolu gerekli.')
+            path = Path(python_site_packages).resolve(strict=True)
+            if (path.name.casefold() != 'site-packages' or not path.is_dir()
+                    or path.is_relative_to(self.root) or self.root.is_relative_to(path)):
+                raise ValueError('Proje dışında bir site-packages klasörü seçin.')
+            self.python_site_packages = str(path)
+            self.dependency_identity = self._dependency_stat()
         self._baseline = self._manifest()
         self._lock = threading.RLock()
         self._call_lock = threading.Lock()
@@ -150,7 +165,18 @@ class HostUnittestAdapter:
             result.append((name, hashlib.sha256(data).hexdigest()))
         return tuple(result)
 
+    def _dependency_stat(self):
+        if self.python_site_packages is None:
+            return None
+        path = Path(self.python_site_packages)
+        if path.resolve(strict=True) != path or not path.is_dir():
+            raise ValueError('Onaylanan site-packages yolu değişti.')
+        stat = path.stat()
+        return stat.st_dev, stat.st_ino
+
     def validate_baseline(self):
+        if self._dependency_stat() != self.dependency_identity:
+            raise ValueError('Onaylanan site-packages klasörü değişti.')
         if self._manifest() != self._baseline:
             raise RuntimeError('Host tests changed since pre-write capture')
 
@@ -197,11 +223,14 @@ class HostUnittestAdapter:
             with _scratch_dir('quartz-host-unittest-') as directory:
                 receipt = Path(directory) / 'result.json'
                 nonce = secrets.token_hex(32)
+                profile = Path(directory) / 'profile'
+                profile.mkdir()
                 with (Path(directory) / 'output.log').open('w+b') as output:
                     args = [self.python, '-I', '-B', '-u', '-X', 'utf8', '-c', _WORKER,
                             str(self.root), json.dumps([p[:-3].replace('/', '.') for p in self.files])]
                     env = {k: v for k, v in os.environ.items() if k.upper() in {
                         'PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP'}}
+                    env['USERPROFILE'] = str(profile)
                     proc = subprocess.Popen(args, cwd=self.root, stdin=subprocess.PIPE, stdout=output,
                                             stderr=subprocess.STDOUT, env=env,
                                             creationflags=CREATE_SUSPENDED | getattr(subprocess, 'CREATE_NO_WINDOW', 0))
@@ -211,7 +240,8 @@ class HostUnittestAdapter:
                     try:
                         if not bind_kill_on_close_job(proc, resume=True):
                             raise RuntimeError('Host test Job Object ownership unavailable')
-                        proc.stdin.write((json.dumps({'receipt': str(receipt), 'nonce': nonce})+'\n').encode('utf-8'))
+                        proc.stdin.write((json.dumps({'receipt': str(receipt), 'nonce': nonce,
+                            'python_site_packages': self.python_site_packages})+'\n').encode('utf-8'))
                         proc.stdin.close()
                         deadline = time.monotonic() + self.timeout
                         while proc.poll() is None:

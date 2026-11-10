@@ -42,6 +42,17 @@ class RepairPlanEntryTests(unittest.TestCase):
         preview=preview or self.preview()
         return self.entry.register(preview['preview_id'],confirm=True)
 
+    def test_preview_binds_explicit_dependency_directory_to_registered_adapter(self):
+        with tempfile.TemporaryDirectory() as external:
+            site_dir = Path(external) / 'site-packages'
+            site_dir.mkdir()
+            preview = self.preview(python_site_packages=str(site_dir))
+            self.assertEqual(preview['python_site_packages'], str(site_dir.resolve()))
+            self.assertEqual(self.chat._repair_plans, {})
+            self.register(preview)
+            self.assertEqual(self.chat._host_test_adapters[self.cid].python_site_packages,
+                             str(site_dir.resolve()))
+
     def test_preview_never_starts_code_or_saves_plan(self):
         with patch('subprocess.Popen') as popen,patch('subprocess.run') as run:
             view=self.preview()

@@ -810,6 +810,14 @@ class MultiAgentService:
             source_validation=evidence.get('source_validation'))
         return run
 
+    def observed_writer_changes(self, run_id):
+        """Read host filesystem evidence without merging agent-reported paths."""
+        with self._lock:
+            evidence = self._file_changes.get(run_id) or {}
+            if evidence.get('evidence_warning') or evidence.get('unauthorized_write_detected'):
+                return ()
+            return tuple(evidence.get('files_changed', ()))
+
     def pending_writer_runs(self, run_ids):
         """Passive ownership readback, not a permission/claim release operation."""
         requested = set(run_ids)

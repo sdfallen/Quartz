@@ -60,7 +60,7 @@ class RepairPlanEntry:
                 'provider': provider, 'model': deepcopy(self.chat.store.get_agent_model(cid, provider))}
 
     def preview(self, *, conversation_id, provider, test_files, expected_tests,
-                support_files=(), python_executable=None, max_repairs=2):
+                support_files=(), python_executable=None, max_repairs=2, python_site_packages=None):
         with self.chat._lock:
             self._idle()
             scope = self._scope(conversation_id, provider)
@@ -71,9 +71,10 @@ class RepairPlanEntry:
             if selected is not None and not isinstance(selected, str): raise ValueError('Geçersiz Python yolu.')
             try:
                 adapter = HostUnittestAdapter(scope['project_path'], test_files, expected_tests=expected_tests,
-                                               support_files=support_files, python_executable=selected)
+                                               support_files=support_files, python_executable=selected,
+                                               python_site_packages=python_site_packages)
             except (ValueError, OSError, TypeError):
-                raise ValueError('Test/destek yollarını, dosya sınırlarını, pozitif test sayısını ve mutlak Python yolunu kontrol edin.') from None
+                raise ValueError('Test/destek yollarını, dosya sınırlarını, pozitif test sayısını, mutlak Python yolunu ve proje dışındaki site-packages yolunu kontrol edin.') from None
             now = self.clock()
             self.previews = {key: item for key, item in self.previews.items()
                              if item['expires'] > now and item['scope']['conversation_id'] != conversation_id}
@@ -84,13 +85,16 @@ class RepairPlanEntry:
                                   'python_stat': self._python_stat(adapter.python)}
             warnings = ['Önizleme kod çalıştırmaz. Python ve testler yalnız sonraki onaylı görevde çalıştırılır.',
                         'Destek dosyalarını eksiksiz seçin; test başarısı bağımsız kod incelemesinin yerine geçmez.']
+            if adapter.python_site_packages:
+                warnings.append('Bu klasördeki Python paketleri güvenilen bağımlılıklar olarak yüklenir. İçerikleri hash’lenmez.')
             if not python_executable: warnings.append('Python yolu önerildi; plan henüz kaydedilmedi.')
             if 'windowsapps' in adapter.python.casefold(): warnings.append('WindowsApps Python takma adı seçildi; kullanılabilirliği henüz çalıştırılarak doğrulanmadı.')
             return {**deepcopy(scope), 'preview_id': pid,
                     'files': [{'path': p, 'role': 'test' if p in adapter.files else 'support', 'sha256': h}
                               for p, h in adapter.baseline_manifest],
                     'expected_tests': expected_tests, 'python_executable': adapter.python,
-                    'python_candidates': candidates, 'max_repairs': max_repairs, 'warnings': warnings}
+                    'python_candidates': candidates, 'max_repairs': max_repairs, 'warnings': warnings,
+                    'python_site_packages': adapter.python_site_packages}
 
     @staticmethod
     def _python_stat(value):
@@ -119,9 +123,11 @@ class RepairPlanEntry:
                 raise RuntimeError('Önce mevcut onarım planını kaldırın.')
             adapter = self.chat.register_host_unittest_plan(cid, project_id=scope['project_id'], provider=scope['provider'],
                 test_files=before.files, support_files=tuple(p for p in before.manifest_files if p not in before.files),
-                expected_tests=before.expected_tests, python_executable=before.python, max_repairs=item['max_repairs'])
+                expected_tests=before.expected_tests, python_executable=before.python, max_repairs=item['max_repairs'],
+                python_site_packages=before.python_site_packages)
             # Close the second capture race: it must still be the approved bytes.
-            if adapter.baseline_manifest != before.baseline_manifest:
+            if (adapter.baseline_manifest != before.baseline_manifest
+                    or adapter.dependency_identity != before.dependency_identity):
                 self.chat._repair_plans.pop(cid, None); self.chat._host_test_adapters.pop(cid, None)
                 raise ValueError('Dosyalar kayıt sırasında değişti; yeniden önizleyin.')
             self.plans[cid] = {**scope, 'status': 'ready', 'files_count': len(adapter.manifest_files),

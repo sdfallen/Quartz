@@ -21,6 +21,19 @@ from core.task_outcome import execution_outcome, group_execution_status
 log = logging.getLogger(__name__)
 
 
+class _WriterTimeout(RuntimeError):
+    def __init__(self, message, run_id):
+        super().__init__(message)
+        self.run_id = run_id
+
+
+def _writer_failed(message, run, run_id):
+    if any(isinstance(event, dict) and event.get('source') == 'process'
+           and event.get('kind') == 'timeout' for event in run.get('error_events', [])):
+        return _WriterTimeout(message, run_id)
+    return RuntimeError(message)
+
+
 class AgentChatService:
     MAX_GROUP_ROUNDS = 2
 
@@ -48,7 +61,7 @@ class AgentChatService:
 
     def register_host_unittest_plan(self, conversation_id, *, project_id, provider,
                                     test_files, expected_tests, support_files=(), python_executable=None,
-                                    timeout=30, max_repairs=2):
+                                    timeout=30, max_repairs=2, python_site_packages=None):
         """Capture host test hashes BEFORE any writer starts; no IPC/MCP entry."""
         from core.host_test_runner import HostUnittestAdapter
         with self._lock:
@@ -61,7 +74,8 @@ class AgentChatService:
             if previous is not None and previous.cleanup_pending:
                 raise RuntimeError('Previous host test cleanup unconfirmed')
             adapter = HostUnittestAdapter(project['path'], test_files, expected_tests=expected_tests,
-                                           support_files=support_files, python_executable=python_executable, timeout=timeout)
+                                           support_files=support_files, python_executable=python_executable,
+                                           timeout=timeout, python_site_packages=python_site_packages)
             self.register_repair_plan(conversation_id, project_id=project_id, provider=provider,
                                       test=adapter, expected_tests=expected_tests, max_repairs=max_repairs)
             self._host_test_adapters[conversation_id] = adapter
@@ -88,7 +102,7 @@ class AgentChatService:
                                                   deepcopy(self.store.get_agent_model(conversation_id, provider)))
 
     def _run_registered_repair(self, cid, msg_id, provider, prompt, project_id,
-                               write, confirm_write, full_access):
+                               write, confirm_write, full_access, *, timed_out_run=None):
         from core.repair_cycle import RepairCycle
         from core.workspace_checkpoint import create_checkpoint
         with self._lock:
@@ -134,8 +148,17 @@ class AgentChatService:
                     raise RuntimeError('Previous writer cleanup unconfirmed')
                 stop.wait(.05)
 
+        verification_note = None
+
         def test(event):
+            nonlocal verification_note
             fence()
+            if timed_out_run is not None:
+                if timed_out_run not in (self._active_turn or {}).get('run_ids', []):
+                    raise RuntimeError('Timed out writer is outside the current turn')
+                if not self.agent_service.observed_writer_changes(timed_out_run):
+                    verification_note = 'Dosya değişikliği doğrulanamadı.'
+                    raise RuntimeError(verification_note)
             return plan[2](event)
 
         def repair(writer, output, event):
@@ -150,9 +173,15 @@ class AgentChatService:
                     use_session=True, full_access=full_access)
 
         try:
-            cycle = RepairCycle(task_id=turn_id, writer_id=provider, max_repairs=plan[4])
+            cycle = RepairCycle(task_id=turn_id, writer_id=provider,
+                                max_repairs=0 if timed_out_run is not None else plan[4])
             result = cycle.run(stop=stop, test=test, checkpoint=lambda: create_checkpoint(root),
                                repair=repair, expected_tests=plan[3], require_manifest=True)
+            if timed_out_run is not None:
+                result['writer_status'] = 'timed_out'
+                result['verification_only'] = True
+                if verification_note:
+                    result['verification_note'] = verification_note
             from core.repair_review import review_writer_changes
             reviews = []
             for rid in list((self._active_turn or {}).get('run_ids', [])):
@@ -170,7 +199,15 @@ class AgentChatService:
                 if self._active_turn and self._active_turn.get('turn_id') == turn_id:
                     msg = next(m for m in self.store.get(cid)['messages'] if m['id'] == msg_id)
                     content = msg['content']
-                    if result['status'] == 'tests_passed':
+                    if timed_out_run is not None:
+                        labels = {'tests_passed': 'geçti', 'failed': 'başarısız oldu', 'cancelled': 'iptal edildi'}
+                        label = labels.get(result['status'], 'doğrulanamadı')
+                        content += f'\n\nYazar zaman aşımına uğradı. Host testleri {label}.'
+                        if result['status'] == 'tests_passed':
+                            content += ' Bağımsız kod incelemesi bekleniyor.'
+                        if verification_note:
+                            content += ' ' + verification_note
+                    elif result['status'] == 'tests_passed':
                         content += ('\n\nHost testleri geçti; bağımsız kod incelemesi bekleniyor. '
                                     'Onarım farkı başka bir ajan veya kullanıcı incelemeden kabul edilmiş sayılmaz.')
                     if result['code_review']['status'] == 'suspicious':
@@ -181,6 +218,8 @@ class AgentChatService:
                     final_run = self._active_turn.get('run_id')
                 else:
                     final_run = None
+            if timed_out_run is not None:
+                return
             if final_run and result['status'] == 'tests_passed' and not stop.is_set():
                 self.agent_service.record_repair_result(final_run, result)
             if result['status'] != 'tests_passed':
@@ -1266,6 +1305,14 @@ class AgentChatService:
         except Exception as exc:
             if self._is_turn_cancelled(msg_id):
                 return
+            if isinstance(exc, _WriterTimeout) and write and confirm_write is True:
+                try:
+                    self._run_registered_repair(cid, msg_id, agent, prompt, project_id, write,
+                                                confirm_write, full_access, timed_out_run=exc.run_id)
+                except Exception as verification_error:
+                    log.warning('Post-timeout verification unavailable (%s)', type(verification_error).__name__)
+                if self._is_turn_cancelled(msg_id):
+                    return
             log.warning("Chat turn error for agent %s: %s", agent, exc)
             log.debug("Chat turn error details", exc_info=True)
             err_text = self._format_error(agent, exc)
@@ -1277,7 +1324,8 @@ class AgentChatService:
                         content = previous.get('content') or ''
                         err_text = (content + '\n\n---\nOnarım sonucu:\n' + err_text).strip()
                     self.store.update_message_content(
-                        cid, target_mid, err_text, metadata={"status": "failed", "error": str(exc)}
+                        cid, target_mid, err_text, metadata={"status": "failed", "error": str(exc),
+                            **({'outcome': execution_outcome('failed')} if isinstance(exc, _WriterTimeout) else {})}
                     )
         finally:
             if agent in {"collaboration", "both"}:
@@ -1529,7 +1577,7 @@ class AgentChatService:
 
         errors = run.get("errors", [])
         err_msg = "\n".join(errors) if errors else "Antigravity görevi tamamlayamadı."
-        raise RuntimeError(err_msg)
+        raise _writer_failed(err_msg, run, run_id)
 
     def _stream_antigravity_run(self, cid: str, msg_id: str, run_id: str, meta: dict, save_session: bool = True):
         run = {}
@@ -1682,7 +1730,7 @@ class AgentChatService:
 
         errors = run.get("errors", [])
         err_msg = "\n".join(errors) if errors else "Codex görevi tamamlayamadı."
-        raise RuntimeError(err_msg)
+        raise _writer_failed(err_msg, run, run_id)
 
     def _stream_codex_run(self, cid: str, msg_id: str, run_id: str, meta: dict, save_session: bool = True):
         run = {}
