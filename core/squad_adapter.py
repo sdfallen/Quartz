@@ -120,7 +120,8 @@ class SquadAdapter:
         return snapshot
 
     def _restore_root_files(self, snapshot: dict[str, tuple[bytes, int, int] | None]) -> None:
-        """Remove only the boilerplate added by `squad init` without clobbering concurrent user edits."""
+        """Remove only the exact boilerplate added by `squad init` without clobbering concurrent user edits."""
+        boilerplate_only = {".squad/", ".squad", _SQUAD_DOC_SNIPPET.strip(), "## Squad Collaboration"}
         for name, state in snapshot.items():
             target = self.project_path / name
             try:
@@ -129,23 +130,22 @@ class SquadAdapter:
                 current_bytes = target.read_bytes()
                 current_text = current_bytes.decode("utf-8", errors="replace")
                 if state is None:
-                    # File did not exist before `squad init`; remove if it only contains Squad's boilerplate.
-                    stripped = current_text.strip()
-                    if stripped in {".squad/", ".squad"} or _SQUAD_DOC_SNIPPET in current_text or "Squad Collaboration" in current_text:
+                    # File did not exist before `squad init`; remove only if its entire content is Squad boilerplate.
+                    stripped = current_text.strip().replace("\r\n", "\n")
+                    if stripped in boilerplate_only:
                         target.unlink(missing_ok=True)
                 else:
                     raw, atime_ns, mtime_ns = state
                     if current_bytes == raw:
                         continue
                     old_text = raw.decode("utf-8", errors="replace")
-                    if current_text.startswith(old_text):
-                        added = current_text[len(old_text):]
-                        if _SQUAD_DOC_SNIPPET in added or "Squad Collaboration" in added or ".squad" in added:
+                    norm_current = current_text.replace("\r\n", "\n")
+                    norm_old = old_text.replace("\r\n", "\n")
+                    if norm_current.startswith(norm_old):
+                        added = norm_current[len(norm_old):].strip()
+                        if added in boilerplate_only:
                             target.write_bytes(raw)
                             os.utime(target, ns=(atime_ns, mtime_ns))
-                    elif "Squad Collaboration" in current_text and "Squad Collaboration" not in old_text:
-                        target.write_bytes(raw)
-                        os.utime(target, ns=(atime_ns, mtime_ns))
             except OSError:
                 pass
         git_exclude = self.project_path / ".git" / "info" / "exclude"
@@ -175,7 +175,7 @@ class SquadAdapter:
             pass
 
     def _quarantine_corrupt_db_files(self) -> Path | None:
-        """Move positively-corrupt messages.db (and -wal/-shm) to a timestamped quarantine path; never delete."""
+        """Move positively-corrupt messages.db (and -wal/-shm) atomically to quarantine; roll back if any sidecar fails."""
         squad_root = self.project_path / ".squad"
         db_path = squad_root / "messages.db"
         if not db_path.is_file() or not self._is_db_corrupt(db_path):
@@ -183,21 +183,33 @@ class SquadAdapter:
         stamp = time.strftime("%Y%m%d-%H%M%S")
         quarantine_db = squad_root / f"messages.db.corrupt-{stamp}"
         counter = 1
-        while quarantine_db.exists():
+        while (
+            quarantine_db.exists()
+            or (squad_root / f"{quarantine_db.name}-wal").exists()
+            or (squad_root / f"{quarantine_db.name}-shm").exists()
+        ):
             counter += 1
             quarantine_db = squad_root / f"messages.db.corrupt-{stamp}-{counter}"
+
+        moved: list[tuple[Path, Path]] = []
         try:
             db_path.replace(quarantine_db)
+            moved.append((db_path, quarantine_db))
+            for suffix in ("-wal", "-shm"):
+                sidecar = squad_root / f"messages.db{suffix}"
+                if sidecar.exists():
+                    dst = squad_root / f"{quarantine_db.name}{suffix}"
+                    sidecar.replace(dst)
+                    moved.append((sidecar, dst))
         except OSError:
-            # Another process holds the file open or permission denied; abort without touching anything.
-            return None
-        for suffix in ("-wal", "-shm"):
-            sidecar = squad_root / f"messages.db{suffix}"
-            if sidecar.is_file():
+            for src, dst in reversed(moved):
                 try:
-                    sidecar.replace(squad_root / f"{quarantine_db.name}{suffix}")
+                    if dst.exists() and not src.exists():
+                        dst.replace(src)
                 except OSError:
                     pass
+            return None
+
         self.last_quarantined_db = str(quarantine_db)
         return quarantine_db
 

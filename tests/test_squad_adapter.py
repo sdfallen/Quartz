@@ -232,6 +232,65 @@ class SquadAdapterTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(list((project / ".squad").glob("messages.db.corrupt-*")), [])
 
+    def test_wal_replace_failure_rolls_back_messages_db_and_does_not_run_init(self):
+        project = Path(self.tmp.name) / "wal_fail_proj"
+        squad_root = project / ".squad"
+        squad_root.mkdir(parents=True)
+        corrupt_db = squad_root / "messages.db"
+        wal_file = squad_root / "messages.db-wal"
+        corrupt_bytes = b"corrupted sqlite main " * 20
+        wal_bytes = b"stale wal frames " * 10
+        corrupt_db.write_bytes(corrupt_bytes)
+        wal_file.write_bytes(wal_bytes)
+        adapter = SquadAdapter(project, executable=self.exe)
+
+        orig_replace = Path.replace
+
+        def fail_on_wal(self_path: Path, target: Path):
+            if self_path.name == "messages.db-wal":
+                raise OSError(13, "Permission denied on -wal")
+            return orig_replace(self_path, target)
+
+        calls = []
+        with patch.object(Path, "replace", fail_on_wal), patch(
+            "core.squad_adapter.subprocess.run",
+            side_effect=lambda cmd, **_kw: calls.append(list(cmd)) or SimpleNamespace(returncode=0, stdout="", stderr=""),
+        ):
+            self.assertIsNone(adapter._quarantine_corrupt_db_files())
+            self.assertTrue(corrupt_db.is_file())
+            self.assertEqual(corrupt_db.read_bytes(), corrupt_bytes)
+            self.assertTrue(wal_file.is_file())
+            self.assertEqual(wal_file.read_bytes(), wal_bytes)
+            self.assertEqual(list(squad_root.glob("messages.db.corrupt-*")), [])
+
+            with self.assertRaises(SquadCommandError):
+                adapter.initialize()
+            # `squad init` must NOT run when -wal could not be quarantined.
+            self.assertEqual(calls, [])
+            self.assertTrue(corrupt_db.is_file())
+            self.assertEqual(corrupt_db.read_bytes(), corrupt_bytes)
+
+    def test_restore_root_files_preserves_concurrent_user_edits(self):
+        project = Path(self.tmp.name) / "concurrent_edit_proj"
+        project.mkdir()
+        claude_md = project / "CLAUDE.md"
+        claude_md.write_text("# Old header\n", encoding="utf-8")
+        adapter = SquadAdapter(project, executable=self.exe)
+        snap = adapter._snapshot_root_files()
+
+        # Simulate concurrent user edit to CLAUDE.md + squad init appending boilerplate,
+        # and concurrent user creation of AGENTS.md with custom text.
+        concurrent_claude = "# Concurrent user header\nCustom rule\n\n## Squad Collaboration\n"
+        claude_md.write_text(concurrent_claude, encoding="utf-8")
+        agents_md = project / "AGENTS.md"
+        concurrent_agents = "# My Custom Agents Doc\nMentions Squad Collaboration in prose.\n"
+        agents_md.write_text(concurrent_agents, encoding="utf-8")
+
+        adapter._restore_root_files(snap)
+        self.assertEqual(claude_md.read_text(encoding="utf-8"), concurrent_claude)
+        self.assertTrue(agents_md.is_file())
+        self.assertEqual(agents_md.read_text(encoding="utf-8"), concurrent_agents)
+
 
 if __name__ == "__main__":
     unittest.main()

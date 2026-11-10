@@ -2,7 +2,7 @@
 
 Hazırlayan: Antigravity (Gemini)
 Dal: `antigravity/wave0-wave1-analysis-20261105`
-Hedef Sahipler: Codex (`core/multi_agent_service.py`, `core/natural_desktop.py`, `scripts/exam_live.py`), Claude (inceleme: `docs/CLAUDE_REVIEW_S4_SQUAD_20261110.md`)
+Hedef Sahipler: Codex (`core/multi_agent_service.py`, `core/natural_desktop.py`, `scripts/exam_live.py`), Claude (inceleme: `docs/CLAUDE_REVIEW_S4_SQUAD_20261110.md`, `docs/CLAUDE_REVIEW_S4_QUARANTINE_20261110.md`)
 
 ---
 
@@ -34,7 +34,7 @@ Hedef Sahipler: Codex (`core/multi_agent_service.py`, `core/natural_desktop.py`,
 
 ---
 
-## 2. Gemini Alanında (`core/squad_adapter.py`, `core/environment_health.py`) Yapılan Düzeltmeler (Claude `3ebd96f` P1/P2 İncelemesi Sonrası)
+## 2. Gemini Alanında (`core/squad_adapter.py`, `core/environment_health.py`) Yapılan Düzeltmeler (Claude `3ebd96f` & `aea8aa3` İncelemeleri Sonrası)
 
 1. **Yalnız Olumlu Kanıtla Bozulma Tespiti (`SquadAdapter._is_db_corrupt`):**
    - Yalnız iki olumlu kanıt durumunda `True` döner:
@@ -42,15 +42,15 @@ Hedef Sahipler: Codex (`core/multi_agent_service.py`, `core/natural_desktop.py`,
      2. `PRAGMA quick_check(1)` sonucu `"ok"` dışında bir satır döndürürse ya da `sqlite3.DatabaseError` mesajı açıkça bozulma kanıtı (`database disk image is malformed`, `file is not a database`, `not a database file`) içeriyorsa.
    - `sqlite3.OperationalError` (`database is locked`, `unable to open database file`, meşgul/kilitli durum) ve `OSError` **asla bozuk sayılmaz (`False` döner)**.
    - `"no such table"` bozulma belirteçleri listesinden çıkarıldı.
-2. **Silme Yok — Zaman Damgalı Karantinaya Taşıma (`_quarantine_corrupt_db_files`):**
+2. **Silme Yok — Atomik/Geri-Alınabilir Zaman Damgalı Karantinaya Taşıma (`_quarantine_corrupt_db_files`):**
    - Bozuk `messages.db` (ve varsa `-wal` / `-shm`) **asla silinmez** (`unlink` yok); `messages.db.corrupt-<YYYYMMDD-HHMMSS>` olarak aynı klasörde karantinaya taşınır (`Path.replace`).
-   - Dış bir süreç dosyayı açık tutuyorsa Windows'ta `replace` `OSError` fırlatır ve onarım hiçbir dosyaya dokunmadan iptal olur. Son karantina yolu `adapter.last_quarantined_db` alanında saklanır.
+   - **P2 Yan Dosya (`-wal` / `-shm`) Geri Alma Güvencesi (`aea8aa3`):** `messages.db` taşındıktan sonra `messages.db-wal` veya `messages.db-shm` taşınırken `OSError` oluşursa, daha önce taşınmış tüm dosyalar (`messages.db` dahil) ters sırayla (`reversed(moved)`) eski yerine geri taşınır (`dst.replace(src)`) ve `_quarantine_corrupt_db_files()` `None` döner. Böylece `.squad/messages.db-wal` sahipsiz kalıp yeni oluşturulan bir `messages.db` üzerine eski WAL çerçevelerini (sessiz şema/veri bozulmasıyla) asla uygulayamaz.
 3. **Salt Okunur Yollarda (`status`, `initialized`, `agents`, `tasks`, `history`, `environment_health`) Onarım Yok:**
    - `status()`, `initialized`, salt okunur komutlar (`--version`, `agents`, `task list`, `history`, `receive`) ve `environment_health` **hiçbir zaman** `_repair_workspace()` çağırmaz, dosya taşımaz veya değiştirmez.
    - `status()` bozuk DB gördüğünde salt okunur olarak `initialized: False` ve `error: "Squad veritabanı (.squad/messages.db) bozuk; yeniden başlatılmalı."` bildirir.
    - Onarım ve karantina **yalnız açık başlatma/yazma yollarında** (`initialize()`, `join()`, `leave()`, `send()`, `create_task()`, `ack_task()`, `complete_task()`, `requeue_task()`) çalışır.
 4. **Cerrahi Kök Dosya Temizliği ve Gizli `.squad` (`_restore_root_files`, `_hide_squad_dir`):**
-   - `squad init` öncesinde var olmayan `.gitignore`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` dosyaları yalnız Squad şablonu içeriyorsa silinir; önceden var olan dosyalarda ise yalnız `squad init` tarafından eklenen Squad şablonu geri alınır.
+   - **P3 Eşzamanlı Kullanıcı Değişikliği Koruması (`aea8aa3`):** `_restore_root_files()` içinde `elif` dalı kaldırıldı; `squad init` öncesinde var olmayan `.gitignore`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` dosyaları yalnız tüm içeriği birebir Squad şablonu (`boilerplate_only`) ise silinir; önceden var olan dosyalarda ise yalnız `squad init` tarafından dosyanın sonuna eklenen Squad şablonu (`boilerplate_only`) geri alınır. Kullanıcının eşzamanlı yaptığı hiçbir değişiklik üzerine yazılmaz.
    - Git depolarında `.git/info/exclude` içine `.squad/` eklenir; Windows'ta `.squad` klasörüne `FILE_ATTRIBUTE_HIDDEN` (`0x02`) verilir.
 5. **`core/environment_health.py` (P3 + Bozuk DB Kontrolü):**
    - `_selected_agents("notion")` boş küme (`set()`) döner; `_run_subprocess` `(OSError, ValueError, TypeError)` yakalar; `_probe_squad_fallback` bozuk `messages.db` dosyasını salt okunur olarak tespit eder.
@@ -143,17 +143,28 @@ corrupt exam-code-07 status()-> initialized: False quarantined_by_status: []
 after initialize()           -> initialized: True quarantined_files: ['messages.db.corrupt-20261110-081104', 'messages.db.corrupt-20261110-081104-shm', 'messages.db.corrupt-20261110-081104-wal'] quarantine_size: 28723
 ```
 
-### 5.2 Birim Testleri (`25` Test: `test_squad_adapter` + `test_environment_health`)
+### 5.2 Ayrı Birim Test Koşuları (`tests.test_squad_adapter`: 12 Test, `tests.test_environment_health`: 15 Test)
 
-Komut:
+*(Not: Önceki rapordaki `Ran 25 tests` çıktısı `python -B -m unittest tests.test_squad_adapter tests.test_environment_health -v` birleşik komutundan (`10 + 15 = 25`) gelmişti. P2 ve P3 için eklenen 2 yeni testle birlikte `tests.test_squad_adapter` 12 test, `tests.test_environment_health` 15 testtir.)*
+
+Komut 1 (`tests.test_squad_adapter`):
 ```powershell
-Set-Location "C:\Users\LENAVO\.gemini\antigravity\worktrees\quartz-wave0-wave1-20261105"; python scripts/check_python_syntax.py; python -B -m unittest tests.test_squad_adapter tests.test_environment_health -v
+Set-Location "C:\Users\LENAVO\.gemini\antigravity\worktrees\quartz-wave0-wave1-20261105"; python -B -m unittest tests.test_squad_adapter -v
+```
+Çıktı 1:
+```text
+Ran 12 tests in 4.661s
+
+OK
 ```
 
-Çıktı:
+Komut 2 (`tests.test_environment_health`):
+```powershell
+Set-Location "C:\Users\LENAVO\.gemini\antigravity\worktrees\quartz-wave0-wave1-20261105"; python -B -m unittest tests.test_environment_health -v
+```
+Çıktı 2:
 ```text
-Published Python syntax: 344 files OK
-Ran 25 tests in 3.957s
+Ran 15 tests in 0.976s
 
 OK
 ```
