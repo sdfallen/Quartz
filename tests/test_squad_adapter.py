@@ -1,10 +1,12 @@
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
-from core.squad_adapter import SquadAdapter
+from core.squad_adapter import SquadAdapter, SquadCommandError
 
 
 class SquadAdapterTests(unittest.TestCase):
@@ -75,7 +77,10 @@ class SquadAdapterTests(unittest.TestCase):
                 (project / ".squad" / "teams").mkdir(parents=True, exist_ok=True)
                 (project / ".gitignore").write_text(".squad/\n", encoding="utf-8")
                 (project / "AGENTS.md").write_text("## Squad Collaboration\n", encoding="utf-8")
-                (project / "CLAUDE.md").write_text("## Overwritten by squad init\n", encoding="utf-8")
+                (project / "CLAUDE.md").write_text(
+                    "# Original Claude instructions\n\n## Squad Collaboration\n\nThis project uses squad for multi-agent collaboration. Run `squad help` for all commands and usage guide.\n",
+                    encoding="utf-8",
+                )
                 (project / "GEMINI.md").write_text("## Squad Collaboration\n", encoding="utf-8")
                 return {"ok": True, "returncode": 0, "stdout": "Initialized", "stderr": "", "error": ""}
             if args == ["agents", "--json"]:
@@ -98,48 +103,134 @@ class SquadAdapterTests(unittest.TestCase):
             attrs = ctypes.windll.kernel32.GetFileAttributesW(str(project / ".squad"))
             self.assertTrue(bool(attrs & 0x02))
 
-    def test_corrupted_messages_db_is_detected_and_repaired(self):
-        project = Path(self.tmp.name) / "corrupt_proj"
+    def test_locked_healthy_db_is_never_marked_corrupt_and_status_preserves_500_messages(self):
+        project = Path(self.tmp.name) / "locked_proj"
+        (project / ".squad").mkdir(parents=True)
+        db_path = project / ".squad" / "messages.db"
+        setup_conn = sqlite3.connect(str(db_path))
+        setup_conn.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, body TEXT);")
+        setup_conn.executemany("INSERT INTO messages (body) VALUES (?);", [(f"msg-{i}",) for i in range(500)])
+        setup_conn.commit()
+        setup_conn.close()
+
+        adapter = SquadAdapter(project, executable=self.exe)
+        self.assertFalse(SquadAdapter._is_db_corrupt(db_path))
+
+        writer = sqlite3.connect(str(db_path), timeout=1.0, isolation_level=None)
+        try:
+            writer.execute("BEGIN EXCLUSIVE;")
+            writer.execute("INSERT INTO messages (body) VALUES ('in-flight');")
+            # While another writer holds BEGIN EXCLUSIVE, _is_db_corrupt MUST return False (never True).
+            self.assertFalse(SquadAdapter._is_db_corrupt(db_path))
+            self.assertTrue(adapter.initialized)
+        finally:
+            writer.execute("ROLLBACK;")
+            writer.close()
+
+        # Even after the short-lived writer releases its lock, status() must keep the 500-message DB intact.
+        with patch(
+            "core.squad_adapter.subprocess.run",
+            return_value=SimpleNamespace(returncode=0, stdout="squad 0.7.6\n", stderr=""),
+        ):
+            st = adapter.status()
+        self.assertTrue(st["initialized"])
+        self.assertEqual(st["error"], "")
+        self.assertTrue(db_path.is_file())
+        self.assertEqual(list((project / ".squad").glob("messages.db.corrupt-*")), [])
+
+        verify_conn = sqlite3.connect(str(db_path))
+        try:
+            count = verify_conn.execute("SELECT COUNT(*) FROM messages;").fetchone()[0]
+        finally:
+            verify_conn.close()
+        self.assertEqual(count, 500)
+
+    def test_status_and_read_commands_never_repair_or_delete_corrupt_db(self):
+        project = Path(self.tmp.name) / "readonly_corrupt_proj"
         (project / ".squad").mkdir(parents=True)
         corrupt_db = project / ".squad" / "messages.db"
-        corrupt_db.write_bytes(b"corrupted text data " * 20)
+        original_bytes = b"corrupted text data " * 20
+        corrupt_db.write_bytes(original_bytes)
         adapter = SquadAdapter(project, executable=self.exe)
 
         self.assertTrue(SquadAdapter._is_db_corrupt(corrupt_db))
         self.assertFalse(adapter.initialized)
 
+        with patch(
+            "core.squad_adapter.subprocess.run",
+            return_value=SimpleNamespace(returncode=0, stdout="squad 0.7.6\n", stderr=""),
+        ):
+            st = adapter.status()
+        self.assertFalse(st["initialized"])
+        self.assertIn("bozuk", st["error"])
+        # status() must NEVER delete or quarantine messages.db.
+        self.assertTrue(corrupt_db.is_file())
+        self.assertEqual(corrupt_db.read_bytes(), original_bytes)
+        self.assertEqual(list((project / ".squad").glob("messages.db.corrupt-*")), [])
+
+        # Read-only commands like agents() must fail cleanly without quarantining or repairing.
+        with self.assertRaises(SquadCommandError):
+            adapter.agents()
+        self.assertTrue(corrupt_db.is_file())
+        self.assertEqual(list((project / ".squad").glob("messages.db.corrupt-*")), [])
+
+    def test_corrupted_messages_db_is_quarantined_not_deleted_on_initialize_and_write(self):
+        project = Path(self.tmp.name) / "quarantine_proj"
+        (project / ".squad").mkdir(parents=True)
+        corrupt_db = project / ".squad" / "messages.db"
+        corrupt_bytes = b"corrupted text data " * 20
+        corrupt_db.write_bytes(corrupt_bytes)
+        adapter = SquadAdapter(project, executable=self.exe)
+
         def fake_subprocess_run(cmd, **_kwargs):
-            from types import SimpleNamespace
             sub = cmd[1] if len(cmd) > 1 else ""
             if sub == "init":
                 (project / ".squad" / "roles").mkdir(parents=True, exist_ok=True)
                 (project / ".squad" / "teams").mkdir(parents=True, exist_ok=True)
                 return SimpleNamespace(returncode=0, stdout="Initialized", stderr="")
             if sub == "agents":
-                if SquadAdapter._is_db_corrupt(corrupt_db):
-                    return SimpleNamespace(
-                        returncode=1,
-                        stdout="",
-                        stderr="Error: database disk image is malformed\nCaused by:\n  Error code 11: The database disk image is malformed",
-                    )
-                import sqlite3
                 conn = sqlite3.connect(str(corrupt_db))
                 conn.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT);")
                 conn.commit()
                 conn.close()
-                return SimpleNamespace(returncode=0, stdout='{"id":"worker","role":"worker","status":"active"}\n', stderr="")
-            if sub == "--version":
-                return SimpleNamespace(returncode=0, stdout="squad 0.7.6\n", stderr="")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            if sub == "join":
+                return SimpleNamespace(returncode=0, stdout="Joined as manager (role: worker).\n", stderr="")
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
         with patch("core.squad_adapter.subprocess.run", side_effect=fake_subprocess_run):
-            rows = adapter.agents()
-            st = adapter.status()
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["id"], "worker")
+            joined = adapter.join("manager", role="worker", client="codex")
+        self.assertEqual(joined["id"], "manager")
+        self.assertTrue(corrupt_db.is_file())
         self.assertFalse(SquadAdapter._is_db_corrupt(corrupt_db))
-        self.assertTrue(adapter.initialized)
-        self.assertTrue(st["initialized"])
+
+        quarantined = list((project / ".squad").glob("messages.db.corrupt-*"))
+        self.assertEqual(len(quarantined), 1)
+        self.assertEqual(quarantined[0].read_bytes(), corrupt_bytes)
+        self.assertEqual(adapter.last_quarantined_db, str(quarantined[0]))
+
+    def test_no_such_table_error_does_not_trigger_workspace_repair(self):
+        project = Path(self.tmp.name) / "schema_proj"
+        (project / ".squad").mkdir(parents=True)
+        db_path = project / ".squad" / "messages.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("CREATE TABLE dummy (id INT);")
+        conn.commit()
+        conn.close()
+        adapter = SquadAdapter(project, executable=self.exe)
+
+        calls = []
+
+        def fake_subprocess_run(cmd, **_kwargs):
+            calls.append(list(cmd))
+            return SimpleNamespace(returncode=1, stdout="", stderr="Error: no such table: agents")
+
+        with patch("core.squad_adapter.subprocess.run", side_effect=fake_subprocess_run):
+            with self.assertRaises(SquadCommandError):
+                adapter.join("manager", role="worker", client="codex")
+        # Must not call `squad init` or quarantine the database on `no such table`.
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(list((project / ".squad").glob("messages.db.corrupt-*")), [])
 
 
 if __name__ == "__main__":
