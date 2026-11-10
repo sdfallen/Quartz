@@ -35,6 +35,8 @@ class AgentChatService:
         self._repair_plans = {}
         self._repair_events = {}
         self._host_test_adapters = {}
+        from core.repair_plan_entry import RepairPlanEntry
+        self.repair_plan_entry = RepairPlanEntry(self)
         self._diagnostics = AsyncSnapshot(self.agent_service.status)
         from core.chat_environment_health import ChatEnvironmentHealth
         self._environment_health = ChatEnvironmentHealth()
@@ -184,6 +186,7 @@ class AgentChatService:
         finally:
             with self._lock:
                 self._repair_events.pop(turn_id, None)
+                self.repair_plan_entry.plans.pop(cid, None)
 
     def status(self, *, force_health=False) -> dict:
         """Returns current chat status including active conversation, Squad state, models, and agent statuses."""
@@ -239,6 +242,7 @@ class AgentChatService:
             health = self._environment_health.read(project_path, conv.get('agent', 'antigravity'),
                                                     raw_status if isinstance(raw_status, dict) else {}, force_health)
             return {
+                "repair_plan": self.repair_plan_entry.summary(conv.get('id')),
                 "environment_health": health,
                 "notion_tools": self._notion_tools_payload(conv.get("id") if conv else None),
                 "active_conversation": conv,
@@ -702,10 +706,12 @@ class AgentChatService:
                 raise ValueError("Geçersiz ajan türü.")
             project_id = conv.get("project_id")
             repair_plan = self._repair_plans.get(cid)
+            if repair_plan:
+                self.repair_plan_entry.validate_ready(cid)
             if repair_plan and (repair_plan[:2] != (project_id, selected_agent)
                                 or not write or confirm_write is not True
                                 or self.store.get_agent_model(cid, selected_agent) != repair_plan[5]):
-                raise PermissionError('Host repair plan does not match this task scope')
+                raise PermissionError('Onarım planı için aynı tek ajanla onaylı bir yazma görevi gönderin veya planı kaldırın.')
             if repair_plan:
                 baseline_check = getattr(repair_plan[2], 'validate_baseline', None)
                 if callable(baseline_check):

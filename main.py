@@ -399,6 +399,26 @@ class IPCServer:
         if action == "chat_status":
             return {"status": "ok", "data": self._get_agent_chat().status()}
 
+        if action in {'repair_plan_preview', 'repair_plan_register', 'repair_plan_clear'}:
+            permitted = {
+                'repair_plan_preview': {'conversation_id','provider','test_files','support_files','expected_tests','python_executable','max_repairs'},
+                'repair_plan_register': {'preview_id','confirm'},
+                'repair_plan_clear': {'conversation_id'},
+            }
+            data = req.get('data')
+            if not isinstance(data, dict) or set(data) - permitted[action]:
+                return {'status':'error','data':'Geçersiz onarım planı alanları; dış komut kabul edilmez.'}
+            try:
+                entry = self._get_agent_chat().repair_plan_entry
+                if action == 'repair_plan_preview': result = entry.preview(**data)
+                elif action == 'repair_plan_register': result = entry.register(**data)
+                else: result = entry.clear(data.get('conversation_id'))
+                return {'status':'ok','data':result}
+            except (ValueError, PermissionError, RuntimeError) as exc:
+                return {'status':'error','data':str(exc)}
+            except (TypeError, OSError, KeyError):
+                return {'status':'error','data':'Plan hazırlanamadı; etkin sohbet, proje ve dosya seçimlerini kontrol edin.'}
+
         if action == "environment_health":
             force = (req.get('data') or {}).get('force') is True
             return {"status": "ok", "data": self._get_agent_chat().status(force_health=force)['environment_health']}
