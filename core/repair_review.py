@@ -14,6 +14,9 @@ _SIGNALS = {
     'os._exit': r'\bos\s*\.\s*_exit\b',
     'unittest': r'\bunittest\b',
     'quartz-host-unittest': r'quartz-host-unittest',
+    '__import__': r'\b__import__\b',
+    'importlib': r'\bimportlib\b',
+    'getattr': r'\b(?:builtins\s*\.\s*|__builtins__\s*\.\s*)?getattr\s*\(\s*(?:sys|os|builtins|__builtins__)\b',
 }
 
 
@@ -63,7 +66,9 @@ def review_writer_changes(workspace, run):
                 total += len(before) + len(after)
                 if len(after) > 1024 * 1024 or total > 8 * 1024 * 1024: raise ValueError('Diff budget')
                 if b'\0' in before or b'\0' in after: raise ValueError('Binary diff unsupported')
-                lines = '\n'.join(set(before.decode('utf-8').splitlines()) ^ set(after.decode('utf-8').splitlines()))
+                b_lines, a_lines = before.decode('utf-8').splitlines(), after.decode('utf-8').splitlines()
+                b_set, a_set = set(b_lines), set(a_lines)
+                lines = '\n'.join([line for line in a_lines if line not in b_set] + [line for line in b_lines if line not in a_set])
                 result['signals'].extend({'file': relative, 'signal': label} for label, pattern in _SIGNALS.items()
                                          if re.search(pattern, lines))
         if result['signals']: result['status'] = 'suspicious'
