@@ -97,11 +97,13 @@ class HostUnittestAdapter:
             if not candidate.resolve(strict=True).is_relative_to(self.root):
                 raise ValueError('Host test escapes project')
             size = candidate.stat().st_size
-            total += size
-            if size > 1024 * 1024 or total > 8 * 1024 * 1024:
+            if size > 1024 * 1024:
                 raise ValueError('Host test manifest size exceeded')
-            data = candidate.read_bytes()
+            with candidate.open('rb') as source:
+                data = source.read(1024 * 1024 + 1)
             if len(data) > 1024 * 1024: raise ValueError('Host test grew while reading')
+            total += len(data)
+            if total > 8 * 1024 * 1024: raise ValueError('Host test manifest size exceeded')
             result.append((name, hashlib.sha256(data).hexdigest()))
         return tuple(result)
 
@@ -170,11 +172,19 @@ class HostUnittestAdapter:
                                 raise RuntimeError('Host test output budget exceeded')
                             stop.wait(.03)
                         code = proc.returncode
+                        # Freeze the result before reading it: descendants must
+                        # not mutate test files/receipts during final validation.
+                        if not self.cleanup():
+                            raise RuntimeError('Host test process cleanup unconfirmed')
                         if os.fstat(output.fileno()).st_size > self.max_output_bytes:
                             raise RuntimeError('Host test output budget exceeded')
                         if not receipt.is_file() or receipt.stat().st_size > 4096:
                             raise RuntimeError('Host unittest receipt unavailable')
-                        observed = json.loads(receipt.read_text(encoding='utf-8'))
+                        with receipt.open('rb') as result_file:
+                            data = result_file.read(4097)
+                        if len(data) > 4096:
+                            raise RuntimeError('Host unittest receipt too large')
+                        observed = json.loads(data.decode('utf-8'))
                         if (type(observed.get('tests_run')) is not int or observed['tests_run'] < self.expected_tests
                                 or observed.get('skipped') != 0 or type(observed.get('exit_code')) is not int
                                 or code != observed['exit_code'] or code not in (0, 1)):
