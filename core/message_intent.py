@@ -53,7 +53,8 @@ _URL = re.compile(r'https?://|www\.|\b[\w-]+\.(?:com|net|org|io|dev|app|tr)\b')
 # "X nedir?" asks for a concept, not for this project's files.
 _CONCEPT = re.compile(r'\b(?:nedir|ne\s+demek|ne\s+anlama\s+gelir|what\s+is|what\s+are)\b')
 # Explicit "don't look at files" wording beyond the generic no-tools phrases.
-_NO_LOOK = re.compile(r'(?:dosyalara|koda|projeye)\s+bakmadan|araclara\s+basvurma|arac\s+kullanmadan|bakmadan\s+acikla')
+_NO_LOOK = re.compile(r'(?:dosyalara|koda|projeye)\s+bakmadan|araclara\s+basvurma|arac\s+kullanmadan|bakmadan\s+acikla|'
+                      r'\b(?:okumadan|bakmadan|acmadan|incelemeden)\b')
 # A bare project name counts only together with a question about how it works.
 _ABOUT_PROJECT = re.compile(r'\b(?:hangi|nerede|neden|nasil\s+calis|ne\s+yap|kac\b|koyuyor|kullaniyor|nasil\s+(?:yapil|yonet|bagla))')
 

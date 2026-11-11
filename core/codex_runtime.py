@@ -232,6 +232,51 @@ class CodexRuntime:
         except (OSError, ValueError):
             return False
 
+    PROJECT_READ_FEATURES_OFF = ("shell_tool", "unified_exec", "apps", "plugins", "multi_agent",
+                                 "multi_agent_v2", "computer_use", "browser_use", "browser_use_external",
+                                 "in_app_browser", "image_generation", "view_image", "memories", "hooks")
+
+    def _project_read_config(self, read_root, cwd):
+        """Config flags that leave ONLY quartz_project enabled, proven with `codex mcp list`.
+
+        The effective MCP set also comes from plugins and other layers (a live
+        probe found node_repl/cua_repl beside the user TOML), so the set is read
+        back with the same flags; anything still enabled besides quartz_project
+        is disabled by name and re-checked, and the start is refused otherwise.
+        """
+        import json as _json
+        import re as _re
+        from core.project_read_mcp import codex_override
+        flags = []
+        for feature in self.PROJECT_READ_FEATURES_OFF:
+            flags += ["-c", f"features.{feature}=false"]
+        flags += ["-c", 'web_search="disabled"', "-c", codex_override(read_root)]
+
+        def enabled_extra(current):
+            from core.cli_installer import cli_environment
+            probe = subprocess.run(self._command(current + ["mcp", "list", "--json"]), cwd=str(cwd),
+                                   capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                   timeout=30, env=cli_environment(),
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if probe.returncode != 0:
+                raise RuntimeError("Cannot verify Codex's effective MCP servers")
+            servers = _json.loads(probe.stdout)
+            if not isinstance(servers, list):
+                raise RuntimeError("Unexpected Codex MCP listing")
+            names = [s.get("name") for s in servers if isinstance(s, dict) and s.get("enabled")]
+            if "quartz_project" not in names:
+                raise RuntimeError("Quartz project tools are not active in Codex")
+            return [n for n in names if n != "quartz_project"]
+
+        extra = enabled_extra(flags)
+        for name in extra:
+            if not isinstance(name, str) or not _re.fullmatch(r"[A-Za-z0-9_-]+", name):
+                raise RuntimeError("Cannot safely disable an inherited MCP server")
+            flags += ["-c", f"mcp_servers.{name}.enabled=false"]
+        if extra and enabled_extra(flags):
+            raise RuntimeError("Codex keeps other MCP servers enabled; project read refused")
+        return flags
+
     def start(self, prompt, project_path, *, sandbox="read-only", approval="never",
               squad_task_id=None, squad_agent_id=None, resume_thread_id=None,
               timeout=None, model: str | None = None, effort: str | None = None,
@@ -265,6 +310,10 @@ class CodexRuntime:
         project = Path(project_path).resolve(strict=True)
         if not project.is_dir():
             raise NotADirectoryError(str(project))
+        if read_root:
+            # Resolve the helper/config and PROVE the effective tool set now: a
+            # failure must not leave a "starting" record without a process.
+            read_config = self._project_read_config(read_root, project)
 
         clean_model = str(model or "").strip() or None
         clean_effort = str(effort or "").strip().lower() or None
@@ -318,11 +367,11 @@ class CodexRuntime:
             common += ["-m", clean_model]
         if clean_effort:
             common += ["-c", f'model_reasoning_effort="{clean_effort}"']
-        if tool_guard or desktop_connection is not None or read_root:
+        if read_root:
+            common += read_config  # verified effective tool set (see _project_read_config)
+        elif tool_guard or desktop_connection is not None:
             # Per-run only: no user config changes. Disable inherited integrations
-            # as well as shell/browser/desktop capabilities. A project read gets
-            # no shell either: the read-only OS sandbox would not stop a shell
-            # from reading outside the project or the environment (Codex review).
+            # as well as shell/browser/desktop capabilities.
             for feature in ("shell_tool", "unified_exec", "apps", "plugins", "multi_agent",
                             "multi_agent_v2", "computer_use", "browser_use", "browser_use_external",
                             "in_app_browser", "image_generation", "view_image", "memories"):
@@ -336,9 +385,6 @@ class CodexRuntime:
                 if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
                     raise ValueError("Cannot safely override this inherited MCP name")
                 common += ["-c", "mcp_servers." + name + ".enabled=false"]
-        if read_root:
-            from core.project_read_mcp import codex_override
-            common += ["-c", codex_override(read_root)]
         desktop_env = None
         if desktop_connection is not None:
             from core.desktop_agents import codex_mcp_override, connection_environment

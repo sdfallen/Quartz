@@ -42,6 +42,28 @@ for _tool in TOOLS:
     _tool["annotations"] = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False}
 
 
+def _final_path(fd):
+    """The real path of an open file (Windows GetFinalPathNameByHandleW), or None elsewhere."""
+    if os.name != "nt":
+        return None
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetFinalPathNameByHandleW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
+    kernel32.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+    buffer = ctypes.create_unicode_buffer(32768)
+    size = kernel32.GetFinalPathNameByHandleW(msvcrt.get_osfhandle(fd), buffer, len(buffer), 0)
+    if not size or size >= len(buffer):
+        raise OSError("Cannot verify the opened file")
+    value = buffer.value
+    if value.startswith("\\\\?\\UNC\\"):
+        value = "\\\\" + value[8:]
+    elif value.startswith("\\\\?\\"):
+        value = value[4:]
+    return value
+
+
 def _is_link(path):
     """Symlink or any Windows reparse point (junction, mount point)."""
     try:
@@ -60,27 +82,52 @@ class ProjectReader:
         return any(SECRET_NAME.match(part) for part in relative_parts)
 
     def resolve(self, raw):
+        """Lexical, link-free path under the root; checked on the REQUESTED parts.
+
+        No ".." and no resolve() before the checks: every requested component is
+        lstat'ed and rejected if it is a link/junction or a secret name.
+        """
         text = str(raw or "").strip().replace("\\", "/")
         if text.startswith(("/", "~")) or re.match(r"^[A-Za-z]:", text) or ":" in text:
             raise ValueError("Use a path relative to the project root")
-        target = (self.root / text).resolve()
-        if target != self.root and not target.is_relative_to(self.root):
+        parts = [p for p in text.split("/") if p not in ("", ".")]
+        if any(p == ".." for p in parts):
             raise ValueError("Path is outside the project")
-        relative = target.relative_to(self.root)
-        if self._hidden(relative.parts):
+        if self._hidden(parts):
             raise ValueError("This file is protected and not readable here")
-        # A link/junction inside the project must not lead outside it.
         probe = self.root
-        for part in relative.parts:
+        for part in parts:
             probe = probe / part
-            if probe.exists() and _is_link(probe):
+            if _is_link(probe) and probe.exists():
                 raise ValueError("Linked paths are not followed")
-        return target
+        return probe
+
+    def _inside(self, real):
+        real = Path(real)
+        if real != self.root and not real.is_relative_to(self.root):
+            return False
+        return not self._hidden(real.relative_to(self.root).parts)
+
+    def _read_verified(self, path):
+        """Open first, then prove the OPENED object lives under the root (no check/use race)."""
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        fd = os.open(str(path), flags)
+        try:
+            info = os.fstat(fd)
+            real = _final_path(fd) or os.path.realpath(str(path))
+            if not self._inside(Path(real).resolve()):
+                raise ValueError("Path is outside the project")
+            if info.st_size > MAX_FILE_BYTES:
+                raise ValueError("File is too large to read here")
+            with os.fdopen(os.dup(fd), "rb") as handle:
+                return handle.read(MAX_FILE_BYTES + 1)
+        finally:
+            os.close(fd)
 
     def list(self, path=""):
         folder = self.resolve(path)
-        if not folder.is_dir():
-            raise NotADirectoryError("Not a folder")
+        if not folder.is_dir() or not self._inside(folder.resolve()):
+            raise NotADirectoryError("Not a folder in the project")
         entries = []
         for child in sorted(folder.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
             if SECRET_NAME.match(child.name):
@@ -95,9 +142,7 @@ class ProjectReader:
         target = self.resolve(path)
         if not target.is_file():
             raise FileNotFoundError("Not a file")
-        if target.stat().st_size > MAX_FILE_BYTES:
-            raise ValueError("File is too large to read here")
-        data = target.read_bytes()
+        data = self._read_verified(target)
         if b"\0" in data[:8192]:
             raise ValueError("Binary file")
         lines = data.decode("utf-8", errors="replace").splitlines()
@@ -114,6 +159,8 @@ class ProjectReader:
         if len(needle) < 2:
             raise ValueError("Query is too short")
         base = self.resolve(path)
+        if not base.is_dir() or not self._inside(base.resolve()):
+            raise NotADirectoryError("Not a folder in the project")
         hits, scanned = [], 0
         for folder, dirs, files in os.walk(base, followlinks=False):
             # os.walk does not treat Windows junctions as links: skip every
@@ -128,10 +175,10 @@ class ProjectReader:
                     return "\n".join(hits + ["… (search stopped: too many files)"])
                 file_path = Path(folder) / name
                 try:
-                    if _is_link(file_path) or file_path.stat().st_size > MAX_FILE_BYTES:
+                    if _is_link(file_path):
                         continue
-                    data = file_path.read_bytes()
-                except OSError:
+                    data = self._read_verified(file_path)
+                except (OSError, ValueError):
                     continue
                 if b"\0" in data[:8192]:
                     continue

@@ -154,6 +154,9 @@ def operator_tool_allowed(payload):
 # are excluded: the hook sees the scope, not the matches, so it could not keep
 # a secret file's content out of the results (Codex review, 12 Nov).
 PROJECT_READ_TOOLS = frozenset({"view_file", "read_file", "list_dir", "list_directory"})
+# Each tool's real target field (live payload: read_file -> args.Path).
+_PRIMARY_PATH_KEYS = {"read_file": ("Path", "AbsolutePath"), "view_file": ("AbsolutePath", "Path"),
+                      "list_dir": ("DirectoryPath", "Path"), "list_directory": ("DirectoryPath", "Path")}
 try:  # one secret policy; also importable when run as a script/frozen helper from core/
     from core import project_read_mcp as _project_read_mcp  # noqa: E402
 except ImportError:  # pragma: no cover - script/frozen layout
@@ -189,6 +192,7 @@ def project_read_tool_allowed(payload, roots, cwd=None):
     name = native_call.get("name") if isinstance(native_call, dict) else payload.get("tool_name")
     if name not in PROJECT_READ_TOOLS:
         return False
+    primary = _PRIMARY_PATH_KEYS[name]
     params = native_call.get("args") if isinstance(native_call, dict) else payload.get("tool_input")
     if isinstance(params, str):
         try: params = json.loads(params)
@@ -198,6 +202,11 @@ def project_read_tool_allowed(payload, roots, cwd=None):
         return False
     base = Path(cwd or os.getcwd())
     allowed = [Path(r).resolve() for r in roots]
+    # The tool's own target field is mandatory and must be a string; a path in
+    # some other field cannot stand in for it (Codex review).
+    targets = [params.get(k) for k in primary if k in params]
+    if len(targets) != 1 or not isinstance(targets[0], str) or not targets[0].strip():
+        return False
     paths = list(_path_values(params))
     if not paths:  # scope is mandatory: no implicit "current folder" reads
         return False

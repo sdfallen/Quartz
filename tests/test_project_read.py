@@ -21,6 +21,13 @@ from tests import test_multi_agent_service as service_tests
 NAMES = ("Quartz", "Jarvis config")
 
 
+def mcp_listing(*names, returncode=0):
+    """A fake `codex mcp list --json` result with the given servers enabled."""
+    from types import SimpleNamespace
+    body = json.dumps([{"name": n, "enabled": True} for n in names])
+    return SimpleNamespace(returncode=returncode, stdout=body, stderr="")
+
+
 class ProjectQuestionTests(unittest.TestCase):
     def test_questions_about_project_files_are_project_reads(self):
         for text in ("agent_chat.py neden bu kadar büyük?", "Bu projede hangi testler yavaş?",
@@ -44,7 +51,9 @@ class ProjectQuestionTests(unittest.TestCase):
                      "Python test piramidi nedir?", "Notepad açık mı?", "Masaüstümde kaç dosya var?",
                      "Ekranda ne var, kodu nerede?", "sadece sohbet edelim, kod hakkında konuşalım",
                      "araç kullanmadan README dosyasını anlat", "Bu kodu dosyalara bakmadan açıkla.",
-                     "README dosyasında ne yazıyor? Araçlara başvurma.", "README dosyasını anlat, ama vazgeçtim"):
+                     "README dosyasında ne yazıyor? Araçlara başvurma.", "README dosyasını anlat, ama vazgeçtim",
+                     "README.md dosyasını okumadan ne işe yaradığını açıkla.",
+                     "İndirilenler klasöründe ne var?", "example.com/index.html neden açılmıyor?"):
             with self.subTest(text=text):
                 self.assertFalse(project_question(text, NAMES))
 
@@ -94,6 +103,24 @@ class ProjectReaderTests(unittest.TestCase):
             self.reader.read("link/outside.txt")
         self.assertNotIn("needle-outside", self.reader.search("needle"))
 
+    def test_opened_object_is_verified_not_just_the_checked_name(self):
+        # Simulate a swap between check and open: the opened handle resolves outside the root.
+        outside = Path(self.tmp.name) / "outside.txt"
+        with patch("core.project_read_mcp._final_path", return_value=str(outside)):
+            with self.assertRaises(ValueError):
+                self.reader.read("core/a.py")
+            self.assertNotIn("needle", self.reader.search("needle"))
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction")
+    def test_link_inside_project_pointing_inside_is_also_not_followed(self):
+        link = self.root / "alias"
+        made = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(self.root / "core")],
+                              capture_output=True, text=True)
+        if made.returncode != 0:
+            self.skipTest("junction creation unavailable")
+        with self.assertRaises(ValueError):
+            self.reader.read("alias/a.py")
+
     def test_mcp_protocol_reports_errors_without_raising(self):
         tools = handle(self.reader, {"method": "tools/list"})["tools"]
         self.assertEqual([t["name"] for t in tools], ["project_list", "project_read", "project_search"])
@@ -134,6 +161,13 @@ class ReadGuardTests(unittest.TestCase):
     def test_scope_is_mandatory(self):
         self.assertFalse(self.allowed("list_dir", {}))
         self.assertFalse(self.allowed("read_file", {"StartLine": 1}))
+
+    def test_the_tools_own_target_field_is_required(self):
+        inside = str(self.root / "core")
+        self.assertFalse(self.allowed("read_file", {"DirectoryPath": inside}))  # no Path
+        self.assertFalse(self.allowed("read_file", {"Path": 42}))
+        self.assertFalse(self.allowed("read_file", {"Path": inside, "AbsolutePath": inside}))  # ambiguous
+        self.assertFalse(self.allowed("list_dir", {"SearchPath": inside}))
 
     def test_paths_outside_project_escape_and_secrets_are_denied(self):
         outside = Path(self.tmp.name) / "outside.txt"
@@ -176,11 +210,17 @@ class RuntimeProfileTests(unittest.TestCase):
         runtime = CodexRuntime(self.exe)
         stream = ('{"type":"thread.started","thread_id":"t-1"}\n'
                   '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n')
-        with patch("core.codex_runtime.subprocess.Popen", return_value=codex_tests.FakeProcess(stream)) as popen:
+        listings = [mcp_listing("quartz_project", "node_repl"), mcp_listing("quartz_project")]
+        with patch("core.codex_runtime.subprocess.run", side_effect=listings) as probe, \
+                patch("core.codex_runtime.subprocess.Popen", return_value=codex_tests.FakeProcess(stream)) as popen:
             run = runtime.start("README ne diyor?", self.work, project_read=self.project)
             self.wait(runtime, run["id"])
+        self.assertEqual(probe.call_count, 2)
+        self.assertIn("mcp", probe.call_args.args[0]); self.assertIn("--json", probe.call_args.args[0])
         command = popen.call_args.args[0]
         joined = " ".join(command)
+        self.assertIn("mcp_servers.node_repl.enabled=false", joined)
+        self.assertIn("features.hooks=false", joined)
         self.assertEqual(command[command.index("--sandbox") + 1], "read-only")
         self.assertEqual(Path(command[command.index("--cd") + 1]).resolve(), self.work.resolve())
         for blocked in ("shell_tool", "unified_exec", "view_image", "apps", "plugins", "multi_agent",
@@ -194,6 +234,23 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", command)
         with self.assertRaises(PermissionError):
             runtime.resume(run["id"], "devam")
+
+    def test_codex_effective_mcp_set_is_proven_or_start_refused(self):
+        runtime = CodexRuntime(self.exe)
+        failing = [
+            [mcp_listing("quartz_project", "node_repl"), mcp_listing("quartz_project", "node_repl")],  # stays on
+            [mcp_listing("node_repl")],                                                               # ours missing
+            [mcp_listing("quartz_project", returncode=1)],                                             # cannot verify
+            [mcp_listing("quartz_project", "bad name!")],                                              # unsafe name
+        ]
+        for listings in failing:
+            with self.subTest(listings=[l.stdout for l in listings]), \
+                    patch("core.codex_runtime.subprocess.run", side_effect=listings), \
+                    patch("core.codex_runtime.subprocess.Popen") as popen:
+                with self.assertRaises(RuntimeError):
+                    runtime.start("x", self.work, project_read=self.project)
+                popen.assert_not_called()
+        self.assertEqual(runtime._runs, {}); self.assertEqual(runtime._writers, {})
 
     def test_codex_rejected_profiles_leave_no_run_or_writer_lock(self):
         runtime = CodexRuntime(self.exe)
