@@ -235,7 +235,7 @@ class CodexRuntime:
     def start(self, prompt, project_path, *, sandbox="read-only", approval="never",
               squad_task_id=None, squad_agent_id=None, resume_thread_id=None,
               timeout=None, model: str | None = None, effort: str | None = None,
-              desktop_connection=None, tool_guard=False) -> dict:
+              desktop_connection=None, tool_guard=False, project_read=False) -> dict:
         if not self.executable:
             raise RuntimeError(self._init_error or "Codex CLI was not found")
         text = str(prompt or "").strip()
@@ -247,6 +247,11 @@ class CodexRuntime:
             raise ValueError("Unsupported Codex sandbox")
         if approval not in {"never", "on-request"}:
             raise ValueError("Unsupported approval policy")
+        # Read-only project inspection: validated before any run/writer is
+        # registered so a refused request leaves no project lock behind.
+        if project_read and (tool_guard or desktop_connection is not None or sandbox != "read-only"
+                             or approval != "never" or resume_thread_id):
+            raise ValueError("Project-read runs are read-only, fresh and tool-scoped")
         project = Path(project_path).resolve(strict=True)
         if not project.is_dir():
             raise NotADirectoryError(str(project))
@@ -283,6 +288,7 @@ class CodexRuntime:
                 "cancel_requested": False,
                 "_oracle_seq": 0,
                 "_tool_guard": bool(tool_guard),
+                "_project_read": bool(project_read),
             }
             self._runs[run_id] = record
             if is_writer:
@@ -305,13 +311,18 @@ class CodexRuntime:
         if tool_guard:
             if desktop_connection is not None or sandbox != "read-only":
                 raise ValueError("Log observer cannot receive desktop/write permissions")
-        if tool_guard or desktop_connection is not None:
+        # Project read keeps shell and image viewing for reading inside the
+        # read-only OS sandbox; integrations that could reach outside the
+        # project or the network are disabled below like the guarded paths.
+        if tool_guard or desktop_connection is not None or project_read:
             # Per-run only: no user config changes. Disable inherited integrations
             # as well as shell/browser/desktop capabilities in the evidence reader.
+            kept = {"shell_tool", "unified_exec", "view_image"} if project_read else set()
             for feature in ("shell_tool", "unified_exec", "apps", "plugins", "multi_agent",
                             "multi_agent_v2", "computer_use", "browser_use", "browser_use_external",
                             "in_app_browser", "image_generation", "view_image", "memories"):
-                common += ["-c", f"features.{feature}=false"]
+                if feature not in kept:
+                    common += ["-c", f"features.{feature}=false"]
             common += ["-c", 'web_search="disabled"']
             import tomllib
             config_path = Path(os.getenv("CODEX_HOME") or Path.home()/".codex")/"config.toml"

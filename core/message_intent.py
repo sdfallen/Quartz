@@ -39,6 +39,34 @@ def tools_disallowed(text):
                 or re.fullmatch(r'\s*(?:lütfen )?sadece sohbet[.!]?\s*', value))
 
 
+_PROJECT_CONTEXT = re.compile(
+    r'\b(?:dosya|kod|proje|depo|repo|test|modul|fonksiyon|sinif|metot|satir|hata|bug|commit|branch|dal(?:[ıi]|da|dan)?\b|'
+    r'readme|klasor|dizin|import|bagimlilik|requirements|todo|listele|neden\s+bu\s+kadar\s+buyuk)'
+    r'|\b[\w./\\-]+\.(?:py|js|ts|tsx|md|json|txt|toml|yml|yaml|ini|cfg|html|css|spec|ps1|bat)\b')
+# Live state of the screen/apps is not in the project files; those stay with the
+# desktop path and its consent gates rather than a file read.
+_LIVE_STATE = re.compile(r'\b(?:ekran|pencere|masaust|acik\s+m[ıi]|notepad|not\s*defteri|tarayic|chrome|edge)')
+
+
+def project_question(text, project_names=()):
+    """A conversation-classified message whose answer lives in the selected project.
+
+    Only a routing hint for a read-only, project-scoped turn: it never grants
+    write, shell side effects, desktop input or network. Explicit "no tools"
+    requests and withdrawn requests stay plain conversation. ``project_names``
+    (the selected project's name/folder) lets "Quartz nasıl çalışıyor?" count.
+    """
+    value = instruction_text(text).strip()
+    if not value or tools_disallowed(value) or request_withdrawn(value):
+        return False
+    folded = turkish_fold(value)
+    if _LIVE_STATE.search(folded):
+        return False
+    names = [turkish_fold(n).strip() for n in project_names if isinstance(n, str) and len(n.strip()) >= 3]
+    named = any(re.search(r'\b' + re.escape(n) + r'\b', folded) for n in names)
+    return bool(_PROJECT_CONTEXT.search(folded)) or named
+
+
 def message_intent(text):
     value = instruction_text(text).strip()
     if tools_disallowed(value) or request_withdrawn(value):

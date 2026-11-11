@@ -1,6 +1,8 @@
 """Small stdio MCP adapter; no UI authority without a live parent capability."""
 import json
 import os
+from pathlib import Path
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -148,8 +150,80 @@ def operator_tool_allowed(payload):
             params.get("ToolName") in {t["name"] for t in TOOLS})
 
 
+PROJECT_READ_TOOLS = frozenset({"view_file", "read_file", "list_dir", "list_directory",
+                                "find_by_name", "grep_search", "codebase_search"})
+_SECRET_NAME = re.compile(r"^(?:\.env(?:\..*)?|.*\.(?:pem|key|pfx|p12)|id_(?:rsa|ed25519|ecdsa)(?:\.pub)?|"
+                          r"\.ssh|\.codex|\.gemini|\.git-credentials|credentials(?:\.json)?|secrets?(?:\.json|\.toml)?|"
+                          r"quartz_(?:memory|conversations|projects)\.json|mobile_access\.json|cli_connections\.json)$", re.I)
+
+
+def _path_values(value, key=""):
+    """Every string that names a path: path-like keys, plus any absolute-looking value."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            yield from _path_values(v, str(k))
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            yield from _path_values(v, key)
+    elif isinstance(value, str):
+        text = value.strip()
+        keyed = re.search(r"path|file|dir|uri|target|folder", key, re.I)
+        absolute = re.match(r"^(?:[A-Za-z]:[\\/]|[\\/]{2}|/|~)", text) or ".." in re.split(r"[\\/]", text)
+        if text and (keyed or absolute):
+            yield text
+
+
+def project_read_tool_allowed(payload, roots, cwd=None):
+    """Read-only project inspection: listed read tools, inside the given roots, no secrets.
+
+    Fails closed: unknown tools, unreadable arguments, paths outside the roots,
+    secret-looking names and Windows alternate streams are all denied.
+    """
+    if not isinstance(payload, dict) or not roots:
+        return False
+    native_call = payload.get("toolCall")
+    name = native_call.get("name") if isinstance(native_call, dict) else payload.get("tool_name")
+    if name not in PROJECT_READ_TOOLS:
+        return False
+    params = native_call.get("args") if isinstance(native_call, dict) else payload.get("tool_input")
+    if isinstance(params, str):
+        try: params = json.loads(params)
+        except (ValueError, TypeError): return False
+    if params is None: params = {}
+    if not isinstance(params, dict):
+        return False
+    base = Path(cwd or os.getcwd())
+    allowed = [Path(r).resolve() for r in roots]
+    for raw in _path_values(params):
+        if raw.startswith("~"):
+            return False
+        candidate = Path(raw)
+        try:
+            target = (candidate if candidate.is_absolute() else base / candidate).resolve()
+        except (OSError, ValueError):
+            return False
+        root = next((r for r in allowed if target == r or target.is_relative_to(r)), None)
+        if ":" in target.name or root is None:
+            return False
+        # Secret names are judged inside the root only: a project that itself
+        # lives under e.g. ~/.codex/worktrees stays readable, its .env does not.
+        if any(_SECRET_NAME.match(part) for part in target.relative_to(root).parts):
+            return False
+    return True
+
+
 if __name__ == "__main__":
-    if "--operator-tools" in sys.argv:
+    if "--project-read" in sys.argv:
+        try:
+            index = sys.argv.index("--project-read")
+            roots = [arg for arg in sys.argv[index + 1:] if not arg.startswith("--")]
+            payload = json.loads(sys.stdin.read(65537))
+            allowed = project_read_tool_allowed(payload, roots + [os.getcwd()])
+        except Exception:
+            allowed = False
+        print(json.dumps({"decision": "allow" if allowed else "deny",
+                          "reason": "Quartz project read: only listing, reading and searching files inside the selected project are allowed."}))
+    elif "--operator-tools" in sys.argv:
         schema = "unreadable input"
         try:
             payload = json.loads(sys.stdin.read(65537))
