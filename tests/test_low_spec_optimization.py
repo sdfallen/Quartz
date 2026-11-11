@@ -170,6 +170,32 @@ class LowSpecOptimizationTests(unittest.TestCase):
         self.assertIn("quartz_rss_mb", metrics["breakdown"])
         self.assertIn("webview2_rss_mb", metrics["breakdown"])
 
+    def test_measure_process_tree_resources_reports_thread_counts(self):
+        metrics = measure_process_tree_resources()
+        self.assertGreaterEqual(metrics["total_threads"], 1)
+        breakdown = metrics["breakdown"]
+        for key in ("quartz_threads", "webview2_threads", "cli_threads"):
+            self.assertIsInstance(breakdown[key], int)
+        self.assertEqual(
+            sum(breakdown[k] for k in ("quartz_threads", "webview2_threads", "cli_threads")),
+            metrics["total_threads"],
+        )
+
+    @unittest.skipUnless(os.name == "nt", "Windows kernel32 signatures")
+    def test_kernel32_signatures_are_64bit_safe_and_private(self):
+        import ctypes
+        from ctypes import wintypes
+        from core.low_spec_optimizer import _kernel32_with_signatures
+
+        shared_before = getattr(ctypes.windll.kernel32.OpenProcess, "restype", None)
+        k32 = _kernel32_with_signatures()
+        self.assertIs(k32.GetCurrentProcess.restype, wintypes.HANDLE)
+        self.assertIs(k32.OpenProcess.restype, wintypes.HANDLE)
+        self.assertEqual(k32.CloseHandle.argtypes, [wintypes.HANDLE])
+        self.assertEqual(k32.SetProcessWorkingSetSizeEx.argtypes[0], wintypes.HANDLE)
+        self.assertIsNot(k32, ctypes.windll.kernel32)
+        self.assertEqual(getattr(ctypes.windll.kernel32.OpenProcess, "restype", None), shared_before)
+
 
 if __name__ == "__main__":
     unittest.main()

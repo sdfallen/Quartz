@@ -129,6 +129,27 @@ def configure_webview_environment() -> str:
     return combined
 
 
+def _kernel32_with_signatures():
+    """Private kernel32 handle with 64-bit-safe signatures.
+
+    A separate WinDLL instance keeps these argtypes from leaking into other
+    modules that share ``ctypes.windll.kernel32``. Without explicit restype,
+    HANDLE return values default to a 32-bit C int and can be truncated.
+    """
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetCurrentProcess.argtypes = []
+    k32.GetCurrentProcess.restype = wintypes.HANDLE
+    k32.SetProcessWorkingSetSizeEx.argtypes = [
+        wintypes.HANDLE, ctypes.c_size_t, ctypes.c_size_t, wintypes.DWORD,
+    ]
+    k32.SetProcessWorkingSetSizeEx.restype = wintypes.BOOL
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    k32.CloseHandle.restype = wintypes.BOOL
+    return k32
+
+
 def trim_working_set(
     force: bool = False,
     min_interval_sec: float = 15.0,
@@ -148,14 +169,10 @@ def trim_working_set(
     children_trimmed = 0
     if sys.platform == "win32":
         try:
-            kernel32 = ctypes.windll.kernel32
+            kernel32 = _kernel32_with_signatures()
+            unlimited = ctypes.c_size_t(-1).value
             handle = kernel32.GetCurrentProcess()
-            res = kernel32.SetProcessWorkingSetSizeEx(
-                handle,
-                ctypes.c_size_t(-1),
-                ctypes.c_size_t(-1),
-                0,
-            )
+            res = kernel32.SetProcessWorkingSetSizeEx(handle, unlimited, unlimited, 0)
             os_trimmed = bool(res)
             if include_children:
                 try:
@@ -175,10 +192,7 @@ def trim_working_set(
                         if h_child:
                             try:
                                 if kernel32.SetProcessWorkingSetSizeEx(
-                                    h_child,
-                                    ctypes.c_size_t(-1),
-                                    ctypes.c_size_t(-1),
-                                    0,
+                                    h_child, unlimited, unlimited, 0,
                                 ):
                                     children_trimmed += 1
                             finally:
@@ -200,7 +214,7 @@ def measure_process_tree_resources(
     root_pid: int | None = None,
     cpu_interval: float = 0.0,
 ) -> dict[str, Any]:
-    """Measure total RAM (RSS & private USS) and CPU across Quartz + WebView2 + CLI children."""
+    """Measure total RAM (RSS & private USS), CPU and threads across Quartz + WebView2 + CLI children."""
     try:
         import psutil
         root = psutil.Process(root_pid) if root_pid else psutil.Process()
@@ -216,6 +230,7 @@ def measure_process_tree_resources(
         total_rss = 0
         total_uss = 0
         total_cpu = 0.0
+        total_threads = 0
         breakdown = {
             "quartz_rss_mb": 0.0,
             "webview2_rss_mb": 0.0,
@@ -223,6 +238,9 @@ def measure_process_tree_resources(
             "quartz_cpu_pct": 0.0,
             "webview2_cpu_pct": 0.0,
             "cli_cpu_pct": 0.0,
+            "quartz_threads": 0,
+            "webview2_threads": 0,
+            "cli_threads": 0,
         }
         alive_count = 0
         for p in tree:
@@ -232,6 +250,11 @@ def measure_process_tree_resources(
                 rss = int(mi.rss)
                 uss = int(getattr(mi, "uss", rss))
                 cpu = (p.cpu_percent(None) / cores) if cpu_interval > 0 else 0.0
+                try:
+                    threads = int(p.num_threads())
+                except Exception:
+                    threads = 0
+                total_threads += threads
                 total_rss += rss
                 total_uss += uss
                 total_cpu += cpu
@@ -239,12 +262,15 @@ def measure_process_tree_resources(
                 if "webview2" in name:
                     breakdown["webview2_rss_mb"] += rss / 1048576
                     breakdown["webview2_cpu_pct"] += cpu
+                    breakdown["webview2_threads"] += threads
                 elif p.pid == root.pid or name in {"quartz.exe", "python.exe", "pythonw.exe"}:
                     breakdown["quartz_rss_mb"] += rss / 1048576
                     breakdown["quartz_cpu_pct"] += cpu
+                    breakdown["quartz_threads"] += threads
                 else:
                     breakdown["cli_rss_mb"] += rss / 1048576
                     breakdown["cli_cpu_pct"] += cpu
+                    breakdown["cli_threads"] += threads
             except Exception:
                 continue
         return {
@@ -253,7 +279,8 @@ def measure_process_tree_resources(
             "total_rss_mb": round(total_rss / 1048576, 2),
             "total_private_uss_mb": round(total_uss / 1048576, 2),
             "total_cpu_pct": round(total_cpu, 2),
-            "breakdown": {k: round(v, 2) for k, v in breakdown.items()},
+            "total_threads": total_threads,
+            "breakdown": {k: (v if k.endswith("_threads") else round(v, 2)) for k, v in breakdown.items()},
         }
     except Exception as exc:
         return {
