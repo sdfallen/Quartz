@@ -402,7 +402,17 @@ class MultiAgentService:
             with self._lock:
                 cached = self._squad_conn_cache.get(pid)
                 if not force and cached is not None and (now - cached[0]) < 30.0:
-                    return dict(cached[1])
+                    if cached[1].get("connected") is True:
+                        db_path = Path(project["path"]) / ".squad" / "messages.db"
+                        try:
+                            db_exists = db_path.is_file()
+                        except OSError:
+                            db_exists = False
+                        if db_exists:
+                            return dict(cached[1])
+                        self._squad_conn_cache.pop(pid, None)
+                    else:
+                        return dict(cached[1])
             squad = self._squad(pid)
             if project.get("workflow") == "warband":
                 return {**self._task_squad_status(squad), "connected": False}
