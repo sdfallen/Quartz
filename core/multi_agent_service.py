@@ -499,11 +499,14 @@ class MultiAgentService:
             raise PermissionError("Araçsız sohbet işlem/yazma yetkisi alamaz.")
         # Project read: a fresh, read-only, project-scoped inspection. Never for a
         # protected project; never resumes a session that held other permissions.
-        project_read = bool(project_read) and not project.get("protected")
+        runtime = self.codex if provider == "codex" else self.antigravity
+        # The Google path's read guard exists only for the agy backend.
+        guard_capable = provider == "codex" or getattr(runtime, "backend", "agy") == "agy"
+        project_read = (bool(project_read) and guard_capable and not project.get("protected")
+                        and project.get("workflow") != "warband")
         root = Path(project["path"]).resolve(strict=True) if project_read else None
         if root is not None and not root.is_dir():
             raise NotADirectoryError(str(root))
-        runtime = self.codex if provider == "codex" else self.antigravity
         probe = runtime.probe()
         if not probe.get("ready"):
             raise RuntimeError(probe.get("error") or "CLI hazır değil")
@@ -520,16 +523,20 @@ class MultiAgentService:
                 write_observer_hooks(workspace.name)
                 options = {"model": model, "effort": effort, "tool_guard": True, "write": False, "timeout": "2m"}
             elif project_read:
-                # The Codex OS sandbox is read-only; the project is the working directory.
-                run_dir = str(root)
+                # Codex runs in the scratch folder with every built-in tool off;
+                # the project is reachable only through Quartz's read-only MCP
+                # tools (root, secret files and result size enforced by Quartz).
                 options = {"model": model, "effort": effort, "sandbox": "read-only", "approval": "never",
-                           "project_read": True}
+                           "project_read": str(root)}
             else:
                 options = {"model": model, "effort": effort, "tool_guard": True,
                            "sandbox": "read-only", "approval": "never"}
             if project_read:
                 instruction = (
-                    f"Bu turda seçili projeyi ({root}) YALNIZ OKUYABİLİRSİN: dosya listeleme, okuma ve arama. "
+                    f"Bu turda seçili projeyi ({root}) YALNIZ OKUYABİLİRSİN: dosya listeleme, okuma"
+                    + (" ve arama (quartz_project araçları: project_list, project_read, project_search; "
+                       "yollar proje köküne göreli). " if provider == "codex" else
+                       " (dosya ve klasör yolunu tam yazarak). ") +
                     "Dosya yazamaz, değiştiremez, silemez; ağa ve masaüstüne erişemezsin. "
                     "Yanıtını okuduğun dosya yollarıyla (ve gerekirse satır numaralarıyla) dayandır; "
                     "okumadığın bir şeyi okumuş gibi yazma. Bir değişiklik gerekiyorsa ne yapılacağını anlat ve "

@@ -150,11 +150,15 @@ def operator_tool_allowed(payload):
             params.get("ToolName") in {t["name"] for t in TOOLS})
 
 
-PROJECT_READ_TOOLS = frozenset({"view_file", "read_file", "list_dir", "list_directory",
-                                "find_by_name", "grep_search", "codebase_search"})
-_SECRET_NAME = re.compile(r"^(?:\.env(?:\..*)?|.*\.(?:pem|key|pfx|p12)|id_(?:rsa|ed25519|ecdsa)(?:\.pub)?|"
-                          r"\.ssh|\.codex|\.gemini|\.git-credentials|credentials(?:\.json)?|secrets?(?:\.json|\.toml)?|"
-                          r"quartz_(?:memory|conversations|projects)\.json|mobile_access\.json|cli_connections\.json)$", re.I)
+# Only tools whose effect is fully described by one explicit path. Search tools
+# are excluded: the hook sees the scope, not the matches, so it could not keep
+# a secret file's content out of the results (Codex review, 12 Nov).
+PROJECT_READ_TOOLS = frozenset({"view_file", "read_file", "list_dir", "list_directory"})
+try:  # one secret policy; also importable when run as a script/frozen helper from core/
+    from core import project_read_mcp as _project_read_mcp  # noqa: E402
+except ImportError:  # pragma: no cover - script/frozen layout
+    import project_read_mcp as _project_read_mcp  # noqa: E402
+_SECRET_NAME = _project_read_mcp.SECRET_NAME
 
 
 def _path_values(value, key=""):
@@ -194,7 +198,10 @@ def project_read_tool_allowed(payload, roots, cwd=None):
         return False
     base = Path(cwd or os.getcwd())
     allowed = [Path(r).resolve() for r in roots]
-    for raw in _path_values(params):
+    paths = list(_path_values(params))
+    if not paths:  # scope is mandatory: no implicit "current folder" reads
+        return False
+    for raw in paths:
         if raw.startswith("~"):
             return False
         candidate = Path(raw)
@@ -213,12 +220,20 @@ def project_read_tool_allowed(payload, roots, cwd=None):
 
 
 if __name__ == "__main__":
-    if "--project-read" in sys.argv:
+    if "--project-read-server" in sys.argv:
+        _project_read_mcp.main(sys.argv[sys.argv.index("--project-read-server") + 1])
+    elif "--project-read" in sys.argv:
         try:
-            index = sys.argv.index("--project-read")
-            roots = [arg for arg in sys.argv[index + 1:] if not arg.startswith("--")]
+            # Roots come from read-roots.json beside this guard: Antigravity runs
+            # hook commands through cmd.exe, where quoted path arguments arrive
+            # mangled (live probe 12 Nov), so no path ever travels on argv.
+            roots_file = Path(sys.executable if getattr(sys, "frozen", False) else __file__).with_name("read-roots.json")
+            roots = json.loads(roots_file.read_text(encoding="utf-8"))["roots"]
+            if not isinstance(roots, list) or not all(isinstance(r, str) and r for r in roots):
+                raise ValueError("Invalid read roots")
             payload = json.loads(sys.stdin.read(65537))
-            allowed = project_read_tool_allowed(payload, roots + [os.getcwd()])
+            base = payload.get("cwd") if isinstance(payload, dict) and isinstance(payload.get("cwd"), str) else os.getcwd()
+            allowed = project_read_tool_allowed(payload, roots, cwd=base)
         except Exception:
             allowed = False
         print(json.dumps({"decision": "allow" if allowed else "deny",

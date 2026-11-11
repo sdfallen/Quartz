@@ -1,5 +1,7 @@
 """Read-only project inspection for questions answered by the selected project's files."""
 import json
+import os
+import subprocess
 import tempfile
 import time
 import unittest
@@ -11,9 +13,12 @@ from core.antigravity_runtime import AntigravityRuntime
 from core.codex_runtime import CodexRuntime
 from core.desktop_mcp import project_read_tool_allowed
 from core.message_intent import message_intent, project_question
+from core.project_read_mcp import ProjectReader, handle
 from tests import test_antigravity_runtime as agy_tests
 from tests import test_codex_runtime as codex_tests
 from tests import test_multi_agent_service as service_tests
+
+NAMES = ("Quartz", "Jarvis config")
 
 
 class ProjectQuestionTests(unittest.TestCase):
@@ -21,26 +26,82 @@ class ProjectQuestionTests(unittest.TestCase):
         for text in ("agent_chat.py neden bu kadar büyük?", "Bu projede hangi testler yavaş?",
                      "Son committe ne değişti?", "repair_review.py içindeki hata nerede olabilir?",
                      "dosyaları listele", "README dosyasında ne yazıyor?", "Hangi dalda çalışıyoruz?",
-                     "requirements.txt içinde hangi paketler var?", "Bu kodu nasıl hızlandırabiliriz?"):
+                     "requirements.txt içinde hangi paketler var?", "Bu kodu nasıl hızlandırabiliriz?",
+                     "agent_chat.py içindeki pencere seçimi nasıl çalışıyor?", "requirements.txt nedir?"):
             with self.subTest(text=text):
                 self.assertEqual(message_intent(text), "conversation")
-                self.assertTrue(project_question(text))
+                self.assertTrue(project_question(text, NAMES))
 
-    def test_project_name_counts(self):
+    def test_project_name_needs_a_question_about_it(self):
         self.assertFalse(project_question("Quartz ajanlara hangi süreleri koyuyor?"))
-        self.assertTrue(project_question("Quartz ajanlara hangi süreleri koyuyor?", ("Quartz", "Jarvis config")))
-        self.assertFalse(project_question("Merhaba", ("Quartz",)))
-
-    def test_small_talk_live_state_and_no_tools_stay_plain_conversation(self):
-        for text in ("Merhaba", "Nasılsın?", "Python nedir?", "Notepad açık mı?",
-                     "Masaüstümde kaç dosya var?", "Ekranda ne var, kodu nerede?",
-                     "sadece sohbet edelim, kod hakkında konuşalım",
-                     "araç kullanmadan README dosyasını anlat", "README dosyasını anlat, ama vazgeçtim"):
+        self.assertTrue(project_question("Quartz ajanlara hangi süreleri koyuyor?", NAMES))
+        for text in ("Quartz, nasılsın?", "Merhaba Quartz"):
             with self.subTest(text=text):
-                self.assertFalse(project_question(text))
+                self.assertFalse(project_question(text, NAMES))
+
+    def test_concepts_small_talk_live_state_and_no_look_stay_plain_conversation(self):
+        for text in ("Merhaba", "Nasılsın?", "Python nedir?", "Fonksiyon nedir?", "Git branch nedir?",
+                     "Python test piramidi nedir?", "Notepad açık mı?", "Masaüstümde kaç dosya var?",
+                     "Ekranda ne var, kodu nerede?", "sadece sohbet edelim, kod hakkında konuşalım",
+                     "araç kullanmadan README dosyasını anlat", "Bu kodu dosyalara bakmadan açıkla.",
+                     "README dosyasında ne yazıyor? Araçlara başvurma.", "README dosyasını anlat, ama vazgeçtim"):
+            with self.subTest(text=text):
+                self.assertFalse(project_question(text, NAMES))
 
     def test_quoted_text_does_not_count(self):
         self.assertFalse(project_question('Şu cümle ne demek: "README dosyasını oku"'))
+
+
+class ProjectReaderTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name) / ".codex" / "worktrees" / "repo"  # project under a dot folder
+        (self.root / "core").mkdir(parents=True)
+        (self.root / "core" / "a.py").write_text("def main():\n    return 'needle'\n", encoding="utf-8")
+        (self.root / ".env").write_text("TOKEN=needle-secret\n", encoding="utf-8")
+        (self.root / "keys").mkdir()
+        (self.root / "keys" / "server.pem").write_text("needle-pem\n", encoding="utf-8")
+        (self.root / "blob.bin").write_bytes(b"\0needle")
+        (Path(self.tmp.name) / "outside.txt").write_text("needle-outside\n", encoding="utf-8")
+        self.reader = ProjectReader(self.root)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_list_read_and_search_inside_the_project(self):
+        listing = self.reader.list("")
+        self.assertIn("core/", listing); self.assertNotIn(".env", listing)
+        self.assertIn("2:     return 'needle'", self.reader.read("core/a.py"))
+        hits = self.reader.search("needle")
+        self.assertIn("core/a.py:2:", hits)
+        for leaked in ("needle-secret", "needle-pem", "needle-outside", "blob.bin"):
+            self.assertNotIn(leaked, hits)
+
+    def test_escape_absolute_secret_and_stream_paths_are_refused(self):
+        for path in ("../../../../outside.txt", "C:/Windows/win.ini", "/etc/passwd", "~/x", ".env",
+                     "keys/server.pem", "core/a.py:hidden", "core/../../repo/.env"):
+            with self.subTest(path=path), self.assertRaises((ValueError, OSError)):
+                self.reader.read(path)
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction")
+    def test_junction_inside_project_is_not_followed(self):
+        link = self.root / "link"
+        made = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), self.tmp.name],
+                              capture_output=True, text=True)
+        if made.returncode != 0:
+            self.skipTest("junction creation unavailable")
+        with self.assertRaises(ValueError):
+            self.reader.read("link/outside.txt")
+        self.assertNotIn("needle-outside", self.reader.search("needle"))
+
+    def test_mcp_protocol_reports_errors_without_raising(self):
+        tools = handle(self.reader, {"method": "tools/list"})["tools"]
+        self.assertEqual([t["name"] for t in tools], ["project_list", "project_read", "project_search"])
+        self.assertTrue(all(t["annotations"]["readOnlyHint"] for t in tools))
+        bad = handle(self.reader, {"method": "tools/call", "params": {"name": "project_read", "arguments": {"path": ".env"}}})
+        self.assertTrue(bad["isError"])
+        unknown = handle(self.reader, {"method": "tools/call", "params": {"name": "write_file", "arguments": {}}})
+        self.assertTrue(unknown["isError"])
 
 
 class ReadGuardTests(unittest.TestCase):
@@ -49,8 +110,6 @@ class ReadGuardTests(unittest.TestCase):
         self.root = Path(self.tmp.name) / "project"
         (self.root / "core").mkdir(parents=True)
         (self.root / "core" / "a.py").write_text("x = 1\n", encoding="utf-8")
-        self.work = Path(self.tmp.name) / "work"
-        self.work.mkdir()
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -58,51 +117,39 @@ class ReadGuardTests(unittest.TestCase):
     def allowed(self, name, args, *, native=True):
         payload = ({"toolCall": {"name": name, "args": args}} if native
                    else {"tool_name": name, "tool_input": json.dumps(args)})
-        return project_read_tool_allowed(payload, [str(self.root), str(self.work)], cwd=self.work)
+        return project_read_tool_allowed(payload, [str(self.root)], cwd=self.root)
 
-    def test_read_tools_inside_project_are_allowed(self):
+    def test_explicit_path_reads_inside_project_are_allowed(self):
+        self.assertTrue(self.allowed("read_file", {"Path": str(self.root / "core" / "a.py")}))  # live payload shape
         self.assertTrue(self.allowed("view_file", {"AbsolutePath": str(self.root / "core" / "a.py")}))
-        self.assertTrue(self.allowed("list_dir", {"DirectoryPath": str(self.root)}))
-        self.assertTrue(self.allowed("grep_search", {"SearchPath": str(self.root), "Query": "x = 1"}))
-        self.assertTrue(self.allowed("find_by_name", {"SearchDirectory": str(self.root), "Pattern": "*.py"}, native=False))
-        self.assertTrue(self.allowed("grep_search", {"Query": "def main"}))
+        self.assertTrue(self.allowed("list_dir", {"DirectoryPath": str(self.root)}, native=False))
 
-    def test_writes_commands_and_unknown_tools_are_denied(self):
+    def test_search_writes_commands_and_unknown_tools_are_denied(self):
         target = str(self.root / "core" / "a.py")
-        for name in ("write_to_file", "replace_file_content", "multi_replace_file_content", "run_command",
-                     "run_shell_command", "search_web", "read_url_content", "call_mcp_tool", "invoke_subagent", ""):
+        for name in ("grep_search", "codebase_search", "find_by_name", "write_to_file", "replace_file_content",
+                     "run_command", "search_web", "read_url_content", "call_mcp_tool", "invoke_subagent", ""):
             with self.subTest(name=name):
-                self.assertFalse(self.allowed(name, {"TargetFile": target, "AbsolutePath": target}))
+                self.assertFalse(self.allowed(name, {"SearchPath": target, "Path": target, "Query": "x"}))
+
+    def test_scope_is_mandatory(self):
+        self.assertFalse(self.allowed("list_dir", {}))
+        self.assertFalse(self.allowed("read_file", {"StartLine": 1}))
 
     def test_paths_outside_project_escape_and_secrets_are_denied(self):
         outside = Path(self.tmp.name) / "outside.txt"
         outside.write_text("secret", encoding="utf-8")
-        (self.root / ".env").write_text("TOKEN=1", encoding="utf-8")
-        for args in ({"AbsolutePath": str(outside)},
-                     {"AbsolutePath": str(self.root / ".." / "outside.txt")},
-                     {"AbsolutePath": "core/../../outside.txt"},
-                     {"AbsolutePath": str(self.root / ".env")},
-                     {"AbsolutePath": str(self.root / "keys" / "server.pem")},
-                     {"AbsolutePath": str(self.root / "core" / "a.py") + ":hidden"},
-                     {"AbsolutePath": "~/.ssh/id_rsa"},
-                     {"SearchPath": "C:\\Windows\\System32", "Query": "x"},
-                     {"nested": {"Uri": str(outside)}}):
+        for args in ({"Path": str(outside)}, {"Path": str(self.root / ".." / "outside.txt")},
+                     {"Path": "core/../../outside.txt"}, {"Path": str(self.root / ".env")},
+                     {"Path": str(self.root / "keys" / "server.pem")}, {"Path": str(self.root / "core" / "a.py") + ":hidden"},
+                     {"Path": "~/.ssh/id_rsa"}, {"nested": {"Uri": str(outside)}}):
             with self.subTest(args=args):
-                self.assertFalse(self.allowed("view_file", args))
-
-    def test_project_under_a_dot_folder_is_readable_but_its_secrets_are_not(self):
-        nested = Path(self.tmp.name) / ".codex" / "worktrees" / "repo"
-        nested.mkdir(parents=True)
-        payload = lambda path: {"toolCall": {"name": "view_file", "args": {"AbsolutePath": str(path)}}}
-        self.assertTrue(project_read_tool_allowed(payload(nested / "README.md"), [str(nested)]))
-        self.assertFalse(project_read_tool_allowed(payload(nested / ".env"), [str(nested)]))
-        self.assertFalse(project_read_tool_allowed(payload(nested / ".codex" / "auth.json"), [str(nested)]))
+                self.assertFalse(self.allowed("read_file", args))
 
     def test_malformed_payloads_fail_closed(self):
         self.assertFalse(project_read_tool_allowed(None, [str(self.root)]))
-        self.assertFalse(project_read_tool_allowed({"toolCall": {"name": "view_file", "args": "{not json"}}, [str(self.root)]))
-        self.assertFalse(project_read_tool_allowed({"toolCall": {"name": "view_file", "args": ["x"]}}, [str(self.root)]))
-        self.assertFalse(project_read_tool_allowed({"toolCall": {"name": "view_file", "args": {}}}, []))
+        self.assertFalse(project_read_tool_allowed({"toolCall": {"name": "read_file", "args": "{not json"}}, [str(self.root)]))
+        self.assertFalse(project_read_tool_allowed({"toolCall": {"name": "read_file", "args": ["x"]}}, [str(self.root)]))
+        self.assertFalse(project_read_tool_allowed({"toolCall": {"name": "read_file", "args": {"Path": "a"}}}, []))
 
 
 class RuntimeProfileTests(unittest.TestCase):
@@ -111,6 +158,10 @@ class RuntimeProfileTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.exe = self.root / "tool.exe"
         self.exe.touch()
+        self.project = self.root / "project"
+        self.project.mkdir()
+        self.work = self.root / "work"
+        self.work.mkdir()
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -121,85 +172,142 @@ class RuntimeProfileTests(unittest.TestCase):
                 return
             time.sleep(0.01)
 
-    def test_codex_project_read_keeps_read_tools_and_disables_reach(self):
+    def test_codex_project_read_has_no_builtin_tools_and_only_quartz_mcp(self):
         runtime = CodexRuntime(self.exe)
-        stream = '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n'
+        stream = ('{"type":"thread.started","thread_id":"t-1"}\n'
+                  '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n')
         with patch("core.codex_runtime.subprocess.Popen", return_value=codex_tests.FakeProcess(stream)) as popen:
-            run = runtime.start("README ne diyor?", self.root, project_read=True)
+            run = runtime.start("README ne diyor?", self.work, project_read=self.project)
             self.wait(runtime, run["id"])
         command = popen.call_args.args[0]
         joined = " ".join(command)
         self.assertEqual(command[command.index("--sandbox") + 1], "read-only")
-        self.assertEqual(Path(command[command.index("--cd") + 1]).resolve(), self.root.resolve())
-        for kept in ("shell_tool", "unified_exec", "view_image"):
-            self.assertNotIn(f"features.{kept}=false", joined)
-        for blocked in ("apps", "plugins", "multi_agent", "computer_use", "browser_use", "memories", "image_generation"):
+        self.assertEqual(Path(command[command.index("--cd") + 1]).resolve(), self.work.resolve())
+        for blocked in ("shell_tool", "unified_exec", "view_image", "apps", "plugins", "multi_agent",
+                        "computer_use", "browser_use", "memories", "image_generation"):
             self.assertIn(f"features.{blocked}=false", joined)
         self.assertIn('web_search="disabled"', joined)
+        override = next(arg for arg in command if arg.startswith("mcp_servers.quartz_project="))
+        self.assertIn("--project-read-server", override)
+        self.assertIn(json.dumps(str(self.project.resolve()))[1:-1].replace("\\\\", "\\"),
+                      override.replace("\\\\", "\\"))
         self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", command)
+        with self.assertRaises(PermissionError):
+            runtime.resume(run["id"], "devam")
 
-    def test_codex_project_read_rejects_write_resume_desktop_and_guard(self):
+    def test_codex_rejected_profiles_leave_no_run_or_writer_lock(self):
         runtime = CodexRuntime(self.exe)
-        for options in ({"sandbox": "workspace-write", "approval": "on-request"},
-                        {"sandbox": "danger-full-access"}, {"resume_thread_id": "old"},
-                        {"tool_guard": True}, {"desktop_connection": {"url": "u", "token": "t"}},
-                        {"approval": "on-request"}):
+        cases = [dict(project_read=self.project, **o) for o in (
+            {"sandbox": "workspace-write", "approval": "on-request"}, {"sandbox": "danger-full-access"},
+            {"resume_thread_id": "old"}, {"tool_guard": True}, {"approval": "on-request"},
+            {"desktop_connection": {"url": "u", "token": "t"}})]
+        cases.append({"tool_guard": True, "sandbox": "workspace-write", "approval": "on-request"})
+        for options in cases:
             with self.subTest(options=options), patch("core.codex_runtime.subprocess.Popen") as popen:
                 with self.assertRaises(ValueError):
-                    runtime.start("x", self.root, project_read=True, **options)
+                    runtime.start("x", self.work, **options)
                 popen.assert_not_called()
+        self.assertEqual(runtime._runs, {}); self.assertEqual(runtime._writers, {})
 
-    def test_antigravity_read_dirs_need_hook_and_read_only(self):
+    def test_failed_reader_start_does_not_release_another_writers_lock(self):
+        runtime = CodexRuntime(self.exe)
+        key = os.path.normcase(str(self.work.resolve()))
+        runtime._writers[key] = "writer-run"
+        with patch("core.codex_runtime.subprocess.Popen", side_effect=OSError("boom")):
+            with self.assertRaises(OSError):
+                runtime.start("x", self.work)  # read-only run on the same folder
+        self.assertEqual(runtime._writers.get(key), "writer-run")
+
+    def make_guard(self, roots=None, hooks=None):
+        from core.chat_coordination import write_project_read_hooks
+        helper = self.root / "QuartzDesktopMCP.exe"
+        helper.write_bytes(b"MZ")
+        with patch("core.chat_coordination.mcp_command", return_value=[str(helper)]):
+            write_project_read_hooks(self.work, roots or [self.project])
+        if hooks is not None:
+            (self.work / ".agents" / "hooks.json").write_text(hooks, encoding="utf-8")
+
+    def test_antigravity_read_dirs_need_the_exact_guard(self):
         runtime = AntigravityRuntime(self.exe)
-        project = self.root / "project"
-        project.mkdir()
-        work = self.root / "work"
-        work.mkdir()
         with patch("core.antigravity_runtime.subprocess.Popen") as popen:
             with self.assertRaises(PermissionError):
-                runtime.start("x", work, read_dirs=[project])  # no hook in workspace
-            (work / ".agents").mkdir()
-            (work / ".agents" / "hooks.json").write_text("{}", encoding="utf-8")
+                runtime.start("x", self.work, read_dirs=[self.project])  # no guard at all
+            self.make_guard(hooks="{}")
             with self.assertRaises(PermissionError):
-                runtime.start("x", work, read_dirs=[project], write=True, full_access=True)
+                runtime.start("x", self.work, read_dirs=[self.project])  # wrong hook content
+            other = self.root / "other"; other.mkdir()
+            self.make_guard(roots=[other])
+            with self.assertRaises(PermissionError):
+                runtime.start("x", self.work, read_dirs=[self.project])  # roots differ
+            self.make_guard()
+            with self.assertRaises(PermissionError):
+                runtime.start("x", self.work, read_dirs=[self.project], write=True, full_access=True)
             popen.assert_not_called()
+        hooks = json.loads((self.work / ".agents" / "hooks.json").read_text(encoding="utf-8"))
+        command = hooks["quartz-project-read"]["PreToolUse"][0]["hooks"][0]["command"]
+        self.assertNotIn('"', command)  # no quoted paths through cmd.exe
         with patch("core.antigravity_runtime.subprocess.Popen", return_value=agy_tests.FakeProcess("")) as popen:
-            run = runtime.start("x", work, read_dirs=[project])
+            run = runtime.start("x", self.work, read_dirs=[self.project])
             self.wait(runtime, run["id"])
         command = popen.call_args.args[0]
-        self.assertEqual(Path(command[command.index("--add-dir") + 1]).resolve(), project.resolve())
-        self.assertEqual(command[command.index("--mode") + 1], "auto")
+        self.assertEqual(Path(command[command.index("--add-dir") + 1]).resolve(), self.project.resolve())
         self.assertIn("--sandbox", command)
         self.assertNotIn("--dangerously-skip-permissions", command)
 
 
 class ServiceRoutingTests(unittest.TestCase):
-    def test_codex_project_read_runs_in_project_read_only(self):
+    def test_codex_project_read_runs_in_scratch_with_project_root(self):
         service, runtime, _ = service_tests.MultiAgentServiceTests().make_service()
         runtime.get.return_value = {"status": "completed"}
         with patch.object(service, "_start_writer") as writer, patch.object(service, "_squad") as squad:
             result = service.dispatch_codex("README ne diyor?", project_id="test", chat_mode=True,
                                             conversation_only=True, project_read=True, resume_thread_id="old")
         args, opts = runtime.start.call_args.args, runtime.start.call_args.kwargs
-        self.assertEqual(Path(args[1]).resolve(), Path(".").resolve())
-        self.assertTrue(opts["project_read"]); self.assertEqual(opts["sandbox"], "read-only")
+        self.assertNotEqual(Path(args[1]).resolve(), Path(".").resolve())
+        self.assertEqual(Path(opts["project_read"]).resolve(), Path(".").resolve())
+        self.assertEqual(opts["sandbox"], "read-only")
         self.assertNotIn("tool_guard", opts); self.assertNotIn("resume_thread_id", opts)
-        self.assertIn("YALNIZ OKUYABİLİRSİN", args[0])
+        self.assertIn("YALNIZ OKUYABİLİRSİN", args[0]); self.assertIn("project_read", args[0])
         writer.assert_not_called(); squad.assert_not_called()
         self.assertTrue(result["run"]["project_read"])
 
-    def test_protected_project_falls_back_to_blind_conversation(self):
-        service, runtime, _ = service_tests.MultiAgentServiceTests().make_service()
-        service.projects._projects["test"]["protected"] = True
-        runtime.get.return_value = {"status": "completed"}
-        service.dispatch_codex("README ne diyor?", project_id="test", chat_mode=True,
-                               conversation_only=True, project_read=True)
-        args, opts = runtime.start.call_args.args, runtime.start.call_args.kwargs
-        self.assertTrue(opts["tool_guard"]); self.assertNotIn("project_read", opts)
-        self.assertNotEqual(Path(args[1]).resolve(), Path(".").resolve())
+    def test_protected_and_warband_projects_fall_back_to_blind_conversation(self):
+        for flag in ({"protected": True}, {"workflow": "warband"}):
+            with self.subTest(flag=flag):
+                service, runtime, _ = service_tests.MultiAgentServiceTests().make_service()
+                service.projects._projects["test"].update(flag)
+                runtime.get.return_value = {"status": "completed"}
+                service.dispatch_codex("README ne diyor?", project_id="test", chat_mode=True,
+                                       conversation_only=True, project_read=True)
+                opts = runtime.start.call_args.kwargs
+                self.assertTrue(opts["tool_guard"]); self.assertNotIn("project_read", opts)
 
-    def test_antigravity_project_read_uses_scratch_hook_and_read_dir(self):
+    def test_gemini_cli_backend_never_gets_project_read(self):
         service, _, agy = service_tests.MultiAgentServiceTests().make_service()
+        service.antigravity = agy  # independent of the machine's Google backend selection
+        agy.backend = "gemini"
+        agy.get.return_value = {"status": "completed"}
+        with patch("core.chat_coordination.write_project_read_hooks") as hooks, \
+                patch("core.chat_coordination.write_observer_hooks"):
+            service.dispatch_antigravity("README ne diyor?", project_id="test", chat_mode=True,
+                                         conversation_only=True, project_read=True)
+        hooks.assert_not_called()
+        opts = agy.start.call_args.kwargs
+        self.assertTrue(opts["tool_guard"]); self.assertNotIn("read_dirs", opts)
+
+    def test_antigravity_runtime_refuses_read_dirs_on_gemini_backend(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / "agy.exe"; exe.touch()
+            runtime = AntigravityRuntime(exe)
+            runtime.backend = "gemini"
+            with patch("core.antigravity_runtime.subprocess.Popen") as popen, self.assertRaises(PermissionError):
+                runtime.start("x", tmp, read_dirs=[tmp])
+            popen.assert_not_called()
+
+    def test_antigravity_project_read_uses_scratch_guard_and_read_dir(self):
+        service, _, agy = service_tests.MultiAgentServiceTests().make_service()
+        service.antigravity = agy  # independent of the machine's Google backend selection
+        agy.backend = "agy"
         agy.get.return_value = {"status": "completed"}
         with patch("core.chat_coordination.write_project_read_hooks") as hooks:
             service.dispatch_antigravity("README ne diyor?", project_id="test", chat_mode=True,
@@ -216,7 +324,7 @@ class ServiceRoutingTests(unittest.TestCase):
         runtime.get.return_value = {"status": "completed"}
         service.dispatch_codex("Merhaba", project_id="test", chat_mode=True, conversation_only=True)
         prompt = runtime.start.call_args.args[0]
-        self.assertNotIn("ASLA 'yetkim yok'", prompt)
+        self.assertNotIn("yetkim yok", prompt)
         self.assertIn("araç kullanmıyorsun", prompt)
 
 
@@ -250,6 +358,10 @@ class ChatTurnTests(unittest.TestCase):
                         tempfile.TemporaryDirectory() as store_dir:
                     chat = self.make_chat(store_dir, project)
                     self.assertFalse(self.send(chat, text, agent)["project_read"])
+
+    def test_single_chat_prompts_no_longer_forbid_admitting_missing_access(self):
+        prompt = AgentChatService._build_single_chat_prompt("codex", "Merhaba", [], set(), write=False)
+        self.assertNotIn("yetkim yok", prompt)
 
 
 if __name__ == "__main__":

@@ -49,14 +49,17 @@ def write_project_read_hooks(directory, roots):
     command=mcp_command()
     helper=Path(command[0]) if len(command)==1 else Path(__file__).resolve().parents[1]/"build/desktop-helper/QuartzDesktopMCP.exe"
     if not helper.is_file(): raise RuntimeError("Build the read guard helper before project inspection")
-    shutil.copy2(helper,hooks.parent/"read-guard.exe")
     clean=[]
     for root in roots:
-        value=str(Path(root).resolve(strict=True))
-        if '"' in value or not Path(value).is_dir(): raise ValueError("Unsafe project read root")
-        clean.append('"'+value+'"')
+        value=Path(root).resolve(strict=True)
+        if not value.is_dir(): raise ValueError("Unsafe project read root")
+        clean.append(str(value))
+    if not clean: raise ValueError("Project read needs a root")
+    shutil.copy2(helper,hooks.parent/"read-guard.exe")
+    # Roots travel in a file beside the guard, never as quoted cmd.exe arguments.
+    (hooks.parent/"read-roots.json").write_text(json.dumps({"roots":clean}),encoding="utf-8")
     hooks.write_text(json.dumps({"quartz-project-read":{"PreToolUse":[{"matcher":"*","hooks":[
-        {"type":"command","command":r".\read-guard.exe --project-read "+" ".join(clean),"timeout":5}]}]}}),encoding="utf-8")
+        {"type":"command","command":r".\read-guard.exe --project-read","timeout":5}]}]}}),encoding="utf-8")
     return hooks
 
 

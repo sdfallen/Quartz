@@ -689,9 +689,9 @@ class AgentChatService:
         )
         if not write:
             role_rules += (
-                "- Quartz tek yetki sistemiyle (Tam Yetki / Full Access) çalışmaktadır. "
-                "Bu tur hızlı sohbet yanıtı içindir; gereksiz araç çağırmadan doğrudan yanıt ver. "
-                "Kullanıcıya asla 'yetkim yok' veya 'salt okunur moddayım' deme.\n"
+                "- Bu turda yazma yetkin yok; gereksiz araç çağırmadan doğrudan yanıt ver. "
+                "Gerçek erişimini bu turun araçları belirler; görmediğin veya yapmadığın bir şeyi "
+                "görmüş ya da yapmış gibi yazma.\n"
             )
         elif full_access:
             role_rules += (

@@ -247,11 +247,21 @@ class CodexRuntime:
             raise ValueError("Unsupported Codex sandbox")
         if approval not in {"never", "on-request"}:
             raise ValueError("Unsupported approval policy")
-        # Read-only project inspection: validated before any run/writer is
-        # registered so a refused request leaves no project lock behind.
-        if project_read and (tool_guard or desktop_connection is not None or sandbox != "read-only"
-                             or approval != "never" or resume_thread_id):
-            raise ValueError("Project-read runs are read-only, fresh and tool-scoped")
+        # Profiles are validated before any run/writer is registered so a
+        # refused request leaves no record or project lock behind.
+        if tool_guard and (desktop_connection is not None or sandbox != "read-only"):
+            raise ValueError("Log observer cannot receive desktop/write permissions")
+        # project_read is the project ROOT to expose through Quartz's own
+        # read-only MCP tools; the Codex process itself runs elsewhere with
+        # every built-in tool (shell included) disabled.
+        read_root = None
+        if project_read:
+            if (tool_guard or desktop_connection is not None or sandbox != "read-only"
+                    or approval != "never" or resume_thread_id):
+                raise ValueError("Project-read runs are read-only, fresh and tool-scoped")
+            read_root = Path(project_read).resolve(strict=True)
+            if not read_root.is_dir():
+                raise NotADirectoryError(str(read_root))
         project = Path(project_path).resolve(strict=True)
         if not project.is_dir():
             raise NotADirectoryError(str(project))
@@ -288,7 +298,7 @@ class CodexRuntime:
                 "cancel_requested": False,
                 "_oracle_seq": 0,
                 "_tool_guard": bool(tool_guard),
-                "_project_read": bool(project_read),
+                "_project_read": str(read_root) if read_root else None,
             }
             self._runs[run_id] = record
             if is_writer:
@@ -308,21 +318,15 @@ class CodexRuntime:
             common += ["-m", clean_model]
         if clean_effort:
             common += ["-c", f'model_reasoning_effort="{clean_effort}"']
-        if tool_guard:
-            if desktop_connection is not None or sandbox != "read-only":
-                raise ValueError("Log observer cannot receive desktop/write permissions")
-        # Project read keeps shell and image viewing for reading inside the
-        # read-only OS sandbox; integrations that could reach outside the
-        # project or the network are disabled below like the guarded paths.
-        if tool_guard or desktop_connection is not None or project_read:
+        if tool_guard or desktop_connection is not None or read_root:
             # Per-run only: no user config changes. Disable inherited integrations
-            # as well as shell/browser/desktop capabilities in the evidence reader.
-            kept = {"shell_tool", "unified_exec", "view_image"} if project_read else set()
+            # as well as shell/browser/desktop capabilities. A project read gets
+            # no shell either: the read-only OS sandbox would not stop a shell
+            # from reading outside the project or the environment (Codex review).
             for feature in ("shell_tool", "unified_exec", "apps", "plugins", "multi_agent",
                             "multi_agent_v2", "computer_use", "browser_use", "browser_use_external",
                             "in_app_browser", "image_generation", "view_image", "memories"):
-                if feature not in kept:
-                    common += ["-c", f"features.{feature}=false"]
+                common += ["-c", f"features.{feature}=false"]
             common += ["-c", 'web_search="disabled"']
             import tomllib
             config_path = Path(os.getenv("CODEX_HOME") or Path.home()/".codex")/"config.toml"
@@ -332,6 +336,9 @@ class CodexRuntime:
                 if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
                     raise ValueError("Cannot safely override this inherited MCP name")
                 common += ["-c", "mcp_servers." + name + ".enabled=false"]
+        if read_root:
+            from core.project_read_mcp import codex_override
+            common += ["-c", codex_override(read_root)]
         desktop_env = None
         if desktop_connection is not None:
             from core.desktop_agents import codex_mcp_override, connection_environment
@@ -368,7 +375,8 @@ class CodexRuntime:
             with self._lock:
                 record["status"] = "failed"
                 record["finished_at"] = time.time()
-                self._writers.pop(project_key, None)
+                if self._writers.get(project_key) == run_id:
+                    self._writers.pop(project_key, None)
             raise
 
         try:
@@ -379,7 +387,8 @@ class CodexRuntime:
             with self._lock:
                 record["status"] = "failed"
                 record["finished_at"] = time.time()
-                self._writers.pop(project_key, None)
+                if self._writers.get(project_key) == run_id:
+                    self._writers.pop(project_key, None)
             raise
 
         with self._lock:
@@ -423,6 +432,12 @@ class CodexRuntime:
             raise RuntimeError("The Codex thread id is not available")
         if previous["status"] not in self.TERMINAL:
             raise RuntimeError("Cannot resume a running Codex task")
+        with self._lock:
+            raw = self._runs.get(run_id, {})
+            scoped = bool(raw.get("_project_read") or raw.get("_tool_guard"))
+        if scoped:
+            # This generic resume would not carry the run's tool profile.
+            raise PermissionError("A project-read or guarded Codex run cannot be resumed")
         return self.start(
             prompt, previous["project"], sandbox=previous["sandbox"],
             approval=previous["approval"],
