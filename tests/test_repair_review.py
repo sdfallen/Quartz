@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -34,6 +35,20 @@ class RepairReviewTests(unittest.TestCase):
                 self.assertEqual(result['status'],'suspicious')
                 self.assertTrue(result['independent_review_required'])
                 self.assertNotIn('12345',json.dumps(result))
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows 8.3 short names')
+    def test_short_name_changed_path_matches_resolved_root(self):
+        import ctypes
+        long_root = Path(self.temp.name)/'long_directory_name_project'
+        long_root.mkdir()
+        buffer = ctypes.create_unicode_buffer(32768)
+        size = ctypes.windll.kernel32.GetShortPathNameW(str(long_root), buffer, len(buffer))
+        if not size or '~' not in buffer.value:
+            self.skipTest('8.3 short names are disabled on this volume')
+        short_root = Path(buffer.value)
+        self.root, self.path = short_root, short_root/'invoice.py'
+        result = self.run_review('total=1\n', 'import inspect\n')
+        self.assertEqual(result['status'], 'suspicious')
 
     def test_unchanged_marker_is_not_flagged(self):
         result=self.run_review('import inspect\ntotal=1\n','import inspect\ntotal=2\n')

@@ -1,6 +1,7 @@
 """Bounded advisory signals from host-owned writer checkpoints; never acceptance."""
 import hashlib
 import json
+import os
 from pathlib import Path, PureWindowsPath
 import re
 import zipfile
@@ -18,6 +19,22 @@ _SIGNALS = {
     'importlib': r'\bimportlib\b',
     'getattr': r'\b(?:builtins\s*\.\s*|__builtins__\s*\.\s*)?getattr\s*\(\s*(?:sys|os|builtins|__builtins__)\b',
 }
+
+
+def _long_path(path):
+    """Expand Windows 8.3 short names (RUNNER~1) lexically, without following links."""
+    if os.name != 'nt' or '~' not in str(path):
+        return path
+    import ctypes
+    existing, rest = path, []
+    while not existing.exists() and existing.parent != existing:
+        rest.insert(0, existing.name)
+        existing = existing.parent
+    buffer = ctypes.create_unicode_buffer(32768)
+    size = ctypes.windll.kernel32.GetLongPathNameW(str(existing), buffer, len(buffer))
+    if not size or size >= len(buffer):
+        return path
+    return Path(buffer.value, *rest)
 
 
 def review_writer_changes(workspace, run):
@@ -47,6 +64,7 @@ def review_writer_changes(workspace, run):
                 if not path.is_absolute(): path = root / path
                 if '..' in path.parts or PureWindowsPath(str(path)).drive.lower() != PureWindowsPath(str(root)).drive.lower():
                     raise ValueError('Changed path scope')
+                path = _long_path(path)
                 relative = path.relative_to(root).as_posix()
                 for part in (path, *path.parents):
                     if part == root: break

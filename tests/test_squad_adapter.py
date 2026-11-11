@@ -207,7 +207,7 @@ class SquadAdapterTests(unittest.TestCase):
         quarantined = list((project / ".squad").glob("messages.db.corrupt-*"))
         self.assertEqual(len(quarantined), 1)
         self.assertEqual(quarantined[0].read_bytes(), corrupt_bytes)
-        self.assertEqual(adapter.last_quarantined_db, str(quarantined[0]))
+        self.assertEqual(Path(adapter.last_quarantined_db).resolve(), quarantined[0].resolve())
 
     def test_no_such_table_error_does_not_trigger_workspace_repair(self):
         project = Path(self.tmp.name) / "schema_proj"
