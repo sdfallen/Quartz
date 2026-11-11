@@ -12,9 +12,9 @@ NORMAL_CHAT_DESKTOP_NOTICE = (
 
 
 def desktop_intent(text):
-    from core.message_intent import instruction_text, message_intent, tools_disallowed
+    from core.message_intent import instruction_text, message_intent, tools_disallowed, request_withdrawn, turkish_fold
     value = instruction_text(text).strip()
-    if tools_disallowed(text): return None
+    if tools_disallowed(text) or request_withdrawn(text): return None
     kind = message_intent(text)
     if re.search(r"warband|aster|gate\s*b",value) and kind == 'task': return "task"
     if re.search(r"kendin(?:ize|e|iz).{0,40}(?:yetki|izin|erişim)",value): return "help"
@@ -22,9 +22,14 @@ def desktop_intent(text):
         r"masaüst|masaustu|bilgisayar|pencere|fare|klavye|not\s*defteri|notepad|uygulama|ekran|"
         r"chrome|edge|firefox|brave|opera|youtube|spotify|steam|discord|tarayıcı|oyun|"
         r"müzik|muzik|şarkı|sarki|ses\s+seviye|sesi\b|sesini\b|volume|pano|clipboard|"
-        r"hesap\s*makine|calc|explorer|dosya\s*gezgin|sistem\s*durum|"
+        # "test_calc" / "calc.py" name code, not the Calculator app (live exam 7 Nov).
+        r"hesap\s*makine|\bcalc(?:ulator)?\b(?![._]\w)|explorer|dosya\s*gezgin|sistem\s*durum|"
         r"window|application|browser|screenshot|button", value)
-    if not subject: return None
+    # App names are open-ended. A named target with a Turkish object suffix and
+    # an actual open/launch/close directive is a desktop request, not an allowlist.
+    named_launch = re.search(r"\b[\w+.-]+(?:\s+[\w+.-]+){0,2}['’]y?[iu](?:nu|ni)?\s+"
+                             r"(?:ac(?:ip|in)?|baslat(?:in)?|kapat(?:in)?)\b", turkish_fold(value))
+    if not subject and not named_launch: return None
     access = re.search(r"yetki|erişim|erisim|kontrol|hak|izin", value)
     if access and (re.search(r"nasıl|neden|niye|var mı|varmı|yok|versem|verebilir|verebil|alabilir|alabil|açabilir|açabil|mümkün", value)
                    or re.search(r"(?:yetki|erişim|erisim|izin).{0,20}sorun", value)):

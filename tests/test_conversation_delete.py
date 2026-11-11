@@ -129,22 +129,34 @@ class ConversationDeleteTests(unittest.TestCase):
 
     def test_ui_has_separate_accessible_delete_buttons_and_explicit_confirmation(self):
         self.assertIn("remove.setAttribute('aria-label'", gui._HTML)
-        self.assertIn("window.confirm(message", gui._HTML)
+        self.assertIn("requestUiConfirm(", gui._HTML)
+        self.assertIn('id="confirmModal"', gui._HTML)
+        self.assertNotIn("window.confirm(", gui._HTML)
         self.assertIn("btnDeleteProjectChats", gui._HTML)
         self.assertIn("c.project_id||'squad-pilot'", gui._HTML)
 
     def test_actual_javascript_confirmation_cancel_bulk_and_error_paths(self):
         # Execute the actual handler, not a separate implementation. No browser,
         # user history, model call or native UI deletion is involved.
+        confirm_start = gui._HTML.index('  let activeConfirmResolver =')
+        confirm_end = gui._HTML.index('  function chatCleanupUnconfirmed(', confirm_start)
+        confirm_helper = gui._HTML[confirm_start:confirm_end]
         start = gui._HTML.index('  async function requestChatDeletion(')
         end = gui._HTML.index('  function renderConversationNavigation(', start)
         handler = gui._HTML[start:end]
         harness = r'''
 const assert=require('node:assert/strict');
 let thinking=false,deletionPending=false,chatPollInterval=null,activeBotBubble=null;
-let reloads=0,calls=[],errors=[],accepted=false,response={status:'ok',data:{deleted_count:1}};
+let reloads=0,calls=[],errors=[],accepted=false,response={status:'ok',data:{deleted_count:1}},lastPrompt='';
 const mainProjectSelect={selectedOptions:[{textContent:'Project P'}]};
-const window={confirm:()=>accepted,pywebview:{api:{
+const confirmModal={hidden:true};
+const confirmTitle={textContent:''};
+const confirmMessage={textContent:''};
+const confirmCancel={textContent:'',onclick:null,focus(){Promise.resolve().then(()=>{lastPrompt=confirmMessage.textContent;(accepted?confirmAccept:confirmCancel).onclick();});}};
+const confirmAccept={textContent:'',onclick:null,classList:{toggle(){}},focus(){Promise.resolve().then(()=>{lastPrompt=confirmMessage.textContent;(accepted?confirmAccept:confirmCancel).onclick();});}};
+const confirmScrim={onclick:null};
+const document={activeElement:null,getElementById:id=>({confirmModal,confirmTitle,confirmMessage,confirmCancel,confirmAccept,confirmScrim})[id]||null};
+const window={pywebview:{api:{
 chat_delete:async(...a)=>{calls.push(['single',...a]);return response;},
 chat_delete_project:async(...a)=>{calls.push(['project',...a]);return response;}}}};
 const loadActiveConversation=async()=>reloads++;
@@ -154,9 +166,11 @@ const logLine=()=>{};const appendMsg=(...a)=>errors.push(a);
 (async()=>{
 const a={id:'a',title:'A'},b={id:'b',title:'B'};
 await requestChatDeletion([a]);assert.equal(calls.length,0);assert.equal(reloads,0);
+assert.equal(confirmModal.hidden,true);assert.match(lastPrompt,/“A” sohbeti silinsin mi\?/);
 accepted=true;await requestChatDeletion([a]);assert.deepEqual(calls.pop(),['single','a',true]);
 assert.equal(reloads,1);assert.equal(deletionPending,false);
 await requestChatDeletion([a,b],'p');assert.deepEqual(calls.pop(),['project','p',['a','b'],true]);
+assert.match(lastPrompt,/“Project P” projesinin 2 sohbeti silinsin mi\?/);
 assert.equal(reloads,2);
 response={status:'error',data:'busy'};await requestChatDeletion([a]);
 assert.equal(errors.length,1);assert.equal(reloads,2);assert.equal(deletionPending,false);
@@ -164,7 +178,7 @@ thinking=true;await requestChatDeletion([a]);assert.equal(calls.length,1);
 console.log('actual delete handler: cancel/single/project/error/busy PASS');
 })().catch(e=>{console.error(e);process.exitCode=1;});
 '''
-        result = subprocess.run(['node', '-'], input=harness + handler + checks,
+        result = subprocess.run(['node', '-'], input=harness + confirm_helper + handler + checks,
                                 capture_output=True, text=True, encoding='utf-8', timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

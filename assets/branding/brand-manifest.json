@@ -1,7 +1,5 @@
 {
-  "source_png": "C:\\Users\\LENAVO\\Desktop\\Jarvis config\\715d52a3-0f49-49c1-9fe1-b6733ea89145.png",
-  "source_ico": "C:\\Users\\LENAVO\\Desktop\\Jarvis config\\download.ico",
-  "supplied_ico_preserved": true,
+  "source": "scripts/build_brand_assets.py",
   "sizes": [
     [
       16,
@@ -32,6 +30,7 @@
       256
     ]
   ],
-  "png_sha256": "3f4476174968ab0285a0b478600187ed57092940c664172424435f9468538c46",
-  "ico_sha256": "aa1f33584830240ba3dc8d619fd6a04febe50c586799c5c2474a1211e593c621"
+  "svg_sha256": "58ef7f118b45b2448c162567ed41f41fac00255131f3935eb862e3dbe406ac1b",
+  "png_sha256": "ffb5e73e810838c42778ffd5227c9a9c4595d67aef66013f07b5cb23f7595b58",
+  "ico_sha256": "ebf22e110717919c733451f44fd427ed25cc5bd32dec7be4be534f2915d1e8fc"
 }

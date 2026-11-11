@@ -82,6 +82,211 @@ class BrokerTests(unittest.TestCase):
         self.assertFalse(self.broker.status()["active"])
         self.assertTrue(self.backend.leases[0].closed)
 
+    def continuous(self):
+        token = self.broker.grant(1, "codex", confirmed=True, seconds=1800, persistent_control=True, continuous=True)["token"]
+        return token, self.broker.call(token, {"name": "desktop_focus"})
+
+    def press(self, token, snapshot, key):
+        return self.broker.call(token, {"name": "desktop_act", "arguments": {"snapshot_id": snapshot, "action": "key", "key": key}})
+
+    def test_first_observation_of_a_continuous_session_acquires_the_window(self):
+        # Live 7 Nov: observe-then-act without desktop_focus was refused and cost a turn.
+        token = self.broker.grant(1, "codex", confirmed=True, seconds=1800, persistent_control=True, continuous=True)["token"]
+        self.backend.foreground = True  # Already in front (just opened), so no focus recovery runs.
+        observed = self.broker.call(token, {"name": "desktop_observe"})
+        self.press(token, observed["snapshot_id"], "tab")
+        self.assertEqual(len(self.backend.actions), 1)
+
+    def test_bounded_session_still_needs_an_explicit_focus(self):
+        token = self.grant()
+        observed = self.broker.call(token, {"name": "desktop_observe"})
+        with self.assertRaisesRegex(PermissionError, "Focus then observe"):
+            self.broker.call(token, {"name": "desktop_act", "arguments": {"snapshot_id": observed["snapshot_id"], "action": "key", "key": "tab"}})
+        self.assertEqual(self.backend.actions, [])
+
+    def test_continuous_session_binds_a_missing_snapshot_id_to_the_latest_fresh_observation(self):
+        # Live 7 Nov: Gemini Flash omitted snapshot_id in 4 of 5 runs.
+        token, observed = self.continuous()
+        bare = {"name": "desktop_act", "arguments": {"action": "key", "key": "tab"}}
+        self.broker.call(token, bare)
+        self.assertEqual(len(self.backend.actions), 1)
+        self.assertTrue(any(e.get("implicit_snapshot") for e in self.broker.audit))
+        with self.assertRaises(PermissionError):  # Single use: the act consumed its observation.
+            self.press(token, observed["snapshot_id"], "tab")
+        self.broker.call(token, {"name": "desktop_observe"})
+        with self.assertRaises(PermissionError):
+            self.press(token, "wrong", "tab")
+        with self.assertRaises(PermissionError):  # A wrong id consumed it; a missing id cannot revive it.
+            self.broker.call(token, bare)
+        self.broker.call(token, {"name": "desktop_observe"})
+        self.now += 16
+        with self.assertRaisesRegex(PermissionError, "Stale"):  # Binding never extends freshness.
+            self.broker.call(token, bare)
+        self.assertEqual(len(self.backend.actions), 1)
+
+    def test_bounded_session_still_requires_the_snapshot_id_and_keeps_the_observation(self):
+        token, observed = self.focus()
+        with self.assertRaisesRegex(PermissionError, "snapshot_id is missing"):
+            self.broker.call(token, {"name": "desktop_act", "arguments": {"action": "key", "key": "tab"}})
+        self.assertEqual(self.backend.actions, [])
+        self.act(token, observed["snapshot_id"])
+        self.assertEqual(len(self.backend.actions), 1)
+
+    def test_common_typing_synonyms_reach_the_guarded_text_action(self):
+        # Live Gemini run 6 Nov: "type" and "input" were refused and the task stalled.
+        token, observed = self.continuous()
+        for alias in ("type", "input", "Type_Text"):
+            observed = self.broker.call(token, {"name": "desktop_act", "arguments": {
+                "snapshot_id": observed["snapshot_id"], "action": alias, "text": "deneme-" + alias}})
+        self.assertEqual([a["action"] for a in self.backend.actions], ["text"] * 3)
+        attempts = [e for e in self.broker.audit if e.get("attempt")]
+        self.assertEqual([e["arguments"]["action"] for e in attempts], ["text"] * 3)
+
+    def test_unknown_action_is_passed_on_unchanged_and_still_needs_a_fresh_snapshot(self):
+        token, observed = self.continuous()
+        self.broker.call(token, {"name": "desktop_act", "arguments": {
+            "snapshot_id": observed["snapshot_id"], "action": "drag", "text": None}})
+        self.assertEqual(self.backend.actions[-1]["action"], "drag")
+        with self.assertRaises(PermissionError):  # An alias never skips the snapshot check.
+            self.broker.call(token, {"name": "desktop_act", "arguments": {
+                "snapshot_id": observed["snapshot_id"], "action": "type", "text": "x"}})
+        self.assertEqual(len(self.backend.actions), 1)
+
+    def test_continuous_session_has_no_action_budget(self):
+        token, observed = self.continuous()
+        for number in range(150):
+            observed = self.press(token, observed["snapshot_id"], "k" + str(number))
+        self.assertEqual(len(self.backend.actions), 150)
+        self.assertTrue(self.broker.status()["active"])
+
+    def test_bounded_session_keeps_its_action_budget(self):
+        token, observed = self.focus()
+        for number in range(100):
+            observed = self.press(token, observed["snapshot_id"], "k" + str(number))
+        with self.assertRaises(PermissionError):
+            self.press(token, observed["snapshot_id"], "k")
+        self.assertEqual(len(self.backend.actions), 100)
+        self.assertEqual(self.broker.status()["stop_reason"], "action budget exhausted")
+
+    def test_owner_renewal_outlives_the_lease_and_stops_when_owner_stops(self):
+        token, _ = self.continuous()
+        for _ in range(5):
+            self.now += 1700
+            self.assertTrue(self.broker.renew(token))
+            self.assertTrue(self.broker.status()["active"])
+        self.now += 1801  # The owner died: nobody renews, so the bearer expires.
+        self.assertFalse(self.broker.renew(token))
+        self.assertFalse(self.broker.status()["active"])
+        with self.assertRaises(PermissionError):
+            self.broker.call(token, {"name": "desktop_observe"})
+
+    def test_renewal_cannot_extend_a_bounded_session_or_revive_a_stopped_one(self):
+        token = self.grant()
+        self.assertFalse(self.broker.renew(token))
+        self.broker.stop()
+        self.assertFalse(self.broker.renew(token))
+        self.assertFalse(self.broker.status()["active"])
+        continuous, _ = self.continuous()
+        self.broker.stop()
+        self.assertFalse(self.broker.renew(continuous))
+
+    def test_stale_owner_cannot_renew_the_next_operators_session(self):
+        first = self.broker.grant(1, "codex", confirmed=True, seconds=30, persistent_control=True, continuous=True)["token"]
+        self.now += 31  # The first session expires.
+        self.assertFalse(self.broker.status()["active"])
+        second = self.broker.grant(1, "antigravity", confirmed=True, seconds=30, persistent_control=True, continuous=True)["token"]
+        before = self.broker._session["expires"]
+        self.assertFalse(self.broker.renew(first))
+        self.assertFalse(self.broker.renew(None))
+        self.assertEqual(self.broker._session["expires"], before)
+        self.assertTrue(self.broker.renew(second))
+        self.assertGreater(self.broker._session["expires"], before)
+
+    def test_repeated_input_on_unchanged_screen_is_refused_then_ends_the_task(self):
+        token, observed = self.continuous()
+        for _ in range(8):
+            observed = self.press(token, observed["snapshot_id"], "tab")
+        self.assertEqual(len(self.backend.actions), 8)
+        for _ in range(3):
+            with self.assertRaisesRegex(PermissionError, "tekrarlandı"):
+                self.press(token, observed["snapshot_id"], "tab")
+            observed = self.broker.call(token, {"name": "desktop_observe"})
+        self.assertEqual(len(self.backend.actions), 8)
+        with self.assertRaises(PermissionError):
+            self.press(token, observed["snapshot_id"], "tab")
+        self.assertEqual(len(self.backend.actions), 8)
+        status = self.broker.status()
+        self.assertFalse(status["active"])
+        self.assertIn("stalled", status["stop_reason"])
+
+    def test_a_changing_screen_or_new_action_is_not_a_repeat(self):
+        token, observed = self.continuous()
+        frame = {"n": 0}
+        def changing(_):
+            frame["n"] += 1
+            return {"ui": {"elements": [frame["n"]]}, "image_base64": "cG5n"}
+        self.backend.observe = changing
+        observed = self.broker.call(token, {"name": "desktop_observe"})
+        for _ in range(30):
+            observed = self.press(token, observed["snapshot_id"], "pagedown")
+        self.assertEqual(len(self.backend.actions), 30)
+        self.backend.observe = lambda _: {"ui": {"elements": []}, "image_base64": "cG5n"}
+        observed = self.broker.call(token, {"name": "desktop_observe"})
+        for number in range(30):
+            observed = self.press(token, observed["snapshot_id"], "tab" if number % 2 else "enter")
+        self.assertEqual(len(self.backend.actions), 60)
+
+    def test_waiting_on_an_unchanged_screen_is_not_a_repeat(self):
+        token, observed = self.continuous()
+        for _ in range(30):
+            observed = self.broker.call(token, {"name": "desktop_act", "arguments": {"snapshot_id": observed["snapshot_id"], "action": "wait", "seconds": 1}})
+        self.assertEqual(len(self.backend.actions), 30)
+        self.assertTrue(self.broker.status()["active"])
+
+    def test_stop_still_revokes_a_continuous_session_immediately(self):
+        token, observed = self.continuous()
+        self.broker.stop()
+        with self.assertRaises(PermissionError):
+            self.press(token, observed["snapshot_id"], "tab")
+        self.assertEqual(self.backend.actions, [])
+
+    def test_pause_revokes_the_old_bearer_snapshot_and_lease(self):
+        token, observed = self.continuous()
+        self.broker.stop("awaiting explicit scope approval")
+        status = self.broker.status()
+        self.assertFalse(status["active"])
+        self.assertEqual(status["stop_reason"], "awaiting explicit scope approval")
+        self.assertTrue(self.backend.leases[-1].closed)
+        with self.assertRaises(PermissionError):
+            self.press(token, observed["snapshot_id"], "tab")
+        with self.assertRaises(PermissionError):
+            self.broker.call(token, {"name": "desktop_observe"})
+        self.assertFalse(self.broker.renew(token))
+        self.assertEqual(self.backend.actions, [])
+
+    def test_resume_needs_a_fresh_identity_and_a_new_observation(self):
+        old, observed = self.continuous()
+        approved = [dict(self.backend.target)]
+        self.broker.stop("awaiting explicit scope approval")
+        self.backend.target["pid"] = 99  # The window now belongs to another process.
+        with self.assertRaisesRegex(PermissionError, "identity"):
+            self.broker.grant(1, "codex", confirmed=True, seconds=1800, expected_targets=approved,
+                              persistent_control=True, continuous=True)
+        self.assertFalse(self.broker.status()["active"])
+        self.backend.target["pid"] = approved[0]["pid"]
+        new = self.broker.grant(1, "codex", confirmed=True, seconds=1800, expected_targets=approved,
+                                persistent_control=True, continuous=True)["token"]
+        self.assertNotEqual(new, old)
+        with self.assertRaises(PermissionError):  # Old bearer and snapshot stay dead after resume.
+            self.press(old, observed["snapshot_id"], "tab")
+        with self.assertRaises(PermissionError):  # The new session must focus and observe first.
+            self.press(new, observed["snapshot_id"], "tab")
+        fresh = self.broker.call(new, {"name": "desktop_focus"})
+        self.press(new, fresh["snapshot_id"], "tab")
+        self.assertEqual(len(self.backend.actions), 1)
+        self.assertFalse(self.broker.renew(old))
+        self.assertTrue(self.broker.renew(new))
+
     def test_persistent_focus_recovery_refreshes_without_replaying_input(self):
         token = self.broker.grant(1, "codex", confirmed=True, persistent_control=True)["token"]
         first = self.broker.call(token, {"name": "desktop_focus"})
@@ -102,6 +307,17 @@ class BrokerTests(unittest.TestCase):
         self.backend.focus = MagicMock()
         with self.assertRaises(PermissionError): self.act(token, first["snapshot_id"])
         self.backend.focus.assert_called_once()
+        self.assertEqual(self.backend.actions, [])
+        self.assertTrue(self.broker.status()["active"])
+        self.assertIsNone(self.broker._session["snapshot"])
+
+    def test_persistent_failed_switch_keeps_task_without_input(self):
+        token = self.broker.grant(1, "codex", confirmed=True, persistent_control=True)["token"]
+        self.broker.call(token, {"name": "desktop_focus"})
+        self.backend.focus = MagicMock()
+        self.backend.is_foreground = MagicMock(side_effect=[True, False])
+        with self.assertRaises(PermissionError):
+            self.broker.call(token, {"name": "desktop_switch", "arguments": {"handle": 1}})
         self.assertEqual(self.backend.actions, [])
         self.assertTrue(self.broker.status()["active"])
         self.assertIsNone(self.broker._session["snapshot"])
@@ -252,6 +468,22 @@ class NativePolicyTests(unittest.TestCase):
             with self.assertRaisesRegex(PermissionError, "changed during capture"):
                 backend.observe(target)
 
+    def test_edit_value_reader_is_bounded_and_falls_back(self):
+        from core.desktop_native import VALUE_LIMIT, _control_value
+        control = MagicMock()
+        control.iface_value.CurrentValue = "x" * (VALUE_LIMIT + 50)
+        self.assertEqual(len(_control_value(control)), VALUE_LIMIT)
+        control = MagicMock()
+        type(control).iface_value = property(lambda _: (_ for _ in ()).throw(RuntimeError("no ValuePattern")))
+        control.get_value.side_effect = RuntimeError("no value")
+        control.window_text.return_value = "deneme"
+        self.assertEqual(_control_value(control), "deneme")
+        control = MagicMock()
+        type(control).iface_value = property(lambda _: (_ for _ in ()).throw(RuntimeError("none")))
+        control.get_value.side_effect = RuntimeError("none")
+        control.window_text.side_effect = RuntimeError("none")
+        self.assertIsNone(_control_value(control))
+
     def run_mock_click(self, *, name="TEST BUTTON", password=False, covered=False, lost=False):
         backend = NativeDesktopBackend()
         desktop = MagicMock()
@@ -337,10 +569,69 @@ class NativePolicyTests(unittest.TestCase):
         window.set_focus.assert_called_once()
         self.assertEqual(sleep.call_count, 2)
     def test_protected_apps_and_warband_are_not_generic_targets(self):
-        for exe in ("powershell.exe", "cmd.exe", "regedit.exe", "consent.exe", "mb_warband.exe", "Quartz.exe", "codex-computer-use.exe"):
+        for exe in ("powershell.exe", "cmd.exe", "regedit.exe", "consent.exe", "mb_warband.exe", "Quartz.exe", "codex-computer-use.exe",
+                    r"C:\Program Files\WindowsApps\Claude_4.23118.0.0_x64__pzs8sxrjxfjjc\app\claude.exe", "Copilot.exe"):
             with self.subTest(exe=exe), self.assertRaises(PermissionError):
                 NativeDesktopBackend.validate_target({"exe": exe, "title": "normal"})
+    def test_other_shells_and_password_managers_are_not_targets(self):
+        # Gemini review 8 Nov.
+        for exe in ("wt.exe", "wsl.exe", "bash.exe", "mintty.exe", "alacritty.exe", "wezterm-gui.exe", "KeePassXC.exe"):
+            with self.subTest(exe=exe), self.assertRaises(PermissionError):
+                NativeDesktopBackend.validate_target({"exe": exe, "title": "normal"})
+    def test_text_with_ref_refuses_a_consequential_field_name(self):
+        # Gemini review 8 Nov: the ui and click paths checked the name; text+ref did not.
+        backend = NativeDesktopBackend()
+        observation = {"ui": {"snapshot_id": "s1", "elements": [{"ref": "3", "name": "Kaydet adı", "type": "Edit"}]}}
+        @contextmanager
+        def scope(): yield MagicMock()
+        with patch.object(backend.controller, "_desktop", scope),              patch.object(backend.controller, "_window", return_value=MagicMock(window_text=lambda: "Form")),              patch.object(backend.controller, "action") as action,              patch.object(backend, "is_foreground", return_value=True),              patch.object(backend, "_safe_controls"):
+            with self.assertRaises(PermissionError):
+                backend.act({"handle": 1}, observation, {"action": "text", "ref": "3", "text": "x"})
+            action.assert_not_called()
+            observation["ui"]["elements"][0]["name"] = "Ad"
+            backend.act({"handle": 1}, observation, {"action": "text", "ref": "3", "text": "x"})
+            action.assert_called_once()
+    def test_mcp_schema_accepts_every_ui_operation_the_backend_runs(self):
+        from core.desktop_mcp import TOOLS
+        act = next(t for t in TOOLS if t["name"] == "desktop_act")
+        enum = act["inputSchema"]["properties"]["ui_action"]["enum"]
+        self.assertEqual(set(enum) - {None}, {"invoke", "select", "expand", "collapse", "focus"})
     def test_password_dialog_is_denied_even_for_allowed_process(self):
         with self.assertRaises(PermissionError): NativeDesktopBackend.validate_target({"exe": "app.exe", "title": "Enter password"})
     def test_normal_app_is_allowed(self):
         NativeDesktopBackend.validate_target({"exe": "notepad.exe", "title": "Untitled - Notepad"})
+    def test_a_web_page_field_may_live_in_a_process_the_app_started(self):
+        # Live exam 7 Nov: a WebView2 page's Edit belongs to the renderer the host started.
+        import os
+        from core.desktop_native import _same_application
+        self.assertTrue(_same_application(os.getpid(), os.getpid()))
+        self.assertTrue(_same_application(os.getpid(), os.getppid()))  # child of the target
+        self.assertFalse(_same_application(os.getppid(), os.getpid()))  # the parent is not the child's app
+        self.assertFalse(_same_application(999999999, os.getpid()))
+
+    def test_get_descendants_preserves_deep_password_and_critical_controls_before_slicing(self):
+        # Step 2.5a: when native descendants fill max_elements, a deep password or
+        # critical control found by _wrapper_aware_scan must not be sliced off.
+        from core.desktop_control import DesktopController
+
+        def make_el(rid, name="", control_type="Button", is_password=False):
+            el = MagicMock()
+            el.element_info.runtime_id = (rid,)
+            el.element_info.name = name
+            el.element_info.control_type = control_type
+            el.element_info.is_password = is_password
+            el.element_info.element = None
+            el.is_visible.return_value = True
+            el.is_enabled.return_value = True
+            return el
+
+        native_items = [make_el(i, f"Item {i}") for i in range(1, 6)]
+        deep_pwd = make_el(99, "Secret Field", "Edit", is_password=True)
+        deep_crit = make_el(100, "Kalıcı olarak sil", "Button", is_password=False)
+        win = MagicMock()
+        win.descendants.return_value = native_items
+        with patch.object(DesktopController, "_wrapper_aware_scan", return_value=[deep_pwd, deep_crit]):
+            result = DesktopController._get_descendants(win, max_depth=4, max_elements=5)
+        self.assertEqual(len(result), 5)
+        self.assertIn(deep_pwd, result)
+        self.assertIn(deep_crit, result)

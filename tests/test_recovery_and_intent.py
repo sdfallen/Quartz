@@ -63,6 +63,24 @@ class RecoveryTests(unittest.TestCase):
                 self.assertEqual(chat.store.recover_interrupted()['status'], 'unchanged')
             finally: chat.close()
 
+    def test_restart_says_a_pending_permission_card_died_with_the_old_session(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/'chat.json'; store = ConversationStore(path)
+            cid = store.get_active()['id']
+            store.append_message(cid, 'assistant', 'Uygulama erişimi gerekiyor: Not Defteri', sender='antigravity',
+                                 metadata={'status':'completed', 'natural_task':'job-1', 'task_status':'awaiting_approval'})
+            store.append_message(cid, 'assistant', 'Başka görev bitti', sender='quartz',
+                                 metadata={'status':'completed', 'natural_task':'job-2', 'task_status':'running'})
+            store.append_message(cid, 'assistant', 'Görev tamamlandı', sender='quartz',
+                                 metadata={'status':'completed', 'natural_task':'job-2', 'task_status':'completed'})
+            store.recover_interrupted()
+            messages = store.get(cid)['messages']
+            self.assertEqual(messages[0]['status'], 'interrupted')
+            self.assertEqual(messages[0]['metadata']['interrupted_while'], 'awaiting_approval')
+            self.assertFalse(messages[0]['metadata']['permissions_restored'])
+            self.assertNotIn('interrupted_while', messages[1]['metadata'])  # Not the last event of job-2.
+            self.assertEqual(messages[2]['status'], 'completed')
+
     def test_recovery_write_failure_leaves_original_memory_and_file(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder)/'chat.json'; store = ConversationStore(path)

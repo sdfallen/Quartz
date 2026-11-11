@@ -20,6 +20,17 @@ hiddenimports += ['core.install_security', 'core.windows_prerequisites']
 hiddenimports += ['core.self_diagnostics', 'core.rea_adapter', 'core.artifact_diagnostics', 'core.package_repair', 'core.diagnostics_intent']
 hiddenimports += ['core.application_knowledge']
 hiddenimports += ['core.elevation']
+hiddenimports += ['core.application_services', 'core.shutdown']
+hiddenimports += ['core.investigation', 'core.investigation.contracts', 'core.investigation.evidence',
+                  'core.investigation.memory', 'core.investigation.session', 'core.investigation.planning',
+                  'core.investigation.gateway', 'core.investigation.chat_task', 'core.investigation.learning']
+hiddenimports += ['core.tool_workbench', 'core.tool_workbench.acquisition', 'core.tool_workbench.catalog',
+                  'core.tool_workbench.contracts', 'core.tool_workbench.errors', 'core.tool_workbench.execution', 'core.tool_workbench.workbench']
+hiddenimports += ['core.rea_analysis', 'core.rea_analysis.binary', 'core.rea_analysis.managed',
+                  'core.rea_analysis.packages', 'core.rea_analysis.service']
+hiddenimports += ['core.notion_cli', 'core.notion_runtime', 'ui', 'ui.document', 'ui.styles', 'ui.theme']
+# Main-chat read-only Notion Worker fixture (lazy imports; pywin32 Credential Manager).
+hiddenimports += ['core.notion_worker_task', 'core.notion_worker_bridge', 'win32cred']
 tmp_ret = collect_all('webview')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 

@@ -27,8 +27,10 @@ def atomic_write_json(path, value: Any, *, indent: int = 2) -> None:
     with _FILE_LOCK:
         target.parent.mkdir(parents=True, exist_ok=True)
         serialized = json.dumps(value, indent=indent, ensure_ascii=False, default=str)
+        # Keep the temporary basename bounded: knowledge keys can already be
+        # long enough that repeating them exceeds Windows path/component limits.
         fd, temporary = tempfile.mkstemp(
-            prefix=f".{target.name}.", suffix=".tmp", dir=str(target.parent)
+            prefix=".quartz-", suffix=".tmp", dir=str(target.parent)
         )
         try:
             with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:

@@ -1,10 +1,25 @@
 """Window-scoped Windows UI Automation with expiring observation references."""
 
 import json
+import re
 import threading
 import time
 import uuid
 from contextlib import contextmanager
+
+# Unnamed single-child containers that only wrap the real UI (see _get_descendants).
+_PASS_THROUGH = {"Pane", "Group", "Custom"}
+# Chromium/WebView2 host views carry the page URL as their name; they are frames, not UI.
+_FRAME_CLASSES = {"Chrome_WidgetWin_0", "Chrome_WidgetWin_1", "Chrome_RenderWidgetHostHWND", "BrowserRootView",
+                  "NonClientView", "EmbeddedBrowserFrameView", "BrowserView", "View"}
+_ABSOLUTE_UIA_DEPTH = 24
+_SENSITIVE_OR_CRITICAL = re.compile(
+    r"password|parola|şifre|sign.in|oturum aç|authentication|verify.*identity|"
+    r"user account control|kullanıcı hesabı denetimi|windows security|"
+    r"\b(?:delete|remove|overwrite|purchase|buy|pay|send|upload|save|sil|"
+    r"kaydet|üzerine yaz|satın al|öde|gönder|yükle|izin ver|allow|install)\b",
+    re.I,
+)
 
 
 class DesktopController:
@@ -89,27 +104,113 @@ class DesktopController:
             except Exception:
                 max_depth = max_depth or 5
                 max_elements = max_elements or 250
+        # Live exam 7 Nov: in a WebView2/Chromium window (browsers, Electron and
+        # pywebview apps) the page's Edit and Button sit ~12 levels down, below a
+        # chain of single-child Pane wrappers, so a plain depth limit of 4-5 never
+        # reached them and typing was refused. A wrapper that only passes through
+        # to one child costs no depth and is not listed; real structure still
+        # counts, and the element budget and an absolute depth cap bound the work.
+        # The native bounded scan stays first, so nothing it found before is lost
+        # (UWP apps such as Calculator); the wrapper-aware scan only adds controls.
         try:
-            return list(win.descendants(depth=max_depth)[:max_elements])
+            native = list(win.descendants(depth=max_depth)[:max_elements])
+        except Exception:
+            native = []
+        deep = DesktopController._wrapper_aware_scan(win, max_depth, max_elements)
+        known = {DesktopController._identity_key(e) for e in native}
+        extra = [e for e in deep if DesktopController._identity_key(e) not in known]
+        # Gemini review 8 Nov: if native already filled max_elements, slicing
+        # merged[:max_elements] dropped deep password/sensitive/critical controls.
+        # Keep security-relevant controls ahead of non-critical overflow.
+        priority = [e for e in extra if DesktopController._is_priority_control(e)]
+        ordinary = [e for e in extra if not DesktopController._is_priority_control(e)]
+        if priority and len(native) + len(priority) > max_elements:
+            keep_native = max(0, max_elements - len(priority))
+            merged = native[:keep_native] + priority
+        else:
+            merged = native + priority + ordinary
+        return merged[:max_elements]
+
+    @staticmethod
+    def _is_priority_control(element):
+        try:
+            info = element.element_info
+            native = getattr(info, "element", None)
+            password = (bool(native.CurrentIsPassword) if native is not None
+                        else bool(getattr(info, "is_password", False)))
+            if password:
+                return True
+            name = str(info.name or "")
+            return bool(name and _SENSITIVE_OR_CRITICAL.search(name))
+        except Exception:
+            return False
+
+    @staticmethod
+    def focused_control(win, scanned=None):
+        """The one control holding keyboard focus inside ``win``, or None.
+
+        Live exam 7 Nov: in a WebView2 window both the Chromium host Pane and the
+        page's Edit report HasKeyboardFocus, so "exactly one focused control" was
+        never true and typing was refused. UI Automation's own focused element is
+        the single answer; it counts only when it belongs to this window. Without
+        it, focus-holding frame Panes are dropped and one control must remain.
+        """
+        try:
+            from pywinauto.controls.uiawrapper import UIAWrapper
+            if isinstance(win, UIAWrapper):
+                from pywinauto.uia_defines import IUIA
+                from pywinauto.uia_element_info import UIAElementInfo
+                focused = UIAWrapper(UIAElementInfo(IUIA().iuia.GetFocusedElement()))
+                if focused.top_level_parent().handle == win.handle:
+                    return focused
         except Exception:
             pass
-        # Robust BFS fallback if win.descendants raises AttributeError on detached elements
-        elements = []
-        queue = [(win, 0)]
-        while queue and len(elements) < max_elements:
-            curr, depth = queue.pop(0)
-            if depth >= max_depth:
+        candidates = []
+        for control in (scanned if scanned is not None else DesktopController._get_descendants(win)):
+            try:
+                if control.has_keyboard_focus():
+                    candidates.append(control)
+            except Exception:
+                continue
+        leaves = [c for c in candidates if getattr(c.element_info, "control_type", "") != "Pane"]
+        pool = leaves or candidates
+        return pool[0] if len(pool) == 1 else None
+
+    @staticmethod
+    def _identity_key(element):
+        try:
+            runtime = tuple(element.element_info.runtime_id or ())
+            if runtime:
+                return runtime
+        except Exception:
+            pass
+        return id(element)
+
+    @staticmethod
+    def _wrapper_aware_scan(win, max_depth, max_elements):
+        elements, seen = [], 0
+        queue = [(win, 0, 0)]
+        while queue and len(elements) < max_elements and seen < max_elements * 4:
+            curr, depth, absolute = queue.pop(0)
+            if depth >= max_depth or absolute >= _ABSOLUTE_UIA_DEPTH:
                 continue
             try:
                 children = curr.children()
             except Exception:
                 continue
             for child in children:
-                elements.append(child)
-                if len(elements) >= max_elements:
-                    break
-                if depth + 1 < max_depth:
-                    queue.append((child, depth + 1))
+                seen += 1
+                try:
+                    info = child.element_info
+                    wrapper = (info.control_type == "Pane" and (not info.name or str(info.class_name or "") in _FRAME_CLASSES)) or (
+                        info.control_type in _PASS_THROUGH and not info.name and len(child.children()) == 1)
+                except Exception:
+                    wrapper = False
+                if not wrapper:
+                    elements.append(child)
+                    if len(elements) >= max_elements:
+                        break
+                queue.append((child, depth if wrapper else depth + 1, absolute + 1))
         return elements
 
     def _inspect(self, desktop, handle, query=""):
@@ -149,7 +250,7 @@ class DesktopController:
             return self._inspect(desktop, handle, query)
 
     def action(self, snapshot_id: str, ref: str, action: str, text: str = "", *, input_guard=None):
-        if action not in {"invoke", "select", "expand", "collapse", "toggle", "set_text"}:
+        if action not in {"invoke", "select", "expand", "collapse", "toggle", "set_text", "focus"}:
             raise ValueError("Unsupported UI action")
         with self._lock, self._desktop() as desktop:
             snapshot = self._snapshots.get(snapshot_id)
@@ -187,6 +288,8 @@ class DesktopController:
                 win.set_focus()
             if action == "set_text":
                 element.set_edit_text(text)
+            elif action == "focus":
+                element.set_focus()
             else:
                 getattr(element, action)()
             time.sleep(.1)

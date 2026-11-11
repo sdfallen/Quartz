@@ -29,8 +29,14 @@ class ProjectRegistry:
         self.storage_path = Path(storage_path) if storage_path else None
         source = projects if projects is not None else self.DEFAULTS
         self._projects = {}
+        saved = load_json(self.storage_path, {}) if self.storage_path is not None else {}
+        saved = saved if isinstance(saved, dict) else {}
+        # Projects the user removed from the list stay removed, defaults included.
+        self._removed = {i for i in saved.get("removed", []) if isinstance(i, str)}
         for item in source:
             project_id = str(item["id"]).strip()
+            if project_id in self._removed:
+                continue
             path = Path(item["path"]).expanduser().resolve(strict=False)
             self._projects[project_id] = {
                 "id": project_id,
@@ -41,8 +47,7 @@ class ProjectRegistry:
             }
         self._selected = next(iter(self._projects), None)
         if self.storage_path is not None:
-            saved = load_json(self.storage_path, {})
-            if isinstance(saved, dict):
+            if saved:
                 for item in saved.get("projects", []):
                     if not isinstance(item, dict):
                         continue
@@ -51,7 +56,7 @@ class ProjectRegistry:
                     except (ValueError, FileNotFoundError, PermissionError):
                         continue
                     project_id = str(item.get("id") or "").strip()
-                    if project_id and project_id not in self._projects:
+                    if project_id and project_id not in self._projects and project_id not in self._removed:
                         self._projects[project_id] = {
                             "id": project_id, "name": str(item.get("name") or path.name),
                             "path": str(path), **self._profile(path),
@@ -86,6 +91,7 @@ class ProjectRegistry:
             atomic_write_json(self.storage_path, {
                 "selected": self._selected,
                 "projects": list(self._projects.values()),
+                "removed": sorted(self._removed),
             })
 
     def add(self, path, name=None) -> dict:
@@ -103,6 +109,24 @@ class ProjectRegistry:
             self._selected = project_id
             self._save()
             return dict(item)
+
+    def remove(self, project_id: str, fallback_id: str) -> dict:
+        """Forget a registered project. Its folder and files are never touched."""
+        with self._lock:
+            project = dict(self._get(project_id))
+            if fallback_id == project["id"] or fallback_id not in self._projects:
+                raise ValueError("Kaldırmadan önce geçilecek başka bir proje gerekli.")
+            before = (dict(self._projects), set(self._removed), self._selected)
+            try:
+                del self._projects[project["id"]]
+                self._removed.add(project["id"])
+                if self._selected == project["id"]:
+                    self._selected = fallback_id
+                self._save()
+            except Exception:
+                self._projects, self._removed, self._selected = before
+                raise
+            return project
 
     def list(self) -> list[dict]:
         with self._lock:

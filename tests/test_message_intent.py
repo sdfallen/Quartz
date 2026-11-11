@@ -21,6 +21,40 @@ class MessageIntentTests(unittest.TestCase):
                      '"dosyayı aç" komutu ne demek?', 'Teşekkürler'):
             with self.subTest(text=text): self.assertEqual(message_intent(text), 'conversation')
 
+    def test_exam_code_requests_are_project_tasks_not_desktop_control(self):
+        # Live exam 7 Nov: "test_calc" started computer control; "hale getir" was chat.
+        from core.desktop_task_ui import desktop_intent
+        for text in ("Codex, test_calc'taki başarısız testi düzelt. Test dosyasını değiştirme.",
+                     "parser.py'deki parse fonksiyonunu daha okunur hale getir.",
+                     "test_report'taki başarısız testi geçir. Test ve veri dosyalarına dokunma.",
+                     "Codex ve Gemini, bu projedeki TODO.md maddesini birlikte değerlendirin.",
+                     "calc.py dosyasını sadeleştir."):
+            with self.subTest(text=text):
+                self.assertEqual(message_intent(text), 'task')
+                self.assertIsNone(desktop_intent(text))
+        for text in ('Hesap makinesini aç', 'calc aç'):
+            with self.subTest(text=text): self.assertEqual(desktop_intent(text), 'task')
+        for text in ('Bugün nasıl geçirdin?', 'Bu kodu nasıl değerlendirirsin?', 'Bu ne getirir?',
+                     'Mikroservis mimarisinin avantajlarını değerlendir?',
+                     'Bu yaklaşımın olası risklerini gözden geçir?',
+                     'Yapay zeka geleceğe ne getir?',
+                     'Zamanı verimli geçir?'):
+            with self.subTest(text=text): self.assertEqual(message_intent(text), 'conversation')
+
+    def test_a_command_after_an_explanation_and_a_comma_is_still_a_task(self):
+        # Claude review 8 Nov: the conceptual-question change dropped comma splitting,
+        # so the explanation clause swallowed the command that followed it.
+        for text in ('bu hata ne demek, düzelt', 'set theory nedir, anlat ve sonra kodu düzelt',
+                     'hakkında ne düşünüyorsun, sonra testleri çalıştır', 'bu ne demek, şunu düzelt'):
+            with self.subTest(text=text): self.assertEqual(message_intent(text), 'task')
+
+    def test_a_review_question_about_code_or_files_is_still_a_task(self):
+        # Context words carry Turkish suffixes and letters ("modülü", "sınıfı", "satırı").
+        for text in ('Kodu değerlendir?', 'Bu dosyayı değerlendir?', 'Bu modülü değerlendir?',
+                     'Bu sınıfı gözden geçir?', 'Bu satırı değerlendir?', 'Projeyi gözden geçir?',
+                     'parser.py gözden geçir?'):
+            with self.subTest(text=text): self.assertEqual(message_intent(text), 'task')
+
     def test_real_requests_are_tasks(self):
         for text in ('Bu warband modunu inceleyin', 'Dosyayı güncelle', 'Kaynakları incele ve düzelt',
                      'Ekranı açıp incele', 'Oyunu test et', 'Logları kontrol edebilir misin?',

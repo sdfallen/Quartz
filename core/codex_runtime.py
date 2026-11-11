@@ -6,12 +6,17 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
 from pathlib import Path
 
-from core.process_tree import stop_process_tree
+from core.process_tree import (CREATE_SUSPENDED, OwnedCleanupUnconfirmed,
+                               bind_kill_on_close_job, close_process_job,
+                               owned_cleanup_pending, stop_process_tree,
+                               wait_for_owned_cleanup,
+                               wait_process_with_job_sync)
 
 
 class CodexRuntime:
@@ -19,6 +24,11 @@ class CodexRuntime:
     SUPPORTED_EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"]
     PROBE_TTL = 300.0
     _SHARED_PROBE_CACHE: dict[str, tuple[float, dict]] = {}
+    _SCRATCH_WORKSPACE_PREFIXES = (
+        "quartz-chat-tool-",
+        "quartz-desktop-task-",
+        "quartz-rea-readonly-",
+    )
 
     def __init__(self, executable=None):
         self.executable = None
@@ -27,7 +37,7 @@ class CodexRuntime:
             self.executable = self._find_executable(executable)
         except Exception as exc:
             self._init_error = str(exc)
-        self._lock = threading.RLock()
+        self.lock = self._lock = threading.RLock()
         self._runs = {}
         self._processes = {}
         self._writers = {}
@@ -152,7 +162,7 @@ class CodexRuntime:
                 if shared and (now - shared[0] < self.PROBE_TTL):
                     cached_at, cached = shared[0], dict(shared[1])
                     self._probe_cache = (cached_at, dict(cached))
-            if not force and cached and cached.get("ready") and (now - cached_at < self.PROBE_TTL):
+            if not force and cached and (now - cached_at < self.PROBE_TTL):
                 return dict(cached)
 
         version = self._probe(["--version"])
@@ -172,13 +182,59 @@ class CodexRuntime:
         with self._lock:
             stamp = time.monotonic()
             self._probe_cache = (stamp, dict(result))
-            if result.get("ready"):
-                self._SHARED_PROBE_CACHE[cache_key] = (stamp, dict(result))
+            self._SHARED_PROBE_CACHE[cache_key] = (stamp, dict(result))
         return result
+
+    @staticmethod
+    def _parse_timeout_seconds(timeout):
+        if timeout is None:
+            return None  # Existing callers had no implicit Codex deadline.
+        import math
+        if isinstance(timeout, bool):
+            raise ValueError("Invalid task timeout")
+        raw = str(timeout).strip().lower()
+        units = (("ms", .001), ("s", 1), ("m", 60), ("h", 3600))
+        multiplier = 1
+        for suffix, factor in units:
+            if raw.endswith(suffix):
+                raw, multiplier = raw[:-len(suffix)], factor
+                break
+        value = float(raw) * multiplier
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError("Invalid task timeout")
+        return max(1.0, value)
+
+    @staticmethod
+    def _next_oracle_seq(record: dict) -> int:
+        seq = int(record.get("_oracle_seq", 0)) + 1
+        record["_oracle_seq"] = seq
+        return seq
+
+    @classmethod
+    def _is_scratch_workspace_path(cls, project_path: str | Path, file_path: str, *, tool_guard: bool = False) -> bool:
+        if tool_guard:
+            return False
+        try:
+            proj = Path(project_path).resolve()
+            temp_root = Path(tempfile.gettempdir()).resolve()
+        except (OSError, ValueError):
+            return False
+        if proj.parent != temp_root or not proj.name.lower().startswith(cls._SCRATCH_WORKSPACE_PREFIXES):
+            return False
+        raw = str(file_path or "").strip()
+        if not raw:
+            return True
+        try:
+            candidate = Path(raw)
+            target = (candidate if candidate.is_absolute() else (proj / candidate)).resolve()
+            target.relative_to(proj)
+            return True
+        except (OSError, ValueError):
+            return False
 
     def start(self, prompt, project_path, *, sandbox="read-only", approval="never",
               squad_task_id=None, squad_agent_id=None, resume_thread_id=None,
-              model: str | None = None, effort: str | None = None,
+              timeout=None, model: str | None = None, effort: str | None = None,
               desktop_connection=None, tool_guard=False) -> dict:
         if not self.executable:
             raise RuntimeError(self._init_error or "Codex CLI was not found")
@@ -204,6 +260,7 @@ class CodexRuntime:
         run_id = uuid.uuid4().hex
         project_key = os.path.normcase(str(project))
         started_wall = time.time()
+        timeout_seconds = self._parse_timeout_seconds(timeout)
         with self._lock:
             if is_writer and project_key in self._writers:
                 raise RuntimeError("This project already has an active write-capable agent")
@@ -211,14 +268,21 @@ class CodexRuntime:
                 "id": run_id, "status": "starting", "pid": None,
                 "project": str(project), "sandbox": sandbox,
                 "approval": approval, "started_at": started_wall,
+                "timeout_seconds": timeout_seconds,
                 "first_event_at": None, "first_text_at": None,
                 "finished_at": None, "exit_code": None, "thread_id": None,
                 "model": clean_model, "effort": clean_effort,
                 "result": "", "errors": [], "events": [], "usage": None,
-                "commands": [], "files_changed": [],
+                "commands": [], "command_results": [], "command_exit_codes": [],
+                "files_changed": [], "scratch_files_changed": [], "file_changes": [],
+                "unauthorized_write_detected": False, "unauthorized_files_changed": [],
+                "error_events": [],
+                "job_bound": False, "job_assignment_error": "",
                 "squad_task_id": squad_task_id,
                 "squad_agent_id": squad_agent_id,
                 "cancel_requested": False,
+                "_oracle_seq": 0,
+                "_tool_guard": bool(tool_guard),
             }
             self._runs[run_id] = record
             if is_writer:
@@ -254,7 +318,7 @@ class CodexRuntime:
             configuration = tomllib.loads(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
             for name in configuration.get("mcp_servers", {}):
                 import re
-                if not re.fullmatch(r"[A-Za-z0-9_-]+",name):
+                if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
                     raise ValueError("Cannot safely override this inherited MCP name")
                 common += ["-c", "mcp_servers." + name + ".enabled=false"]
         desktop_env = None
@@ -277,7 +341,8 @@ class CodexRuntime:
         else:
             args = common + ["--json", "--skip-git-repo-check", "-"]
         command = self._command(args)
-        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | CREATE_SUSPENDED
+        job_errors: list[str] = []
         try:
             from core.cli_installer import cli_environment
             process_options = {"env": desktop_env if desktop_env is not None else cli_environment()}
@@ -287,6 +352,7 @@ class CodexRuntime:
                 encoding="utf-8", errors="replace", creationflags=flags,
                 **process_options,
             )
+            job_bound = bind_kill_on_close_job(process, resume=True, error_sink=job_errors.append)
         except Exception:
             with self._lock:
                 record["status"] = "failed"
@@ -307,6 +373,19 @@ class CodexRuntime:
 
         with self._lock:
             record["pid"] = process.pid
+            record["job_bound"] = bool(job_bound)
+            if job_errors:
+                record["job_assignment_error"] = job_errors[-1]
+                seq = self._next_oracle_seq(record)
+                record.setdefault("error_events", []).append({
+                    "seq": seq,
+                    "source": "job_object",
+                    "kind": "job_assignment_failed",
+                    "tool": None,
+                    "command": None,
+                    "exit_code": None,
+                    "message": job_errors[-1],
+                })
             record["status"] = "running"
             self._processes[run_id] = process
         stdout_thread = threading.Thread(
@@ -348,11 +427,17 @@ class CodexRuntime:
             if run_id not in self._runs:
                 raise KeyError(f"Unknown Codex run: {run_id}")
             record = self._runs[run_id]
-            value = dict(record)
+            value = {k: v for k, v in record.items() if not str(k).startswith("_")}
             value["errors"] = list(record["errors"][-20:])
             value["events"] = list(record["events"][-100:])
-            value["commands"] = list(record.get("commands", [])[-30:])
+            value["commands"] = [dict(item) for item in record.get("commands", [])[-30:]]
+            value["command_results"] = [dict(item) for item in record.get("command_results", [])[-50:]]
+            value["command_exit_codes"] = list(record.get("command_exit_codes", [])[-50:])
             value["files_changed"] = list(record.get("files_changed", []))
+            value["scratch_files_changed"] = list(record.get("scratch_files_changed", []))
+            value["file_changes"] = [dict(item) for item in record.get("file_changes", [])[-100:]]
+            value["unauthorized_files_changed"] = list(record.get("unauthorized_files_changed", []))
+            value["error_events"] = [dict(item) for item in record.get("error_events", [])[-50:]]
             return value
 
     def list(self, limit=20) -> list[dict]:
@@ -370,18 +455,20 @@ class CodexRuntime:
                 return self.get(run_id)
             record["cancel_requested"] = True
             record["status"] = "cancelling"
-        if process is not None and process.poll() is None:
+        if owned_cleanup_pending(process):
             stop_process_tree(process, timeout=max(1, timeout))
         return self.get(run_id)
 
     def shutdown(self):
         with self._lock:
-            active = [run_id for run_id, proc in self._processes.items() if proc.poll() is None]
-        for run_id in active:
-            try:
+            owned = list(self._processes.items())
+        for run_id, process in owned:
+            if owned_cleanup_pending(process):
                 self.cancel(run_id)
-            except Exception:
-                pass
+        # Sending Stop is not proof that an owned process actually exited.
+        for _, process in owned:
+            if owned_cleanup_pending(process):
+                raise RuntimeError("Owned runtime cleanup is not confirmed")
 
     def _command(self, args):
         suffix = Path(self.executable).suffix.lower()
@@ -416,73 +503,314 @@ class CodexRuntime:
     def _read_stdout(self, run_id, process):
         if process.stdout is None:
             return
-        for raw in process.stdout:
-            line = raw.strip()
-            if not line:
-                continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                event = {"type": "raw", "text": line}
-            with self._lock:
-                record = self._runs[run_id]
-                if record.get("first_event_at") is None:
-                    record["first_event_at"] = time.time()
-                record["events"].append(event)
-                event_type = event.get("type")
-                if event_type == "thread.started":
-                    record["thread_id"] = event.get("thread_id")
-                elif event_type == "item.completed":
-                    item = event.get("item") or {}
-                    if item.get("type") == "agent_message":
-                        text_val = str(item.get("text") or "")
-                        if text_val and record.get("first_text_at") is None:
-                            record["first_text_at"] = time.time()
-                        record["result"] = text_val
-                    elif item.get("type") == "error":
-                        record["errors"].append(str(item.get("message") or "Codex error"))
-                    elif item.get("type") == "command_execution":
-                        record["commands"].append({
-                            "command": str(item.get("command") or "")[:1000],
-                            "exit_code": item.get("exit_code"),
-                            "output": str(item.get("aggregated_output") or "")[:4000],
+        try:
+            for raw in process.stdout:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    event = {"type": "raw", "text": line}
+                with self._lock:
+                    record = self._runs.get(run_id)
+                    if not record:
+                        continue
+                    is_terminal = record.get("status") in self.TERMINAL
+                    if is_terminal:
+                        continue  # A terminal receipt/session identity is immutable.
+                    if not is_terminal and record.get("first_event_at") is None:
+                        record["first_event_at"] = time.time()
+                    record["events"].append(event)
+                    event_type = event.get("type")
+                    if event_type == "thread.started":
+                        record["thread_id"] = event.get("thread_id")
+                    elif event_type == "item.completed":
+                        item = event.get("item") or {}
+                        item_type = item.get("type")
+                        if item_type == "agent_message":
+                            text_val = str(item.get("text") or "")
+                            if not is_terminal:
+                                if text_val and record.get("first_text_at") is None:
+                                    record["first_text_at"] = time.time()
+                                record["result"] = text_val
+                        elif item_type == "error":
+                            msg = str(item.get("message") or "Codex error")
+                            record["errors"].append(msg)
+                            seq = self._next_oracle_seq(record)
+                            record.setdefault("error_events", []).append({
+                                "seq": seq,
+                                "source": "item.error",
+                                "kind": "item_error",
+                                "tool": None,
+                                "command": None,
+                                "exit_code": None,
+                                "message": msg,
+                            })
+                        elif item_type == "command_execution":
+                            cmd_str = str(item.get("command") or "")[:1000]
+                            raw_exit = item.get("exit_code")
+                            exit_code = int(raw_exit) if isinstance(raw_exit, int) and not isinstance(raw_exit, bool) else None
+                            out_str = str(item.get("aggregated_output") or "")[:4000]
+                            item_status = str(item.get("status") or ("completed" if exit_code == 0 else "failed")).lower()
+                            state_str = "DONE" if (exit_code == 0 and item_status not in {"failed", "declined", "error"}) else "ERROR"
+                            seq = self._next_oracle_seq(record)
+                            record["commands"].append({
+                                "command": cmd_str,
+                                "exit_code": exit_code,
+                                "output": out_str,
+                            })
+                            record.setdefault("command_exit_codes", []).append(exit_code)
+                            record.setdefault("command_results", []).append({
+                                "seq": seq,
+                                "tool": "command_execution",
+                                "command": cmd_str,
+                                "exit_code": exit_code,
+                                "ok": exit_code == 0 and state_str == "DONE",
+                                "state": state_str,
+                                "output": out_str,
+                                "error": "" if exit_code == 0 and state_str == "DONE" else (out_str[:1000] or f"Command exited with code {exit_code}"),
+                            })
+                            if exit_code not in (None, 0) or state_str == "ERROR":
+                                record.setdefault("error_events", []).append({
+                                    "seq": seq,
+                                    "source": "command",
+                                    "kind": "nonzero_exit" if exit_code not in (None, 0) else "command_error",
+                                    "tool": "command_execution",
+                                    "command": cmd_str,
+                                    "exit_code": exit_code,
+                                    "message": out_str[:1000] or f"Command exited with code {exit_code}",
+                                })
+                        elif item_type == "file_change":
+                            item_status = str(item.get("status") or "completed").lower()
+                            state_str = "ERROR" if item_status in {"failed", "declined", "error"} else "DONE"
+                            for change in item.get("changes") or []:
+                                path = str(change.get("path") or "")
+                                change_kind = str(change.get("kind") or "update").lower()
+                                if path:
+                                    seq = self._next_oracle_seq(record)
+                                    is_scratch = self._is_scratch_workspace_path(
+                                        record.get("project", ""),
+                                        path,
+                                        tool_guard=bool(record.get("_tool_guard")),
+                                    )
+                                    record.setdefault("file_changes", []).append({
+                                        "seq": seq,
+                                        "path": path,
+                                        "kind": change_kind,
+                                        "tool": "file_change",
+                                        "state": state_str,
+                                    })
+                                    if state_str == "DONE":
+                                        if is_scratch:
+                                            scratch_list = record.setdefault("scratch_files_changed", [])
+                                            if path not in scratch_list:
+                                                scratch_list.append(path)
+                                        else:
+                                            if path not in record["files_changed"]:
+                                                record["files_changed"].append(path)
+                                            if record.get("sandbox") == "read-only":
+                                                record["unauthorized_write_detected"] = True
+                                                unauth_list = record.setdefault("unauthorized_files_changed", [])
+                                                if path not in unauth_list:
+                                                    unauth_list.append(path)
+                                                violation_msg = f"Read-only Codex run modified file without write permission: {path}"
+                                                record["errors"].append(violation_msg)
+                                                record.setdefault("error_events", []).append({
+                                                    "seq": seq,
+                                                    "source": "sandbox_guard",
+                                                    "kind": "unauthorized_readonly_write",
+                                                    "tool": "file_change",
+                                                    "command": None,
+                                                    "exit_code": None,
+                                                    "message": violation_msg,
+                                                })
+                                    elif state_str == "ERROR":
+                                        record.setdefault("error_events", []).append({
+                                            "seq": seq,
+                                            "source": "file_change",
+                                            "kind": "file_change_error",
+                                            "tool": "file_change",
+                                            "command": None,
+                                            "exit_code": None,
+                                            "message": f"File change failed for {path} ({change_kind})",
+                                        })
+                    elif event_type == "turn.failed":
+                        error_msg = str(event.get("error") or event.get("message") or "Codex turn failed")
+                        record["errors"].append(error_msg)
+                        seq = self._next_oracle_seq(record)
+                        record.setdefault("error_events", []).append({
+                            "seq": seq,
+                            "source": "turn.failed",
+                            "kind": "turn_failed",
+                            "tool": None,
+                            "command": None,
+                            "exit_code": None,
+                            "message": error_msg,
                         })
-                    elif item.get("type") == "file_change":
-                        for change in item.get("changes") or []:
-                            path = str(change.get("path") or "")
-                            if path and path not in record["files_changed"]:
-                                record["files_changed"].append(path)
-                elif event_type == "turn.failed":
-                    error_msg = event.get("error") or event.get("message") or "Codex turn failed"
-                    record["errors"].append(str(error_msg))
-                elif event_type == "error":
-                    record["errors"].append(str(event.get("message") or "Codex error"))
-                elif event_type == "turn.completed":
-                    record["usage"] = event.get("usage")
+                    elif event_type == "error":
+                        error_msg = str(event.get("message") or "Codex error")
+                        record["errors"].append(error_msg)
+                        seq = self._next_oracle_seq(record)
+                        record.setdefault("error_events", []).append({
+                            "seq": seq,
+                            "source": "stream.error",
+                            "kind": "stream_error",
+                            "tool": None,
+                            "command": None,
+                            "exit_code": None,
+                            "message": error_msg,
+                        })
+                    elif event_type == "turn.completed":
+                        record["usage"] = event.get("usage")
+        except (OSError, ValueError):
+            pass
 
     def _read_stderr(self, run_id, process):
         if process.stderr is None:
             return
-        for raw in process.stderr:
-            line = raw.strip()
-            if line:
-                with self._lock:
-                    self._runs[run_id]["errors"].append(line)
+        try:
+            for raw in process.stderr:
+                line = raw.strip()
+                if line:
+                    with self._lock:
+                        record = self._runs.get(run_id)
+                        if record:
+                            record["errors"].append(line)
+                            seq = self._next_oracle_seq(record)
+                            record.setdefault("error_events", []).append({
+                                "seq": seq,
+                                "source": "stderr",
+                                "kind": "stderr_line",
+                                "tool": None,
+                                "command": None,
+                                "exit_code": None,
+                                "message": line,
+                            })
+        except (OSError, ValueError):
+            pass
 
     def _wait(self, run_id, process, project_key, stdout_thread, stderr_thread):
-        code = process.wait()
-        stdout_thread.join(timeout=5)
-        stderr_thread.join(timeout=5)
         with self._lock:
-            record = self._runs[run_id]
-            record["exit_code"] = code
-            record["finished_at"] = time.time()
-            if record["cancel_requested"]:
-                record["status"] = "cancelled"
-            elif code == 0 and record["result"]:
-                record["status"] = "completed"
-            else:
-                record["status"] = "failed"
-            self._processes.pop(run_id, None)
-            if self._writers.get(project_key) == run_id:
-                self._writers.pop(project_key, None)
+            timeout_sec = self._runs.get(run_id, {}).get("timeout_seconds")
+        timed_out = False
+        code = -1
+        exit_known = False
+        def pending_cleanup():
+            with self._lock:
+                record = self._runs.get(run_id)
+                if record:
+                    record.update(status="cancelling", cleanup_pending=True, process_exit_confirmed=False)
+        try:
+            try:
+                code = wait_process_with_job_sync(process, timeout=timeout_sec)
+                exit_known = True
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                stop_process_tree(process, timeout=5)
+                try:
+                    code = process.wait(timeout=5)
+                    exit_known = True
+                except Exception:
+                    code = -1
+            if not exit_known or owned_cleanup_pending(process, include_root=False):
+                exit_known = False
+                code = wait_for_owned_cleanup(process, pending_cleanup)
+                exit_known = True
+            stdout_thread.join(timeout=5)
+            stderr_thread.join(timeout=5)
+            with self._lock:
+                record = self._runs.get(run_id)
+                if record:
+                    record.update(cleanup_pending=False, process_exit_confirmed=True)
+                    record["exit_code"] = code
+                    record["finished_at"] = time.time()
+                    if timed_out:
+                        msg = f"Task timed out after {timeout_sec:g}s"
+                        record["errors"].append(msg)
+                        seq = self._next_oracle_seq(record)
+                        record.setdefault("error_events", []).append({
+                            "seq": seq,
+                            "source": "process",
+                            "kind": "timeout",
+                            "tool": None,
+                            "command": None,
+                            "exit_code": code,
+                            "message": msg,
+                        })
+                    if record.get("cancel_requested"):
+                        record["status"] = "cancelled"
+                    elif not timed_out and code == 0 and record.get("result") and not record.get("unauthorized_write_detected"):
+                        record["status"] = "completed"
+                    else:
+                        record["status"] = "failed"
+                        if code != 0 and not record["errors"]:
+                            msg = f"Process exited with code {code}"
+                            record["errors"].append(msg)
+                            seq = self._next_oracle_seq(record)
+                            record.setdefault("error_events", []).append({
+                                "seq": seq,
+                                "source": "process",
+                                "kind": "process_exit",
+                                "tool": None,
+                                "command": None,
+                                "exit_code": code,
+                                "message": msg,
+                            })
+                        elif code == 0 and not record.get("result") and not record["errors"]:
+                            msg = "Codex returned exit code 0 without response output"
+                            record["errors"].append(msg)
+                            seq = self._next_oracle_seq(record)
+                            record.setdefault("error_events", []).append({
+                                "seq": seq,
+                                "source": "process",
+                                "kind": "empty_output",
+                                "tool": None,
+                                "command": None,
+                                "exit_code": code,
+                                "message": msg,
+                            })
+        except Exception as exc:
+            with self._lock:
+                record = self._runs.get(run_id)
+                if record:
+                    record["status"] = "failed" if exit_known else "cancelling"
+                    record["cleanup_pending"] = not exit_known
+                    record["process_exit_confirmed"] = exit_known
+                    if exit_known:
+                        record["finished_at"] = time.time()
+                    if isinstance(exc, OwnedCleanupUnconfirmed):
+                        record.update(root_exit_confirmed=True, exit_code=exc.root_returncode,
+                                      cleanup_error='tree_discovery_incomplete')
+                        msg = "Ana süreç durdu; alt süreçlerin kapanışı doğrulanamadı."
+                        record["errors"].append(msg)
+                        seq = self._next_oracle_seq(record)
+                        record.setdefault("error_events", []).append({
+                            "seq": seq,
+                            "source": "process",
+                            "kind": "cleanup_unconfirmed",
+                            "tool": None,
+                            "command": None,
+                            "exit_code": exc.root_returncode,
+                            "message": msg,
+                        })
+                    else:
+                        msg = "Process watcher failed; inspect cleanup status"
+                        record["errors"].append(msg)
+                        seq = self._next_oracle_seq(record)
+                        record.setdefault("error_events", []).append({
+                            "seq": seq,
+                            "source": "process",
+                            "kind": "watcher_error",
+                            "tool": None,
+                            "command": None,
+                            "exit_code": None,
+                            "message": msg,
+                        })
+        finally:
+            with self._lock:
+                if exit_known:
+                    close_process_job(process)
+                    self._processes.pop(run_id, None)
+                    if self._writers.get(project_key) == run_id:
+                        self._writers.pop(project_key, None)

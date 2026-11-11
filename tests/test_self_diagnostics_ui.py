@@ -79,7 +79,7 @@ class SelfDiagnosticsBridgeTests(unittest.TestCase):
         self.assertIn("body.low-spec .diagnostics-card", css)
         self.assertIn("body.ui-idle .diagnostics-card", css)
         self.assertIn('id="btnSelfDiagnostics"', gui._HTML)
-        self.assertIn('alt="Quartz Q"', gui._HTML)
+        self.assertIn('aria-label="Quartz"', gui._HTML)
 
 
 class SelfDiagnosticsJavaScriptTests(unittest.TestCase):

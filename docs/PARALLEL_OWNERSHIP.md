@@ -1,5 +1,62 @@
 # Quartz paralel görev ve dosya sahipliği
 
+## AKTİF — 9 Kasım üçlü çalışma (Codex + Gemini + Claude)
+
+Kullanıcı kararı (9 Kasım 2026 akşamı): Codex döndü; Quartz'ı üç ajan paralel geliştirir. Hedef ve iş bölümü:
+[THREE_AGENT_WEEK_PLAN_20261109.md](THREE_AGENT_WEEK_PLAN_20261109.md).
+
+- 6 Kasım geçici devri **bitti**: Codex dosyaları, `main` birleştirme ve kullanıcı onaylı kurulum yeniden Codex'te.
+- Codex, Claude'un `0fb2b2e` sonrası üç birleşimini (`826f846`, `095e71c`, `cb962b7`) geriye dönük inceler; öncelik `cb962b7`.
+- Hiçbir ajan kendi üretim kodunu kendisi kabul etmez; her üretim dalı diğer ikisinden birinin incelemesinden sonra birleşir.
+- Gerçek masaüstünde aynı anda tek operatör (varsayılan Claude). GitHub gönderimi yalnız kullanıcı onayıyla.
+
+## TARİHSEL — 6 Kasım geçici devir: Codex'in işleri Claude'da (9 Kasım'da bitti)
+
+Kullanıcı kararı (6 Kasım 2026): Codex yaklaşık üç gün yok; bu sürede Codex'in bütün görevleri ve dosya sahipliği
+Claude'dadır. Buna `main`'e birleştirme ve kullanıcı onaylı paket kurulumu dahildir.
+
+- **Bağımsız inceleme Gemini'de.** Claude kendi yazdığı kodu kendisi kabul etmez: Claude'un üretim değişiklikleri
+  Gemini incelemeden `main`'e alınmaz. Yalnız belge değişiklikleri ve daha önce bağımsız incelenmiş dallar beklemeden alınabilir.
+- Gemini'nin dalları Claude incelemesinden sonra Claude tarafından birleştirilir.
+- Codex döndüğünde devir biter; Codex bu süredeki Codex alanı değişikliklerini geriye dönük inceler.
+- Diğer kurallar (ayrı worktree, tek operatör, tek yazıcı, GitHub'a gönderim yok) aynen geçerlidir.
+- 6–7 Kasım'da kullanıcının açık sözlü yetkisiyle bazı Claude değişiklikleri öz incelemeyle alındı; liste ve
+  geriye dönük inceleme kuyruğu: [CLAUDE_HANDOVER_TO_CODEX_20261107.md](CLAUDE_HANDOVER_TO_CODEX_20261107.md).
+
+## AKTİF — 5 Kasım Dalga 0
+
+- Kullanıcının güncel görevi: Codex bağımsız continuity/UI incelemesi, kabul
+  betiği sınıflandırması ve Görev Sınavı koşucusu; Claude görev listesini yazar.
+- Masaüstü broker/native sahibi kullanıcı plan kararıyla Claude; Codex inceler.
+  Tarihsel R1 renewal-owner bulgusu 1a18556 ile düzeltildi ve Codex tarafından
+  SOURCE/TESTED kabul edildi; güncel karar `CODEX_WAVE0_CLOSE_WAVE1_REVIEW_20261105.md`.
+- Gemini gerçek CLI timeout doğrulaması ve kendi ayrı işleri üzerinde çalışır;
+  gerçek masaüstünde aynı anda yalnız bir operatör. Bu Codex dilimi desktop/account
+  betiği, paket dağıtımı veya uygulama açılışı yapmaz.
+- Güncel teknik taban `main` 1a18556; kurulu paketin bildirilen kaynak SHA'sıyla
+  aynı. Eski 643b51f ret kanıtı korunur, düzeltme onu geçersiz test sonucu yapmaz.
+  Koşucu yeni main tabanındaki Codex dalında. Uzun gerçek görev ve G1–G8 canlı
+  skor kartı kaynak birleştirmesiyle tamamlanmış sayılmaz.
+- Koşucu/katalog/ilgili test ve repo belgeleri bu kullanıcı atamasıyla Codex'te;
+  eski aşağıdaki sahiplik kayıtları tarihsel kapsamlarıyla korunur.
+
+## AKTİF — 1 Kasım sistem piramidi
+
+Güncel sözleşme: [architecture/PYRAMID.md](architecture/PYRAMID.md) ve
+[architecture/TEAM.md](architecture/TEAM.md). Aşağıdaki Notion ve Kimi
+görevleri tarihsel kayıttır; Notion araç ajanı durduruldu, yeni geliştirme
+yetkisi oluşturmaz. Üçlü aktif ekip Codex, Antigravity ve Claude'dur.
+Çalışan baseline e2ce872; mimari hazırlık dalı
+codex/architecture-pyramid-20261101. Bu belge dış ajan başlatmaz.
+
+## Güncel dar kapsam — 1 Kasım Notion araç entegrasyonu
+
+Kullanıcı, Codex + Gemini 3.8 Flash + Claude 5.5 Opus arasında yeni görev bölümü
+istedi. Bu görevdeki aktif sahiplik, baseline ve kabul kapıları
+[Notion araç entegrasyonu planında](notion-tools/PLAN.md) tanımlıdır.
+Bu dar kapsamda yeni tablo aşağıdaki tarihsel görev dağılımından önce gelir;
+diğer alanların sahipliği değişmez. Bu belge dış ajan oturumu başlatmaz.
+
 Karar: 31 Ekim 2026. Başlangıç kaynak referansı: `cba9972`.
 Bu dosyayı ekleyen koordinasyon commit'i ortak başlangıç baseline'ıdır.
 `git log --all -- CLAUDE.md docs/PARALLEL_OWNERSHIP.md` ile bulunabilir.
@@ -15,6 +72,19 @@ Model adları kullanıcının görevlendirmesidir; bu belge dış ajan oturumu b
 ve sağlayıcıdaki model erişimini doğrulamaz.
 
 ## Codex sahipliği
+
+1 Kasım modern arayüz teslimi sonrası entegrasyon: kullanıcının ve Claude'un
+integration request'i doğrultusunda `gui.py`, `main.py`, `core/notion_*.py`,
+ilgili frontend/Notion testleri ve paket spec'i Codex tarafından birleştirilir.
+Claude'un tema/animasyon tasarımı korunur. Antigravity performans dalı bu
+entegrasyona dahil değildir; mevcut inceleme bulguları ayrı kalır.
+
+1 Kasım entegrasyon kapsamı: yeni `core/notion_*.py`,
+`scripts/notion_agent.py`, `tests/test_notion_*.py` ve
+`docs/CODEX_NOTION_*.md` Codex'e aittir. Mevcut Codex sahipliğindeki
+sohbet/servis dosyalarına isteğe bağlı Notion adaptörü eklenebilir.
+`gui.py` ve kurulum ekranı değişiklikleri bu kapsamda değildir;
+frontend sahibine integration request ile devredilir.
 
 - `core/agent_chat.py`, `core/multi_agent_service.py`, `core/natural_desktop.py`
 - `core/run_evidence_store.py`, `core/writer_journal.py`, `core/workspace_checkpoint.py`

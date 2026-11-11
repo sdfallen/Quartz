@@ -3,6 +3,7 @@ import ast
 import copy
 import sys
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -25,6 +26,29 @@ def controller_functions(mouse, clipboard):
 
 
 class JarvisRegressionTests(unittest.TestCase):
+    def test_slow_composite_does_not_hold_stop_or_publish_a_manual_card_mid_effect(self):
+        entered=threading.Event(); release=threading.Event(); errors=[]
+        def slow(_): entered.set(); release.wait(2); return 'old controller result'
+        self.adv.smart_open=slow
+        def invoke():
+            try:self.task.call('token-op',{'name':'jarvis_open_app','arguments':{'target':'notepad'}})
+            except Exception as exc:errors.append(exc)
+        worker=threading.Thread(target=invoke);worker.start()
+        self.addCleanup(lambda:(release.set(),worker.join(3)))
+        self.assertTrue(entered.wait(1))
+        self.task.job['requested_permission_level'] = 'project'
+        with self.assertRaisesRegex(RuntimeError, 'Henüz kart açılmadı'):
+            self.task.call('token-op', {'name':'desktop_request_access',
+                'arguments':{'handles':[1], 'reason':'Yeni kapsam için insan onayı'}})
+        self.assertIsNone(self.task.pending)
+        # Stop must return before releasing an arbitrarily blocked controller.
+        stopped=threading.Event()
+        stopper=threading.Thread(target=lambda:(self.task.stop('cancelled'),stopped.set()))
+        stopper.start()
+        self.assertTrue(stopped.wait(1),'Stop blocked on a long controller call')
+        release.set();worker.join(2);stopper.join(2)
+        self.assertTrue(self.task.stopped.is_set());self.assertFalse(self.fixture.broker.status()['active'])
+
     def setUp(self):
         self.fixture=lifecycle.NaturalTaskLifecycleReliabilityTests('test_stop_idempotency')
         self.fixture.setUp();self.fixture._setup_active_approved_task()
@@ -39,6 +63,55 @@ class JarvisRegressionTests(unittest.TestCase):
 
     def call(self,action,**args):
         return self.task.call('token-op',{'name':'jarvis_input','arguments':{'action':action,**args}})
+
+    def test_open_app_waits_for_a_late_window_and_says_when_none_came(self):
+        # Live exam 8 Nov: Calculator's window appeared after the old 0.4 s snapshot.
+        self.adv.smart_open=lambda target:'Attempted to open: calc'
+        old=dict(self.backend.target); late={**old,'handle':77,'title':'Hesap Makinesi'}
+        answers=[[old],[old],[old],[old,late]]
+        with patch.object(self.task.desktop,'windows',side_effect=lambda:answers.pop(0) if len(answers)>1 else answers[0]), \
+             patch('core.natural_desktop.OPEN_WINDOW_WAIT',5):
+            result=self.task.call('token-op',{'name':'jarvis_open_app','arguments':{'target':'calc'}})
+        self.assertEqual([w['handle'] for w in result['new_windows']],[77])
+        with patch.object(self.task.desktop,'windows',return_value=[old]), patch('core.natural_desktop.OPEN_WINDOW_WAIT',0.5):
+            result=self.task.call('token-op',{'name':'jarvis_open_app','arguments':{'target':'calc'}})
+        self.assertEqual(result['new_windows'],[]); self.assertIn('No new window',result['note'])
+
+    def test_open_app_keeps_waiting_while_the_window_list_cannot_be_read(self):
+        # Gemini review 8 Nov: with no before-list the wait ended after one 0.4 s sleep.
+        self.adv.smart_open=lambda target:'Attempted to open: calc'
+        late={**dict(self.backend.target),'handle':77,'title':'Hesap Makinesi'}
+        answers=[RuntimeError('busy'),RuntimeError('busy'),RuntimeError('busy'),[late]]
+        def windows():
+            answer=answers.pop(0) if len(answers)>1 else answers[0]
+            if isinstance(answer,Exception): raise answer
+            return answer
+        with patch.object(self.task.desktop,'windows',side_effect=windows), patch('core.natural_desktop.OPEN_WINDOW_WAIT',5):
+            result=self.task.call('token-op',{'name':'jarvis_open_app','arguments':{'target':'calc'}})
+        self.assertEqual([w['handle'] for w in result['open_windows']],[77])
+
+    def test_open_app_returns_within_bounded_wait_and_tracks_late_window_in_background(self):
+        # Step 2.3 (exam-desk-03): jarvis_open_app must not block near the 25 s socket
+        # timeout; if no window appears within OPEN_WINDOW_WAIT, it returns immediately
+        # and wakes task_wait when the window arrives in the background.
+        from core.natural_desktop import OPEN_WINDOW_WAIT
+        self.assertLessEqual(OPEN_WINDOW_WAIT, 2.5)
+        self.adv.smart_open=lambda target:'Opened calculator'
+        old=dict(self.backend.target); late={**old,'handle':88,'title':'Hesap Makinesi'}
+        state={'windows':[old]}
+        with patch.object(self.task.desktop,'windows',side_effect=lambda:list(state['windows'])), \
+             patch('core.natural_desktop.OPEN_WINDOW_WAIT',0.2):
+            t0=time.monotonic()
+            result=self.task.call('token-op',{'name':'jarvis_open_app','arguments':{'target':'calculator'}})
+            elapsed=time.monotonic()-t0
+            self.assertLess(elapsed, 1.0)
+            self.assertEqual(result['new_windows'],[])
+            self.assertIn('task_context',result['note'])
+            state['windows']=[old,late]
+            deadline=time.monotonic()+2.0
+            while time.monotonic()<deadline and not self.task.job.get('late_opened_windows'):
+                time.sleep(0.05)
+            self.assertEqual([w['handle'] for w in self.task.job.get('late_opened_windows',[])],[88])
 
     def test_missing_or_ambiguous_target_never_clicks_or_focuses(self):
         with self.assertRaises(ValueError):self.call('click',target_window='ABSENT',x=5,y=5)

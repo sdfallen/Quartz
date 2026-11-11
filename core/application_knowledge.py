@@ -10,6 +10,8 @@ import time
 
 from core.atomic_json import atomic_write_json
 from core.artifact_diagnostics import selected_executable, ArtifactDiagnosticsService
+from core.investigation.contracts import InvestigationError, Target
+from core.investigation.memory import InvestigationMemory
 from core.path_identity import canonical_key
 
 
@@ -235,13 +237,37 @@ class ApplicationKnowledge:
 
 class ApplicationLearning:
     """One bounded worker; does not block the task/permission/UI locks."""
-    def __init__(self, root=None):
+    def __init__(self, root=None, *, investigation_root=None):
         self.store = ApplicationKnowledge(root)
+        # Where ArtifactDiagnosticsService persisted this target's investigation
+        # knowledge. Defaults to the sibling convention it uses so a cache hit
+        # can still surface context; if the directory is absent, retrieval is a
+        # no-op and behaviour is unchanged.
+        self.investigation_root = Path(investigation_root) if investigation_root else self.store.root.parent / 'investigations'
         self.lock = threading.RLock()
         self.jobs = {}
         self.ops = {}
         self.cancel = threading.Event()
         self.worker_lock = threading.Lock()
+
+    def _cached_investigation_context(self, path):
+        """Bounded, path-free investigation context for an already-known target.
+
+        On the legacy cache-hit path the diagnostics service is not re-run, so
+        the fresh report that normally carries context does not exist. Read the
+        most recent persisted investigation context for this exact file instead,
+        so prior evidence reaches the next task without a new CLI run. Any
+        failure yields None — context is best-effort, never load-bearing, and
+        never a grant or task restore."""
+        try:
+            if not Path(self.investigation_root).is_dir():
+                return None
+            deadline = time.monotonic() + 15
+            target = Target.capture(path, self.cancel, deadline)
+            context = InvestigationMemory(self.investigation_root).context_for_target(target, self.cancel, deadline)
+            return context or None
+        except (OSError, ValueError, InvestigationError, KeyError, TypeError):
+            return None
 
     def start(self, value):
         path = selected_executable(value)
@@ -331,7 +357,9 @@ class ApplicationLearning:
                     return
                 if cached is None:
                     # The learner persists once below; avoid a duplicate save/hash.
-                    service = ArtifactDiagnosticsService(path, knowledge=False)
+                    service = ArtifactDiagnosticsService(path, knowledge=False,
+                        reports=self.store.root.parent / 'diagnostics',
+                        investigation_root=self.investigation_root)
                     job = service.start()
                     while service.status(job['id'])['state'] == 'running':
                         if self.cancel.wait(.2):
@@ -347,8 +375,20 @@ class ApplicationLearning:
                         cached = self.store.record_operation(path, **pending_ops)
                     except (OSError, ValueError):
                         pass
+                if service is not None:
+                    # Fresh run: context comes from this run's host report.
+                    report = service.status(job['id'])
+                    context = (report.get('investigation') or {}).get('context')
+                else:
+                    # Cache hit: the service never ran, so recover the persisted
+                    # bounded context instead of silently dropping it.
+                    context = self._cached_investigation_context(path)
                 with self.lock:
                     self.jobs[key] = {'state': 'completed', 'knowledge': cached}
+                    # Only host-produced, path-free evidence context; never a
+                    # grant, task replay or arbitrary text from the executable.
+                    if context:
+                        self.jobs[key]['investigation'] = context
         except Exception as exc:
             with self.lock:
                 self.jobs[key] = {'state': 'unavailable', 'reason': type(exc).__name__, 'knowledge': None}

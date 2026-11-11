@@ -8,6 +8,8 @@ import uuid
 import os
 import re
 import tempfile
+import copy
+from pathlib import Path
 
 from core.antigravity_runtime import AntigravityRuntime
 from core.codex_runtime import CodexRuntime
@@ -16,8 +18,20 @@ from core.squad_adapter import SquadAdapter
 from core.workspace_checkpoint import create_checkpoint, snapshot_workspace_files, changed_workspace_files
 from core.source_verification import verify_changed_python
 from core.run_evidence_store import RunEvidenceStore
+from core.task_outcome import execution_outcome
+from core.task_oracle import TaskOracle
 from core.writer_journal import WriterJournal
 from core.path_identity import canonical_key
+
+
+class WriterDispatchError(RuntimeError):
+    """A start was attempted; preserve ownership even if dispatch cannot return."""
+    def __init__(self, provider, claim_id, run_id=None):
+        super().__init__("Writer dispatch failed after start was attempted; cleanup/recovery must be verified.")
+        self.provider = provider
+        self.claim_id = claim_id
+        self.run_id = run_id
+        self.unresolved_start = run_id is None
 
 
 class MultiAgentService:
@@ -41,6 +55,9 @@ class MultiAgentService:
         self.codex = CodexRuntime(codex_executable)
         self.antigravity = None
         self._antigravity_error = ""
+        # Optional provider: construct lazily; never probe/login on app startup.
+        self._notion = None
+        self._notion_tools = None
         try:
             from core.gemini_runtime import google_runtime
             self.antigravity = google_runtime(antigravity_executable, legacy_factory=AntigravityRuntime)
@@ -52,6 +69,8 @@ class MultiAgentService:
         self._probe_cache = (0.0, None)
         self._antigravity_probe_cache = (0.0, None)
         self._squad_conn_cache: dict[str, tuple[float, dict]] = {}
+        self._squad_snapshot_cache = {}
+        self._squad_snapshot_lock = threading.RLock()
         self._collaborations = {}
         self._writers: dict[str, dict] = {}
         self._writer_threads = {}
@@ -63,6 +82,35 @@ class MultiAgentService:
             journal_store = Path(project_store).parent / '.quartz' / 'writer_claims.json'
         self._writer_journal = WriterJournal(journal_store)
         self._text_workspaces = {}
+        self._goal_oracle = TaskOracle()
+
+    def register_goal_oracle(self, run_id, checks):
+        """Trusted host adapter only; intentionally absent from GUI/MCP tools.
+
+        Must be installed while the owned run is still running, not retrofitted
+        from a provider's final message. Free-form goals have no implicit oracle.
+        """
+        with self._lock: link = dict(self._links.get(run_id, {}))
+        if not link.get('task_id') or not link.get('project_id'):
+            raise PermissionError('Owned project task required')
+        runtime = self.antigravity if link.get('provider') == 'antigravity' else self.codex
+        if runtime.get(run_id).get('status') != 'running':
+            raise PermissionError('Declare the goal before execution completes')
+        self._goal_oracle.register(link['task_id'], run_id, self.projects.resolve(link['project_id']), checks)
+
+    def goal_evaluation(self, run_id):
+        with self._lock: link = dict(self._links.get(run_id, {}))
+        if not link.get('task_id'): return None
+        runtime = self.antigravity if link.get('provider') == 'antigravity' else self.codex
+        if runtime is None or runtime.get(run_id).get('status') != 'completed': return None
+        return self._goal_oracle.evaluate(link['task_id'], run_id)
+
+    def _project_goal_outcome(self, run, evidence):
+        run = self._with_file_evidence(run, evidence)
+        evaluation = self.goal_evaluation(run.get('id'))
+        run['outcome'] = execution_outcome(run.get('status', 'unknown'),
+            source_validation=evidence.get('source_validation'), goal_evaluation=evaluation)
+        return run
 
     def _start_writer(self, provider: str, project: dict, start, *args, **kwargs) -> dict:
         from pathlib import Path
@@ -99,11 +147,23 @@ class MultiAgentService:
             with self._lock: self._writer_threads[run['id']] = worker
             worker.start()
             return run
-        except Exception:
+        except Exception as exc:
             # A start call may have spawned a process before raising. Durable
             # uncertainty must survive; never remove it just to allow a retry.
             if 'claim' in locals() and not starting:
                 self._writer_journal.finish(claim)
+            if starting:
+                rid = run.get('id') if isinstance(locals().get('run'), dict) else None
+                with self._lock:
+                    self._writers[key].update(owner=rid, pending=True, dispatch_failed=True)
+                    if rid:
+                        self._links[rid] = {"provider":provider, "project_id":project["id"],
+                                            "journal_claim":claim, "dispatch_failed":True}
+                if rid:
+                    runtime = self.codex if provider == "codex" else self.antigravity
+                    try: runtime.cancel(rid)
+                    except Exception: pass  # Ownership is retained; caller must confirm exit.
+                raise WriterDispatchError(provider, claim, rid) from exc
             with self._lock:
                 self._writers.pop(key, None)
             raise
@@ -114,12 +174,14 @@ class MultiAgentService:
             while runtime.get(run_id)["status"] not in runtime.TERMINAL:
                 time.sleep(0.15)
             terminal_observed = True
+            from core.runtime_evidence import runtime_evidence
+            observed_runtime = runtime_evidence(runtime.get(run_id))
             after = snapshot_workspace_files(project_path)
             changed, warning = changed_workspace_files(project_path, before, after)
             validation = verify_changed_python(project_path, changed, warning=warning)
             with self._lock:
                 receipt = {"files_changed": changed, "evidence_warning": warning,
-                    "source_validation": validation}
+                    "source_validation": validation, **observed_runtime}
                 self._file_changes[run_id] = receipt
             try:
                 self._evidence_store.put(run_id, receipt)
@@ -217,13 +279,7 @@ class MultiAgentService:
             agents, tasks, history = [], [], []
             error = squad_status.get("error", "")
         else:
-            squad_status = squad.status()
-            try:
-                agents = squad.agents(include_archived=False)
-                tasks = squad.tasks()
-                history = squad.history()[-30:]
-            except Exception as exc:
-                agents, tasks, history, error = [], [], [], str(exc)
+            squad_status, agents, tasks, history, error = self._squad_snapshot(project, squad)
         return {
             "projects": self.projects.list(), "project": project,
             "squad": squad_status, "codex": codex_status,
@@ -240,15 +296,103 @@ class MultiAgentService:
             },
         }
 
+    @staticmethod
+    def _squad_signature(project):
+        """SQLite WAL writes need not change messages.db's mtime. No DB reads."""
+        root = Path(project['path']) / '.squad'
+        try:
+            if not (root / 'messages.db').is_file(): return None
+            values = []
+            for name in ('messages.db', 'messages.db-wal'):
+                path = root / name
+                try:
+                    st = path.stat()
+                    values.append((name, st.st_ino, st.st_size, st.st_mtime_ns))
+                except FileNotFoundError:
+                    values.append((name, None))
+            return tuple(values)
+        except OSError:
+            return None
+
+    def _squad_snapshot(self, project, squad):
+        # UI display cache only. Dispatch, permission, writer and connection
+        # decisions still read their authoritative stores, never this snapshot.
+        key = canonical_key(project['path'])
+        with self._lock:
+            active = any(link.get('project_id') == project['id'] and not link.get('reported', False)
+                         for link in self._links.values()) or any(
+                item.get('project_id') == project['id'] and item.get('status') not in
+                {'completed', 'failed', 'cancelled'} for item in self._collaborations.values())
+        with self._squad_snapshot_lock:
+            signature = self._squad_signature(project)
+            now = time.monotonic()
+            cached = self._squad_snapshot_cache.get(key)
+            if not active and signature is not None and cached and cached[1] == signature and now-cached[0] < 300:
+                return copy.deepcopy(cached[2])
+            # A project without a Squad workspace has nothing to change in the
+            # background: reuse its 'not initialized' view until Squad appears.
+            uninitialized = not active and signature is None and squad.initialized is False
+            empty_key = ('uninitialized', key)
+            empty = self._squad_snapshot_cache.get(empty_key)
+            if uninitialized and empty and now-empty[0] < 300:
+                return copy.deepcopy(empty[1])
+            self._squad_snapshot_cache.pop(empty_key, None)
+            # Never reuse an old snapshot after an active job, failed query or
+            # concurrent external write; completion times anchor the TTL.
+            self._squad_snapshot_cache.pop(key, None)
+            squad_status = squad.status()
+            try:
+                agents = squad.agents(include_archived=False)
+                tasks = squad.tasks()
+                history = squad.history()[-30:]
+                error = ''
+            except Exception as exc:
+                agents, tasks, history, error = [], [], [], str(exc)
+            result = (squad_status, agents, tasks, history, error)
+            after = self._squad_signature(project)
+            if not active and signature is not None and signature == after and not error and not squad_status.get('error'):
+                self._squad_snapshot_cache[key] = (time.monotonic(), after, copy.deepcopy(result))
+            elif (uninitialized and after is None and squad.initialized is False
+                  and squad_status.get('installed') and not squad_status.get('error')):
+                self._squad_snapshot_cache[empty_key] = (time.monotonic(), copy.deepcopy(result))
+            return result
+
     def dispatch(self, provider, prompt, **kwargs) -> dict:
         provider = str(provider or "codex").strip().lower()
         if provider == "codex":
             return self.dispatch_codex(prompt, **kwargs)
         if provider in {"antigravity", "agy"}:
             return self.dispatch_antigravity(prompt, **kwargs)
+        if provider == "notion":
+            return self.dispatch_notion(prompt, session_id=kwargs.get("session_id"))
         if provider in {"collaboration", "both", "codex-antigravity"}:
             return self.dispatch_collaboration(prompt, **kwargs)
         raise ValueError(f"Unknown agent provider: {provider}")
+
+    @property
+    def notion(self):
+        with self._lock:
+            if self._notion is None:
+                from core.notion_runtime import NotionRuntime
+                self._notion = NotionRuntime()
+            return self._notion
+
+    @property
+    def notion_tools(self):
+        # Main-chat driver for the verified read-only Worker fixture only.
+        with self._lock:
+            if self._notion_tools is None:
+                from core.notion_worker_task import NotionWorkerTasks
+                self._notion_tools = NotionWorkerTasks(self.notion)
+            return self._notion_tools
+
+    def dispatch_notion(self, prompt, *, session_id=None):
+        # Cloud-only: no project paths, file contents, desktop tools or writer
+        # claims are implicitly forwarded to the remote Custom Agent.
+        run = self.notion.start(str(prompt), session_id=session_id)
+        with self._lock:
+            self._links[run["id"]] = {"provider": "notion"}
+        return {"run": run}
 
     def check_squad_connection(self, project_id=None, *, force: bool = False) -> dict:
         try:
@@ -258,11 +402,29 @@ class MultiAgentService:
             with self._lock:
                 cached = self._squad_conn_cache.get(pid)
                 if not force and cached is not None and (now - cached[0]) < 30.0:
-                    return dict(cached[1])
+                    if cached[1].get("connected") is True:
+                        db_path = Path(project["path"]) / ".squad" / "messages.db"
+                        try:
+                            db_exists = db_path.is_file()
+                        except OSError:
+                            db_exists = False
+                        if db_exists:
+                            return dict(cached[1])
+                        self._squad_conn_cache.pop(pid, None)
+                    else:
+                        return dict(cached[1])
             squad = self._squad(pid)
             if project.get("workflow") == "warband":
                 return {**self._task_squad_status(squad), "connected": False}
             st = squad.status()
+            # S4 (integration request 10 Nov): a reset fixture or a positively corrupt DB is
+            # repaired on these write paths (add/dispatch/send); status() itself stays read-only.
+            if st.get("installed") and not st.get("initialized"):
+                try:
+                    squad.initialize()
+                    st = squad.status()
+                except Exception as exc:
+                    st = {**st, "error": str(exc)}
             if not st.get("initialized") or not st.get("installed"):
                 res = {
                     "connected": False,
@@ -624,17 +786,27 @@ class MultiAgentService:
 
     def get_run(self, run_id: str) -> dict:
         with self._lock:
-            provider = self._links.get(run_id, {}).get("provider")
+            link = dict(self._links.get(run_id, {}))
+            provider = link.get("provider")
             evidence = dict(self._file_changes.get(run_id, {}))
+        if provider == "notion":
+            return self.notion.get(run_id)
+
+        # The pre-write checkpoint lives on the link, not on the runtime record. Live gate 3
+        # (11 Nov): without it the repair diff scan always reported "unknown".
+        def with_checkpoint(run):
+            if link.get("checkpoint") is not None and run.get("checkpoint") is None:
+                run["checkpoint"] = link["checkpoint"]
+            return run
         if provider == "antigravity" and self.antigravity:
             run = self.antigravity.get(run_id)
-            return self._with_file_evidence(run, evidence)
+            return with_checkpoint(self._project_goal_outcome(run, evidence))
         if self.codex:
             try:
-                return self._with_file_evidence(self.codex.get(run_id), evidence)
+                return with_checkpoint(self._project_goal_outcome(self.codex.get(run_id), evidence))
             except KeyError:
                 if self.antigravity:
-                    return self._with_file_evidence(self.antigravity.get(run_id), evidence)
+                    return with_checkpoint(self._project_goal_outcome(self.antigravity.get(run_id), evidence))
                 raise
 
     @staticmethod
@@ -644,7 +816,48 @@ class MultiAgentService:
                                           set(evidence.get("files_changed", [])))
             run["evidence_warning"] = evidence.get("evidence_warning", "")
             run["source_validation"] = evidence.get("source_validation", {})
+        run['outcome'] = execution_outcome(run.get('status','unknown'),
+            source_validation=evidence.get('source_validation'))
         return run
+
+    def observed_writer_changes(self, run_id):
+        """Read host filesystem evidence without merging agent-reported paths."""
+        with self._lock:
+            evidence = self._file_changes.get(run_id) or {}
+            if evidence.get('evidence_warning') or evidence.get('unauthorized_write_detected'):
+                return ()
+            return tuple(evidence.get('files_changed', ()))
+
+    def pending_writer_runs(self, run_ids):
+        """Passive ownership readback, not a permission/claim release operation."""
+        requested = set(run_ids)
+        with self._lock:
+            pending = {item.get("owner") for item in self._writers.values()
+                       if item.get("owner") in requested}
+            pending.update(rid for rid in self._writer_threads if rid in requested)
+            claims_by_run = {rid:self._links.get(rid, {}).get("journal_claim") for rid in requested}
+        # A watcher can finish while durable release failed. A missing thread
+        # is not permission to ignore the remaining recovery claim.
+        recovery = self._writer_journal.recovery_status()
+        if recovery.get("error"):
+            raise RuntimeError("Writer recovery readback is unavailable")
+        pending.update(item["run_id"] for item in recovery.get("claims", [])
+                       if item.get("run_id") in requested)
+        pending.update(rid for rid, claim_id in claims_by_run.items() if claim_id and
+                       any(item.get("id") == claim_id for item in recovery.get("claims", [])))
+        return sorted(pending)
+
+    def record_repair_result(self, run_id, result):
+        """Host-only terminal evidence; never grants another writer claim."""
+        from copy import deepcopy
+        if self.pending_writer_runs([run_id]) or self.get_run(run_id).get('process_exit_confirmed') is not True:
+            raise RuntimeError('Repair receipt requires confirmed writer exit')
+        with self._lock:
+            if run_id not in self._links:
+                raise KeyError('Unknown repair run')
+            receipt = {**self.run_evidence(run_id), 'repair_cycle': deepcopy(result)}
+            self._evidence_store.put(run_id, receipt)
+            self._file_changes[run_id] = receipt
 
     def run_evidence(self, run_id):
         """Read-only receipt; no runtime probe, command or implicit retest."""
@@ -688,14 +901,18 @@ class MultiAgentService:
                 self._links[run_id]["coordination_status"] = "cancelling"
         with self._lock:
             provider = self._links.get(run_id, {}).get("provider", "codex")
-        runtime = self.antigravity if provider == "antigravity" else self.codex
+        runtime = self.notion if provider == "notion" else self.antigravity if provider == "antigravity" else self.codex
         if runtime is None:
             raise RuntimeError("Runtime is unavailable")
         return runtime.cancel(run_id)
 
     def shutdown(self):
         errors = []
-        for runtime in (self.codex, self.antigravity):
+        tools = getattr(self, '_notion_tools', None)
+        if tools is not None:
+            try: tools.stop_all()   # local revocation before cloud runtimes stop
+            except Exception as exc: errors.append(str(exc))
+        for runtime in (self.codex, self.antigravity, getattr(self, '_notion', None)):
             if runtime is not None:
                 try: runtime.shutdown()
                 except Exception as exc: errors.append(str(exc))
@@ -740,7 +957,10 @@ class MultiAgentService:
         squad = self._squad(link["project_id"])
         try:
             if run["status"] == "completed":
-                summary = run["result"].strip() or "Codex task completed"
+                # Squad's task lifecycle completion is not goal acceptance.
+                projected = self._project_goal_outcome(run, self.run_evidence(run_id))
+                summary = ('Execution completed; goal: ' + projected['outcome']['goal_verdict']
+                           + '\nUntrusted agent report:\n' + str(run.get('result') or '').strip())
                 squad.complete_task(link["agent_id"], link["task_id"], summary[:50_000])
                 report_status = "completed"
             else:
@@ -760,12 +980,14 @@ class MultiAgentService:
             runs.append(run)
         if self.antigravity is not None:
             runs.extend(self.antigravity.list())
+        if self._notion is not None:
+            runs.extend(self._notion.list())
         runs.sort(key=lambda item: item.get("started_at", 0), reverse=True)
         with self._lock:
             links = {key: dict(value) for key, value in self._links.items()}
             evidence = {key: dict(value) for key, value in self._file_changes.items()}
         for run in runs:
-            self._with_file_evidence(run, evidence.get(run["id"], {}))
+            self._project_goal_outcome(run, evidence.get(run["id"], {}))
             link = links.get(run["id"], {})
             run["coordination_status"] = link.get("coordination_status", "not_linked")
             run["coordination_error"] = link.get("coordination_error", "")
@@ -777,7 +999,7 @@ class MultiAgentService:
         with self._lock:
             writer = self._writers.get(project_key)
             if writer:
-                return {"locked": True, **writer}
+                return {"locked": True, **writer, "recovery_required":bool(writer.get("dispatch_failed"))}
         recovery = self.writer_recovery_status()
         for claim in recovery['claims']:
             if self._writer_journal.conflicts(project_key, False, claim):
@@ -790,7 +1012,7 @@ class MultiAgentService:
         if refresh: self._writer_journal.refresh()
         raw = self._writer_journal.recovery_status()
         with self._lock:
-            managed = {w.get('journal_claim') for w in self._writers.values()}
+            managed = {w.get('journal_claim') for w in self._writers.values() if not w.get('dispatch_failed')}
         raw['claims'] = [c for c in raw['claims'] if c['id'] not in managed]
         raw['blocked'] = bool(raw['claims'] or raw.get('error'))
         return raw

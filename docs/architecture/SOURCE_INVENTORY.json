@@ -1,0 +1,835 @@
+{
+  "baseline": "integration of ddb9dbd + 8802e06 + 54ea4e4, reviewed local source 2026-11-02",
+  "scope": "core/*.py; static AST including lazy/conditional imports; not a runtime trace",
+  "modules": [
+    {
+      "file": "core/agent_chat.py",
+      "lines": 1963,
+      "classes": [
+        "AgentChatService"
+      ],
+      "static_core_imports": [
+        "core.async_snapshot",
+        "core.conversation_store",
+        "core.desktop_task_ui",
+        "core.message_intent",
+        "core.multi_agent_service",
+        "core.notion_worker_task",
+        "core.response_style"
+      ],
+      "archived_prototype": false,
+      "sha256": "477d565aec0e5bdeb579f504012b6e41563056e73ac9825ba2399e38de6c0b54"
+    },
+    {
+      "file": "core/antigravity_runtime.py",
+      "lines": 556,
+      "classes": [
+        "AntigravityRuntime"
+      ],
+      "static_core_imports": [
+        "core.cli_installer",
+        "core.desktop_agents",
+        "core.process_tree"
+      ],
+      "archived_prototype": false,
+      "sha256": "b96ba5e15d3c15bf493ad34fb903820e36b108394dbb88f6264c1854d51afc10"
+    },
+    {
+      "file": "core/application_knowledge.py",
+      "lines": 379,
+      "classes": [
+        "ApplicationKnowledge",
+        "ApplicationLearning"
+      ],
+      "static_core_imports": [
+        "core.artifact_diagnostics",
+        "core.atomic_json",
+        "core.path_identity"
+      ],
+      "archived_prototype": false,
+      "sha256": "3f86f0db0e023ee9aafa17136b4bb5afbe56f7f4630a9bd5b803e60c0f2c2f70"
+    },
+    {
+      "file": "core/application_services.py",
+      "lines": 349,
+      "classes": [
+        "ServicesClosed",
+        "ServiceFactories",
+        "ApplicationServices"
+      ],
+      "static_core_imports": [
+        "core.artifact_diagnostics",
+        "core.chat_coordination",
+        "core.cli_installer",
+        "core.desktop_agents",
+        "core.natural_desktop",
+        "core.onboarding",
+        "core.package_repair"
+      ],
+      "archived_prototype": false,
+      "sha256": "20345662bf9e28045cf1fd4e6b933a9c1322cd41c4fd69f4e59aab3b3abe8c25"
+    },
+    {
+      "file": "core/artifact_diagnostics.py",
+      "lines": 143,
+      "classes": [
+        "ArtifactDiagnosticsService"
+      ],
+      "static_core_imports": [
+        "core.application_knowledge",
+        "core.rea_adapter",
+        "core.self_diagnostics"
+      ],
+      "archived_prototype": false,
+      "sha256": "8b599e4296dfe56df5cd75a0a0a56a6bf010b6f8b3da1bb28efc16ee18c811bc"
+    },
+    {
+      "file": "core/async_snapshot.py",
+      "lines": 65,
+      "classes": [
+        "AsyncSnapshot"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "b5b0e17f968f2b2f146834f1f19336d867aa10f219363bfa96eef5a3165624a5"
+    },
+    {
+      "file": "core/atomic_json.py",
+      "lines": 56,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "10ce0d5303e36bdd31358bb452d4378dc40223af053b7c77d02536ec83f8faad"
+    },
+    {
+      "file": "core/branding.py",
+      "lines": 21,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "2cec4442898dc3a6c652eab73b3e202fb6efedcba7aea9cee24e08d9d9daf604"
+    },
+    {
+      "file": "core/chat_coordination.py",
+      "lines": 330,
+      "classes": [
+        "ApprovedLog",
+        "ChatCoordination"
+      ],
+      "static_core_imports": [
+        "core.antigravity_runtime",
+        "core.codex_runtime",
+        "core.desktop_agents",
+        "core.desktop_launch",
+        "core.gemini_runtime",
+        "core.multi_agent_service",
+        "core.response_style",
+        "core.squad_adapter",
+        "core.task_outcome"
+      ],
+      "archived_prototype": false,
+      "sha256": "027ad1bf08eb2633a066ff6a5e0dabc0d69c5a0c6bfbdf685f48e2a538158401"
+    },
+    {
+      "file": "core/cli_installer.py",
+      "lines": 287,
+      "classes": [
+        "CliInstaller"
+      ],
+      "static_core_imports": [
+        "core.atomic_json",
+        "core.install_security"
+      ],
+      "archived_prototype": false,
+      "sha256": "5f3c86fbaffa82408f94b45e4367883e5f8105577901485f6f0a1abbf0a1f706"
+    },
+    {
+      "file": "core/codex_runtime.py",
+      "lines": 573,
+      "classes": [
+        "CodexRuntime"
+      ],
+      "static_core_imports": [
+        "core.cli_installer",
+        "core.desktop_agents",
+        "core.process_tree"
+      ],
+      "archived_prototype": false,
+      "sha256": "75051bcc52e010a593c62d327aa7ee49106b7ad093735c47578667b62aeb11e8"
+    },
+    {
+      "file": "core/confirmation_manager.py",
+      "lines": 36,
+      "classes": [
+        "ConfirmationManager"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "33273975b51f8ba2acdd30d14f309572590fa4a5ab11afa86b6d64c58b15579f"
+    },
+    {
+      "file": "core/continuity_engine.py",
+      "lines": 221,
+      "classes": [
+        "ContinuityEngine"
+      ],
+      "static_core_imports": [
+        "core.atomic_json"
+      ],
+      "archived_prototype": false,
+      "sha256": "f71afe043066fba7e9561001ea9755b4d23cb6e8ffe955d4809b262cb424f7f8"
+    },
+    {
+      "file": "core/conversation_store.py",
+      "lines": 359,
+      "classes": [
+        "ConversationStore"
+      ],
+      "static_core_imports": [
+        "core.atomic_json"
+      ],
+      "archived_prototype": false,
+      "sha256": "7bac06976ff3f7eaf09391f52d35c557e98bd0bac640fc4bc1eefd7ad87375a2"
+    },
+    {
+      "file": "core/desktop_agents.py",
+      "lines": 215,
+      "classes": [
+        "DesktopAgentService"
+      ],
+      "static_core_imports": [
+        "core.antigravity_runtime",
+        "core.atomic_json",
+        "core.codex_runtime",
+        "core.desktop_broker",
+        "core.desktop_mcp",
+        "core.desktop_native",
+        "core.gemini_runtime",
+        "core.multi_agent_service",
+        "core.screen_overlay"
+      ],
+      "archived_prototype": false,
+      "sha256": "bf8b2ebc942090729b2cd40c270f92b9efa2cdfde9fca9fdaba765c687ae5109"
+    },
+    {
+      "file": "core/desktop_broker.py",
+      "lines": 322,
+      "classes": [
+        "DesktopBroker"
+      ],
+      "static_core_imports": [
+        "core.desktop_launch",
+        "core.low_spec_optimizer"
+      ],
+      "archived_prototype": false,
+      "sha256": "d450ff8a2bb119103b3d204688f4d72791058f95c113368c17b53a2a1a13b923"
+    },
+    {
+      "file": "core/desktop_control.py",
+      "lines": 217,
+      "classes": [
+        "DesktopController"
+      ],
+      "static_core_imports": [
+        "core.low_spec_optimizer"
+      ],
+      "archived_prototype": false,
+      "sha256": "8a94662d3122f611827601653f54fd21e97f97d4aa69ee58f926d55fa8233d3c"
+    },
+    {
+      "file": "core/desktop_launch.py",
+      "lines": 67,
+      "classes": [],
+      "static_core_imports": [
+        "core.desktop_native"
+      ],
+      "archived_prototype": false,
+      "sha256": "b3ea0665ed1b7b8f456fce604098ec174afa7619a228d3aeef51dad505b40bf3"
+    },
+    {
+      "file": "core/desktop_mcp.py",
+      "lines": 167,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "f94122ef4032be3a2100f17d6c33e23da86e338721976bc1be27ccdb057f3fc8"
+    },
+    {
+      "file": "core/desktop_native.py",
+      "lines": 452,
+      "classes": [
+        "NativeDesktopBackend"
+      ],
+      "static_core_imports": [
+        "core.desktop_control",
+        "core.elevation"
+      ],
+      "archived_prototype": false,
+      "sha256": "2d9446d2c645e7eac5e1d197d765d791400d25a66ab858ff2d4b28ccd2c9c6f6"
+    },
+    {
+      "file": "core/desktop_task_ui.py",
+      "lines": 84,
+      "classes": [],
+      "static_core_imports": [
+        "core.message_intent"
+      ],
+      "archived_prototype": false,
+      "sha256": "4ae5aa351dccab8f73fb581e397aecfec2fa1f9c325498ab83154aaa159ffb21"
+    },
+    {
+      "file": "core/diagnostics_intent.py",
+      "lines": 26,
+      "classes": [],
+      "static_core_imports": [
+        "core.message_intent"
+      ],
+      "archived_prototype": false,
+      "sha256": "1db5c6e5849685649946b13117c9f703305b428af8963e3801a701b480d05630"
+    },
+    {
+      "file": "core/elevation.py",
+      "lines": 101,
+      "classes": [
+        "ElevationRequired"
+      ],
+      "static_core_imports": [
+        "core.desktop_launch"
+      ],
+      "archived_prototype": false,
+      "sha256": "88a933db36ef3cebd2c414dbbe7694a82c8ecb4e5fc6fffd9f4278873a43b26d"
+    },
+    {
+      "file": "core/gemini_auth.py",
+      "lines": 122,
+      "classes": [],
+      "static_core_imports": [
+        "core.atomic_json"
+      ],
+      "archived_prototype": false,
+      "sha256": "15afb084cbb87a0cf7e27b43b13d98c5b5a6bc26a95737816ef72a73b75a0846"
+    },
+    {
+      "file": "core/gemini_runtime.py",
+      "lines": 201,
+      "classes": [
+        "GeminiRuntime"
+      ],
+      "static_core_imports": [
+        "core.antigravity_runtime",
+        "core.atomic_json",
+        "core.cli_installer",
+        "core.desktop_agents",
+        "core.desktop_mcp",
+        "core.gemini_auth"
+      ],
+      "archived_prototype": false,
+      "sha256": "226b9ec303b34f8dee0ae6bbdc791c1bb6f0d230d9c6f3dbc19e2d1ef40dd374"
+    },
+    {
+      "file": "core/history_manager.py",
+      "lines": 23,
+      "classes": [
+        "HistoryStore"
+      ],
+      "static_core_imports": [
+        "core.atomic_json"
+      ],
+      "archived_prototype": false,
+      "sha256": "7fbaa01f4b916ee6fef8447bbcbb2d91235067cc5cadf1228cc1b6d33367f9a3"
+    },
+    {
+      "file": "core/install_security.py",
+      "lines": 76,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "9fedd80810fe7d08a5d517530a435ead5ba589c0bc771b7b8f5f8e9830ae832e"
+    },
+    {
+      "file": "core/llm_provider.py",
+      "lines": 84,
+      "classes": [
+        "LLMGateway"
+      ],
+      "static_core_imports": [
+        "core.request_budget"
+      ],
+      "archived_prototype": false,
+      "sha256": "0e1fe6ea9bf4bdba49988c9acf372024307a1d0411ed09df5512e199e3ece476"
+    },
+    {
+      "file": "core/local_ipc.py",
+      "lines": 18,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "586bc4ba19f9df9b3f5c34e6596f363765218514ecada0cdd6b3b84b22673709"
+    },
+    {
+      "file": "core/local_search.py",
+      "lines": 111,
+      "classes": [
+        "LocalSearchEngine"
+      ],
+      "static_core_imports": [
+        "core.atomic_json",
+        "core.sandbox"
+      ],
+      "archived_prototype": false,
+      "sha256": "e5160b28bc5f352a98c97a3082629673c114da002bdc258d1035ba8b6cf9a5ba"
+    },
+    {
+      "file": "core/low_spec_optimizer.py",
+      "lines": 420,
+      "classes": [
+        "_MEMORYSTATUSEX",
+        "LazyClientProxy"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "217e9e651478c4d60b7cb19421db535cbceba361b0ba8e6fc8972a39e29dc27e"
+    },
+    {
+      "file": "core/message_intent.py",
+      "lines": 75,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "4cba7e43de0ceec8de4a93b1919f516dab455cf17acd478a9096a8a69a424f88"
+    },
+    {
+      "file": "core/multi_agent_service.py",
+      "lines": 1110,
+      "classes": [
+        "WriterDispatchError",
+        "MultiAgentService"
+      ],
+      "static_core_imports": [
+        "core.antigravity_runtime",
+        "core.chat_coordination",
+        "core.codex_runtime",
+        "core.gemini_runtime",
+        "core.notion_runtime",
+        "core.notion_worker_task",
+        "core.path_identity",
+        "core.project_registry",
+        "core.run_evidence_store",
+        "core.source_verification",
+        "core.squad_adapter",
+        "core.workspace_checkpoint",
+        "core.writer_journal"
+      ],
+      "archived_prototype": false,
+      "sha256": "41b6faa4e4d1f7e160a0b5a75fea8a1dc76d73697e70d304cd00171280c669b6"
+    },
+    {
+      "file": "core/natural_desktop.py",
+      "lines": 1186,
+      "classes": [
+        "NaturalDesktopTask"
+      ],
+      "static_core_imports": [
+        "core.application_knowledge",
+        "core.atomic_json",
+        "core.chat_coordination",
+        "core.codex_runtime",
+        "core.desktop_agents",
+        "core.desktop_launch",
+        "core.elevation",
+        "core.gemini_runtime",
+        "core.multi_agent_service",
+        "core.path_identity",
+        "core.screen_overlay",
+        "core.squad_adapter",
+        "core.task_outcome",
+        "core.warband_workspace"
+      ],
+      "archived_prototype": false,
+      "sha256": "9ac1cdf694d5aef6b2adb788e38d51b9bf324863e325137805d1b6ecae0b7831"
+    },
+    {
+      "file": "core/notion_cli.py",
+      "lines": 215,
+      "classes": [
+        "NotionError",
+        "NotionCli"
+      ],
+      "static_core_imports": [
+        "core.atomic_json",
+        "core.cli_installer"
+      ],
+      "archived_prototype": true,
+      "sha256": "bc492bdf4b35259e4f86e952a4717d8bd119bda5f97ac34e8345dc8bfe790430"
+    },
+    {
+      "file": "core/notion_local_tools.py",
+      "lines": 141,
+      "classes": [
+        "NotionLocalTools"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": true,
+      "sha256": "988351293d896423f29f318dccdf068c25f3ce83eea3aecb5ea2962e1dd1b000"
+    },
+    {
+      "file": "core/notion_runtime.py",
+      "lines": 347,
+      "classes": [
+        "NotionRuntime"
+      ],
+      "static_core_imports": [
+        "core.atomic_json",
+        "core.notion_cli"
+      ],
+      "archived_prototype": true,
+      "sha256": "9647a54d0e048d6a93de3058f23b3b45f844a17e1b95fd9921f220bb0fd385d9"
+    },
+    {
+      "file": "core/notion_tool_transport.py",
+      "lines": 496,
+      "classes": [
+        "NotionTransportError",
+        "ValidationError",
+        "SessionMismatchError",
+        "ReplayError",
+        "PayloadLimitError",
+        "NotionToolRequest",
+        "NotionToolResult",
+        "NotionToolTransport"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": true,
+      "sha256": "0d2510e0a17839270f85d9be7ab8cac6f295a5bb7d8dc348032bd8c2ce76b1fb"
+    },
+    {
+      "file": "core/notion_worker_bridge.py",
+      "lines": 195,
+      "classes": [
+        "NotionQueueApi",
+        "ReadOnlyWorkerBridge"
+      ],
+      "static_core_imports": [
+        "core.notion_cli"
+      ],
+      "archived_prototype": true,
+      "sha256": "0ff9f8c640d2fc6d3946478b2aed4a56f51e1ba558ec117289a01876b016aef9"
+    },
+    {
+      "file": "core/notion_worker_task.py",
+      "lines": 469,
+      "classes": [
+        "NotionToolCancelled",
+        "NotionWorkerTasks"
+      ],
+      "static_core_imports": [
+        "core.atomic_json",
+        "core.notion_cli",
+        "core.notion_worker_bridge"
+      ],
+      "archived_prototype": true,
+      "sha256": "6ff312d4122b2962e6bdb91daebe660d5fb170741c78a9f6e1886eb7e071264f"
+    },
+    {
+      "file": "core/onboarding.py",
+      "lines": 318,
+      "classes": [
+        "OnboardingService"
+      ],
+      "static_core_imports": [
+        "core.antigravity_runtime",
+        "core.atomic_json",
+        "core.cli_installer",
+        "core.gemini_auth"
+      ],
+      "archived_prototype": false,
+      "sha256": "1dcef7fd36c0a1cc1e998a26bbb4bfa0b5f2b81247e5d2879934e92a03be3802"
+    },
+    {
+      "file": "core/package_repair.py",
+      "lines": 163,
+      "classes": [
+        "PackageRepair"
+      ],
+      "static_core_imports": [
+        "core.atomic_json",
+        "core.self_diagnostics"
+      ],
+      "archived_prototype": false,
+      "sha256": "a5199dcac0966d4ab46c7bcccdf291e77d8375184d1f6c506ebbd86a022495be"
+    },
+    {
+      "file": "core/path_identity.py",
+      "lines": 23,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "6b74d40f1e68f82487bb1ab518af0c7283df43fa281bbe55248dd046031e79c5"
+    },
+    {
+      "file": "core/plugin_loader.py",
+      "lines": 53,
+      "classes": [
+        "PluginManifest"
+      ],
+      "static_core_imports": [
+        "core.tool_registry"
+      ],
+      "archived_prototype": false,
+      "sha256": "3cee100cf511a9fdf2bc1a18fda204b2b1e059dfcf28a1602adbc77199a20a5a"
+    },
+    {
+      "file": "core/process_tree.py",
+      "lines": 73,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "05a803a86d340939cfa13d935420b678e6529479b6c2ed2c978b15ab89b71389"
+    },
+    {
+      "file": "core/project_registry.py",
+      "lines": 155,
+      "classes": [
+        "ProjectRegistry"
+      ],
+      "static_core_imports": [
+        "core.atomic_json"
+      ],
+      "archived_prototype": false,
+      "sha256": "3182fd6fd75238efb6b3341db7625682f5b127cb2fa5b8ee7bd1893087d38470"
+    },
+    {
+      "file": "core/provider_manager.py",
+      "lines": 116,
+      "classes": [
+        "ProviderManager"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "f07c1ad9b3d5b9bf308e1cac132b5047b3e2a32926102afc14b92bf563559dee"
+    },
+    {
+      "file": "core/rea_adapter.py",
+      "lines": 276,
+      "classes": [
+        "ReaAdapter"
+      ],
+      "static_core_imports": [
+        "core.cli_installer",
+        "core.process_tree"
+      ],
+      "archived_prototype": false,
+      "sha256": "ebc85078a06d1ccab8fe44c5c78d489d689ff91f05a30d66d4465785b1139742"
+    },
+    {
+      "file": "core/request_budget.py",
+      "lines": 73,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "465664d0e67cb2fc0abac284beddd6850258c17182255f960fce5a2764f0d22b"
+    },
+    {
+      "file": "core/response_style.py",
+      "lines": 46,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "48ff48f7f0bd25f412b39888aa6e2e1c91f3deb10d17ec864fbe3fda5891bf28"
+    },
+    {
+      "file": "core/rollback_manager.py",
+      "lines": 49,
+      "classes": [
+        "RollbackManager"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "e1aae7d83fcebbebb7432b386352f9aa783f87c23cffa9bcd79309e29403bced"
+    },
+    {
+      "file": "core/run_evidence_store.py",
+      "lines": 54,
+      "classes": [
+        "RunEvidenceStore"
+      ],
+      "static_core_imports": [
+        "core.atomic_json"
+      ],
+      "archived_prototype": false,
+      "sha256": "eeb428ce165db1ac3fc3b4bfec3f3cc0d9f4ed59fa33bc5b86fd30be7a663a84"
+    },
+    {
+      "file": "core/sandbox.py",
+      "lines": 28,
+      "classes": [
+        "SandboxViolation",
+        "PathSandbox"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "2999bcb1cae2f79ffb087b6eba3dbd85a5ed40b02c366b879da57297da83ab2c"
+    },
+    {
+      "file": "core/screen_advisor.py",
+      "lines": 94,
+      "classes": [
+        "ScreenAdvisor"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "4470da91b8edd6f6941f0d6bd11ee5c08b2e5f9e30f45f31b3313a061cea47a9"
+    },
+    {
+      "file": "core/screen_interaction.py",
+      "lines": 34,
+      "classes": [
+        "ScreenTarget"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "8fb2ff50ebeacdb084b4fbaf07f806ff18db8ff76aa1fcaa879b857bfbcd64d6"
+    },
+    {
+      "file": "core/screen_overlay.py",
+      "lines": 358,
+      "classes": [
+        "ScreenControlOverlay"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "84959c293288bca1f092f8534edd3236414989a48288ca2c725f4112cc215038"
+    },
+    {
+      "file": "core/self_diagnostics.py",
+      "lines": 239,
+      "classes": [
+        "InspectionCancelled",
+        "SelfDiagnosticsService"
+      ],
+      "static_core_imports": [
+        "core.atomic_json",
+        "core.cli_installer",
+        "core.rea_adapter"
+      ],
+      "archived_prototype": false,
+      "sha256": "08eb766f4a624362da404542bebbf20f353d9f53d0f14b6f3eb568ce15c5ed05"
+    },
+    {
+      "file": "core/shutdown.py",
+      "lines": 159,
+      "classes": [
+        "ShutdownReceipt",
+        "ShutdownCoordinator"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "86bcb622049c1c6391ded5a5b847502eb89891a078de694d93f68993b242e0ed"
+    },
+    {
+      "file": "core/source_verification.py",
+      "lines": 44,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "4a6a370dd43887b00e59e5c7290ad31fe0c834d9182aa35e5d8e21eb71d1b161"
+    },
+    {
+      "file": "core/squad_adapter.py",
+      "lines": 273,
+      "classes": [
+        "SquadCommandError",
+        "SquadAdapter"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "4a8e28d13b26640e6bb4bae054da482ab808a94ff9b050b22970756600d2f282"
+    },
+    {
+      "file": "core/task_engine.py",
+      "lines": 96,
+      "classes": [
+        "TaskEngine"
+      ],
+      "static_core_imports": [
+        "core.atomic_json"
+      ],
+      "archived_prototype": false,
+      "sha256": "f555ac8288b0b56bdcd6c695e2aea332fceab8b4f247064861dde8d0f50fba5a"
+    },
+    {
+      "file": "core/task_outcome.py",
+      "lines": 33,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "f84f68c4d53f23936fcfef11dfcfa7fe577300f67aaec601564f8b7db8a38721"
+    },
+    {
+      "file": "core/tool_compat.py",
+      "lines": 32,
+      "classes": [],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "58caed2b678fa6eedf4ddefabe373db0fbe9ae4a01add9c17a0bd1805314f68e"
+    },
+    {
+      "file": "core/tool_registry.py",
+      "lines": 155,
+      "classes": [
+        "ToolSpec",
+        "ToolRegistry"
+      ],
+      "static_core_imports": [],
+      "archived_prototype": false,
+      "sha256": "4c3a75a074dc549ee6e37120be1c3ea801842080cf084fcb92e212b3a5a74454"
+    },
+    {
+      "file": "core/warband_workspace.py",
+      "lines": 717,
+      "classes": [
+        "GameLoading",
+        "SaveGuard",
+        "WarbandWorkspace"
+      ],
+      "static_core_imports": [
+        "core.desktop_native",
+        "core.process_tree"
+      ],
+      "archived_prototype": false,
+      "sha256": "45f88f18af4e94ce1d8b06298e9aac2d4f462e619d5a3d3233c90c8d068dd3da"
+    },
+    {
+      "file": "core/windows_prerequisites.py",
+      "lines": 98,
+      "classes": [],
+      "static_core_imports": [
+        "core.install_security"
+      ],
+      "archived_prototype": false,
+      "sha256": "37400fbfe4ba502c34da299d890af807a7a3677b579d60031b4b568cb2c073dc"
+    },
+    {
+      "file": "core/workspace_checkpoint.py",
+      "lines": 170,
+      "classes": [],
+      "static_core_imports": [
+        "core.path_identity"
+      ],
+      "archived_prototype": false,
+      "sha256": "4cb2fa8399010e8d7bb85f9275a8e32cf819ea69248bf6f3efd161ae68cbef1d"
+    },
+    {
+      "file": "core/writer_journal.py",
+      "lines": 167,
+      "classes": [
+        "WriterJournal"
+      ],
+      "static_core_imports": [
+        "core.atomic_json"
+      ],
+      "archived_prototype": false,
+      "sha256": "cc4b8be16ee783d2b750cb43398e08c73490ecf2e7cbd6ffe0fe5d6353f35491"
+    }
+  ]
+}

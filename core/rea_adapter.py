@@ -17,6 +17,7 @@ from core.process_tree import stop_process_tree
 
 
 class ReaAdapter:
+    supports_evidence_sink = True
     MAX_OUTPUT = 2 * 1024 * 1024
     SUPPORTED_VERSION = '6.8.0'
     _CACHE_LOCK = threading.RLock()
@@ -158,7 +159,18 @@ class ReaAdapter:
                 or (version[0] == 24 and version >= (24, 22, 1))
                 or version >= (26, 12, 1))
 
-    def inspect(self, target, *, event, deadline):
+    @classmethod
+    def runtime_identity(cls):
+        """Stable tool fingerprint for evidence reuse; does not launch a process."""
+        try:
+            node, script = cls.discover()
+            return {'provider': 'rea', 'version': cls.SUPPORTED_VERSION,
+                    'node_sha256': cls._cached_script_sha256(Path(node)),
+                    'script_sha256': cls._cached_script_sha256(Path(script))}
+        except (OSError, ValueError, KeyError, TypeError):
+            return {'provider': 'rea', 'version': cls.SUPPORTED_VERSION, 'available': False}
+
+    def inspect(self, target, *, event, deadline, evidence_sink=None):
         try:
             command = list(self.command or self.discover())
         except (OSError, ValueError, KeyError, TypeError):
@@ -206,6 +218,15 @@ class ReaAdapter:
             with target.open('rb') as stream:
                 if hashlib.file_digest(stream, 'sha256').hexdigest() != target_hash:
                     return {'status': 'UNKNOWN', 'message': 'Hedef inceleme sırasında değişti; sonuç kabul edilmedi.', 'used': True, 'evidence': evidence}
+            if evidence_sink is not None:
+                # The caller owns persistence. Capture before TemporaryDirectory
+                # cleanup; never execute or trust the artifact as instructions.
+                saved = evidence_sink(source_evidence, source_root=working,
+                                      expected_sha256=evidence['source_evidence_sha256'])
+                if (not isinstance(saved, dict) or saved.get('digest') != evidence['source_evidence_sha256']
+                        or not re.fullmatch('[a-f0-9]{32}', saved.get('evidence_id', ''))):
+                    raise ValueError('invalid-evidence-receipt')
+                evidence['persisted_evidence_id'] = saved['evidence_id']
             return self.summarize(payload, evidence)
 
     @staticmethod

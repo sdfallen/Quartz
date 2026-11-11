@@ -22,11 +22,55 @@ DENIED_EXES = {"cmd.exe", "powershell.exe", "pwsh.exe", "windowsterminal.exe",
                "sechealthui.exe", "consent.exe", "credentialuibroker.exe", "logonui.exe",
                "lockapp.exe", "keepass.exe", "1password.exe", "bitwarden.exe",
                "codex.exe", "chatgpt.exe", "quartz.exe", "codex-computer-use.exe",
-               "antigravity.exe"}
+               "antigravity.exe",
+               # Live exam 7 Nov: under Tam Yetki the Claude desktop app was approved as a
+               # target and observed. Other AI assistants' windows hold the user's private
+               # conversations and can run actions themselves; never a control target.
+               "claude.exe", "copilot.exe", "cursor.exe", "windsurf.exe", "ollama app.exe",
+               # Gemini review 8 Nov: other shells/terminals and password managers.
+               "wt.exe", "wsl.exe", "bash.exe", "mintty.exe", "alacritty.exe", "wezterm-gui.exe",
+               "keepassxc.exe"}
 SENSITIVE = re.compile(r"password|parola|şifre|sign.in|oturum aç|authentication|verify.*identity|"
                        r"user account control|kullanıcı hesabı denetimi|windows security", re.I)
 CRITICAL = re.compile(r"\b(delete|remove|overwrite|purchase|buy|pay|send|upload|save|sil|"
                       r"kaydet|üzerine yaz|satın al|öde|gönder|yükle|izin ver|allow|install)\b", re.I)
+# Text inside an ordinary edit box is what a typing task changes. The control name
+# ("Metin Düzenleyici") never shows it, so without the value such a task can never
+# be verified. Bounded; password controls are refused before this is read.
+VALUE_TYPES = {"Edit", "Document"}
+VALUE_LIMIT = 1000
+VALUE_CONTROLS = 10
+
+
+def _same_application(control_pid, target_pid):
+    """The control's process is the target's or one the target started.
+
+    Live exam 7 Nov: a WebView2/Chromium page runs in a renderer process the host
+    app started, so the focused Edit's pid never equals the window's pid. The
+    control is still required to sit inside the target window (focused_control).
+    """
+    if control_pid == target_pid:
+        return True
+    try:
+        import psutil
+        return any(parent.pid == target_pid for parent in psutil.Process(control_pid).parents())
+    except Exception:
+        return False
+
+
+def _control_value(control):
+    readers = (lambda: control.iface_value.CurrentValue, lambda: control.get_value(),
+               lambda: control.window_text())
+    for read in readers:
+        try:
+            value = read()
+        except Exception:
+            continue
+        if isinstance(value, str):
+            return value[:VALUE_LIMIT]
+    return None
+
+
 SAFE_KEYS = {
     "enter", "tab", "escape", "esc", "up", "down", "left", "right", "space",
     "backspace", "delete", "insert", "home", "end", "pageup", "pagedown",
@@ -36,7 +80,16 @@ SAFE_KEYS = {
     *{chr(c) for c in range(ord("a"), ord("z") + 1)},
     *{str(d) for d in range(10)},
     *{f"f{i}" for i in range(1, 13)},
+    # Calculator/number-pad symbols (single characters, no chords).
+    "+", "-", "*", "/", "=", ".", ",",
 }
+# One desktop_act key action may carry a short space-separated sequence of SAFE_KEYS,
+# e.g. "1 2 3 4 * 5 6 enter". Live exam 9 Nov (exam-desk-03): eight single-key actions,
+# each with its own observation and model turn, took 4 minutes for 1234 x 56.
+MAX_KEY_SEQUENCE = 24
+# pyautogui sends symbols by the US layout; on this PC's Turkish Q keyboard "*" would
+# arrive as another character. Number-pad keys are layout independent.
+NUMPAD_KEYS = {"*": "multiply", "+": "add", "-": "subtract", "/": "divide", ".": "decimal", "=": "enter"}
 
 
 def _uia_operation(method):
@@ -274,25 +327,37 @@ class NativeDesktopBackend:
             elements, references = [], {}
             snapshot_id = uuid.uuid4().hex[:12]
             focused_item = None
-            for control in self.controller._get_descendants(win):
+            values_read = 0
+            controls = self.controller._get_descendants(win)
+            for control in controls:
                 try:
                     item = self.controller._describe(control)
                     if not item["visible"]:
                         continue
                     if item["password"] or SENSITIVE.search(item["name"]):
                         raise PermissionError("Authentication/private input appeared; hand off to user")
-                    if focused_item is None and control.has_keyboard_focus():
-                        focused_item = item.copy()
                     if len(elements) < 120:
                         ref = str(len(elements) + 1)
                         references[ref] = item.copy()
                         public = {k: v for k, v in item.items() if k not in {"runtime_id", "password"}}
                         public["ref"] = ref
+                        if item["type"] in VALUE_TYPES and values_read < VALUE_CONTROLS:
+                            value = _control_value(control)
+                            if value is not None:
+                                public["value"] = value
+                                values_read += 1
                         elements.append(public)
                 except PermissionError:
                     raise
                 except Exception:
                     continue
+            # The same single focused control the typing check will demand.
+            focus = self.controller.focused_control(win, scanned=controls)
+            if focus is not None:
+                try:
+                    focused_item = self.controller._describe(focus)
+                except Exception:
+                    focused_item = None
             self.controller._snapshots = {k: v for k, v in self.controller._snapshots.items()
                                           if self.controller._clock() - v["at"] < 120}
             self.controller._snapshots[snapshot_id] = {
@@ -358,15 +423,39 @@ class NativeDesktopBackend:
         if not self.is_foreground(target): raise PermissionError("Target lost foreground")
         self._safe_controls(target)
         action = args.get("action")
+        ref = args.get("ref")
+        ref = str(ref) if ref not in (None, "") else ""
+        item = next((i for i in observation["ui"]["elements"] if i["ref"] == ref), None) if ref else None
+        # Live exam 7 Nov: Gemini as operator named the element it meant (text/click
+        # with ref, ui without an operation) and every attempt was refused for
+        # its form, never for safety. An element reference is the more precise
+        # target, so these forms now go through the same snapshot-bound path.
+        if action == "click" and item is not None and args.get("x") is None and args.get("y") is None:
+            action = "ui"
         if action == "ui":
-            ref = str(args.get("ref", ""))
-            item = next((i for i in observation["ui"]["elements"] if i["ref"] == ref), None)
             if not item or CRITICAL.search(item["name"]):
                 raise PermissionError("Unknown or consequential UI action; user confirmation required outside the agent")
-            operation = args.get("ui_action")
-            if operation not in {"invoke", "select", "expand", "collapse"}:
+            operation = args.get("ui_action") or ("focus" if item["type"] == "Edit" else "invoke")
+            if operation not in {"invoke", "select", "expand", "collapse", "focus"}:
                 raise ValueError("Unsupported UI operation")
             self.controller.action(observation["ui"]["snapshot_id"], ref, operation,
+                                   input_guard=lambda: self._before_input(target))
+            return
+        if action == "text" and item is not None:
+            text = args.get("text", "")
+            if not isinstance(text, str) or len(text) > 2000 or any(c in text for c in "\r\n\x00"):
+                raise ValueError("Only bounded literal single-line text is allowed")
+            if item["type"] != "Edit":
+                raise PermissionError("Text can only go into an Edit control")
+            # Gemini review 8 Nov: same name rule as the ui and click paths.
+            if CRITICAL.search(item.get("name") or ""):
+                raise PermissionError("Consequential field; user confirmation required outside the agent")
+            with self.controller._desktop() as desktop:
+                if CRITICAL.search(self.controller._window(desktop, target["handle"]).window_text()):
+                    raise PermissionError("File/critical dialog requires a separate user decision")
+            # set_text re-finds the element by runtime id, refuses password/disabled
+            # fields and runs the broker's input guard first.
+            self.controller.action(observation["ui"]["snapshot_id"], ref, "set_text", text,
                                    input_guard=lambda: self._before_input(target))
             return
         if action == "text":
@@ -375,12 +464,12 @@ class NativeDesktopBackend:
                 raise ValueError("Only bounded literal single-line text is allowed")
             with self.controller._desktop() as desktop:
                 win = self.controller._window(desktop, target["handle"])
-                # Never type into a guessed surface or another process.
-                focused = [c for c in win.descendants(depth=7)[:800] if c.has_keyboard_focus()]
-                if len(focused) != 1: raise PermissionError("No unique focused edit control")
-                control = focused[0]
+                # Never type into a guessed surface or another process. The same
+                # traversal as observe(), so a WebView/Chromium field it saw is found.
+                control = self.controller.focused_control(win)
+                if control is None: raise PermissionError("No unique focused edit control")
                 item = self.controller._describe(control)
-                if (control.process_id() != target["pid"] or item["type"] != "Edit" or item["password"]):
+                if (not _same_application(control.process_id(), target["pid"]) or item["type"] != "Edit" or item["password"]):
                     raise PermissionError("Observe and focus a normal Edit control before typing")
                 old_focus = observation["ui"].get("focused") or {}
                 if item["runtime_id"] != old_focus.get("runtime_id"):
@@ -429,14 +518,33 @@ class NativeDesktopBackend:
             pyautogui.click(left + x, top + y)
         elif action in {"key", "hold"}:
             key = args.get("key")
-            if key not in SAFE_KEYS: raise PermissionError("Key/chord is outside the bounded operator profile")
-            with self.controller._desktop() as desktop:
-                win = self.controller._window(desktop, target["handle"])
-                focused = [c for c in win.descendants(depth=7)[:800] if c.has_keyboard_focus()]
-                if any(CRITICAL.search(self.controller._describe(c)["name"]) for c in focused):
-                    raise PermissionError("Focused consequential control requires user handoff")
-            self._before_input(target)
-            if action == "key": pyautogui.press(key)
+            key = key.strip().lower() if isinstance(key, str) else key  # "Tab" and "tab" are the same key
+            keys = key.split() if action == "key" and isinstance(key, str) else [key]
+            if not keys or len(keys) > MAX_KEY_SEQUENCE or any(k not in SAFE_KEYS for k in keys):
+                raise PermissionError("Key/chord is outside the bounded operator profile")
+            def guard(sent):
+                # Every key gets the same checks a single key gets: a key such as Tab can move
+                # focus onto Pay/Delete/Send, and the next key must not press it (Codex review
+                # 9 Nov, IR-KEY-SEQUENCE-CRITICAL-01).
+                with self.controller._desktop() as desktop:
+                    win = self.controller._window(desktop, target["handle"])
+                    focused = [c for c in [self.controller.focused_control(win)] if c is not None]
+                    if any(CRITICAL.search(self.controller._describe(c)["name"]) for c in focused):
+                        raise PermissionError("Focused consequential control requires user handoff"
+                                              + (f"; stopped after {sent} of {len(keys)} keys" if sent else ""))
+                self._before_input(target)
+            guard(0)
+            if action == "key":
+                cancelled = getattr(self, "input_cancelled", None)
+                for index, step in enumerate(keys):
+                    # Stop or a foreground change ends the sequence; remaining keys are never sent.
+                    if callable(cancelled) and cancelled():
+                        raise PermissionError(f"Stopped after {index} of {len(keys)} keys; remaining keys not sent")
+                    if index:
+                        if not self.is_foreground(target):
+                            raise PermissionError(f"Foreground changed after {index} of {len(keys)} keys; remaining keys not sent")
+                        guard(index)
+                    pyautogui.press(NUMPAD_KEYS.get(step, step))
             else:
                 duration = args.get("seconds", 0.1)
                 if type(duration) not in {int, float} or not 0 < duration <= 1:
@@ -449,4 +557,5 @@ class NativeDesktopBackend:
                         time.sleep(.02)
                 finally: pyautogui.keyUp(key)
         else:
-            raise ValueError("Unsupported action")
+            raise ValueError(f"Unsupported action {str(action)[:40]!r}; use click, text, key, hold or ui. "
+                             "To type, focus the edit control, observe, then send action='text' with text")

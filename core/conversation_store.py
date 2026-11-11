@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 
@@ -42,6 +43,22 @@ class ConversationStore:
                 "effort": str(entry.get("effort") or defaults["effort"]).strip().lower(),
             }
         return out
+
+    @contextmanager
+    def rollback_on_failure(self):
+        """Keep chat state recoverable when a companion registry write fails."""
+        with self._lock:
+            before = deepcopy({'active_id': self._active_id,
+                               'conversations': self._conversations,
+                               'preferences': self._preferences})
+            try:
+                yield
+            except Exception:
+                atomic_write_json(self.path, before)
+                self._active_id = before['active_id']
+                self._conversations = before['conversations']
+                self._preferences = before['preferences']
+                raise
 
     def _load(self):
         with self._lock:
@@ -98,6 +115,8 @@ class ConversationStore:
                         last_task_event[meta['natural_task']] = msg.get('id')
                 for msg in conv.get('messages', []):
                     meta = msg.get('metadata') or {}
+                    if msg.get('role') == 'user' and meta.get('instruction_state') in {'queued', 'running'}:
+                        msg['metadata']['instruction_state'] = 'interrupted'
                     abandoned_task = (meta.get('natural_task') and
                         last_task_event.get(meta['natural_task']) == msg.get('id') and
                         meta.get('task_status') in active_states)
@@ -107,7 +126,11 @@ class ConversationStore:
                     meta.update(status='interrupted', recovered_at=now,
                         recovery_reason='Application restarted before a terminal result',
                         automatic_replay=False, permissions_restored=False)
-                    if abandoned_task: meta['task_status'] = 'interrupted'
+                    if meta.get('instruction_state') in {'queued', 'running'}: meta['instruction_state'] = 'interrupted'
+                    if abandoned_task:
+                        # Say that a pending permission card died with the old session.
+                        if meta.get('task_status') == 'awaiting_approval': meta['interrupted_while'] = 'awaiting_approval'
+                        meta['task_status'] = 'interrupted'
                     msg['status'] = 'interrupted'
                     if not msg.get('content', '').strip():
                         msg['content'] = 'Önceki oturum kesildi. Görev otomatik sürdürülmedi; devam etmeden önce durumu kontrol edin.'
@@ -180,7 +203,7 @@ class ConversationStore:
             self._conversations[cid] = record
             self._active_id = cid
             self._save()
-            return dict(record)
+            return deepcopy(record)
 
     def get_active(self) -> dict:
         with self._lock:
@@ -192,7 +215,7 @@ class ConversationStore:
             rec = self._conversations[self._active_id]
             rec["models"] = self._normalize_models(rec.get("models"))
             rec["permission_level"] = "full"
-            return dict(rec)
+            return deepcopy(rec)
 
     def get(self, conversation_id: str) -> dict:
         with self._lock:
@@ -201,7 +224,7 @@ class ConversationStore:
             rec = self._conversations[conversation_id]
             rec["models"] = self._normalize_models(rec.get("models"))
             rec["permission_level"] = "full"
-            return dict(rec)
+            return deepcopy(rec)
 
     def select(self, conversation_id: str) -> dict:
         with self._lock:
@@ -212,12 +235,12 @@ class ConversationStore:
             rec["models"] = self._normalize_models(rec.get("models"))
             rec["permission_level"] = "full"
             self._save()
-            return dict(rec)
+            return deepcopy(rec)
 
     def delete(self, conversation_id: str) -> dict:
         return self.delete_many([conversation_id])["active_conversation"]
 
-    def delete_many(self, conversation_ids: list[str]) -> dict:
+    def delete_many(self, conversation_ids: list[str], fallback_project_id: str | None = None) -> dict:
         """Remove only exact IDs, after a durable local recovery copy.
 
         No CLI session, project directory or external agent history is deleted.
@@ -232,7 +255,7 @@ class ConversationStore:
             previous = self._conversations.get(active, {})
             remaining = {cid: rec for cid, rec in self._conversations.items() if cid not in removed}
             if active not in remaining:
-                project = previous.get("project_id")
+                project = fallback_project_id or previous.get("project_id")
                 candidates = [c for c in remaining.values() if
                               (c.get("project_id") or "squad-pilot") == (project or "squad-pilot")]
                 if candidates:
@@ -310,7 +333,7 @@ class ConversationStore:
                 raise KeyError(f"Conversation not found: {conversation_id}")
             msg_id = uuid.uuid4().hex
             now = time.time()
-            meta = dict(metadata or {})
+            meta = deepcopy(metadata or {})
             resolved_sender = sender or meta.get("sender") or role
             entry = {
                 "id": msg_id,
@@ -333,7 +356,7 @@ class ConversationStore:
                 if clean_title:
                     conv["title"] = clean_title
             self._save()
-            return entry
+            return deepcopy(entry)
 
     def update_message_content(self, conversation_id: str, message_id: str, content: str,
                                metadata: dict | None = None) -> None:
@@ -345,7 +368,7 @@ class ConversationStore:
                 if msg["id"] == message_id:
                     msg["content"] = content
                     if metadata:
-                        msg["metadata"].update(metadata)
+                        msg["metadata"].update(deepcopy(metadata))
                         for key in ("sender", "recipient", "sequence", "squad_task_id", "status"):
                             if key in metadata and metadata[key] is not None:
                                 msg[key] = metadata[key]

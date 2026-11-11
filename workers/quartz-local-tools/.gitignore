@@ -1,0 +1,16 @@
+.env
+.env.*
+dist/
+node_modules/
+workers.*.json
+workers.json
+.dev-shell/
+.agents/
+.claude/
+.examples/
+AGENTS.md
+CLAUDE.md
+tsconfig.examples.json
+.claudeignore
+.codexignore
+README.md

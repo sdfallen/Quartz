@@ -1,0 +1,56 @@
+{
+  "timestamp": 1793623976.1818507,
+  "tool_id": "ripgrep",
+  "tool_version": "14.1.1",
+  "package_digest": "d0f534024c42afd6cb4d38907c25cd2b249b79bbe6cc1dbee8e3e37c2b6e25a1",
+  "target_size_mb": 3.4,
+  "acquisition_seconds": 6.66,
+  "runs": [
+    {
+      "tool_id": "ripgrep",
+      "operation": "search",
+      "status": "confirmed",
+      "exit_code": 0,
+      "wall_duration_seconds": 0.1746,
+      "stdout_bytes": 111000,
+      "stderr_bytes": 0,
+      "process_identity": {
+        "pid": 2336,
+        "exit_code": 0
+      },
+      "cleanup_confirmed": true,
+      "artifacts_count": 0
+    },
+    {
+      "tool_id": "ripgrep",
+      "operation": "strings",
+      "status": "confirmed",
+      "exit_code": 0,
+      "wall_duration_seconds": 0.1297,
+      "stdout_bytes": 219000,
+      "stderr_bytes": 0,
+      "process_identity": {
+        "pid": 10996,
+        "exit_code": 0
+      },
+      "cleanup_confirmed": true,
+      "artifacts_count": 0
+    },
+    {
+      "tool_id": "ripgrep",
+      "operation": "search",
+      "status": "confirmed",
+      "exit_code": 0,
+      "wall_duration_seconds": 0.1223,
+      "stdout_bytes": 87000,
+      "stderr_bytes": 0,
+      "process_identity": {
+        "pid": 13864,
+        "exit_code": 0
+      },
+      "cleanup_confirmed": true,
+      "artifacts_count": 0
+    }
+  ],
+  "average_scan_ms": 142.2
+}

@@ -208,6 +208,10 @@ class SelfDiagnosticsService:
     def _on_completed(self, identity, snapshot):
         pass
 
+    def _commit_completed(self, identity, snapshot):
+        """Short publication only; cancellation is fenced by the existing lock."""
+        pass
+
     def _work(self, identity, event, include_rea):
         deadline = time.monotonic() + self.DEADLINE_SECONDS
         try:
@@ -227,8 +231,9 @@ class SelfDiagnosticsService:
             self._on_completed(identity, snapshot)
             with self.lock:
                 self._guard(event, deadline)
+                self._commit_completed(identity, snapshot)
                 atomic_write_json(report, snapshot)
-                extra_keys = ('knowledge_saved',) if 'knowledge_saved' in snapshot else ()
+                extra_keys = tuple(k for k in ('knowledge_saved', 'investigation', 'investigation_knowledge_saved') if k in snapshot)
                 self._update(identity, **{k: snapshot[k] for k in ('state', 'phase', 'progress', 'finished_at', 'report_path', 'message', *extra_keys)})
         except InspectionCancelled:
             self._update(identity, state='cancelled', phase='done', verdict='UNKNOWN', finished_at=time.time(), message='Teşhis iptal edildi; yarım inceleme başarı sayılmadı.')

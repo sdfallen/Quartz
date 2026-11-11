@@ -53,6 +53,8 @@ class Q01ToQ10ReviewFixesTests(unittest.TestCase):
             logged_res = case.task.job["jarvis_actions"][-1]["result"]
             self.assertNotEqual(logged_res, "SENSITIVE_CLIPBOARD_DATA")
             self.assertIn("[redacted:", logged_res)
+            # The operator column shows the last tool call (GPT UI review 8 Nov).
+            self.assertEqual(case.task.job["last_step"]["tool"], "jarvis_system_info")
         finally:
             case.tearDown()
 

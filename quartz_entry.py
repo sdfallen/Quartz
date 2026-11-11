@@ -59,7 +59,7 @@ def start_backend_thread():
             log(f"Backend error: {exc}")
 
     thread = threading.Thread(
-        target=run_backend, name="quartz-backend", daemon=True)
+        target=run_backend, name="quartz-backend", daemon=False)
     thread.start()
     return thread
 
@@ -77,6 +77,7 @@ def start_gui():
         app = QuartzUI()
         log("GUI created successfully")
         app.run()
+        return app
     except Exception as e:
         log(f"GUI error: {e}")
         import traceback
@@ -98,6 +99,39 @@ def start_gui():
             pass
 
 
+def finish_backend(backend_thread, app=None):
+    """Keep ownership until GUI services and backend have actually settled.
+
+    Bounded waits refresh receipts; they never convert pending into success.
+    There is no PID-based kill or unconditional process exit here.
+    """
+    from main import stop_backend
+    from core.application_services import overall_status
+    import json
+    first = True
+    while True:
+        try:
+            gui_receipt = app._api._services.shutdown() if app is not None else {'status':'confirmed'}
+        except Exception as exc:
+            gui_receipt = {'status':'failed', 'error_type':type(exc).__name__}
+        try:
+            backend_receipt = stop_backend()
+        except Exception as exc:
+            backend_receipt = {'status':'failed', 'error_type':type(exc).__name__}
+        backend_thread.join(timeout=.2)
+        parts = {'gui':gui_receipt['status'], 'backend':backend_receipt['status'],
+                 'backend_thread':'pending' if backend_thread.is_alive() else 'confirmed'}
+        receipt = {'status':overall_status(parts), 'components':parts,
+                   'backend':backend_receipt, 'gui':gui_receipt}
+        if receipt['status'] == 'confirmed':
+            log('Shutdown receipt: '+json.dumps(receipt, ensure_ascii=False))
+            return receipt
+        if first:
+            log('Shutdown remains pending; owned workers retained. '+json.dumps(receipt, ensure_ascii=False))
+            first = False
+        time.sleep(.2)
+
+
 if __name__ == "__main__":
     if '--quartz-overlay' in sys.argv:
         from core.screen_overlay import run_overlay_child
@@ -113,16 +147,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # Start the window immediately while the backend imports in parallel.
-    start_backend_thread()
-    start_gui()
-
+    backend_thread = start_backend_thread()
+    app = start_gui()
+    finish_backend(backend_thread, app)
     log("Quartz Exit")
-
-    # Belt-and-suspenders: guarantee this process
-    # actually dies. Some background threads (e.g. the
-    # speech-recognition listener, or pywebview on some
-    # backends) aren't always daemon threads, which can
-    # leave a python.exe hanging around in Task Manager
-    # even after the window is gone. This forces an
-    # immediate, unconditional exit.
-    os._exit(0)

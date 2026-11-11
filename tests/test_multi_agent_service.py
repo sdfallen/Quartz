@@ -78,6 +78,56 @@ class MultiAgentServiceTests(unittest.TestCase):
                 time.sleep(.01)
         self.assertEqual(service.get_run("codex-write")["files_changed"],
                          [str(Path(project["path"]) / "created.txt")])
+        self.assertEqual(service.observed_writer_changes('codex-write'),
+                         (str(Path(project['path']) / 'created.txt'),))
+
+    # Live gate 3 (11 Nov): the repair diff scan reads get_run()["checkpoint"]; the runtime
+    # record never carries it, so the scan always said "unknown".
+    def test_get_run_carries_the_linked_pre_write_checkpoint(self):
+        service, codex, agy = self.make_service()
+        checkpoint = {"status": "snapshot", "complete": True, "archive": "before.zip"}
+        codex.get.return_value = {"id": "codex-write", "status": "completed"}
+        agy.get.return_value = {"id": "agy-write", "status": "completed", "checkpoint": {"own": True}}
+        with service._lock:
+            service._links["codex-write"] = {"provider": "codex", "checkpoint": checkpoint}
+            service._links["agy-write"] = {"provider": "antigravity", "checkpoint": checkpoint}
+            service._links["agy-nolink"] = {"provider": "antigravity"}
+        self.assertEqual(service.get_run("codex-write")["checkpoint"], checkpoint)
+        self.assertEqual(service.get_run("agy-write")["checkpoint"], {"own": True})  # runtime value wins
+        agy.get.return_value = {"id": "agy-nolink", "status": "completed"}
+        self.assertNotIn("checkpoint", service.get_run("agy-nolink"))
+
+    # S4 integration request (10 Nov): a reset or positively corrupt workspace is rebuilt on
+    # the write paths that call check_squad_connection; nothing happens without the CLI.
+    def test_check_squad_connection_initializes_an_uninitialized_workspace(self):
+        service, _, _ = self.make_service()
+        squad = MagicMock()
+        squad.status.side_effect = [{"installed": True, "initialized": False, "database": "db"},
+                                    {"installed": True, "initialized": True, "database": "db"}]
+        with patch.object(service, "_squad", return_value=squad), patch.object(service, "_ensure_agent"):
+            result = service.check_squad_connection(force=True)
+        squad.initialize.assert_called_once()
+        self.assertTrue(result["connected"])
+
+    def test_check_squad_connection_does_not_initialize_without_cli_or_when_ready(self):
+        service, _, _ = self.make_service()
+        for status in ({"installed": False, "initialized": False}, {"installed": True, "initialized": True}):
+            squad = MagicMock()
+            squad.status.return_value = status
+            with self.subTest(status=status), patch.object(service, "_squad", return_value=squad), \
+                 patch.object(service, "_ensure_agent"):
+                service.check_squad_connection(force=True)
+                squad.initialize.assert_not_called()
+
+    def test_check_squad_connection_reports_a_failed_rebuild(self):
+        service, _, _ = self.make_service()
+        squad = MagicMock()
+        squad.status.return_value = {"installed": True, "initialized": False}
+        squad.initialize.side_effect = RuntimeError("Corrupt Squad database could not be quarantined")
+        with patch.object(service, "_squad", return_value=squad):
+            result = service.check_squad_connection(force=True)
+        self.assertFalse(result["connected"])
+        self.assertIn("quarantined", result["error"])
 
     def test_dispatch_links_squad_task_and_real_runtime(self):
         service, runtime, _ = self.make_service()

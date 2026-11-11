@@ -1,0 +1,15 @@
+# Antigravity — süreç ve kapanış yaşam döngüsü
+
+Quartz mimari kapanışında Codex ve Claude ile eş zamanlı çalışacaksın. Önce `docs/architecture/FINALIZATION_TEAM_20261102.md`, `PYRAMID.md`, `DELIVERY_REVIEW.md` ve gerçek mevcut kodu oku. Yalnız `C:\Users\LENAVO\.codex\worktrees\quartz-final-antigravity` / `codex/final-antigravity-lifecycle-20261102` alanında çalış. Eski 3a14401 teslimini yeniden uygulama; onun düzeltmeleri birleşmiş durumda. Codex agent_chat WIP checkpoint'i alınmayacak.
+
+Görevin: main.py ve quartz_entry.py üzerinden gerçek kooperatif kapanışı tamamla. Şu an packaged backend daemon thread'de açılıyor, IPC shutdown .5 saniye sonra SIGTERM gönderiyor, entry GUI dönünce os._exit yapıyor. Bu akış sahiplerin stop/join kanıtını atlıyor. `IPCServer.stop` içindeki tek cleanup hatası sonraki sahipleri atlamasın; lazy service getter'ları kapanış sırasında yeni servis yaratamasın. Yalnız gerçekten oluşturulmuş singleton'ları temizle. Mobile gateway ve legacy assistant varsa onların mevcut stop/shutdown sözleşmelerini de hesaba kat; sırf kapatmak için instantiate etme.
+
+Normal GUI/backend kapanışı aynı kimliği doğrulanmış stop talebine bağlansın; dispatch admission kapanıp sahipler bağımsız temizlensin; entry backend thread'i gözlenebilir şekilde join etsin. Sonucu TEAM belgesindeki confirmed/pending/failed receipt ile açıkla; unconfirmed cleanup'ı gizlemek için zorla exit, kill-all, PID tahmini veya permission bypass kullanma. Bir stuck component sonsuz GUI donmasına da dönüşmesin: mevcut owner/watcher takibiyle görünür pending/failure ve güvenli yeniden deneme üret, süreç çıkmış gibi raporlama.
+
+Mevcut process_tree/runtime düzeltmelerini koru: root ölü child canlı durumunda sahiplik kaybolmaz; bilinen çocuklar temizlenmeden writer claim bırakılmaz; terminal çıktı session kimliğini değiştiremez; Codex timeout varsayılanı None. Gerekli somut runtime hatasını dar düzelt, yeni supervisor/framework yazma. Observer maliyeti/performans işini bu görevle karıştırma.
+
+Dosya sahipliği: main.py, quartz_entry.py, gerekirse core/shutdown.py; ilgili process_tree/provider runtime dosyaları ve testleri. gui.py/Api Claude'a, agent_chat ve multi_agent_service Codex'e ait; bunlara doğrudan yazma. `AgentChatService.close` / GUI receipt beklentin varsa rapora integration request koy.
+
+Testler: stop yeni lazy service yaratmaz; getter-stop yarışı; bir owner exception atınca diğer owner/socket da cleanup; tekrar/simultaneous shutdown; owned root/child kalıntısı; entry normal kapanışında SIGTERM/os._exit yok; backend thread join ve doğru receipt; provider testleri. `tests/test_cooperative_shutdown.py` ve ilgili mevcut runtime/process testlerini kullan. Fake test ile gerçek subprocess smoke'ını ayrı belirt; mevcut kullanıcı uygulaması/sürecini kapatma, üretim EXE deploy etme.
+
+Teslim: ortak SHA, kendi commit SHA, sınırlı patch/bundle, `docs/architecture/ANTIGRAVITY_FINALIZATION_REPORT.md`, test komut/logları, kaynak/derleme/canlı ayrımı, kalan riskler ve rollback. Secret/kullanıcı kaydı ekleme; ASTER/Notion üçüncü ajanı açma, public push yapma. Entegrasyon ve paket kabulü Codex'te.

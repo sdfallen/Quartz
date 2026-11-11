@@ -116,9 +116,10 @@ class NaturalTaskLifecycleReliabilityTests(unittest.TestCase):
         self.assertEqual(self.task.job["scope"], "İkinci görev başlat")
         self.assertEqual(self.task.job["requested_permission_level"], "full")
 
-    def test_f03_verified_log_request_preserves_active_desktop_broker(self):
-        """F-03 VERIFICATION: Requesting read-only logs preserves the active desktop connection."""
+    def test_f03_full_auto_approved_log_request_preserves_active_desktop_broker(self):
+        """Automatic full-mode consent keeps its grant; manual cards now pause."""
         self._setup_active_approved_task()
+        self.task.job['requested_permission_level'] = 'full'
         self.assertTrue(self.broker.status()["active"])
         self.assertIsNotNone(self.task.connection)
 
@@ -129,7 +130,7 @@ class NaturalTaskLifecycleReliabilityTests(unittest.TestCase):
             "name": "desktop_request_access",
             "arguments": {"handles": [], "log_paths": ["app.log"], "reason": "Log inceleme"},
         })
-        self.assertEqual(req_res["status"], "waiting_for_inline_permission")
+        self.assertEqual(req_res["status"], "approved")
         self.assertTrue(self.broker.status()["active"])
         self.assertIsNotNone(self.task.connection)
 

@@ -5,6 +5,7 @@ environment, never a global permission or a token written to a model transcript.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import secrets
@@ -15,12 +16,42 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
+# A continuous session lives while its owner renews it, so the bearer still dies
+# soon after the owning task does. Renewal never creates or widens authority.
+CONTINUOUS_LEASE_SECONDS = 1800
+# Same input on an unchanged screen: refuse first, then end the task.
+REPEAT_REFUSE_AFTER = 8
+REPEAT_STOP_AFTER = 11
+# Live models send common synonyms despite the schema enum (Gemini sent "type",
+# then "input", and gave up). Map them to the one guarded action they mean;
+# the backend still applies every check of that action.
+ACT_ALIASES = {"type": "text", "input": "text", "type_text": "text", "write": "text",
+               "press": "key", "key_press": "key", "keypress": "key"}
+
+
+def _canonical_act(args):
+    action = args.get("action")
+    canonical = ACT_ALIASES.get(action.strip().lower()) if isinstance(action, str) else None
+    return dict(args, action=canonical) if canonical else args
+
+
+def _screen_fingerprint(data):
+    stable = dict(data) if isinstance(data, dict) else {"data": data}
+    if isinstance(stable.get("ui"), dict):
+        stable["ui"] = {k: v for k, v in stable["ui"].items() if k != "snapshot_id"}
+    return hashlib.sha256(json.dumps(stable, sort_keys=True, default=str).encode()).hexdigest()
+
+
 class DesktopBroker:
     def __init__(self, backend, clock=time.monotonic):
         self.backend = backend
         self.clock = clock
         self._lock = threading.RLock()
         self._session = None
+        self._busy = False
+        # Set by stop() without waiting for the broker lock, so an in-flight key
+        # sequence ends at its next key (the lock is held for the whole action).
+        self._input_cancel = threading.Event()
         self._server = None
         self._lease = None
         self.audit = []
@@ -32,10 +63,10 @@ class DesktopBroker:
     def windows(self):
         return self.backend.windows()
 
-    def grant(self, handle, provider, *, confirmed=False, seconds=600, launches=None, expected_targets=None, persistent_control=False):
+    def grant(self, handle, provider, *, confirmed=False, seconds=600, launches=None, expected_targets=None, persistent_control=False, continuous=False):
         if confirmed is not True:
             raise PermissionError("Explicit desktop-control confirmation required")
-        if provider not in {"codex", "antigravity"}:
+        if provider not in {"codex", "antigravity", "notion"}:
             raise ValueError("Select one input operator")
         if self.admission_guard is not None:
             self.admission_guard()  # May veto, never grants or restores authority.
@@ -43,6 +74,7 @@ class DesktopBroker:
             if self._session and self.clock() < self._session["expires"]:
                 raise RuntimeError("Another desktop operator owns the input lease")
             self.stop()
+            self._input_cancel.clear()
             handles = handle if isinstance(handle, (list, tuple)) else [handle]
             if not 1 <= len(handles) <= 12 or len(set(map(int, handles))) != len(handles):
                 raise ValueError("Select 1..12 distinct windows")
@@ -70,7 +102,7 @@ class DesktopBroker:
                 "token": secrets.token_urlsafe(32), "expires": self.clock() + min(1800, max(30, int(seconds))),
                 "snapshot": None, "focused": False, "actions": 0,
                 "targets": targets, "launches": launch_scope, "launched": set(),
-                "persistent_control": bool(persistent_control),
+                "persistent_control": bool(persistent_control), "continuous": bool(continuous),
             }
             self.stop_reason = ""
             self.stop_detail = None
@@ -118,12 +150,44 @@ class DesktopBroker:
                     "persistent_control": bool(s.get("persistent_control")) if s else False,
                     "stop_reason": self.stop_reason, "stop_detail": self.stop_detail}
 
+    def renew(self, token):
+        """Owner heartbeat for its own continuous session; cannot revive an ended one.
+
+        A stale owner holding an earlier bearer must not extend a later session.
+        """
+        with self._lock:
+            s = self._session
+            if (not s or not s.get("continuous") or self.clock() >= s["expires"]
+                    or not hmac.compare_digest(str(token), s["token"])):
+                return False
+            s["expires"] = self.clock() + CONTINUOUS_LEASE_SECONDS
+            return True
+
+    def _guard_repeated_input(self, s, args, observation):
+        # Waiting leaves the screen as it is by design, and does not break a streak.
+        if args.get("action") == "wait":
+            return
+        request = {k: v for k, v in args.items() if k != "snapshot_id"}
+        signature = hashlib.sha256((json.dumps(request, sort_keys=True, default=str) +
+                                    _screen_fingerprint(observation["data"])).encode()).hexdigest()
+        if signature != s.get("repeat_signature"):
+            s["repeat_signature"], s["repeat_count"] = signature, 0
+        s["repeat_count"] += 1
+        if s["repeat_count"] > REPEAT_STOP_AFTER:
+            self.stop("stalled: repeated action")
+            raise PermissionError("Same action kept failing to change the screen; task stopped")
+        if s["repeat_count"] > REPEAT_REFUSE_AFTER:
+            raise PermissionError("Bu eylem ekranı değiştirmeden tekrarlandı; girdi gönderilmedi. "
+                                  "Farklı bir yol deneyin veya engeli kullanıcıya bildirin.")
+
     def stop(self, reason="user/owner stopped"):
         had_session = False
+        self._input_cancel.set()
         with self._lock:
             had_session = self._session is not None
             self.stop_reason = reason
             self._session = None  # revoke before waiting for the CLI to exit
+            self._busy = False
             if self._lease:
                 self._lease.close()
                 self._lease = None
@@ -217,12 +281,19 @@ class DesktopBroker:
     def _call(self, token, request):
         with self._lock:
             s = self._check(token)
+            if self._busy:
+                raise PermissionError("Another desktop operation is in flight; wait for it to finish")
             tool = request.get("name")
             args = request.get("arguments") or {}
             recovered = s.pop("focus_recovered", False)
             refresh_only = recovered and tool == "desktop_act"
             if refresh_only:
                 tool = "desktop_observe"
+            if tool == "desktop_observe" and not s["focused"] and s.get("persistent_control"):
+                # Live 7 Nov: Gemini observed before focusing and its first action
+                # was refused. The first observation acquires the approved window
+                # through the same focus checks.
+                tool = "desktop_focus"
             if tool == "desktop_windows":
                 available = []
                 for approved in s["targets"].values():
@@ -264,6 +335,8 @@ class DesktopBroker:
                 s["snapshot"] = None
                 self.backend.focus(current)
                 if not self.backend.is_foreground(current):
+                    if s.get("persistent_control"):
+                        raise PermissionError("Hedef pencere öne alınamadı; görev açık, girdi gönderilmedi. desktop_switch ile yeniden deneyin.")
                     self.stop("could not switch target")
                     raise PermissionError("Window activation failed; input revoked")
                 s["target"], s["focused"] = current, True
@@ -284,6 +357,20 @@ class DesktopBroker:
                 pass
             elif tool == "desktop_act":
                 observation = s["snapshot"]
+                if s["focused"] and observation and args.get("snapshot_id") in (None, ""):
+                    if s.get("continuous"):
+                        # Live 7 Nov: Gemini Flash omitted snapshot_id in 4 of 5 runs and
+                        # fell back to clipboard typing. In a single-operator continuous
+                        # session the only observation is the one this bearer just got;
+                        # bind to it. It stays single-use and 15 s fresh; a wrong id is
+                        # still refused and consumes the observation.
+                        args = dict(args, snapshot_id=observation["id"])
+                        self.audit.append({"at": time.time(), "tool": tool, "implicit_snapshot": True,
+                                           "age_seconds": self.clock() - observation["at"]})
+                    else:
+                        # Nothing was attempted, so the unused observation stays valid.
+                        raise PermissionError("snapshot_id is missing: copy the top-level snapshot_id of your latest "
+                                              "observation into desktop_act and send it again")
                 s["snapshot"] = None  # consume even on a rejected/failed action
                 if not s["focused"] or not observation:
                     raise PermissionError("Focus then observe before acting")
@@ -294,7 +381,10 @@ class DesktopBroker:
                     raise PermissionError("Use the latest top-level snapshot_id exactly; observe again")
                 if self.clock() - observation["at"] > 15:
                     raise PermissionError("Stale observation; observe again")
-                if s["actions"] >= 100:
+                args = _canonical_act(args)
+                if s.get("continuous"):
+                    self._guard_repeated_input(s, args, observation)
+                elif s["actions"] >= 100:
                     self.stop("action budget exhausted")
                     raise PermissionError("Session action budget exhausted")
                 self.audit.append({"at": time.time(), "tool": tool, "attempt": True,
@@ -304,12 +394,27 @@ class DesktopBroker:
                 if s.pop("focus_recovered", False):
                     raise PermissionError("Odak yeniden alındı; eski eylem uygulanmadı. desktop_observe ile yeni görüntü alın.")
                 self.backend.validate_input_session()
+                self.backend.input_cancelled = self._input_cancel.is_set
                 self.backend.act(s["target"], observation["data"], args)
                 s["actions"] += 1
             else:
                 raise ValueError("Unknown desktop tool")
             self._check(token)
-            data = self.backend.observe(s["target"])
+            target_snapshot = dict(s["target"])
+            session_id = s["id"]
+            self._busy = True
+        # Read-only post-action observation runs without holding the broker lock,
+        # so Stop can revoke the session immediately (< 50 ms) instead of blocking
+        # on a multi-second UIA/screenshot capture (live exam 8 Nov: exam-desk-09).
+        try:
+            data = self.backend.observe(target_snapshot)
+        finally:
+            with self._lock:
+                self._busy = False
+        with self._lock:
+            if not self._session or self._session["id"] != session_id or not hmac.compare_digest(str(token), self._session["token"]):
+                raise PermissionError("Desktop capability is missing or revoked")
+            s = self._session
             snapshot_id = uuid.uuid4().hex
             s["snapshot"] = {"id": snapshot_id, "at": self.clock(), "data": data}
             self.audit.append({"at": time.time(), "session": s["id"], "provider": s["provider"],

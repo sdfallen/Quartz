@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "tasks": [
+    {
+      "id": "infra-regression-only",
+      "kind": "regression",
+      "modules": ["tests.test_task_exam_runner"],
+      "timeout_seconds": 60
+    },
+    {
+      "id": "synthetic-process-only",
+      "kind": "script",
+      "script": "scripts/measure_runtime_efficiency_pyramid.py",
+      "timeout_seconds": 60
+    }
+  ]
+}

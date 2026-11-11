@@ -1,0 +1,29 @@
+{
+  "source_production_commit": "d69e04f",
+  "tests_review_commit": "8ddbc40",
+  "suite": {
+    "cases": 1148,
+    "seconds": 200.774,
+    "result": "PASS",
+    "skipped": 2,
+    "skip_reasons": [
+      "explicit live network test (verified separately)",
+      "Windows symlink creation privilege unavailable"
+    ]
+  },
+  "package": {
+    "exe_sha256": "5aa67fd7599927bf7d4c8ba63f2904acf8b722a240b43339591a735b16daf1d6",
+    "checks": 87,
+    "source_asset_helper_checks": "PASS",
+    "clean_audit_files": 1919,
+    "deployed": false,
+    "clean_candidate": "rea-release-dist/Quartz",
+    "gui_test_profile": "rea-candidate-dist/Quartz",
+    "clean_candidate_hash_matches_gui_test_candidate": true
+  },
+  "live_tool": "workbench-live-d69e04f-retry/result.json",
+  "live_memory_reuse": "live-investigation-5a2d16df9de340739a3ae496830cb91f/third-reuse-result.json",
+  "packaged_investigation": "BLOCKED",
+  "overall": "INTEGRATION CANDIDATE - NOT COMPLETE",
+  "timestamp": "2026-11-02T15:15:32.644804+00:00"
+}

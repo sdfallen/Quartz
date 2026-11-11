@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 
 from core.natural_desktop import NaturalDesktopTask, task_roles
 from core.desktop_broker import DesktopBroker
+from core.task_outcome import stop_summary
 from core.desktop_task_ui import desktop_intent
 from core.desktop_mcp import handle
 from tests.test_desktop_broker import FakeBackend
@@ -50,6 +51,89 @@ class NaturalTaskTests(unittest.TestCase):
         self.request()
         self.task.approve(self.task.pending["id"],confirmed=True)
 
+    def test_task_without_deadline_stays_callable_and_gets_a_continuous_session(self):
+        self.task.job["expires_at"] = None
+        self.assertEqual(self.task._provider("op"), "codex")
+        self.request()
+        self.assertGreater(self.task.pending["expires_at"], time.time())
+        self.task.approve(self.task.pending["id"], confirmed=True)
+        self.assertTrue(self.broker._session["continuous"])
+        self.assertTrue(self.broker._session["persistent_control"])
+
+    def test_legacy_game_window_keeps_the_bounded_session(self):
+        self.task.job["expires_at"] = None
+        self.task.warband = Mock()
+        self.backend.target["exe"] = "mb_warband.exe"
+        self.request()
+        self.task.approve(self.task.pending["id"], confirmed=True)
+        self.assertFalse(self.broker._session["continuous"])
+        self.assertFalse(self.broker._session["persistent_control"])
+        self.task.warband = None
+
+    def test_running_task_outlives_every_old_limit_until_stop(self):
+        now = [0]
+        self.broker.clock = lambda: now[0]
+        self.task.job["expires_at"] = None
+        self.request()
+        self.task.approve(self.task.pending["id"], confirmed=True)
+        runtime = SimpleNamespace(TERMINAL={"completed", "failed"}, get=lambda _: {"status": "running"}, cancel=lambda _: None)
+        self.task.runs = {"codex": (runtime, "r1")}
+        watcher = threading.Thread(target=self.task._watch, args=(self.task.job, self.task.stopped), daemon=True)
+        self.task.thread = watcher
+        watcher.start()
+        for _ in range(4):  # Far past the old 15 and 30 minute limits.
+            time.sleep(.5)
+            now[0] += 1200
+        time.sleep(.5)
+        self.assertTrue(watcher.is_alive())
+        self.assertEqual(self.task.job["status"], "running")
+        self.assertTrue(self.broker.status()["active"])
+        self.assertEqual(self.broker._session["token"], self.task.connection["token"])
+        self.task.stop("cancelled")
+        self.assertEqual(self.task.job["status"], "cancelled")
+        self.assertFalse(self.broker.status()["active"])
+
+    def test_provider_turn_is_not_cut_at_fifteen_minutes(self):
+        started = {}
+        class Runtime:
+            backend = "gemini"
+            TERMINAL = {"completed"}
+            def start(self, _prompt, _workspace, **options):
+                started.update(options)
+                return {"id": "r"}
+        self.task.factories = {"antigravity": Runtime}
+        self.task.job.update(models={"antigravity": {"model": "auto", "effort": "medium"}},
+                             roles={"operator": "antigravity", "observer": "codex", "assignments": {"antigravity": "", "codex": ""}})
+        self.task.server = SimpleNamespace(server_port=1, shutdown=lambda: None, server_close=lambda: None)
+        self.task.tokens["antigravity"] = "op"
+        self.task._launch_provider("antigravity")
+        self.assertEqual(started["timeout"], "1440m")
+        self.task.runs = {}
+
+    def test_identical_jarvis_input_is_refused_then_marks_the_task_stalled(self):
+        job = self.task.job
+        for _ in range(40):
+            self.task._note_jarvis_input(job, "jarvis_input", {"action": "click"})
+        for _ in range(4):
+            with self.assertRaises(PermissionError):
+                self.task._note_jarvis_input(job, "jarvis_input", {"action": "click"})
+        self.assertNotIn("stalled", job)
+        with self.assertRaises(PermissionError):
+            self.task._note_jarvis_input(job, "jarvis_input", {"action": "click"})
+        self.assertTrue(job["stalled"])
+
+    def test_varied_jarvis_input_is_never_a_repeat_and_text_is_not_stored(self):
+        job = self.task.job
+        for number in range(200):
+            self.task._note_jarvis_input(job, "jarvis_input", {"action": "type", "text": "gizli" + str(number % 2)})
+        self.assertNotIn("stalled", job)
+        self.assertNotIn("gizli", json.dumps(job["input_repeat"]))
+
+    def test_stall_has_its_own_honest_summary(self):
+        summary = stop_summary("blocked: stalled: repeated action", {"status": "NOT VERIFIED"})
+        self.assertIn("tekrarladığı", summary)
+        self.assertIn("tamamlanmış sayılmadı", summary)
+
     def test_plain_acceptance_and_real_chrome_request_route(self):
         for text in ("Codex, açık test uygulamasındaki sorunu incele ve düzelt. Gemini, test loglarını kontrol et.",
                      "Codex Chrome u açıp youtube a gir Ve Gemini Sende Kafana göre bir şarkı seçimi yap codexe bildir"):
@@ -66,6 +150,23 @@ class NaturalTaskTests(unittest.TestCase):
         self.assertFalse(self.broker.status()["active"])
         self.assertEqual(self.backend.actions,[])
         with self.assertRaises(PermissionError):self.call("desktop_focus")
+
+    def test_context_names_both_task_ids_and_delivers_only_this_tasks_messages(self):
+        # Live 6 Nov: Codex saw task_id from task_context and another id in message
+        # receipts and concluded routing was broken.
+        self.task.squad.receive.return_value=[{"task_id":"squad-task","content":"operator report"},
+                                              {"task_id":"other-task","content":"stale"}]
+        context=self.call("task_context",token="review")
+        self.assertEqual((context["task_id"],context["squad_task_id"]),("test","squad-task"))
+        self.assertEqual([m["content"] for m in context["colleague_messages"]],["operator report"])
+        self.task.squad.receive.assert_called_with("g-task")
+        self.call("task_message",{"text":"Not Defteri'ne yazdım; gözlemde 'deneme' görünüyor."})
+        self.task.squad.send.assert_called_with("c-task","g-task","Not Defteri'ne yazdım; gözlemde 'deneme' görünüyor.",task_id="squad-task")
+
+    def test_operator_is_asked_to_report_its_step_to_the_collaborator(self):
+        from core.natural_desktop import INSTRUCTIONS
+        self.assertIn("send one short task_message with what you did",INSTRUCTIONS)
+        self.assertIn("squad_task_id",INSTRUCTIONS)
 
     def test_no_chat_string_or_truthy_value_is_approval(self):
         self.request()
@@ -114,6 +215,140 @@ class NaturalTaskTests(unittest.TestCase):
         self.assertEqual(len([event for event in self.task.job["events"] if event.get("permission_request")]),1)
         self.assertFalse(self.broker.status()["active"])
 
+    def test_duplicate_approval_does_not_revoke_existing_grant(self):
+        self.request()
+        identity = self.task.pending['id']
+        self.task.approve(identity, confirmed=True)
+        grant = dict(self.task.connection)
+        with self.assertRaises(PermissionError):
+            self.task.approve(identity, confirmed=True)
+        self.assertFalse(self.task.stopped.is_set())
+        self.assertEqual(self.task.connection, grant)
+        self.assertTrue(self.broker.status()['active'])
+        self.assertEqual(self.task.tokens['codex'], 'op')
+        self.task.squad.complete_task.assert_not_called()
+
+    def test_invalid_confirmation_does_not_cancel_an_active_scope(self):
+        self.approve()
+        (self.root / 'extra.log').write_text('fixture', encoding='utf-8')
+        self.call('task_read_log', {'path': 'extra.log'}, 'review')
+        pending = dict(self.task.pending)
+        grant = self.task.connection
+        self.assertIsNone(grant)  # A manual card now pauses even the old scope.
+        with self.assertRaises(PermissionError):
+            self.task.approve(pending['id'], confirmed='true')
+        self.assertFalse(self.task.stopped.is_set())
+        self.assertEqual(self.task.pending, pending)
+        self.assertEqual(self.task.connection, grant)
+        self.task.approve(pending['id'], confirmed=True)
+        self.assertIn('extra.log', self.task.approved_logs)
+
+    def test_superseded_card_does_not_cancel_live_input_or_new_request(self):
+        self.approve()
+        for name in ('first.log', 'second.log'):
+            (self.root / name).write_text('fixture', encoding='utf-8')
+        self.call('task_read_log', {'path': 'first.log'}, 'review')
+        old = self.task.pending['id']
+        self.call('task_read_log', {'path': 'second.log'}, 'review')
+        latest = self.task.pending['id']
+        with self.assertRaises(PermissionError):
+            self.task.approve(old, confirmed=True)
+        self.assertFalse(self.task.stopped.is_set())
+        self.assertEqual(self.task.pending['id'], latest)
+        self.assertFalse(self.broker.status()['active'])
+        self.task.approve(latest, confirmed=True)
+        self.assertEqual(set(self.task.approved_logs), {'first.log', 'second.log'})
+
+    def test_valid_approval_failure_still_revokes_the_current_scope(self):
+        self.approve()
+        (self.root / 'extra.log').write_text('fixture', encoding='utf-8')
+        self.call('task_read_log', {'path': 'extra.log'}, 'review')
+        identity = self.task.pending['id']
+        self.backend.target['pid'] += 1
+        with self.assertRaises(PermissionError):
+            self.task.approve(identity, confirmed=True)
+        self.assertTrue(self.task.stopped.is_set())
+        self.assertIsNone(self.task.connection)
+        self.assertFalse(self.broker.status()['active'])
+        self.assertEqual(self.task.tokens, {})
+
+    def test_concurrent_duplicate_approvals_apply_the_grant_only_once(self):
+        self.request()
+        identity = self.task.pending['id']
+        barrier = threading.Barrier(2)
+        outcomes = []
+
+        def approve():
+            barrier.wait(timeout=2)
+            try:
+                self.task.approve(identity, confirmed=True)
+                outcomes.append('applied')
+            except PermissionError:
+                outcomes.append('stale')
+
+        with patch.object(self.broker, 'grant', wraps=self.broker.grant) as grant:
+            threads = [threading.Thread(target=approve) for _ in range(2)]
+            for worker in threads:
+                worker.start()
+            for worker in threads:
+                worker.join(timeout=3)
+                self.assertFalse(worker.is_alive())
+            self.assertCountEqual(outcomes, ['applied', 'stale'])
+            grant.assert_called_once()
+        self.assertFalse(self.task.stopped.is_set())
+        self.assertTrue(self.broker.status()['active'])
+        self.assertEqual(self.backend.actions, [])
+
+    def test_late_approval_failure_cannot_stop_a_new_task_generation(self):
+        self.approve()
+        (self.root / 'extra.log').write_text('fixture', encoding='utf-8')
+        self.call('task_read_log', {'path': 'extra.log'}, 'review')
+        identity = self.task.pending['id']
+        original = self.task.job
+        stop = self.task.stop
+
+        def replace_generation_then_stop(reason, **kwargs):
+            # Deterministic interleaving at the error-cleanup boundary, with no
+            # real app/process/input. The grant stands in for the new task's.
+            self.task.job = {**original, 'id': 'new-generation'}
+            self.task.tokens = {'codex': 'new-token'}
+            self.task.connection = self.broker.grant([1], 'codex', confirmed=True)
+            return stop(reason, **kwargs)
+
+        self.backend.target['pid'] += 1
+        with patch.object(self.task, 'stop', side_effect=replace_generation_then_stop), \
+                patch('core.natural_desktop.overlay_manager.hide') as hide:
+            with self.assertRaises(PermissionError):
+                self.task.approve(identity, confirmed=True)
+        self.assertFalse(self.task.stopped.is_set())
+        self.assertEqual(self.task.job['id'], 'new-generation')
+        self.assertEqual(self.task.tokens, {'codex': 'new-token'})
+        self.assertTrue(self.broker.status()['active'])
+        hide.assert_not_called()
+
+    def test_repeated_stop_does_not_repeat_resource_release(self):
+        self.approve()
+        learning = Mock()
+        self.task.application_learning = learning
+        with patch('core.natural_desktop.overlay_manager.hide') as hide:
+            self.task.stop()
+            self.task.stop()
+        hide.assert_called_once()
+        learning.stop.assert_called_once()
+        self.task.squad.complete_task.assert_called_once()
+
+    def test_learning_release_error_does_not_prevent_authority_revocation(self):
+        self.approve()
+        learning = Mock()
+        learning.stop.side_effect = RuntimeError('fixture release failure')
+        self.task.application_learning = learning
+        self.task.stop()
+        self.assertTrue(self.task.stopped.is_set())
+        self.assertEqual(self.task.tokens, {})
+        self.assertFalse(self.broker.status()['active'])
+        self.assertEqual(self.task.job['cleanup']['status'], 'failed')
+        self.task.squad.complete_task.assert_called_once()
+
     def test_stop_revokes_and_wakes_pending_wait(self):
         self.request();errors=[]
         def wait():
@@ -144,6 +379,126 @@ class NaturalTaskTests(unittest.TestCase):
         self.assertEqual(self.call("desktop_verify",args)["status"],"NOT VERIFIED")
         self.task.latest["at"]-=16
         with self.assertRaises(PermissionError):self.call("desktop_verify",args)
+
+    def notepad(self, value):
+        image=base64.b64encode(b"fixture-image").decode()
+        self.backend.observe=lambda _: {"ui":{"elements":[{"name":"Metin Düzenleyici","type":"Edit","visible":True,"value":value}]},"image_base64":image}
+
+    def test_quoted_text_from_the_user_is_checked_by_quartz_after_input(self):
+        # Live 6 Nov: Gemini typed 'deneme' but never called desktop_verify; 217 s were spent afterwards.
+        from core.natural_desktop import requested_literals, HOST_TEXT_SOURCE
+        self.task.job["requested_text"]=requested_literals("Gemini, Not Defteri’ni aç ve ‘deneme’ yaz")
+        self.assertEqual(self.task.job["requested_text"],["deneme"])
+        self.approve(); self.notepad("")
+        observed=self.call("desktop_focus")
+        self.assertNotIn("host_verification",observed)
+        self.notepad("deneme")
+        observed=self.call("desktop_act",{"snapshot_id":observed["snapshot_id"],"action":"text","text":"deneme"})
+        self.assertEqual(self.task.job["verification"]["source"],HOST_TEXT_SOURCE)
+        self.assertEqual(self.task.job["verification"]["status"],"OBSERVED UI CRITERION VERIFIED")
+        self.assertIn("end your turn",observed["host_verification"]["next"])
+        self.assertIn("'deneme'",stop_summary("completed",self.task.job["verification"]))
+        self.notepad("başka")  # A later observation without the text withdraws the check.
+        observed=self.call("desktop_observe")
+        self.assertEqual(self.task.job["verification"]["status"],"NOT VERIFIED")
+        self.assertNotIn("host_verification",observed)
+
+    def test_host_check_ignores_text_that_was_visible_before_any_input(self):
+        from core.natural_desktop import requested_literals
+        self.task.job["requested_text"]=requested_literals("Not Defteri'ne 'deneme' yaz")
+        self.approve(); self.notepad("deneme")
+        observed=self.call("desktop_focus")
+        observed=self.call("desktop_act",{"snapshot_id":observed["snapshot_id"],"action":"key","key":"end"})
+        self.assertEqual(self.task.job["verification"]["status"],"NOT VERIFIED")
+        self.assertNotIn("host_verification",observed)
+
+    def test_text_typed_through_jarvis_input_counts_as_input_for_the_host_check(self):
+        # Live 7 Nov (task 6dd2de4f): jarvis_input typed 'deneme', the broker counted no action,
+        # and the host check wrongly treated the text as already present before input.
+        from core.natural_desktop import requested_literals, HOST_TEXT_SOURCE
+        self.task.job["requested_text"]=requested_literals("Not Defteri'ne 'deneme' yaz")
+        self.approve(); self.notepad("")
+        self.call("desktop_focus")
+        self.task.job.setdefault("jarvis_actions",[]).append({"tool":"jarvis_input","arguments":{"action":"type_text"}})
+        self.notepad("deneme")
+        observed=self.call("desktop_observe")
+        self.assertEqual(self.task.job["verification"].get("source"),HOST_TEXT_SOURCE)
+        self.assertIn("host_verification",observed)
+        self.assertFalse(self.task.job.get("requested_text_before_input"))
+
+    def test_read_only_jarvis_calls_are_not_input(self):
+        from core.natural_desktop import requested_literals
+        self.task.job["requested_text"]=requested_literals("Not Defteri'ne 'deneme' yaz")
+        self.approve(); self.notepad("deneme")
+        self.task.job.setdefault("jarvis_actions",[]).append({"tool":"jarvis_system_info","arguments":{"action":"windows"}})
+        observed=self.call("desktop_focus")
+        self.assertTrue(self.task.job["requested_text_before_input"])
+        self.assertNotIn("host_verification",observed)
+
+    def test_model_chosen_text_never_becomes_a_host_check(self):
+        self.task.job["requested_text"]=[]  # The user quoted nothing.
+        self.approve(); self.notepad("")
+        observed=self.call("desktop_focus")
+        self.notepad("Metin Düzenleyici deneme")
+        observed=self.call("desktop_act",{"snapshot_id":observed["snapshot_id"],"action":"text","text":"deneme"})
+        self.assertNotIn("source",self.task.job["verification"])
+        self.assertNotIn("host_verification",observed)
+        self.assertIn("tüm hedefin doğrulandığı anlamına gelmez",stop_summary("completed",self.task.job["verification"]))
+
+    def test_typed_text_is_verified_from_the_edit_value_not_only_names(self):
+        # Live 6 Nov: Notepad's Edit is named "Metin Düzenleyici"; "deneme" exists only as its value.
+        self.approve()
+        image=base64.b64encode(b"fixture-image").decode()
+        self.backend.observe=lambda _: {"ui":{"elements":[{"name":"Metin Düzenleyici","type":"Edit","visible":True,"value":"deneme"}]},"image_base64":image}
+        observed=self.call("desktop_focus")
+        args={"snapshot_id":observed["snapshot_id"],"expected_text":"deneme"}
+        self.assertEqual(self.call("desktop_verify",args)["status"],"NOT VERIFIED")  # No input yet.
+        observed=self.call("desktop_act",{"snapshot_id":observed["snapshot_id"],"action":"text","text":"deneme"})
+        args["snapshot_id"]=observed["snapshot_id"]
+        self.assertEqual(self.call("desktop_verify",args)["status"],"OBSERVED UI CRITERION VERIFIED")
+        args["expected_text"]="başka metin"
+        self.assertEqual(self.call("desktop_verify",args)["status"],"NOT VERIFIED")
+        self.backend.observe=lambda _: {"ui":{"elements":[{"name":"Metin Düzenleyici","type":"Edit","visible":False,"value":"deneme"}]},"image_base64":image}
+        observed=self.call("desktop_observe")
+        self.assertEqual(self.call("desktop_verify",{"snapshot_id":observed["snapshot_id"],"expected_text":"deneme"})["status"],"NOT VERIFIED")
+
+    def test_a_read_only_look_after_verify_keeps_the_verified_text(self):
+        # Live 7 Nov (task afdd5615): Codex verified 'Codex | Antigravity', looked once
+        # more without input, and the task ended NOT VERIFIED.
+        self.approve(); self.notepad("Codex | Antigravity")
+        observed=self.call("desktop_focus")
+        observed=self.call("desktop_act",{"snapshot_id":observed["snapshot_id"],"action":"text","text":"Codex | Antigravity"})
+        self.call("desktop_verify",{"snapshot_id":observed["snapshot_id"],"expected_text":"Codex | Antigravity"})
+        again=self.call("desktop_observe")
+        verification=self.task.job["verification"]
+        self.assertEqual(verification["status"],"OBSERVED UI CRITERION VERIFIED")
+        self.assertEqual(verification["snapshot_id"],again["snapshot_id"])
+        self.assertTrue(verification["rechecked"])
+        self.notepad("")  # The text is gone: the look withdraws the check.
+        self.call("desktop_observe")
+        self.assertEqual(self.task.job["verification"]["status"],"NOT VERIFIED")
+        self.notepad("Codex | Antigravity")  # Back on screen, but the earlier check is not revived.
+        self.call("desktop_observe")
+        self.assertEqual(self.task.job["verification"]["status"],"NOT VERIFIED")
+
+    def test_a_jarvis_input_between_verify_and_look_withdraws_the_check(self):
+        # Gemini review 8 Nov: the recheck must also see jarvis inputs, not only broker actions.
+        self.approve(); self.notepad("Codex | Antigravity")
+        observed=self.call("desktop_focus")
+        observed=self.call("desktop_act",{"snapshot_id":observed["snapshot_id"],"action":"text","text":"Codex | Antigravity"})
+        self.call("desktop_verify",{"snapshot_id":observed["snapshot_id"],"expected_text":"Codex | Antigravity"})
+        self.task.job.setdefault("jarvis_actions",[]).append({"tool":"jarvis_input"})
+        self.call("desktop_observe")
+        self.assertEqual(self.task.job["verification"]["status"],"NOT VERIFIED")
+
+    def test_input_after_verify_still_requires_a_new_verify(self):
+        self.approve(); self.notepad("imza")
+        observed=self.call("desktop_focus")
+        observed=self.call("desktop_act",{"snapshot_id":observed["snapshot_id"],"action":"text","text":"imza"})
+        self.call("desktop_verify",{"snapshot_id":observed["snapshot_id"],"expected_text":"imza"})
+        observed=self.call("desktop_act",{"snapshot_id":observed["snapshot_id"],"action":"key","key":"end"})
+        self.call("desktop_observe")
+        self.assertEqual(self.task.job["verification"]["status"],"NOT VERIFIED")
 
     def test_mcp_returns_image_not_only_a_file_path(self):
         self.approve()
@@ -177,6 +532,26 @@ class NaturalTaskTests(unittest.TestCase):
         self.assertTrue(self.broker.status()["active"])
         self.assertEqual(session, self.broker.status()["id"])
         self.assertEqual(self.backend.actions, [])
+
+    def test_focus_loss_never_stops_the_task_in_warband_profile(self):
+        self.task.warband = Mock()
+        self.approve();self.call("desktop_focus");self.backend.foreground=False
+        session = self.broker.status()["id"]
+        self.assertEqual(self.task.status()["operator"]["session"]["id"], session)
+        self.assertTrue(self.call("desktop_observe")["focus_recovered"])
+        self.assertEqual(session, self.broker.status()["id"])
+        self.assertEqual(self.backend.actions, [])
+
+    def test_warband_game_window_still_revokes_on_focus_loss(self):
+        self.task.warband = Mock()
+        self.backend.target["exe"] = r"C:\\Game\\mb_warband.exe"
+        self.approve();self.call("desktop_focus");self.backend.foreground=False
+        self.assertFalse(self.broker.status()["active"])
+        self.assertIn("user takeover", self.broker.stop_reason)
+
+    def test_agents_are_told_to_continue_until_stop(self):
+        from core.natural_desktop import INSTRUCTIONS
+        self.assertIn("keep working until the user presses Stop", INSTRUCTIONS)
 
     def test_start_runs_both_selected_models_without_granting_input(self):
         from tests.test_chat_coordination import MODELS
@@ -244,7 +619,92 @@ class NaturalTaskTests(unittest.TestCase):
             self.assertEqual(task.job["verification"]["status"],"NOT VERIFIED")
         finally:task.stop()
 
-    def test_cli_finishes_just_after_approval_continues_same_task(self):
+    def test_a_run_that_used_its_tools_after_consent_is_not_restarted(self):
+        # Live 7 Nov (task 47c6783c): Gemini reviewed the approved state, ended its turn,
+        # and was restarted anyway; the same review ran again for 87 s.
+        from tests.test_chat_coordination import MODELS
+        class Runtime:
+            TERMINAL={"completed","failed","cancelled"}
+            executable="test-runtime.exe"
+            def __init__(self):self.states={};self.started=[]
+            def start(self,prompt,workspace,**opts):
+                rid="run"+str(len(self.started)+1)
+                self.started.append(prompt)
+                self.states[rid]={"id":rid,"status":"running","result":"İnceleme bitti."}
+                return self.states[rid]
+            def get(self,rid):return self.states[rid]
+            def cancel(self,rid):self.states[rid]["status"]="cancelled"
+        codex,gemini=Runtime(),Runtime()
+        squad=Mock();squad.initialized=True;squad.create_task.return_value={"id":"task"};squad.receive.return_value=[]
+        task=NaturalDesktopTask(self.desktop,lambda *a:None,factories={"codex":lambda:codex,"antigravity":lambda:gemini},
+            squad_factory=lambda p:squad,evidence_root=self.root/"consent-seen")
+        try:
+            with patch("core.natural_desktop.subprocess.run",return_value=SimpleNamespace(returncode=0)),                  patch("core.natural_desktop.ensure_antigravity_tool_grants"),patch("core.natural_desktop.write_operator_hooks"):
+                task.start("Codex test uygulamasını incele. Gemini sonucu değerlendir.",{"path":str(self.root)},"chat",MODELS,
+                           requested_permission_level="full")
+                # Tam Yetki grants inside the operator's own call while both runs are working.
+                task.call(task.tokens["codex"],{"name":"desktop_request_access","arguments":{"handles":[1],"reason":"Test penceresi için izin"}})
+                self.assertIsNone(task.pending)
+                self.assertEqual(set(task._approval_resume),{"codex","antigravity"})
+                time.sleep(.01)
+                task.call(task.tokens["antigravity"],{"name":"task_context","arguments":{}})
+                codex.states["run1"]["status"]="completed"
+                gemini.states["run1"]["status"]="completed"
+                time.sleep(.6)
+            self.assertEqual(len(gemini.started),1)  # Saw the consent through its own tool call.
+            self.assertEqual(len(codex.started),2)   # Never looked after consent: continues once.
+        finally:task.stop()
+
+    def test_placeholder_messages_never_reach_the_chat(self):
+        for raw in ("Test", "Ready", "ready!"):
+            with self.assertRaises(ValueError):
+                self.call("task_message",{"text":raw},token="review")
+        with self.task.changed:
+            self.task._message("antigravity","Hazırım.")  # e.g. a final turn result
+            self.task._message("antigravity","Ready.")
+            self.task._message("antigravity","Test sonucu: imzalar görünüyor.")
+        texts=[e[1] for e in self.events if len(e)>1]
+        self.assertFalse(any(str(t).strip() in {"Test","Hazırım.","Ready."} for t in texts))
+        self.assertEqual(self.task.squad.send.call_count,1)
+
+    def test_shelved_aster_project_gets_an_ordinary_isolated_desktop_task(self):
+        # Live 4-7 Nov: every desktop task in the ASTER chat ran the Universal Modder profile.
+        from tests.test_chat_coordination import MODELS
+        class Runtime:
+            TERMINAL={"completed","failed","cancelled"}
+            executable="test-runtime.exe"
+            def __init__(self):self.started=[]
+            def start(self,prompt,workspace,**opts):
+                self.started.append(prompt);return {"id":"run"+str(len(self.started)),"status":"running"}
+            def get(self,rid):return {"id":rid,"status":"running"}
+            def cancel(self,rid):pass
+        aster=self.root/"WarbandIsland";aster.mkdir()
+        codex,gemini=Runtime(),Runtime()
+        squad=Mock();squad.initialized=True;squad.create_task.return_value={"id":"task"};squad.receive.return_value=[]
+        squad.status.return_value={"installed":True,"initialized":True}
+        roots=[]
+        def squad_factory(path):roots.append(path);return squad
+        warband=Mock()
+        task=NaturalDesktopTask(self.desktop,lambda *a:None,factories={"codex":lambda:codex,"antigravity":lambda:gemini},
+            squad_factory=squad_factory,evidence_root=self.root/"aster-evidence",warband_factory=warband)
+        try:
+            with patch("core.warband_workspace.PROJECT",aster), \
+                 patch("core.natural_desktop.subprocess.run",return_value=SimpleNamespace(returncode=0)), \
+                 patch("core.natural_desktop.ensure_antigravity_tool_grants"),patch("core.natural_desktop.write_operator_hooks"):
+                task.start("Gemini, Not Defteri'ni aç ve 'deneme' yaz",{"id":"aster-warband","path":str(aster),"workflow":"warband"},"chat",MODELS)
+            warband.assert_not_called()
+            self.assertIsNone(task.warband)
+            self.assertEqual(roots,[str(task.evidence)])  # Squad lives in the task folder, not in the ASTER tree.
+            self.assertFalse((aster/".squad").exists())
+            self.assertEqual(task.squad_info["mode"],"task-isolated")
+            self.assertTrue(all("Universal Modder workspace" not in prompt for prompt in codex.started+gemini.started))
+            with self.assertRaises(PermissionError):  # Other ASTER paths stay refused.
+                other=aster/"Modules";other.mkdir()
+                NaturalDesktopTask(self.desktop,lambda *a:None,factories={},evidence_root=self.root/"x").start(
+                    "x",{"path":str(other)},"chat",MODELS)
+        finally:task.stop()
+
+    def test_early_approval_waits_for_pause_drain_and_late_old_exit_cannot_complete_new_run(self):
         from tests.test_chat_coordination import MODELS
         class Runtime:
             TERMINAL={"completed","failed","cancelled"}
@@ -267,6 +727,9 @@ class NaturalTaskTests(unittest.TestCase):
                 task.start("Codex test uygulamasını incele. Gemini logları kontrol et.",{"path":str(self.root)},"chat",MODELS)
                 token=task.tokens["codex"]
                 task.call(token,{"name":"desktop_request_access","arguments":{"handles":[1],"reason":"Test penceresi için izin"}})
+                with self.assertRaises(PermissionError):
+                    task.approve(task.pending["id"],confirmed=True)
+                task._drain_pause(task.job)
                 task.approve(task.pending["id"],confirmed=True)
                 codex.states["run1"]["status"]="completed"
                 gemini.states["run1"]["status"]="completed"
@@ -279,6 +742,51 @@ class NaturalTaskTests(unittest.TestCase):
             self.assertTrue(self.broker.status()["active"])
             self.assertEqual(task.job["verification"]["status"],"NOT VERIFIED")
         finally:task.stop()
+
+    def test_stop_revokes_within_one_second_during_slow_broker_observation_and_records_cleanup_durations(self):
+        # Live 8 Nov (exam-desk-09): a 5 s post-action backend.observe() held self.changed
+        # and self.broker._lock, delaying stop() and finished_at by 4-7 seconds.
+        self.approve()
+        first = self.call("desktop_focus")
+        obs_entered = threading.Event()
+        obs_release = threading.Event()
+        image = base64.b64encode(b"fixture-image").decode()
+
+        def slow_observe(_target):
+            obs_entered.set()
+            obs_release.wait(timeout=3.0)
+            return {"ui": {"elements": []}, "image_base64": image}
+
+        self.backend.observe = slow_observe
+        call_errors = []
+
+        def run_slow_act():
+            try:
+                self.call("desktop_act", {"snapshot_id": first["snapshot_id"], "action": "key", "key": "tab"})
+            except PermissionError as exc:
+                call_errors.append(str(exc))
+
+        worker = threading.Thread(target=run_slow_act, daemon=True)
+        worker.start()
+        self.assertTrue(obs_entered.wait(timeout=1.0))
+
+        stop_at = time.time()
+        t0 = time.monotonic()
+        self.task.stop("cancelled")
+        stop_elapsed = time.monotonic() - t0
+        obs_release.set()
+        worker.join(timeout=2.0)
+
+        self.assertLess(stop_elapsed, 0.5)
+        self.assertLessEqual(self.task.job["finished_at"] - stop_at, 0.5)
+        self.assertFalse(self.broker.status()["active"])
+        self.assertEqual(len(call_errors), 1)
+        steps = self.task.job["cleanup"]["steps"]
+        self.assertTrue(steps)
+        for step in steps:
+            self.assertIn("duration_ms", step)
+            self.assertIsInstance(step["duration_ms"], (int, float))
+            self.assertGreaterEqual(step["duration_ms"], 0.0)
 
 
 if __name__ == "__main__":unittest.main()

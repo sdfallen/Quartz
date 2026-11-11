@@ -1,4 +1,5 @@
 import io
+import os
 import tempfile
 import time
 import unittest
@@ -6,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core.antigravity_runtime import AntigravityRuntime
+from core.process_tree import CREATE_SUSPENDED
 
 
 class FakeProcess:
@@ -173,6 +175,251 @@ class AntigravityRuntimeTests(unittest.TestCase):
             runtime.start("edit", self.root, full_access=True)
             with self.assertRaises(RuntimeError):
                 runtime.start("second", self.root, full_access=True)
+
+    def test_p0_3_oracle_fields_record_command_exit_codes_file_changes_and_error_events(self):
+        changed = str(self.root / "calc.py").replace("\\", "\\\\")
+        stream = (
+            '{"event":"init","conversation_id":"conv-oracle"}\n'
+            '{"event":"step_update","step_update":{"id":"s1","state":"RUNNING","tool_name":"run_command","tool_info":{"parameters":{"CommandLine":"pytest -q"}}}}\n'
+            '{"event":"step_update","step_update":{"id":"s1","state":"ERROR","tool_name":"run_command","tool_info":{"output":"Command exited with code 1\\n1 failed"}}}\n'
+            '{"event":"step_update","step_update":{"id":"s2","state":"DONE","tool_name":"edit_file","tool_info":{"parameters":{"Path":"' + changed + '"}}}}\n'
+            '{"event":"step_update","step_update":{"id":"s3","state":"DONE","tool_name":"run_command","tool_info":{"parameters":{"CommandLine":"pytest -q"},"exit_code":0,"output":"1 passed"}}}\n'
+            '{"event":"result","result":{"conversation_id":"conv-oracle","status":"SUCCESS","response":"Fixed calc.py"}}\n'
+        )
+        runtime = AntigravityRuntime(self.exe)
+        with patch("core.antigravity_runtime.subprocess.Popen", return_value=FakeProcess(stream)):
+            started = runtime.start("fix", self.root, write=True, full_access=True)
+            for _ in range(100):
+                current = runtime.get(started["id"])
+                if current["status"] in runtime.TERMINAL:
+                    break
+                time.sleep(0.01)
+
+        self.assertEqual(current["status"], "completed")
+        self.assertEqual(current["command_exit_codes"], [1, 0])
+        self.assertEqual(len(current["command_results"]), 2)
+        self.assertEqual(current["command_results"][0]["seq"], 1)
+        self.assertEqual(current["command_results"][0]["command"], "pytest -q")
+        self.assertEqual(current["command_results"][0]["exit_code"], 1)
+        self.assertFalse(current["command_results"][0]["ok"])
+        self.assertEqual(current["command_results"][1]["seq"], 3)
+        self.assertEqual(current["command_results"][1]["exit_code"], 0)
+        self.assertTrue(current["command_results"][1]["ok"])
+        self.assertEqual(current["file_changes"], [{
+            "seq": 2,
+            "path": str(self.root / "calc.py"),
+            "kind": "update",
+            "tool": "edit_file",
+            "state": "DONE",
+        }])
+        self.assertEqual(len(current["error_events"]), 1)
+        self.assertEqual(current["error_events"][0]["seq"], 1)
+        self.assertEqual(current["error_events"][0]["source"], "command")
+        self.assertEqual(current["error_events"][0]["kind"], "nonzero_exit")
+        self.assertEqual(current["error_events"][0]["exit_code"], 1)
+        self.assertEqual(current["errors"], [])
+
+    def test_p1_3_readonly_run_detects_and_fails_unauthorized_file_write(self):
+        changed = str(self.root / "readonly_probe.txt").replace("\\", "\\\\")
+        stream = (
+            '{"event":"init","conversation_id":"conv-ro"}\n'
+            '{"event":"step_update","step_update":{"id":"s1","state":"DONE","step_type":"tool",'
+            '"tool_name":"write_file","tool_info":{"parameters":{"Path":"' + changed + '"}}}}\n'
+            '{"event":"result","result":{"conversation_id":"conv-ro","status":"SUCCESS","response":"Wrote file"}}\n'
+        )
+        runtime = AntigravityRuntime(self.exe)
+        with patch("core.antigravity_runtime.subprocess.Popen", return_value=FakeProcess(stream)):
+            started = runtime.start("inspect only", self.root, write=False, full_access=False)
+            for _ in range(100):
+                current = runtime.get(started["id"])
+                if current["status"] in runtime.TERMINAL:
+                    break
+                time.sleep(0.01)
+
+        self.assertEqual(current["status"], "failed")
+        self.assertTrue(current["unauthorized_write_detected"])
+        self.assertEqual(current["unauthorized_files_changed"], [str(self.root / "readonly_probe.txt")])
+        self.assertTrue(any(e["kind"] == "unauthorized_readonly_write" for e in current["error_events"]))
+        self.assertTrue(any(d.get("reason") == "read_only_violation" for d in current["denied_actions"]))
+
+    def test_p1_3_readonly_run_does_not_blame_reader_for_concurrent_writer_disk_changes(self):
+        stream = (
+            '{"event":"init","conversation_id":"conv-ro-clean"}\n'
+            '{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"Reviewed safely."}}\n'
+            '{"event":"result","result":{"conversation_id":"conv-ro-clean","status":"SUCCESS","response":"Reviewed safely."}}\n'
+        )
+        runtime = AntigravityRuntime(self.exe)
+        with patch("core.antigravity_runtime.subprocess.Popen", return_value=FakeProcess(stream)):
+            # Concurrent writer modifies a file in the project directory during the reader's run
+            (self.root / "writer_owned.txt").write_text("concurrent writer change\n", encoding="utf-8")
+            started = runtime.start("review", self.root, write=False, full_access=False)
+            for _ in range(100):
+                current = runtime.get(started["id"])
+                if current["status"] in runtime.TERMINAL:
+                    break
+                time.sleep(0.01)
+
+        self.assertEqual(current["status"], "completed")
+        self.assertFalse(current["unauthorized_write_detected"])
+        self.assertEqual(current["unauthorized_files_changed"], [])
+
+    def test_r2_readonly_run_allows_quartz_chat_tool_temp_workspace_writes_but_blocks_project_writes(self):
+        runtime = AntigravityRuntime(self.exe)
+        with tempfile.TemporaryDirectory(prefix="quartz-chat-tool-") as scratch_tmp:
+            scratch_dir = Path(scratch_tmp)
+            scratch_note = str(scratch_dir / "operator_notes.md").replace("\\", "\\\\")
+            # 1) Writing inside quartz-chat-tool-* temporary workspace is separated into scratch_files_changed
+            stream_scratch = (
+                '{"event":"init","conversation_id":"conv-r2-ok"}\n'
+                '{"event":"step_update","step_update":{"id":"s1","state":"DONE","step_type":"tool",'
+                '"tool_name":"write_file","tool_info":{"parameters":{"Path":"' + scratch_note + '"}}}}\n'
+                '{"event":"result","result":{"conversation_id":"conv-r2-ok","status":"SUCCESS","response":"Operator done"}}\n'
+            )
+            with patch("core.antigravity_runtime.subprocess.Popen", return_value=FakeProcess(stream_scratch)):
+                started = runtime.start("desktop operator", scratch_dir, write=False, full_access=False)
+                for _ in range(100):
+                    current = runtime.get(started["id"])
+                    if current["status"] in runtime.TERMINAL:
+                        break
+                    time.sleep(0.01)
+            self.assertEqual(current["status"], "completed")
+            self.assertFalse(current["unauthorized_write_detected"])
+            self.assertEqual(current["files_changed"], [])
+            self.assertEqual(current["scratch_files_changed"], [str(scratch_dir / "operator_notes.md")])
+            self.assertEqual(current["unauthorized_files_changed"], [])
+
+            # 2) Escaping quartz-chat-tool-* to write into the user's project directory IS a violation
+            escaped_path = str(self.root / "escaped.py").replace("\\", "\\\\")
+            stream_escape = (
+                '{"event":"init","conversation_id":"conv-r2-escape"}\n'
+                '{"event":"step_update","step_update":{"id":"s1","state":"DONE","step_type":"tool",'
+                '"tool_name":"write_file","tool_info":{"parameters":{"Path":"' + escaped_path + '"}}}}\n'
+                '{"event":"result","result":{"conversation_id":"conv-r2-escape","status":"SUCCESS","response":"Escaped"}}\n'
+            )
+            with patch("core.antigravity_runtime.subprocess.Popen", return_value=FakeProcess(stream_escape)):
+                started2 = runtime.start("desktop operator", scratch_dir, write=False, full_access=False)
+                for _ in range(100):
+                    current2 = runtime.get(started2["id"])
+                    if current2["status"] in runtime.TERMINAL:
+                        break
+                    time.sleep(0.01)
+            self.assertEqual(current2["status"], "failed")
+            self.assertTrue(current2["unauthorized_write_detected"])
+            self.assertEqual(current2["unauthorized_files_changed"], [str(self.root / "escaped.py")])
+            self.assertEqual(current2["scratch_files_changed"], [])
+
+    def test_r3_start_uses_create_suspended_and_records_job_assignment_failure(self):
+        stream = (
+            '{"event":"init","conversation_id":"conv-r3"}\n'
+            '{"event":"result","result":{"conversation_id":"conv-r3","status":"SUCCESS","response":"ok"}}\n'
+        )
+        runtime = AntigravityRuntime(self.exe)
+
+        def fake_bind(process, *, resume=False, error_sink=None):
+            if callable(error_sink):
+                error_sink("Simulated AssignProcessToJobObject failure")
+            return False
+
+        with patch("core.antigravity_runtime.subprocess.Popen", return_value=FakeProcess(stream)) as popen, \
+             patch("core.antigravity_runtime.bind_kill_on_close_job", side_effect=fake_bind) as bind_mock:
+            started = runtime.start("inspect", self.root, write=False, full_access=False)
+            for _ in range(100):
+                current = runtime.get(started["id"])
+                if current["status"] in runtime.TERMINAL:
+                    break
+                time.sleep(0.01)
+
+        if os.name == "nt":
+            self.assertTrue(bool(popen.call_args.kwargs.get("creationflags", 0) & CREATE_SUSPENDED))
+        self.assertTrue(bind_mock.call_args.kwargs.get("resume"))
+        self.assertFalse(current["job_bound"])
+        self.assertEqual(current["job_assignment_error"], "Simulated AssignProcessToJobObject failure")
+        self.assertTrue(any(e["kind"] == "job_assignment_failed" for e in current["error_events"]))
+
+    def test_p1_readonly_write_outside_project_and_outside_temp_sets_unauthorized_write_detected(self):
+        runtime = AntigravityRuntime(self.exe)
+        isolated_temp = self.root / "isolated_temp"
+        user_project = self.root / "user_project"
+        outside_docs = self.root / "outside_docs"
+        isolated_temp.mkdir(parents=True, exist_ok=True)
+        user_project.mkdir(parents=True, exist_ok=True)
+        outside_docs.mkdir(parents=True, exist_ok=True)
+        leak_file = outside_docs / "leak.txt"
+        leak_str = str(leak_file).replace("\\", "\\\\")
+        stream = (
+            '{"event":"init","conversation_id":"conv-p1"}\n'
+            '{"event":"step_update","step_update":{"id":"s1","state":"DONE","step_type":"tool",'
+            '"tool_name":"write_file","tool_info":{"parameters":{"Path":"' + leak_str + '"}}}}\n'
+            '{"event":"result","result":{"conversation_id":"conv-p1","status":"SUCCESS","response":"Wrote outside"}}\n'
+        )
+        with patch("core.antigravity_runtime.tempfile.gettempdir", return_value=str(isolated_temp)), \
+             patch("core.antigravity_runtime.subprocess.Popen", return_value=FakeProcess(stream)):
+            started = runtime.start("inspect", user_project, write=False, full_access=False)
+            for _ in range(100):
+                current = runtime.get(started["id"])
+                if current["status"] in runtime.TERMINAL:
+                    break
+                time.sleep(0.01)
+
+        self.assertEqual(current["status"], "failed")
+        self.assertTrue(current["unauthorized_write_detected"])
+        self.assertEqual(current["unauthorized_files_changed"], [str(leak_file)])
+        self.assertEqual(current["scratch_files_changed"], [])
+        self.assertTrue(any("modified file without write permission" in err for err in current["errors"]))
+
+    def test_p2a_user_project_does_not_exempt_temp_files_or_quartz_chat_tool_subfolders(self):
+        runtime = AntigravityRuntime(self.exe)
+        isolated_temp = self.root / "isolated_temp"
+        user_project = self.root / "user_project"
+        subfolder = user_project / "quartz-chat-tool-sub"
+        isolated_temp.mkdir(parents=True, exist_ok=True)
+        subfolder.mkdir(parents=True, exist_ok=True)
+
+        # 1) User project writing to a file in TEMP is NOT exempt
+        temp_file = isolated_temp / "random_temp.txt"
+        temp_str = str(temp_file).replace("\\", "\\\\")
+        stream_temp = (
+            '{"event":"init","conversation_id":"conv-p2a-temp"}\n'
+            '{"event":"step_update","step_update":{"id":"s1","state":"DONE","step_type":"tool",'
+            '"tool_name":"write_file","tool_info":{"parameters":{"Path":"' + temp_str + '"}}}}\n'
+            '{"event":"result","result":{"conversation_id":"conv-p2a-temp","status":"SUCCESS","response":"Wrote temp"}}\n'
+        )
+        with patch("core.antigravity_runtime.tempfile.gettempdir", return_value=str(isolated_temp)), \
+             patch("core.antigravity_runtime.subprocess.Popen", return_value=FakeProcess(stream_temp)):
+            started1 = runtime.start("inspect", user_project, write=False, full_access=False)
+            for _ in range(100):
+                current1 = runtime.get(started1["id"])
+                if current1["status"] in runtime.TERMINAL:
+                    break
+                time.sleep(0.01)
+
+        self.assertEqual(current1["status"], "failed")
+        self.assertTrue(current1["unauthorized_write_detected"])
+        self.assertEqual(current1["unauthorized_files_changed"], [str(temp_file)])
+        self.assertEqual(current1["scratch_files_changed"], [])
+
+        # 2) User project writing to a "quartz-chat-tool-*" subfolder inside the project is NOT exempt
+        sub_file = subfolder / "a.py"
+        sub_str = str(sub_file).replace("\\", "\\\\")
+        stream_sub = (
+            '{"event":"init","conversation_id":"conv-p2a-sub"}\n'
+            '{"event":"step_update","step_update":{"id":"s1","state":"DONE","step_type":"tool",'
+            '"tool_name":"write_file","tool_info":{"parameters":{"Path":"' + sub_str + '"}}}}\n'
+            '{"event":"result","result":{"conversation_id":"conv-p2a-sub","status":"SUCCESS","response":"Wrote sub"}}\n'
+        )
+        with patch("core.antigravity_runtime.tempfile.gettempdir", return_value=str(isolated_temp)), \
+             patch("core.antigravity_runtime.subprocess.Popen", return_value=FakeProcess(stream_sub)):
+            started2 = runtime.start("inspect", user_project, write=False, full_access=False)
+            for _ in range(100):
+                current2 = runtime.get(started2["id"])
+                if current2["status"] in runtime.TERMINAL:
+                    break
+                time.sleep(0.01)
+
+        self.assertEqual(current2["status"], "failed")
+        self.assertTrue(current2["unauthorized_write_detected"])
+        self.assertEqual(current2["unauthorized_files_changed"], [str(sub_file)])
+        self.assertEqual(current2["scratch_files_changed"], [])
 
 
 if __name__ == "__main__":
