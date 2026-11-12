@@ -107,23 +107,37 @@ class AppServerSession:
             return self._notifications.pop(0)
 
     # -- protocol --------------------------------------------------------
-    def open_verified_thread(self, *, cwd, model=None, should_abort=None, expected_root=None):
-        """initialize -> config gate -> thread/start -> prove the thread's tool set. Returns the thread id."""
+    def open_verified_thread(self, *, cwd, model=None, should_abort=None, expected_root=None,
+                             expected_server=None):
+        """initialize -> config gate -> thread/start (pinned) -> re-read -> prove the tool set."""
         self.request("initialize", {"clientInfo": {"name": "quartz", "version": "1"}})
         self.notify("initialized")
         # Start gate: the effective config of THIS app-server, read before any
         # thread exists, must already allow only Quartz's server (so no other
         # MCP server can be launched by thread/start). Codex owner review.
         config = self.request("config/read", {"cwd": str(cwd)}).get("config")
-        refusal = config_refusal(config, expected_root)
+        refusal = config_refusal(config, expected_root, expected_server)
         if refusal:
             raise SessionRefused(f"Codex config would start more than Quartz's read tools ({refusal})")
+        known = sorted(config["mcp_servers"])
         if should_abort and should_abort():
             raise SessionRefused("Cancelled before the thread was started")
-        params = {"cwd": str(cwd), "sandbox": "read-only", "approvalPolicy": "never", "ephemeral": True}
+        # The thread's MCP table is given in full here: the thread-level override
+        # REPLACES the table (observed live), so the thread's servers are exactly
+        # Quartz's read server plus explicitly disabled known names -- a name added
+        # by any layer meanwhile is simply not part of this thread.
+        servers = {name: {"enabled": False} for name in known if name != ALLOWED_SERVER}
+        servers[ALLOWED_SERVER] = quartz_server_entry(config["mcp_servers"][ALLOWED_SERVER])
+        params = {"cwd": str(cwd), "sandbox": "read-only", "approvalPolicy": "never", "ephemeral": True,
+                  "config": {"features": {name: False for name in FEATURES_OFF}, "mcp_servers": servers}}
         if model:
             params["model"] = model
         started = self.request("thread/start", params)
+        # A server name that appeared meanwhile is refused before any prompt.
+        after = self.request("config/read", {"cwd": str(cwd)}).get("config")
+        refusal = config_refusal(after, expected_root, expected_server)
+        if refusal or sorted((after or {}).get("mcp_servers") or {}) != known:
+            raise SessionRefused("Codex config changed while the thread was starting")
         thread = started.get("thread") if isinstance(started, dict) else None
         thread_id = thread.get("id") if isinstance(thread, dict) else None
         if not isinstance(thread_id, str) or not thread_id:
@@ -160,15 +174,36 @@ class AppServerSession:
             time.sleep(0.5)
 
 
-def config_refusal(config, expected_root=None):
-    """None when the effective config can only start quartz_project; else a reason."""
+FEATURES_OFF = ("plugins", "apps", "hooks", "shell_tool", "unified_exec", "computer_use", "browser_use",
+                "multi_agent", "memories")
+
+
+def quartz_server_entry(verified):
+    """Re-state the already verified quartz_project entry for the thread config (no new values)."""
+    entry = {"command": verified.get("command"), "args": list(verified.get("args") or []), "enabled": True}
+    for key in ("enabled_tools", "tool_timeout_sec", "default_tools_approval_mode"):
+        if key in verified and verified[key] is not None:
+            entry[key] = verified[key]
+    return entry
+
+
+def _same_path(a, b):
+    import os
+    return os.path.normcase(os.path.normpath(str(a))) == os.path.normcase(os.path.normpath(str(b)))
+
+
+def config_refusal(config, expected_root=None, expected_server=None):
+    """None when the effective config can only start quartz_project; else a reason.
+
+    ``expected_server`` ({"command", "args"}) pins Quartz's helper identity:
+    the exact executable and the exact argument list.
+    """
     if not isinstance(config, dict):
         return "config unreadable"
     features = config.get("features")
     if not isinstance(features, dict):
         return "features unreadable"
-    for name in ("plugins", "apps", "hooks", "shell_tool", "unified_exec", "computer_use", "browser_use",
-                 "multi_agent", "memories"):
+    for name in FEATURES_OFF:
         if features.get(name) is not False:
             return f"feature {name} not off"
     servers = config.get("mcp_servers")
@@ -185,6 +220,14 @@ def config_refusal(config, expected_root=None):
                 return "quartz_project is not Quartz's read server"
             if expected_root is not None and str(expected_root) not in [str(a) for a in args]:
                 return "quartz_project serves a different root"
+            if expected_server is not None:
+                if not _same_path(server.get("command"), expected_server["command"]):
+                    return "quartz_project runs a different program"
+                if [str(a) for a in args] != [str(a) for a in expected_server["args"]]:
+                    return "quartz_project arguments differ"
+                transport = server.get("transport") or server.get("type")
+                if transport not in (None, "stdio"):
+                    return "quartz_project is not a stdio server"
         elif server.get("enabled") is not False:
             return f"server {str(name)[:40]} enabled"
     if ALLOWED_SERVER not in servers:

@@ -497,6 +497,7 @@ class CodexRuntime:
         """Spawn `codex app-server` with the project-read config and drive one verified turn."""
         from core.cli_installer import cli_environment
         from core.codex_project_session import AppServerSession, SessionRefused, ALLOWED_SERVER, ALLOWED_TOOLS
+        from core.project_read_mcp import expected_server
 
         def read_root_of(rec):
             return rec.get("_project_read")
@@ -549,7 +550,8 @@ class CodexRuntime:
             try:
                 session = AppServerSession(process, on_event=note)
                 thread_id = session.open_verified_thread(cwd=project, model=model, should_abort=should_abort,
-                                                         expected_root=read_root_of(record))
+                                                         expected_root=read_root_of(record),
+                                                         expected_server=expected_server(read_root_of(record)))
                 with self._lock:
                     record["thread_id"] = thread_id
                     record["first_event_at"] = record.get("first_event_at") or time.time()
@@ -682,8 +684,24 @@ class CodexRuntime:
                 raise KeyError(f"Unknown Codex run: {run_id}")
             record = self._runs[run_id]
             process = self._processes.get(run_id)
-            if record["status"] in self.TERMINAL:
+            retry_cleanup = (record["status"] in self.TERMINAL and record.get("cleanup_pending") is True
+                             and process is not None)
+            if record["status"] in self.TERMINAL and not retry_cleanup:
                 return self.get(run_id)
+        if retry_cleanup:
+            # A finished run whose process exit was never confirmed: Stop and
+            # shutdown retry the owned cleanup instead of returning early.
+            try:
+                stop_process_tree(process, timeout=max(1, timeout))
+            except Exception:
+                pass
+            if not owned_cleanup_pending(process):
+                close_process_job(process)
+                with self._lock:
+                    record.update(cleanup_pending=False, process_exit_confirmed=True, exit_code=process.poll())
+                    self._processes.pop(run_id, None)
+            return self.get(run_id)
+        with self._lock:
             record["cancel_requested"] = True
             record["status"] = "cancelling"
         if owned_cleanup_pending(process):

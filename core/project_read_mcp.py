@@ -353,12 +353,18 @@ def main(root):
         print(json.dumps(response, ensure_ascii=False), flush=True)
 
 
-def codex_override(root):
-    """Per-run Codex config: this server only, read-only tools auto-approved."""
+def expected_server(root):
+    """The exact helper identity Quartz registers for a project read: program and arguments."""
     from core.desktop_agents import mcp_command
     command = mcp_command()
     clean = str(Path(root).resolve(strict=True))
-    return ('mcp_servers.quartz_project={command=' + json.dumps(command[0]) +
-            ',args=' + json.dumps(command[1:] + ["--project-read-server", clean]) +
+    return {"command": command[0], "args": command[1:] + ["--project-read-server", clean]}
+
+
+def codex_override(root):
+    """Per-run Codex config: this server only, read-only tools auto-approved."""
+    server = expected_server(root)
+    return ('mcp_servers.quartz_project={command=' + json.dumps(server["command"]) +
+            ',args=' + json.dumps(server["args"]) +
             ',enabled_tools=' + json.dumps([t["name"] for t in TOOLS]) +
             ',tool_timeout_sec=60,default_tools_approval_mode="approve"}')

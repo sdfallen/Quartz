@@ -564,7 +564,12 @@ class MultiAgentService:
                     "coordination_status":"not-required", "coordination_error":""}
             def finish():
                 try:
-                    while runtime.get(run["id"])["status"] not in runtime.TERMINAL:
+                    # Keep the scratch workspace while the run's process is still owned
+                    # (an unconfirmed cleanup can be retried by Stop/shutdown).
+                    while True:
+                        current = runtime.get(run["id"])
+                        if current["status"] in runtime.TERMINAL and current.get("cleanup_pending") is not True:
+                            break
                         time.sleep(.15)
                 finally:
                     workspace.cleanup()

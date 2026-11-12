@@ -15,10 +15,14 @@ OFF = ("plugins", "apps", "hooks", "shell_tool", "unified_exec", "computer_use",
 
 
 def good_config(root=None):
-    args = ["desktop_mcp.py", "--project-read-server"] + ([str(root)] if root else [])
+    if root is not None and Path(str(root)).exists():
+        from core.project_read_mcp import expected_server
+        server = expected_server(root)
+        quartz = {"enabled": True, "command": server["command"], "args": server["args"]}
+    else:
+        quartz = {"enabled": True, "args": ["desktop_mcp.py", "--project-read-server"] + ([str(root)] if root else [])}
     return {"features": {name: False for name in OFF},
-            "mcp_servers": {"quartz_project": {"enabled": True, "args": args},
-                            "node_repl": {"enabled": False}}}
+            "mcp_servers": {"quartz_project": quartz, "node_repl": {"enabled": False}}}
 
 
 class FakeAppServer:
@@ -205,6 +209,61 @@ class ProjectSessionRuntimeTests(unittest.TestCase):
         self.assertIn("config/read", fake.methods())
         self.assertNotIn("thread/start", fake.methods())
         self.assertNotIn("turn/start", fake.methods())
+
+    def test_helper_identity_is_pinned(self):
+        from core.codex_project_session import config_refusal
+        from core.project_read_mcp import expected_server
+        expected = expected_server(self.project)
+        good = good_config(self.project.resolve())
+        self.assertIsNone(config_refusal(good, str(self.project.resolve()), expected))
+        for change in ({"command": "C:/evil/tool.exe"}, {"args": good["mcp_servers"]["quartz_project"]["args"] + ["--x"]},
+                       {"type": "streamable_http"}):
+            with self.subTest(change=change):
+                bad = good_config(self.project.resolve())
+                bad["mcp_servers"]["quartz_project"].update(change)
+                self.assertIsNotNone(config_refusal(bad, str(self.project.resolve()), expected))
+
+    def test_thread_start_pins_limits_and_a_new_server_meanwhile_is_refused(self):
+        fake = FakeAppServer()
+        _, run, _ = self.run_read(fake)
+        start = next(m for m in fake.sent if m.get("method") == "thread/start")["params"]
+        servers = start["config"]["mcp_servers"]
+        self.assertEqual(set(servers), {"node_repl", "quartz_project"})  # the thread's whole table
+        self.assertEqual(servers["node_repl"], {"enabled": False})
+        self.assertIn("--project-read-server", servers["quartz_project"]["args"])
+        self.assertFalse(start["config"]["features"]["plugins"])
+        # A server name that appears between the two config reads stops everything before the prompt.
+        fake2 = FakeAppServer()
+        reads = []
+        original = fake2._answer
+
+        def answer(message):
+            if message.get("method") == "config/read":
+                reads.append(1)
+                config = good_config(self.project.resolve())
+                if len(reads) > 1:
+                    config["mcp_servers"]["late"] = {"enabled": False}
+                fake2._emit({"id": message["id"], "result": {"config": config}})
+                return
+            original(message)
+
+        fake2._answer = answer
+        _, run2, _ = self.run_read(fake2, keep_config=True)
+        self.assertEqual(run2["status"], "failed")
+        self.assertIn("thread/start", fake2.methods())
+        self.assertNotIn("turn/start", fake2.methods())
+
+    def test_stop_retries_an_unconfirmed_cleanup_and_frees_ownership(self):
+        fake = FakeAppServer()
+        runtime, run, _ = self.run_read(fake, cleanup_ok=False)
+        self.assertIn(run["id"], runtime._processes)
+        with patch("core.codex_runtime.stop_process_tree", side_effect=lambda p, timeout=5: p.terminate()), \
+                patch("core.codex_runtime.owned_cleanup_pending", return_value=False), \
+                patch("core.codex_runtime.close_process_job"):
+            after = runtime.cancel(run["id"])
+        self.assertFalse(after["cleanup_pending"])
+        self.assertIs(after["process_exit_confirmed"], True)
+        self.assertNotIn(run["id"], runtime._processes)
 
     def test_unlisted_tool_on_quartz_server_fails_the_turn(self):
         fake = FakeAppServer(items=[{"type": "mcpToolCall", "server": "quartz_project", "tool": "project_write"},
