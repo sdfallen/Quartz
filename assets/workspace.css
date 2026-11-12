@@ -686,3 +686,19 @@ body.repair-plan-open .empty-state { visibility: hidden; }
 .repair-chip { width: min(var(--measure), 100%); margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
 .repair-chip .msg-badge { margin-right: auto; }
 @media (max-width: 560px) { .rp-grid { grid-template-columns: minmax(0, 1fr); } .rp-help { grid-column: 1; } }
+
+/* App preview pane (loopback web apps) ---------------------------------- */
+.preview-pane { width: clamp(340px, 42vw, 820px); flex: none; display: none; flex-direction: column; min-height: 0; background: var(--surface-1); border-left: 1px solid var(--line); }
+body.show-preview .preview-pane { display: flex; }
+.preview-bar { display: flex; align-items: center; gap: 6px; height: 52px; padding: 0 8px; flex: none; border-bottom: 1px solid var(--line); }
+.preview-address { flex: 1; min-width: 0; height: 30px; padding: 0 10px; font: inherit; font-size: var(--text-xs); color: var(--text); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md); }
+.preview-address:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.preview-note { padding: 10px 12px; font-size: var(--text-xs); line-height: 1.5; color: var(--text-2); overflow-wrap: anywhere; }
+.preview-note[data-tone="error"] { color: var(--text); background: color-mix(in oklab, var(--stop-hover) 14%, transparent); }
+.preview-note:empty { display: none; }
+.preview-frame { flex: 1; width: 100%; min-height: 0; border: 0; background: #fff; }
+.preview-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.preview-link-btn { display: inline-flex; align-items: center; gap: 6px; }
+@media (max-width: 1080px) {
+  body.show-preview .preview-pane { position: fixed; top: 0; right: 0; bottom: 0; width: min(100vw, 720px); z-index: 61; box-shadow: var(--shadow-3); }
+}

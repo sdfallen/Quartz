@@ -21,6 +21,7 @@ import webview
 from core.application_services import (ServicesClosed,
     CONFIRMED, FAILED, PENDING, ApplicationServices, ServicesClosed, overall_status)
 from core.local_ipc import request_token
+from core.preview_url import PreviewUrlError, frame_policy, normalize_preview_url
 from core.ui_preferences import apply_to_document, load_ui_preferences, save_ui_preference, window_background
 from core.ui_window import full_window_rect, initial_geometry, maximized_window_rect
 from ui.document import BRAND_MARK, asset_root, build_document
@@ -895,6 +896,34 @@ class Api:
         if not folders:
             return {"status": "cancelled", "data": None}
         return ipc_send("project_add", {"path": folders[0]})
+
+    def preview_check_url(self, url: str) -> dict:
+        """Normalise a preview address; loopback http(s) only."""
+        try:
+            return {"status": "ok", "data": normalize_preview_url(url)}
+        except PreviewUrlError as exc:
+            return {"status": "error", "data": str(exc)}
+
+    def preview_frame_policy(self, url: str) -> dict:
+        """``allowed`` / ``blocked`` (open in own window) / ``unreachable``."""
+        try:
+            return {"status": "ok", "data": frame_policy(url)}
+        except PreviewUrlError as exc:
+            return {"status": "error", "data": str(exc)}
+
+    def preview_open_window(self, url: str) -> dict:
+        """Open a loopback app in its own window.
+
+        The window gets no ``js_api``: the previewed page can never reach the
+        Quartz bridge. Used when a page refuses to be framed in the side panel.
+        """
+        try:
+            target = normalize_preview_url(url)
+        except PreviewUrlError as exc:
+            return {"status": "error", "data": str(exc)}
+        webview.create_window("Quartz önizleme", url=target, width=1100, height=760,
+                              min_size=(360, 300), text_select=True)
+        return {"status": "ok", "data": target}
 
     def project_select(self, project_id: str) -> dict:
         return ipc_send("project_select", {"project_id": project_id})
