@@ -45,7 +45,13 @@ Dal `claude/project-read-20261112` (`6b8bcba` → `e29c38d`).
     kontrol/kullanım yarışı; kancada araca özgü alan; kayıt artığı; "okumadan" ifadesi).
   - v3 `fb9d489` → Codex başlatmadan önce `codex mcp list --json` ile etkin sunucuları doğruluyor (canlıda eklentiden
     gelen `node_repl` yakalandı ve kapatıldı); okumalar açılan tanıtıcının gerçek yolu üzerinden doğrulanıyor.
-    Codex'in v3 incelemesi bekleniyor.
+  - v3 → Codex yine "değişiklik" (ön kontrol exec oturumuna bağlı değil; tanıtıcı sonrası yeniden çözümleme ve
+    ada bağlı listeleme; ön kontrolde Stop).
+  - v4 `faf7053` → klasörler tanıtıcıdan listeleniyor (`GetFileInformationByHandleEx`); bilinmeyen durumlu MCP satırı
+    ret; Stop ön kontrolde ve başlatmadan hemen önce denetleniyor. Test, tanıtıcı tutmanın bu Windows'ta yeniden
+    adlandırmayı engellemediğini gösterdi; çözüm buna göre seçildi. Codex'in v4 incelemesi bekleniyor.
+  - **Açık risk:** `codex mcp list` ön kontrolü ayrı süreçte; gerçek `exec` oturumuna bağlanmadı. Arada yapılandırma
+    değişirse görülmez (pencere saniyeler; aynı bayraklar exec'e de veriliyor).
   - Testler ayrıca bir junction sızıntısını ve iki kilit sızıntısını yakaladı.
 
 ## Yan bulgu (main'de, bu dalda düzeltilmedi)
@@ -66,7 +72,7 @@ v1 (kabuklu Codex) aynı soruları 47–152 sn'de yanıtlıyordu; v2'nin Quartz 
 
 ## Kanıt seviyesi
 
-- SOURCE/TESTED: tam takım Ran 1756, OK (skipped=2) (v3); `tests/test_project_read.py` 30 test.
+- SOURCE/TESTED: tam takım Ran 1760, OK (skipped=2) (v4); `tests/test_project_read.py` 34 test.
 - LIVE v3 kısa kontrol: Codex 2/2, 0 kabuk; Antigravity 2/2 (2 komut denemesi kancada reddedildi); kopya temiz.
 - BUILT: derlenmiş yardımcı (okuma koruması 7/7, MCP sunucusu protokol duman testi).
 - LIVE (geliştirme koşusu, paket değil): yukarıdaki A/B; Quartz GUI'den uçtan uca denenmedi.
