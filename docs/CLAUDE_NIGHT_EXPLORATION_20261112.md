@@ -38,9 +38,21 @@ Dal `claude/project-read-20261112` (`6b8bcba` → `e29c38d`).
 - **Antigravity:** geçici klasör + `--add-dir <proje>` + PreToolUse okuma koruması: yalnız açık yollu
   `read_file/view_file/list_dir`, proje içinde, gizli dosyasız. Gemini CLI arka ucunda kapalı.
 - İstemler turun gerçek erişimini söylüyor.
-- İnceleme döngüsü: v1 → Codex "değişiklik gerekli" (kabuk proje dışını/`.env`'i okuyabilir, MCP katmanı, kilit
-  sızıntısı, arama sonucu filtresi) + Gemini "koşullu kabul" (Gemini CLI yolo kaçağı, göreli yol, yanlış pozitifler)
-  → v2 bunları kapattı; testler bir junction sızıntısını ve bir kilit sızıntısını ayrıca yakaladı.
+- İnceleme döngüsü:
+  - v1 `6b8bcba` → Codex "değişiklik gerekli" (kabuk proje dışını/`.env`'i okuyabilir, MCP katmanı, kilit sızıntısı,
+    arama sonucu filtresi) + Gemini "koşullu kabul" (Gemini CLI yolo kaçağı, göreli yol, yanlış pozitifler).
+  - v2 `e29c38d` → Gemini KABUL; Codex yine "değişiklik" (etkin MCP kümesi kanıtlanmıyor; okuma sunucusunda
+    kontrol/kullanım yarışı; kancada araca özgü alan; kayıt artığı; "okumadan" ifadesi).
+  - v3 `fb9d489` → Codex başlatmadan önce `codex mcp list --json` ile etkin sunucuları doğruluyor (canlıda eklentiden
+    gelen `node_repl` yakalandı ve kapatıldı); okumalar açılan tanıtıcının gerçek yolu üzerinden doğrulanıyor.
+    Codex'in v3 incelemesi bekleniyor.
+  - Testler ayrıca bir junction sızıntısını ve iki kilit sızıntısını yakaladı.
+
+## Yan bulgu (main'de, bu dalda düzeltilmedi)
+
+Main'deki "araçsız sohbet" ve gözlemci yolları Codex MCP sunucularını yalnız kullanıcı `config.toml` adlarından kapatıyor.
+Bu makinede eklentiden gelen `node_repl` (ve özellik bayrağına bağlı `cua_repl`) bu döngünün dışında kalıyor. v3'teki
+etkin küme doğrulaması bu yollara da uygulanmalı.
 
 ## Canlı deney (aynı 4–5 soru, main'in kopyasında; kopya her koşudan sonra temiz)
 
@@ -54,7 +66,8 @@ v1 (kabuklu Codex) aynı soruları 47–152 sn'de yanıtlıyordu; v2'nin Quartz 
 
 ## Kanıt seviyesi
 
-- SOURCE/TESTED: tam takım Ran 1752, OK (skipped=2); `tests/test_project_read.py` 26 test.
+- SOURCE/TESTED: tam takım Ran 1756, OK (skipped=2) (v3); `tests/test_project_read.py` 30 test.
+- LIVE v3 kısa kontrol: Codex 2/2, 0 kabuk; Antigravity 2/2 (2 komut denemesi kancada reddedildi); kopya temiz.
 - BUILT: derlenmiş yardımcı (okuma koruması 7/7, MCP sunucusu protokol duman testi).
 - LIVE (geliştirme koşusu, paket değil): yukarıdaki A/B; Quartz GUI'den uçtan uca denenmedi.
 - Kurulu paket değişmedi (`259fb177…`).
