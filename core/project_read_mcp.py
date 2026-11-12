@@ -101,8 +101,13 @@ class _DirHandle:
                                  None)
         if handle in (None, 0, -1) or handle == ctypes_invalid():
             raise OSError("Cannot open the folder")
+        try:
+            real = _handle_path(handle)
+        except BaseException:
+            k32.CloseHandle(handle)  # __exit__ will not run when __enter__ fails
+            raise
         self.handle = handle
-        return _handle_path(handle)
+        return real
 
     def entries(self):
         """(name, is_dir, is_reparse) for every child, read from this handle."""

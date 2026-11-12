@@ -425,6 +425,38 @@ class ServiceRoutingTests(unittest.TestCase):
         self.assertEqual([Path(p).resolve() for p in opts["read_dirs"]], [Path(".").resolve()])
         self.assertFalse(opts["write"]); self.assertNotIn("tool_guard", opts)
 
+    def test_stop_while_antigravity_guard_is_prepared_starts_nothing(self):
+        service, _, agy = service_tests.MultiAgentServiceTests().make_service()
+        service.antigravity = agy
+        agy.backend = "agy"
+        with patch("core.chat_coordination.write_project_read_hooks"):
+            with self.assertRaises(RuntimeError):
+                service.dispatch_antigravity("README ne diyor?", project_id="test", chat_mode=True,
+                                             conversation_only=True, project_read=True, should_abort=lambda: True)
+        agy.start.assert_not_called()
+
+    @unittest.skipUnless(os.name == "nt", "Windows handle")
+    def test_folder_handle_is_closed_when_its_path_cannot_be_verified(self):
+        from core import project_read_mcp
+        closed = []
+        real_k32 = project_read_mcp._kernel32()
+
+        class K32:
+            def __getattr__(self, name):
+                return getattr(real_k32, name)
+
+            def CloseHandle(self, handle):
+                closed.append(handle)
+                return real_k32.CloseHandle(handle)
+
+        with tempfile.TemporaryDirectory() as folder, \
+                patch("core.project_read_mcp._kernel32", return_value=K32()), \
+                patch("core.project_read_mcp._handle_path", side_effect=OSError("verify failed")):
+            with self.assertRaises(OSError):
+                with project_read_mcp._DirHandle(folder):
+                    pass
+        self.assertEqual(len(closed), 1)
+
     def test_plain_conversation_prompt_is_truthful(self):
         service, runtime, _ = service_tests.MultiAgentServiceTests().make_service()
         runtime.get.return_value = {"status": "completed"}

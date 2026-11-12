@@ -550,6 +550,10 @@ class MultiAgentService:
                     "söyle ve kullanıcının bunu bir görev olarak (ör. \"README dosyasını oku\") istemesini öner. "
                     "Görmediğin bir şeyi görmüş gibi yazma.\n\n"
                 )
+            # Stop that arrived while the guard/workspace was prepared starts nothing
+            # (Codex re-checks inside its own pre-start probes as well).
+            if should_abort and should_abort():
+                raise RuntimeError("Project read cancelled before start")
             run = runtime.start(instruction + str(prompt), run_dir, **options)
             run["conversation_only"] = True
             run["project_read"] = project_read
