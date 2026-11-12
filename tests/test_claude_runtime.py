@@ -72,6 +72,17 @@ class CommandTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             rt.tools_for("anything")
 
+    def test_read_and_write_permissions_stay_inside_the_project(self):
+        rt = runtime()
+
+        def allowed(sandbox):
+            args = rt.build_args(sandbox)
+            return args[args.index("--allowedTools") + 1] if "--allowedTools" in args else None
+        # No blanket "Read" rule: outside-project reads must hit dontAsk and be refused.
+        self.assertIsNone(allowed("read-only"))
+        self.assertEqual(allowed("workspace-write"), "Edit(./**)")
+        self.assertEqual(allowed("danger-full-access").split(","), list(rt.tools_for("danger-full-access")))
+
     def test_tool_less_chat_has_no_allow_list_and_resume_uses_resume(self):
         rt = runtime()
         args = rt.build_args("none")
