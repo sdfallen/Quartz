@@ -334,6 +334,7 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     }
     bubble.append(body);
     if (!isUserMessage && view.summary !== '...' && typeof revealMessage === 'function') revealMessage(bubble, body, msg?.id);
+    if (!isUserMessage && view.summary !== '...' && window.QuartzPreview) window.QuartzPreview.decorate(bubble, view.summary + '\n' + (view.details || ''));
     if (msg?.status === 'interrupted' && msg.id) {
       const resume = document.createElement('button'); resume.className = 'control-btn';
       resume.textContent = 'Yeni görev taslağı hazırla';

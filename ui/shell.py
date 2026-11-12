@@ -47,6 +47,7 @@ _SPRITE = """<svg width="0" height="0" style="position:absolute" aria-hidden="tr
 <symbol id="i-wave" viewBox="0 0 24 24"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"/></symbol>
 <symbol id="i-volume" viewBox="0 0 24 24"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4ZM16 9a4 4 0 0 1 0 6"/></symbol>
 <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7.5 3v5.5c0 4.5-3 8-7.5 9.5-4.5-1.5-7.5-5-7.5-9.5V6L12 3Z"/></symbol>
+<symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.4 3.6 5.2 3.6 8.5s-1.2 6.1-3.6 8.5c-2.4-2.4-3.6-5.2-3.6-8.5s1.2-6.1 3.6-8.5Z"/></symbol>
 <symbol id="i-loop" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 9M20 4v5h-5M20 12a8 8 0 0 1-13.7 5.6L4 15M4 20v-5h5"/></symbol>
 </defs></svg>"""
 
@@ -78,6 +79,7 @@ SHELL_MARKUP = r"""
     <div class="rail-spacer"></div>
     <button type="button" class="rail-btn" id="btnSelfDiagnostics" title="Quartz öz teşhisini bu sohbette başlat" aria-label="Öz teşhis">@@i:pulse@@<span class="rail-tip" aria-hidden="true">Öz teşhis</span></button>
     <button type="button" class="rail-btn" id="btnPanels" title="Durum ve araç panelini aç/kapat (Ctrl+I)" aria-label="Durum ve araçlar" aria-keyshortcuts="Control+I">@@i:panel@@<span class="rail-tip" aria-hidden="true">Durum ve araçlar</span></button>
+    <button type="button" class="rail-btn" id="btnPreview" title="Uygulama önizlemesini aç/kapat (Ctrl+Shift+P)" aria-label="Uygulama önizlemesi" aria-controls="previewPane" aria-keyshortcuts="Control+Shift+P">@@i:globe@@<span class="rail-tip" aria-hidden="true">Önizleme</span></button>
     <div class="signature-mark" title="Ali Mehdi">AM</div>
   </nav>
 
@@ -430,6 +432,19 @@ SHELL_MARKUP = r"""
       <div class="log-box" id="logBox" role="log" aria-label="Uygulama günlüğü"></div>
     </div>
   </aside>
+
+  <!-- App preview: shows a web app running on this computer (loopback only). -->
+  <aside class="preview-pane" id="previewPane" aria-label="Uygulama önizlemesi">
+    <form class="preview-bar" id="previewBar" autocomplete="off">
+      <button type="button" class="icon-btn" id="btnPreviewReload" title="Yenile" aria-label="Önizlemeyi yenile">@@i:loop:sm@@</button>
+      <input class="preview-address" id="previewAddress" type="text" inputmode="url" spellcheck="false" placeholder="http://127.0.0.1:8000" aria-label="Önizleme adresi">
+      <button type="submit" class="control-btn" id="btnPreviewGo">Aç</button>
+      <button type="button" class="icon-btn" id="btnPreviewWindow" title="Ayrı pencerede aç" aria-label="Ayrı pencerede aç">@@i:windows:sm@@</button>
+      <button type="button" class="icon-btn" id="btnPreviewClose" title="Önizlemeyi kapat" aria-label="Önizlemeyi kapat">@@i:close:sm@@</button>
+    </form>
+    <div class="preview-note" id="previewNote" role="status">Bu bilgisayarda çalışan bir uygulamanın adresini yazın (ör. 127.0.0.1:8000). Ajan yanıtındaki yerel adreslerin yanında da “Önizle” düğmesi çıkar.</div>
+    <iframe class="preview-frame" id="previewFrame" title="Uygulama önizlemesi" sandbox="allow-scripts allow-forms allow-same-origin allow-downloads allow-modals" referrerpolicy="no-referrer" hidden></iframe>
+  </aside>
 </div>
 
 <div class="palette-layer" id="paletteLayer" hidden>
@@ -565,5 +580,5 @@ for _name, _size in (("stop", "sm"), ("plus", "md"), ("search", "md"), ("sidebar
                      ("panel", "md"), ("minus", "sm"), ("maximize", "sm"), ("compact", "sm"), ("close", "sm"), ("loop", "sm"),
                      ("mic", "md"), ("send", "md"), ("camera", "md"), ("chip", "md"), ("windows", "md"),
                      ("spark", "md"), ("eye", "md"), ("agents", "md"), ("phone", "md"), ("wave", "md"),
-                     ("volume", "md"), ("shield", "md"), ("trash", "md")):
+                     ("volume", "md"), ("shield", "md"), ("trash", "md"), ("globe", "md"), ("windows", "sm")):
     SHELL_MARKUP = SHELL_MARKUP.replace(f"@@i:{_name}:{_size}@@", _icon(_name, _size)).replace(f"@@i:{_name}@@", _icon(_name))
