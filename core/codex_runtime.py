@@ -256,12 +256,18 @@ class CodexRuntime:
                           "in_app_browser", "image_generation", "view_image", "memories")
 
     def _guarded_config(self, cwd, desktop_connection=None, should_abort=None, env=None):
-        """Flags for tool_guard/desktop runs whose effective MCP set is verified.
+        """Flags for tool_guard/desktop runs, checked against Codex's own MCP listing.
 
         Disabling only the names in the user's config.toml left plugin servers
         (node_repl, which can run code) enabled; the set Codex itself reports
         is the source of truth. Only quartz_desktop may stay, and only on the
         desktop path.
+
+        Guarantee (precisely): every server enabled at the pre-start listing is
+        disabled by name for the run, or the run is refused. The listing is a
+        separate process; a server ADDED to Codex's configuration between the
+        listing and `exec` is not covered. Codex has no start-time MCP
+        allowlist yet (documented residual risk, Codex review 12 Nov).
         """
         flags = []
         for feature in self.GUARD_FEATURES_OFF:
