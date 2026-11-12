@@ -20,6 +20,7 @@ from core.antigravity_runtime import AntigravityRuntime
 from core.gemini_runtime import google_runtime
 from core.codex_runtime import CodexRuntime
 from core.desktop_agents import mcp_command
+from core.helper_command import HOOK_TIMEOUT_SECONDS
 from core.response_style import communication_instruction
 from core.squad_adapter import SquadAdapter
 from core.task_outcome import cleanup_step, execution_outcome
@@ -33,7 +34,7 @@ def write_observer_hooks(directory):
     if not helper.is_file(): raise RuntimeError("Build the observer deny helper before starting coordination")
     shutil.copy2(helper,hooks.parent/"observer-guard.exe")
     hooks.write_text(json.dumps({"quartz-readonly-observer":{"PreToolUse":[{"matcher":"*","hooks":[
-        {"type":"command","command":r".\observer-guard.exe --deny-tools","timeout":5}]}]}}),encoding="utf-8")
+        {"type":"command","command":r".\observer-guard.exe --deny-tools","timeout":HOOK_TIMEOUT_SECONDS}]}]}}),encoding="utf-8")
     return hooks
 
 
@@ -59,7 +60,7 @@ def write_project_read_hooks(directory, roots):
     # Roots travel in a file beside the guard, never as quoted cmd.exe arguments.
     (hooks.parent/"read-roots.json").write_text(json.dumps({"roots":clean}),encoding="utf-8")
     hooks.write_text(json.dumps({"quartz-project-read":{"PreToolUse":[{"matcher":"*","hooks":[
-        {"type":"command","command":r".\read-guard.exe --project-read","timeout":5}]}]}}),encoding="utf-8")
+        {"type":"command","command":r".\read-guard.exe --project-read","timeout":HOOK_TIMEOUT_SECONDS}]}]}}),encoding="utf-8")
     return hooks
 
 
