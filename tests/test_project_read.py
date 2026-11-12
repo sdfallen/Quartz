@@ -238,10 +238,10 @@ class RuntimeProfileTests(unittest.TestCase):
         self.assertIn("mcp", probe.call_args.args[0]); self.assertIn("--json", probe.call_args.args[0])
         command = popen.call_args.args[0]
         joined = " ".join(command)
+        self.assertEqual(command[-1], "app-server")  # same-session verification path
+        self.assertEqual(Path(popen.call_args.kwargs["cwd"]).resolve(), self.work.resolve())
         self.assertIn("mcp_servers.node_repl.enabled=false", joined)
         self.assertIn("features.hooks=false", joined)
-        self.assertEqual(command[command.index("--sandbox") + 1], "read-only")
-        self.assertEqual(Path(command[command.index("--cd") + 1]).resolve(), self.work.resolve())
         for blocked in ("shell_tool", "unified_exec", "view_image", "apps", "plugins", "multi_agent",
                         "computer_use", "browser_use", "memories", "image_generation"):
             self.assertIn(f"features.{blocked}=false", joined)

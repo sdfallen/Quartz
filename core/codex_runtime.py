@@ -359,6 +359,12 @@ class CodexRuntime:
             if is_writer:
                 self._writers[project_key] = run_id
 
+        if read_root:
+            # Project read runs over app-server so the verified tool set is the
+            # SAME session that receives the prompt (Codex owner review).
+            return self._start_project_session(run_id, record, project, read_config, text,
+                                               clean_model, clean_effort, timeout_seconds, should_abort)
+
         # `exec` has no interactive approval channel. Automatic review keeps
         # workspace-write inside the CLI sandbox without silently denying
         # every normal build/test tool request.
@@ -485,19 +491,131 @@ class CodexRuntime:
         ).start()
         return self.get(run_id)
 
+    def _start_project_session(self, run_id, record, project, read_config, text,
+                               model, effort, timeout_seconds, should_abort):
+        """Spawn `codex app-server` with the project-read config and drive one verified turn."""
+        from core.cli_installer import cli_environment
+        from core.codex_project_session import AppServerSession, SessionRefused, ALLOWED_SERVER
+
+        def finish(status, error=None):
+            with self._lock:
+                if record["status"] not in self.TERMINAL:
+                    record["status"] = "cancelled" if record.get("cancel_requested") else status
+                if error and record["status"] != "cancelled":
+                    record["errors"].append(str(error)[:500])
+                record["finished_at"] = record.get("finished_at") or time.time()
+
+        if should_abort and should_abort():
+            finish("cancelled")
+            raise RuntimeError("Codex run cancelled before start")
+        args = list(read_config)
+        if effort:
+            args += ["-c", f'model_reasoning_effort="{effort}"']
+        command = self._command(args + ["app-server"])
+        job_errors: list[str] = []
+        try:
+            process = subprocess.Popen(
+                command, cwd=str(project), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) | CREATE_SUSPENDED,
+                env=cli_environment())
+            job_bound = bind_kill_on_close_job(process, resume=True, error_sink=job_errors.append)
+        except Exception as exc:
+            finish("failed", exc)
+            raise
+        with self._lock:
+            record["pid"] = process.pid
+            record["job_bound"] = bool(job_bound)
+            if job_errors:
+                record["job_assignment_error"] = job_errors[-1]
+            record["status"] = "running"
+            record["transport"] = "app-server"
+            self._processes[run_id] = process
+
+        def note(event):
+            with self._lock:
+                record["events"].append(event)
+
+        def drive():
+            deadline = time.monotonic() + float(timeout_seconds or 900)
+            try:
+                session = AppServerSession(process, on_event=note)
+                thread_id = session.open_verified_thread(cwd=project, model=model, should_abort=should_abort)
+                with self._lock:
+                    record["thread_id"] = thread_id
+                    record["first_event_at"] = record.get("first_event_at") or time.time()
+                    record["tool_set_verified"] = True
+                if should_abort and should_abort():
+                    raise SessionRefused("Cancelled before the prompt was delivered")
+                params = {"threadId": thread_id, "input": [{"type": "text", "text": text}]}
+                if effort:
+                    params["effort"] = effort
+                session.request("turn/start", params)
+                final_text, last_text = "", ""
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("Project read timed out")
+                    message = session.next_notification(min(remaining, 5))
+                    if message is None:
+                        if process.poll() is not None:
+                            raise SessionRefused("Codex app-server exited")
+                        continue
+                    method = message.get("method")
+                    params_in = message.get("params") or {}
+                    if method == "item/completed":
+                        item = params_in.get("item") or {}
+                        kind = item.get("type")
+                        if kind == "agentMessage":
+                            last_text = str(item.get("text") or "")
+                            if item.get("phase") == "final_answer":
+                                final_text = last_text
+                            with self._lock:
+                                record["first_text_at"] = record.get("first_text_at") or time.time()
+                        elif kind == "mcpToolCall":
+                            server, tool = item.get("server"), item.get("tool")
+                            note({"type": "mcp_tool_call", "server": server, "tool": tool,
+                                  "status": item.get("status")})
+                            if server != ALLOWED_SERVER:
+                                raise SessionRefused(f"Tool outside Quartz read set: {server}/{tool}")
+                        elif kind not in {"userMessage", "reasoning"}:
+                            # commandExecution, fileChange, webSearch, ... are not part of a project read.
+                            note({"type": "unexpected_item", "item_type": str(kind)[:60]})
+                            raise SessionRefused(f"Unexpected Codex action in a project read: {kind}")
+                    elif method == "turn/completed":
+                        turn = params_in.get("turn") or {}
+                        with self._lock:
+                            record["result"] = final_text or last_text
+                        status = turn.get("status")
+                        finish("completed" if status == "completed" else "failed",
+                               None if status == "completed" else f"Turn ended: {status} {turn.get('error')}")
+                        return
+            except Exception as exc:  # recorded; the process is stopped below either way
+                finish("failed", exc)
+            finally:
+                try:
+                    stop_process_tree(process, timeout=5)
+                except Exception:
+                    pass
+                with self._lock:
+                    self._processes.pop(run_id, None)
+
+        threading.Thread(target=drive, name=f"codex-read-{run_id[:8]}", daemon=True).start()
+        return self.get(run_id)
+
     def resume(self, run_id, prompt, *, model: str | None = None, effort: str | None = None) -> dict:
         previous = self.get(run_id)
-        thread_id = previous.get("thread_id")
-        if not thread_id:
-            raise RuntimeError("The Codex thread id is not available")
-        if previous["status"] not in self.TERMINAL:
-            raise RuntimeError("Cannot resume a running Codex task")
         with self._lock:
             raw = self._runs.get(run_id, {})
             scoped = bool(raw.get("_project_read") or raw.get("_tool_guard"))
         if scoped:
             # This generic resume would not carry the run's tool profile.
             raise PermissionError("A project-read or guarded Codex run cannot be resumed")
+        thread_id = previous.get("thread_id")
+        if not thread_id:
+            raise RuntimeError("The Codex thread id is not available")
+        if previous["status"] not in self.TERMINAL:
+            raise RuntimeError("Cannot resume a running Codex task")
         return self.start(
             prompt, previous["project"], sandbox=previous["sandbox"],
             approval=previous["approval"],
