@@ -58,6 +58,24 @@ Dal `claude/project-read-20261112` (`6b8bcba` → `e29c38d`).
     değişirse görülmez (pencere saniyeler; aynı bayraklar exec'e de veriliyor).
   - Testler ayrıca bir junction sızıntısını ve iki kilit sızıntısını yakaladı.
 
+## Sabah: Codex tarafının tamamlanması (kullanıcı: "hepsini al; 'göremiyorum' kararı sende")
+
+- **v6–v9:** Codex proje okuması `codex app-server` üzerinden çalışıyor. Akış:
+  1. Aynı süreçte `config/read` başlatma kapısı.
+  2. `thread/start`, oturumun MCP tablosu ve 14 özelliklik tam kapatma listesiyle başlatılıyor.
+  3. `config/read` tekrar okunuyor.
+  4. Aynı oturumun `mcpServerStatus/list` envanteri doğrulanıyor.
+  5. İstem ancak bundan sonra `turn/start` ile veriliyor.
+  - Süreç çıkışı doğrulanmadan tamamlanma bildirilmiyor (`process_exit_confirmed`). Gemini'nin yakaladığı sohbet kilidi bu şekilde kapandı.
+  - Doğrulanmamış temizlik Stop ya da kapanışta yeniden deneniyor.
+- **İnceleme sonucu:** Gemini v7 ve v8'i KABUL etti. Codex her turda gerçek bulgular verdi ve hepsi kapatıldı. Bunlardan biri v8'in 9 özelliklik listesinin `view_image` gibi varsayılanları geri açmasıydı.
+- **"Göremiyorum" kararı:** Dürüst istemler korundu, çünkü eski talimat kanıtlı biçimde uydurmaya yol açtı. Codex de Gemini de bunu yerinde buldu.
+- **Bilinçli kabul edilen artık risk (Claude kararı, kullanıcı yetkisiyle):** Codex'in v8 P1'i şöyle: `config/read` ile `thread/start` arasındaki milisaniyelik aralıkta kullanıcı veya sistem Codex ayar dosyasına YENİ bir MCP sunucusu yazılırsa, o sunucu oturumla başlatılabilir.
+  - Bu durumda istem yine gönderilmez: sonradan okunan yapılandırma ve oturum envanteri reddeder, süreç kapatılır.
+  - Bu saldırı Codex ayar dosyasına yazma yetkisi gerektirir; böyle biri Codex her açıldığında zaten kod çalıştırabilir.
+  - Tam çözüm, kimlik dosyaları kopyalanmış ayrı bir Codex ortamı olurdu. Proje kuralları kimlik bilgisine dokunmayı yasaklıyor.
+  - Gelecekte Codex bir "yalnız bu MCP sunucuları" başlatma ayarı sunarsa bu kapatılmalı.
+
 ## Yan bulgu (main'de, bu dalda düzeltilmedi)
 
 Main'deki "araçsız sohbet" ve gözlemci yolları Codex MCP sunucularını yalnız kullanıcı `config.toml` adlarından kapatıyor.

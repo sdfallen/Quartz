@@ -232,9 +232,7 @@ class CodexRuntime:
         except (OSError, ValueError):
             return False
 
-    PROJECT_READ_FEATURES_OFF = ("shell_tool", "unified_exec", "apps", "plugins", "multi_agent",
-                                 "multi_agent_v2", "computer_use", "browser_use", "browser_use_external",
-                                 "in_app_browser", "image_generation", "view_image", "memories", "hooks")
+    from core.codex_project_session import FEATURES_OFF as PROJECT_READ_FEATURES_OFF  # single source
 
     def _project_read_config(self, read_root, cwd, should_abort=None):
         """Config flags that leave ONLY quartz_project enabled, proven with `codex mcp list`.
@@ -688,6 +686,11 @@ class CodexRuntime:
                              and process is not None)
             if record["status"] in self.TERMINAL and not retry_cleanup:
                 return self.get(run_id)
+            if not retry_cleanup:
+                # Decided under the same lock as the terminal check, so a run that
+                # finishes meanwhile is never turned back into "cancelling" (Codex review).
+                record["cancel_requested"] = True
+                record["status"] = "cancelling"
         if retry_cleanup:
             # A finished run whose process exit was never confirmed: Stop and
             # shutdown retry the owned cleanup instead of returning early.
@@ -701,9 +704,6 @@ class CodexRuntime:
                     record.update(cleanup_pending=False, process_exit_confirmed=True, exit_code=process.poll())
                     self._processes.pop(run_id, None)
             return self.get(run_id)
-        with self._lock:
-            record["cancel_requested"] = True
-            record["status"] = "cancelling"
         if owned_cleanup_pending(process):
             stop_process_tree(process, timeout=max(1, timeout))
         return self.get(run_id)

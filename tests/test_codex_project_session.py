@@ -11,7 +11,7 @@ from core.codex_project_session import inventory_state
 from core.codex_runtime import CodexRuntime
 
 TOOLS = {"project_list": {}, "project_read": {}, "project_search": {}}
-OFF = ("plugins", "apps", "hooks", "shell_tool", "unified_exec", "computer_use", "browser_use", "multi_agent", "memories")
+from core.codex_project_session import FEATURES_OFF as OFF  # noqa: E402
 
 
 def good_config(root=None):
@@ -227,6 +227,11 @@ class ProjectSessionRuntimeTests(unittest.TestCase):
         fake = FakeAppServer()
         _, run, _ = self.run_read(fake)
         start = next(m for m in fake.sent if m.get("method") == "thread/start")["params"]
+        from core.codex_project_session import FEATURES_OFF
+        self.assertEqual(start["config"]["features"], {name: False for name in FEATURES_OFF})
+        for name in ("view_image", "image_generation", "in_app_browser", "multi_agent_v2", "browser_use_external"):
+            self.assertIs(start["config"]["features"][name], False)  # the thread table replaces the earlier one
+        self.assertEqual(set(CodexRuntime.PROJECT_READ_FEATURES_OFF), set(FEATURES_OFF))
         servers = start["config"]["mcp_servers"]
         self.assertEqual(set(servers), {"node_repl", "quartz_project"})  # the thread's whole table
         self.assertEqual(servers["node_repl"], {"enabled": False})

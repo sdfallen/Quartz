@@ -174,8 +174,12 @@ class AppServerSession:
             time.sleep(0.5)
 
 
-FEATURES_OFF = ("plugins", "apps", "hooks", "shell_tool", "unified_exec", "computer_use", "browser_use",
-                "multi_agent", "memories")
+# ONE complete list for the process flags, the thread override and both config
+# checks: a thread-level "features" table replaces the earlier override table,
+# so a shorter list here silently re-enabled defaults like view_image (Codex review).
+FEATURES_OFF = ("shell_tool", "unified_exec", "apps", "plugins", "multi_agent", "multi_agent_v2",
+                "computer_use", "browser_use", "browser_use_external", "in_app_browser",
+                "image_generation", "view_image", "memories", "hooks")
 
 
 def quartz_server_entry(verified):
