@@ -108,11 +108,12 @@ class AntigravityRuntime:
     @staticmethod
     def _read_guard_matches(workspace: Path, roots) -> bool:
         """Fail closed unless the workspace carries exactly Quartz's read guard for these roots."""
+        from core.helper_command import HOOK_TIMEOUT_SECONDS
         agents = workspace / ".agents"
         try:
             hooks = json.loads((agents / "hooks.json").read_text(encoding="utf-8"))
             expected = {"quartz-project-read": {"PreToolUse": [{"matcher": "*", "hooks": [
-                {"type": "command", "command": r".\read-guard.exe --project-read", "timeout": 5}]}]}}
+                {"type": "command", "command": r".\read-guard.exe --project-read", "timeout": HOOK_TIMEOUT_SECONDS}]}]}}
             listed = json.loads((agents / "read-roots.json").read_text(encoding="utf-8")).get("roots")
             return (hooks == expected and (agents / "read-guard.exe").is_file()
                     and isinstance(listed, list)

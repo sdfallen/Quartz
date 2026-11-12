@@ -355,7 +355,7 @@ def main(root):
 
 def expected_server(root):
     """The exact helper identity Quartz registers for a project read: program and arguments."""
-    from core.desktop_agents import mcp_command
+    from core.helper_command import mcp_command  # stdlib-only: keeps the guard exe small
     command = mcp_command()
     clean = str(Path(root).resolve(strict=True))
     return {"command": command[0], "args": command[1:] + ["--project-read-server", clean]}

@@ -20,12 +20,7 @@ from core.desktop_native import NativeDesktopBackend
 from core.screen_overlay import overlay_manager
 
 
-def mcp_command():
-    if getattr(sys, "frozen", False):
-        exe = Path(sys._MEIPASS) / "operator" / "QuartzDesktopMCP.exe"
-        if not exe.is_file(): raise RuntimeError("Desktop MCP helper is missing from the package")
-        return [str(exe)]
-    return [sys.executable, str(Path(__file__).with_name("desktop_mcp.py"))]
+from core.helper_command import HOOK_TIMEOUT_SECONDS, mcp_command  # noqa: E402  (stdlib-only; see module)
 
 
 def connection_environment(connection, base=None):
@@ -45,7 +40,7 @@ def write_operator_hooks(directory):
     if not helper.is_file(): raise RuntimeError("Build the operator guard helper first")
     shutil.copy2(helper,hooks.parent/"operator-guard.exe")
     hooks.write_text(json.dumps({"quartz-operator":{"PreToolUse":[{"matcher":"*","hooks":[
-        {"type":"command","command":r".\operator-guard.exe --operator-tools","timeout":5}]}]}}),encoding="utf-8")
+        {"type":"command","command":r".\operator-guard.exe --operator-tools","timeout":HOOK_TIMEOUT_SECONDS}]}]}}),encoding="utf-8")
 
 
 def codex_mcp_override(connection):
