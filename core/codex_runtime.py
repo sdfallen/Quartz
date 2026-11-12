@@ -232,10 +232,59 @@ class CodexRuntime:
         except (OSError, ValueError):
             return False
 
+    from core.codex_project_session import FEATURES_OFF as PROJECT_READ_FEATURES_OFF  # single source
+
+    def _project_read_config(self, read_root, cwd, should_abort=None):
+        """Config flags that leave ONLY quartz_project enabled, proven with `codex mcp list`.
+
+        The effective MCP set also comes from plugins and other layers (a live
+        probe found node_repl/cua_repl beside the user TOML), so the set is read
+        back with the same flags; anything still enabled besides quartz_project
+        is disabled by name and re-checked, and the start is refused otherwise.
+        """
+        import json as _json
+        import re as _re
+        from core.project_read_mcp import codex_override
+        flags = []
+        for feature in self.PROJECT_READ_FEATURES_OFF:
+            flags += ["-c", f"features.{feature}=false"]
+        flags += ["-c", 'web_search="disabled"', "-c", codex_override(read_root)]
+
+        def enabled_extra(current):
+            from core.cli_installer import cli_environment
+            if should_abort and should_abort():
+                raise RuntimeError("Project read cancelled before start")
+            probe = subprocess.run(self._command(current + ["mcp", "list", "--json"]), cwd=str(cwd),
+                                   capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                   timeout=30, env=cli_environment(),
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if probe.returncode != 0:
+                raise RuntimeError("Cannot verify Codex's effective MCP servers")
+            servers = _json.loads(probe.stdout)
+            if not isinstance(servers, list):
+                raise RuntimeError("Unexpected Codex MCP listing")
+            # Every row must state its name and enabled flag; an unknown state is a refusal.
+            if not all(isinstance(s, dict) and isinstance(s.get("name"), str)
+                       and isinstance(s.get("enabled"), bool) for s in servers):
+                raise RuntimeError("Codex MCP listing has an entry of unknown state")
+            names = [s["name"] for s in servers if s["enabled"]]
+            if "quartz_project" not in names:
+                raise RuntimeError("Quartz project tools are not active in Codex")
+            return [n for n in names if n != "quartz_project"]
+
+        extra = enabled_extra(flags)
+        for name in extra:
+            if not isinstance(name, str) or not _re.fullmatch(r"[A-Za-z0-9_-]+", name):
+                raise RuntimeError("Cannot safely disable an inherited MCP server")
+            flags += ["-c", f"mcp_servers.{name}.enabled=false"]
+        if extra and enabled_extra(flags):
+            raise RuntimeError("Codex keeps other MCP servers enabled; project read refused")
+        return flags
+
     def start(self, prompt, project_path, *, sandbox="read-only", approval="never",
               squad_task_id=None, squad_agent_id=None, resume_thread_id=None,
               timeout=None, model: str | None = None, effort: str | None = None,
-              desktop_connection=None, tool_guard=False) -> dict:
+              desktop_connection=None, tool_guard=False, project_read=False, should_abort=None) -> dict:
         if not self.executable:
             raise RuntimeError(self._init_error or "Codex CLI was not found")
         text = str(prompt or "").strip()
@@ -247,9 +296,28 @@ class CodexRuntime:
             raise ValueError("Unsupported Codex sandbox")
         if approval not in {"never", "on-request"}:
             raise ValueError("Unsupported approval policy")
+        # Profiles are validated before any run/writer is registered so a
+        # refused request leaves no record or project lock behind.
+        if tool_guard and (desktop_connection is not None or sandbox != "read-only"):
+            raise ValueError("Log observer cannot receive desktop/write permissions")
+        # project_read is the project ROOT to expose through Quartz's own
+        # read-only MCP tools; the Codex process itself runs elsewhere with
+        # every built-in tool (shell included) disabled.
+        read_root = None
+        if project_read:
+            if (tool_guard or desktop_connection is not None or sandbox != "read-only"
+                    or approval != "never" or resume_thread_id):
+                raise ValueError("Project-read runs are read-only, fresh and tool-scoped")
+            read_root = Path(project_read).resolve(strict=True)
+            if not read_root.is_dir():
+                raise NotADirectoryError(str(read_root))
         project = Path(project_path).resolve(strict=True)
         if not project.is_dir():
             raise NotADirectoryError(str(project))
+        if read_root:
+            # Resolve the helper/config and PROVE the effective tool set now: a
+            # failure must not leave a "starting" record without a process.
+            read_config = self._project_read_config(read_root, project, should_abort)
 
         clean_model = str(model or "").strip() or None
         clean_effort = str(effort or "").strip().lower() or None
@@ -283,10 +351,17 @@ class CodexRuntime:
                 "cancel_requested": False,
                 "_oracle_seq": 0,
                 "_tool_guard": bool(tool_guard),
+                "_project_read": str(read_root) if read_root else None,
             }
             self._runs[run_id] = record
             if is_writer:
                 self._writers[project_key] = run_id
+
+        if read_root:
+            # Project read runs over app-server so the verified tool set is the
+            # SAME session that receives the prompt (Codex owner review).
+            return self._start_project_session(run_id, record, project, read_config, text,
+                                               clean_model, clean_effort, timeout_seconds, should_abort)
 
         # `exec` has no interactive approval channel. Automatic review keeps
         # workspace-write inside the CLI sandbox without silently denying
@@ -302,12 +377,11 @@ class CodexRuntime:
             common += ["-m", clean_model]
         if clean_effort:
             common += ["-c", f'model_reasoning_effort="{clean_effort}"']
-        if tool_guard:
-            if desktop_connection is not None or sandbox != "read-only":
-                raise ValueError("Log observer cannot receive desktop/write permissions")
-        if tool_guard or desktop_connection is not None:
+        if read_root:
+            common += read_config  # verified effective tool set (see _project_read_config)
+        elif tool_guard or desktop_connection is not None:
             # Per-run only: no user config changes. Disable inherited integrations
-            # as well as shell/browser/desktop capabilities in the evidence reader.
+            # as well as shell/browser/desktop capabilities.
             for feature in ("shell_tool", "unified_exec", "apps", "plugins", "multi_agent",
                             "multi_agent_v2", "computer_use", "browser_use", "browser_use_external",
                             "in_app_browser", "image_generation", "view_image", "memories"):
@@ -343,6 +417,15 @@ class CodexRuntime:
         command = self._command(args)
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | CREATE_SUSPENDED
         job_errors: list[str] = []
+        if should_abort and should_abort():
+            # Stop arrived while the project-read checks ran: no process starts.
+            with self._lock:
+                record["status"] = "cancelled"
+                record["finished_at"] = time.time()
+                record.update(cleanup_pending=False, process_exit_confirmed=True)
+                if self._writers.get(project_key) == run_id:
+                    self._writers.pop(project_key, None)
+            raise RuntimeError("Codex run cancelled before start")
         try:
             from core.cli_installer import cli_environment
             process_options = {"env": desktop_env if desktop_env is not None else cli_environment()}
@@ -357,7 +440,8 @@ class CodexRuntime:
             with self._lock:
                 record["status"] = "failed"
                 record["finished_at"] = time.time()
-                self._writers.pop(project_key, None)
+                if self._writers.get(project_key) == run_id:
+                    self._writers.pop(project_key, None)
             raise
 
         try:
@@ -368,7 +452,8 @@ class CodexRuntime:
             with self._lock:
                 record["status"] = "failed"
                 record["finished_at"] = time.time()
-                self._writers.pop(project_key, None)
+                if self._writers.get(project_key) == run_id:
+                    self._writers.pop(project_key, None)
             raise
 
         with self._lock:
@@ -405,8 +490,154 @@ class CodexRuntime:
         ).start()
         return self.get(run_id)
 
+    def _start_project_session(self, run_id, record, project, read_config, text,
+                               model, effort, timeout_seconds, should_abort):
+        """Spawn `codex app-server` with the project-read config and drive one verified turn."""
+        from core.cli_installer import cli_environment
+        from core.codex_project_session import AppServerSession, SessionRefused, ALLOWED_SERVER, ALLOWED_TOOLS
+        from core.project_read_mcp import expected_server
+
+        def read_root_of(rec):
+            return rec.get("_project_read")
+
+        def finish(status, error=None, *, no_process=False):
+            with self._lock:
+                if no_process:  # nothing was spawned, so there is nothing left to stop
+                    record.update(cleanup_pending=False, process_exit_confirmed=True)
+                if record["status"] not in self.TERMINAL:
+                    record["status"] = "cancelled" if record.get("cancel_requested") else status
+                if error and record["status"] != "cancelled":
+                    record["errors"].append(str(error)[:500])
+                record["finished_at"] = record.get("finished_at") or time.time()
+
+        if should_abort and should_abort():
+            finish("cancelled", no_process=True)
+            raise RuntimeError("Codex run cancelled before start")
+        args = list(read_config)
+        if effort:
+            args += ["-c", f'model_reasoning_effort="{effort}"']
+        command = self._command(args + ["app-server"])
+        job_errors: list[str] = []
+        try:
+            process = subprocess.Popen(
+                command, cwd=str(project), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) | CREATE_SUSPENDED,
+                env=cli_environment())
+            job_bound = bind_kill_on_close_job(process, resume=True, error_sink=job_errors.append)
+        except Exception as exc:
+            finish("failed", exc, no_process=True)
+            raise
+        with self._lock:
+            record["pid"] = process.pid
+            record["job_bound"] = bool(job_bound)
+            if job_errors:
+                record["job_assignment_error"] = job_errors[-1]
+            record["status"] = "running"
+            record["transport"] = "app-server"
+            record["process_exit_confirmed"] = False
+            self._processes[run_id] = process
+
+        def note(event):
+            with self._lock:
+                record["events"].append(event)
+
+        def drive():
+            deadline = time.monotonic() + float(timeout_seconds or 900)
+            outcome = ["failed", None]  # decided here, reported only after the process is gone
+            try:
+                session = AppServerSession(process, on_event=note)
+                thread_id = session.open_verified_thread(cwd=project, model=model, should_abort=should_abort,
+                                                         expected_root=read_root_of(record),
+                                                         expected_server=expected_server(read_root_of(record)))
+                with self._lock:
+                    record["thread_id"] = thread_id
+                    record["first_event_at"] = record.get("first_event_at") or time.time()
+                    record["tool_set_verified"] = True
+                if should_abort and should_abort():
+                    raise SessionRefused("Cancelled before the prompt was delivered")
+                params = {"threadId": thread_id, "input": [{"type": "text", "text": text}]}
+                if effort:
+                    params["effort"] = effort
+                session.request("turn/start", params)
+                final_text, last_text = "", ""
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("Project read timed out")
+                    message = session.next_notification(min(remaining, 5))
+                    if message is None:
+                        if process.poll() is not None:
+                            raise SessionRefused("Codex app-server exited")
+                        continue
+                    method = message.get("method")
+                    params_in = message.get("params") or {}
+                    if method == "item/completed":
+                        item = params_in.get("item") or {}
+                        kind = item.get("type")
+                        if kind == "agentMessage":
+                            last_text = str(item.get("text") or "")
+                            if item.get("phase") == "final_answer":
+                                final_text = last_text
+                            with self._lock:
+                                record["first_text_at"] = record.get("first_text_at") or time.time()
+                        elif kind == "mcpToolCall":
+                            server, tool = item.get("server"), item.get("tool")
+                            note({"type": "mcp_tool_call", "server": server, "tool": tool,
+                                  "status": item.get("status")})
+                            if server != ALLOWED_SERVER or tool not in ALLOWED_TOOLS:
+                                raise SessionRefused(f"Tool outside Quartz read set: {server}/{tool}")
+                        elif kind not in {"userMessage", "reasoning"}:
+                            # commandExecution, fileChange, webSearch, ... are not part of a project read.
+                            note({"type": "unexpected_item", "item_type": str(kind)[:60]})
+                            raise SessionRefused(f"Unexpected Codex action in a project read: {kind}")
+                    elif method == "turn/completed":
+                        turn = params_in.get("turn") or {}
+                        with self._lock:
+                            record["result"] = final_text or last_text
+                        status = turn.get("status")
+                        outcome[:] = (["completed", None] if status == "completed"
+                                      else ["failed", f"Turn ended: {status} {turn.get('error')}"])
+                        return
+            except Exception as exc:
+                outcome[:] = ["failed", exc]
+            finally:
+                # Completion is reported only after the owned process tree is gone;
+                # an unconfirmed cleanup keeps ownership so shutdown() still sees it.
+                with self._lock:
+                    record["cleanup_pending"] = True
+                try:
+                    stop_process_tree(process, timeout=5)
+                except Exception:
+                    pass
+                try:
+                    wait_for_owned_cleanup(process, lambda: None)
+                    cleaned = True
+                except Exception:
+                    cleaned = False
+                with self._lock:
+                    record["cleanup_pending"] = not cleaned
+                    # The chat's stop receipt waits on this exact flag (Gemini review).
+                    record["process_exit_confirmed"] = cleaned
+                    if cleaned:
+                        record["exit_code"] = process.poll()
+                        self._processes.pop(run_id, None)
+                if cleaned:
+                    finish(*outcome)
+                else:
+                    finish("failed", "Codex app-server cleanup is not confirmed")
+
+        threading.Thread(target=drive, name=f"codex-read-{run_id[:8]}", daemon=True).start()
+        return self.get(run_id)
+
     def resume(self, run_id, prompt, *, model: str | None = None, effort: str | None = None) -> dict:
         previous = self.get(run_id)
+        with self._lock:
+            raw = self._runs.get(run_id, {})
+            scoped = bool(raw.get("_project_read") or raw.get("_tool_guard"))
+        if scoped:
+            # This generic resume would not carry the run's tool profile.
+            raise PermissionError("A project-read or guarded Codex run cannot be resumed")
         thread_id = previous.get("thread_id")
         if not thread_id:
             raise RuntimeError("The Codex thread id is not available")
@@ -451,10 +682,28 @@ class CodexRuntime:
                 raise KeyError(f"Unknown Codex run: {run_id}")
             record = self._runs[run_id]
             process = self._processes.get(run_id)
-            if record["status"] in self.TERMINAL:
+            retry_cleanup = (record["status"] in self.TERMINAL and record.get("cleanup_pending") is True
+                             and process is not None)
+            if record["status"] in self.TERMINAL and not retry_cleanup:
                 return self.get(run_id)
-            record["cancel_requested"] = True
-            record["status"] = "cancelling"
+            if not retry_cleanup:
+                # Decided under the same lock as the terminal check, so a run that
+                # finishes meanwhile is never turned back into "cancelling" (Codex review).
+                record["cancel_requested"] = True
+                record["status"] = "cancelling"
+        if retry_cleanup:
+            # A finished run whose process exit was never confirmed: Stop and
+            # shutdown retry the owned cleanup instead of returning early.
+            try:
+                stop_process_tree(process, timeout=max(1, timeout))
+            except Exception:
+                pass
+            if not owned_cleanup_pending(process):
+                close_process_job(process)
+                with self._lock:
+                    record.update(cleanup_pending=False, process_exit_confirmed=True, exit_code=process.poll())
+                    self._processes.pop(run_id, None)
+            return self.get(run_id)
         if owned_cleanup_pending(process):
             stop_process_tree(process, timeout=max(1, timeout))
         return self.get(run_id)

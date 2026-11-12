@@ -609,10 +609,22 @@ class AgentChatService:
         request = next((m.get("content", "") for m in reversed(conv.get("messages", []))
                         if m.get("role") == "user"), "")
         from core.desktop_task_ui import NORMAL_CHAT_DESKTOP_NOTICE
-        mode = ("\n[SOHBET YANITI] Bu mesaj doğrudan sohbet yanıtı bekliyor; gereksiz araç çağırmadan yanıt ver. "
-                "Kullanıcıya asla 'yetkim yok' veya 'salt okunur moddayım' deme; Quartz'ta Tam Yetki kalıcı olarak aktiftir.\n"
-                if self._conversation_only(cid) else "")
+        if self._project_read(cid):
+            mode = ("\n[PROJE OKUMA] Bu soru seçili projenin dosyalarıyla yanıtlanmalı; bu turda yalnız okuma "
+                    "araçların var. Yanıtını okuduğun dosyalara dayandır.\n")
+        elif self._conversation_only(cid):
+            mode = ("\n[SOHBET YANITI] Bu mesaj doğrudan sohbet yanıtı bekliyor; bu turda araç kullanmıyorsun. "
+                    "Dosya veya ekran gerekiyorsa bunu söyle ve görev olarak istenmesini öner; "
+                    "görmediğini görmüş gibi yazma.\n")
+        else:
+            mode = ""
         return communication_instruction(self.store.preferences()["response_detail"], request) + "\n" + NORMAL_CHAT_DESKTOP_NOTICE + mode + full_prompt
+
+    def _project_read(self, cid):
+        with self._lock:
+            turn = getattr(self, "_active_turn", None)
+            return bool(turn and turn.get("conversation_id") == cid and turn.get("conversation_only")
+                        and turn.get("project_read"))
 
     def _conversation_only(self, cid):
         with self._lock:
@@ -677,9 +689,9 @@ class AgentChatService:
         )
         if not write:
             role_rules += (
-                "- Quartz tek yetki sistemiyle (Tam Yetki / Full Access) çalışmaktadır. "
-                "Bu tur hızlı sohbet yanıtı içindir; gereksiz araç çağırmadan doğrudan yanıt ver. "
-                "Kullanıcıya asla 'yetkim yok' veya 'salt okunur moddayım' deme.\n"
+                "- Bu turda yazma yetkin yok; gereksiz araç çağırmadan doğrudan yanıt ver. "
+                "Gerçek erişimini bu turun araçları belirler; görmediğin veya yapmadığın bir şeyi "
+                "görmüş ya da yapmış gibi yazma.\n"
             )
         elif full_access:
             role_rules += (
@@ -803,8 +815,22 @@ class AgentChatService:
                 },
             )
 
+            # A question answered by the selected project's files gets a fresh,
+            # read-only, project-scoped run instead of a blind scratch folder.
+            project_read = False
+            if conversation_only and project_id and selected_agent in {"codex", "antigravity"}:
+                from core.message_intent import project_question
+                try:
+                    project = self.agent_service.projects.get(project_id)
+                except Exception:
+                    project = None
+                if (isinstance(project, dict) and project.get("path") and not project.get("protected")
+                        and project.get("workflow") != "warband"):
+                    names = (project.get("name"), Path(str(project["path"])).name)
+                    project_read = project_question(text, names)
             turn_state = {
                 "conversation_only": conversation_only,
+                "project_read": project_read,
                 "requested_permission_level":requested_permission_level,
                 "permission_level":'full' if full_access else 'project' if write else 'read-only',
                 "turn_id": task_id, "project_id":project_id,
@@ -1289,11 +1315,12 @@ class AgentChatService:
                 selected = turn.get('requested_permission_level','read-only')
                 effective = turn.get('permission_level','read-only')
                 chat_only = bool(turn.get('conversation_only'))
-            prompt = (f'[HOST PERMISSION CONTEXT] Quartz Tam Yetki (Full Access) modunda çalışmaktadır '
-                      f'(selected={selected}, effective={effective}, conversation_turn={chat_only}). '
-                      'Kullanıcıya asla "yetkim yok", "salt okunur moddayım" veya "izin verilmedi" deme; '
-                      'Tam Yetki kalıcı olarak aktiftir. Sohbet turlarında gereksiz araç çağırmadan yanıt ver, '
-                      'ancak gerçekte yapmadığın bir gözlemi yapmış gibi iddia etme.\n\n') + prompt
+                project_read = bool(turn.get('project_read'))
+            turn_kind = 'project-read' if chat_only and project_read else 'conversation' if chat_only else 'task'
+            prompt = (f'[HOST PERMISSION CONTEXT] selected={selected}, effective={effective}, turn={turn_kind}. '
+                      'Bu turdaki gerçek erişimini Quartz\'ın verdiği araçlar belirler: sohbet turunda araç yok, '
+                      'proje okuma turunda yalnız seçili projeyi okuma, görev turunda seçilen yetki. '
+                      'Gerçekte yapmadığın bir gözlemi veya işlemi yapmış gibi iddia etme.\n\n') + prompt
             if agent == "antigravity":
                 self._run_antigravity_turn(cid, msg_id, prompt, project_id, write, confirm_write, full_access)
             elif agent == "codex":
@@ -1493,6 +1520,9 @@ class AgentChatService:
         }
         if conversation_only:
             dispatch_kwargs["conversation_only"] = True
+            if self._project_read(cid):
+                dispatch_kwargs["project_read"] = True
+                dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
         dispatch_res = self._dispatch_chat_run(self.agent_service.dispatch_antigravity, cid, msg_id,
             full_prompt, chat_mode=True, squad_task_id=squad_task_id,
             model=selected_model, effort=selected_effort, **dispatch_kwargs
@@ -1673,6 +1703,9 @@ class AgentChatService:
         }
         if conversation_only:
             dispatch_kwargs["conversation_only"] = True
+            if self._project_read(cid):
+                dispatch_kwargs["project_read"] = True
+                dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
         dispatch_res = self._dispatch_chat_run(self.agent_service.dispatch_codex, cid, msg_id,
             full_prompt, chat_mode=True, squad_task_id=squad_task_id,
             model=selected_model, effort=selected_effort, **dispatch_kwargs

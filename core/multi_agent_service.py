@@ -494,30 +494,69 @@ class MultiAgentService:
         hist = squad.history(agent_id)
         return hist[-5:] if hist else []
 
-    def _text_conversation(self, provider, prompt, project, *, chat_mode, write, model, effort):
+    def _text_conversation(self, provider, prompt, project, *, chat_mode, write, model, effort, project_read=False,
+                           should_abort=None):
         if chat_mode is not True or write:
             raise PermissionError("Araçsız sohbet işlem/yazma yetkisi alamaz.")
+        # Project read: a fresh, read-only, project-scoped inspection. Never for a
+        # protected project; never resumes a session that held other permissions.
         runtime = self.codex if provider == "codex" else self.antigravity
+        # The Google path's read guard exists only for the agy backend.
+        guard_capable = provider == "codex" or getattr(runtime, "backend", "agy") == "agy"
+        project_read = (bool(project_read) and guard_capable and not project.get("protected")
+                        and project.get("workflow") != "warband")
+        root = Path(project["path"]).resolve(strict=True) if project_read else None
+        if root is not None and not root.is_dir():
+            raise NotADirectoryError(str(root))
         probe = runtime.probe()
         if not probe.get("ready"):
             raise RuntimeError(probe.get("error") or "CLI hazır değil")
         workspace = tempfile.TemporaryDirectory(prefix="quartz-text-chat-")
         try:
-            if provider == "antigravity":
+            run_dir = workspace.name
+            if provider == "antigravity" and project_read:
+                from core.chat_coordination import write_project_read_hooks
+                write_project_read_hooks(workspace.name, [root])
+                options = {"model": model, "effort": effort, "write": False, "timeout": "10m",
+                           "read_dirs": [str(root)]}
+            elif provider == "antigravity":
                 from core.chat_coordination import write_observer_hooks
                 write_observer_hooks(workspace.name)
-            options = {"model": model, "effort": effort, "tool_guard": True}
-            options.update({"sandbox":"read-only", "approval":"never"} if provider == "codex"
-                           else {"write":False, "timeout":"2m"})
-            instruction = (
-                "Kullanıcıyla doğrudan ve doğal biçimde sohbet et. Quartz üzerinde Tam Yetki (Full Access) "
-                "ve J.A.R.V.I.S. bilgisayar/sistem kontrol yetkilerin kalıcı olarak aktiftir. "
-                "Bu mesaj genel bir sohbet mesajı olduğu için şu an araç çağırmadan doğrudan yanıt ver; "
-                "ancak kullanıcıya ASLA 'yetkim yok', 'salt okunur moddayım' veya 'erişimim kısıtlı' deme. "
-                "Kullanıcı bir dosya veya bilgisayar görevi verdiğinde tam yetkiyle yapabileceğini belirt.\n\n"
-            )
-            run = runtime.start(instruction + str(prompt), workspace.name, **options)
+                options = {"model": model, "effort": effort, "tool_guard": True, "write": False, "timeout": "2m"}
+            elif project_read:
+                # Codex runs in the scratch folder with every built-in tool off;
+                # the project is reachable only through Quartz's read-only MCP
+                # tools (root, secret files and result size enforced by Quartz).
+                options = {"model": model, "effort": effort, "sandbox": "read-only", "approval": "never",
+                           "project_read": str(root), "should_abort": should_abort}
+            else:
+                options = {"model": model, "effort": effort, "tool_guard": True,
+                           "sandbox": "read-only", "approval": "never"}
+            if project_read:
+                instruction = (
+                    f"Bu turda seçili projeyi ({root}) YALNIZ OKUYABİLİRSİN: dosya listeleme, okuma"
+                    + (" ve arama (quartz_project araçları: project_list, project_read, project_search; "
+                       "yollar proje köküne göreli). " if provider == "codex" else
+                       " (dosya ve klasör yolunu tam yazarak). ") +
+                    "Dosya yazamaz, değiştiremez, silemez; ağa ve masaüstüne erişemezsin. "
+                    "Yanıtını okuduğun dosya yollarıyla (ve gerekirse satır numaralarıyla) dayandır; "
+                    "okumadığın bir şeyi okumuş gibi yazma. Bir değişiklik gerekiyorsa ne yapılacağını anlat ve "
+                    "kullanıcının bunu görev olarak istemesini öner.\n\n"
+                )
+            else:
+                instruction = (
+                    "Kullanıcıyla doğrudan ve doğal biçimde sohbet et. Bu turda araç kullanmıyorsun: dosya, "
+                    "komut, ekran veya web erişimin yok. Bir dosya veya ekran bilgisi gerekiyorsa bunu kısaca "
+                    "söyle ve kullanıcının bunu bir görev olarak (ör. \"README dosyasını oku\") istemesini öner. "
+                    "Görmediğin bir şeyi görmüş gibi yazma.\n\n"
+                )
+            # Stop that arrived while the guard/workspace was prepared starts nothing
+            # (Codex re-checks inside its own pre-start probes as well).
+            if should_abort and should_abort():
+                raise RuntimeError("Project read cancelled before start")
+            run = runtime.start(instruction + str(prompt), run_dir, **options)
             run["conversation_only"] = True
+            run["project_read"] = project_read
             with self._lock:
                 self._text_workspaces[run["id"]] = workspace
                 self._links[run["id"]] = {"provider":provider, "project_id":project["id"],
@@ -525,7 +564,12 @@ class MultiAgentService:
                     "coordination_status":"not-required", "coordination_error":""}
             def finish():
                 try:
-                    while runtime.get(run["id"])["status"] not in runtime.TERMINAL:
+                    # Keep the scratch workspace while the run's process is still owned
+                    # (an unconfirmed cleanup can be retried by Stop/shutdown).
+                    while True:
+                        current = runtime.get(run["id"])
+                        if current["status"] in runtime.TERMINAL and current.get("cleanup_pending") is not True:
+                            break
                         time.sleep(.15)
                 finally:
                     workspace.cleanup()
@@ -541,11 +585,13 @@ class MultiAgentService:
     def dispatch_codex(self, prompt, *, title=None, project_id=None,
                        write=False, confirm_write=False, full_access=False,
                        resume_thread_id=None, chat_mode=False, squad_task_id=None,
-                       model: str | None = None, effort: str | None = None, conversation_only=False) -> dict:
+                       model: str | None = None, effort: str | None = None, conversation_only=False,
+                       project_read=False, should_abort=None) -> dict:
         project = self.projects.get(project_id) if project_id else self.projects.selected()
         if conversation_only:
             return self._text_conversation("codex", prompt, project, chat_mode=chat_mode,
-                write=write or full_access, model=model, effort=effort)
+                write=write or full_access, model=model, effort=effort, project_read=project_read,
+                should_abort=should_abort)
         if project.get("protected"):
             raise PermissionError("This project is protected")
         effective_write = bool(write or full_access)
@@ -633,13 +679,15 @@ class MultiAgentService:
     def dispatch_antigravity(self, prompt, *, title=None, project_id=None,
                              write=False, confirm_write=False, full_access=False,
                              conversation_id=None, chat_mode=False, squad_task_id=None,
-                             model: str | None = None, effort: str | None = None, conversation_only=False) -> dict:
+                             model: str | None = None, effort: str | None = None, conversation_only=False,
+                       project_read=False, should_abort=None) -> dict:
         if self.antigravity is None:
             raise RuntimeError(self._antigravity_error or "Antigravity CLI is unavailable")
         project = self.projects.get(project_id) if project_id else self.projects.selected()
         if conversation_only:
             return self._text_conversation("antigravity", prompt, project, chat_mode=chat_mode,
-                write=write or full_access, model=model, effort=effort)
+                write=write or full_access, model=model, effort=effort, project_read=project_read,
+                should_abort=should_abort)
         if project.get("protected"):
             raise PermissionError("This project is protected")
         effective_write = bool(write or full_access)

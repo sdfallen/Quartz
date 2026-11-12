@@ -37,6 +37,32 @@ def write_observer_hooks(directory):
     return hooks
 
 
+def write_project_read_hooks(directory, roots):
+    """PreToolUse guard for a read-only project inspection run.
+
+    The hook lives in Quartz's scratch workspace, never in the user's project;
+    the project is reached only through --add-dir and every tool call must pass
+    desktop_mcp.project_read_tool_allowed (read tools, inside roots, no secrets).
+    """
+    hooks = Path(directory)/".agents/hooks.json"
+    hooks.parent.mkdir(exist_ok=True)
+    command=mcp_command()
+    helper=Path(command[0]) if len(command)==1 else Path(__file__).resolve().parents[1]/"build/desktop-helper/QuartzDesktopMCP.exe"
+    if not helper.is_file(): raise RuntimeError("Build the read guard helper before project inspection")
+    clean=[]
+    for root in roots:
+        value=Path(root).resolve(strict=True)
+        if not value.is_dir(): raise ValueError("Unsafe project read root")
+        clean.append(str(value))
+    if not clean: raise ValueError("Project read needs a root")
+    shutil.copy2(helper,hooks.parent/"read-guard.exe")
+    # Roots travel in a file beside the guard, never as quoted cmd.exe arguments.
+    (hooks.parent/"read-roots.json").write_text(json.dumps({"roots":clean}),encoding="utf-8")
+    hooks.write_text(json.dumps({"quartz-project-read":{"PreToolUse":[{"matcher":"*","hooks":[
+        {"type":"command","command":r".\read-guard.exe --project-read","timeout":5}]}]}}),encoding="utf-8")
+    return hooks
+
+
 def proposed_roles(text, *, allow_defaults=False):
     lower = text.lower()
     if allow_defaults and re.search(r"kontrolünü alma\b|kontrol etme\b|masaüstünü yönetme\b",lower):

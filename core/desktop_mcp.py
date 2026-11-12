@@ -1,6 +1,8 @@
 """Small stdio MCP adapter; no UI authority without a live parent capability."""
 import json
 import os
+from pathlib import Path
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -148,8 +150,104 @@ def operator_tool_allowed(payload):
             params.get("ToolName") in {t["name"] for t in TOOLS})
 
 
+# Only tools whose effect is fully described by one explicit path. Search tools
+# are excluded: the hook sees the scope, not the matches, so it could not keep
+# a secret file's content out of the results (Codex review, 12 Nov).
+PROJECT_READ_TOOLS = frozenset({"view_file", "read_file", "list_dir", "list_directory"})
+# Each tool's real target field (live payload: read_file -> args.Path).
+_PRIMARY_PATH_KEYS = {"read_file": ("Path", "AbsolutePath"), "view_file": ("AbsolutePath", "Path"),
+                      "list_dir": ("DirectoryPath", "Path"), "list_directory": ("DirectoryPath", "Path")}
+try:  # one secret policy; also importable when run as a script/frozen helper from core/
+    from core import project_read_mcp as _project_read_mcp  # noqa: E402
+except ImportError:  # pragma: no cover - script/frozen layout
+    import project_read_mcp as _project_read_mcp  # noqa: E402
+_SECRET_NAME = _project_read_mcp.SECRET_NAME
+
+
+def _path_values(value, key=""):
+    """Every string that names a path: path-like keys, plus any absolute-looking value."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            yield from _path_values(v, str(k))
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            yield from _path_values(v, key)
+    elif isinstance(value, str):
+        text = value.strip()
+        keyed = re.search(r"path|file|dir|uri|target|folder", key, re.I)
+        absolute = re.match(r"^(?:[A-Za-z]:[\\/]|[\\/]{2}|/|~)", text) or ".." in re.split(r"[\\/]", text)
+        if text and (keyed or absolute):
+            yield text
+
+
+def project_read_tool_allowed(payload, roots, cwd=None):
+    """Read-only project inspection: listed read tools, inside the given roots, no secrets.
+
+    Fails closed: unknown tools, unreadable arguments, paths outside the roots,
+    secret-looking names and Windows alternate streams are all denied.
+    """
+    if not isinstance(payload, dict) or not roots:
+        return False
+    native_call = payload.get("toolCall")
+    name = native_call.get("name") if isinstance(native_call, dict) else payload.get("tool_name")
+    if name not in PROJECT_READ_TOOLS:
+        return False
+    primary = _PRIMARY_PATH_KEYS[name]
+    params = native_call.get("args") if isinstance(native_call, dict) else payload.get("tool_input")
+    if isinstance(params, str):
+        try: params = json.loads(params)
+        except (ValueError, TypeError): return False
+    if params is None: params = {}
+    if not isinstance(params, dict):
+        return False
+    base = Path(cwd or os.getcwd())
+    allowed = [Path(r).resolve() for r in roots]
+    # The tool's own target field is mandatory and must be a string; a path in
+    # some other field cannot stand in for it (Codex review).
+    targets = [params.get(k) for k in primary if k in params]
+    if len(targets) != 1 or not isinstance(targets[0], str) or not targets[0].strip():
+        return False
+    paths = list(_path_values(params))
+    if not paths:  # scope is mandatory: no implicit "current folder" reads
+        return False
+    for raw in paths:
+        if raw.startswith("~"):
+            return False
+        candidate = Path(raw)
+        try:
+            target = (candidate if candidate.is_absolute() else base / candidate).resolve()
+        except (OSError, ValueError):
+            return False
+        root = next((r for r in allowed if target == r or target.is_relative_to(r)), None)
+        if ":" in target.name or root is None:
+            return False
+        # Secret names are judged inside the root only: a project that itself
+        # lives under e.g. ~/.codex/worktrees stays readable, its .env does not.
+        if any(_SECRET_NAME.match(part) for part in target.relative_to(root).parts):
+            return False
+    return True
+
+
 if __name__ == "__main__":
-    if "--operator-tools" in sys.argv:
+    if "--project-read-server" in sys.argv:
+        _project_read_mcp.main(sys.argv[sys.argv.index("--project-read-server") + 1])
+    elif "--project-read" in sys.argv:
+        try:
+            # Roots come from read-roots.json beside this guard: Antigravity runs
+            # hook commands through cmd.exe, where quoted path arguments arrive
+            # mangled (live probe 12 Nov), so no path ever travels on argv.
+            roots_file = Path(sys.executable if getattr(sys, "frozen", False) else __file__).with_name("read-roots.json")
+            roots = json.loads(roots_file.read_text(encoding="utf-8"))["roots"]
+            if not isinstance(roots, list) or not all(isinstance(r, str) and r for r in roots):
+                raise ValueError("Invalid read roots")
+            payload = json.loads(sys.stdin.read(65537))
+            base = payload.get("cwd") if isinstance(payload, dict) and isinstance(payload.get("cwd"), str) else os.getcwd()
+            allowed = project_read_tool_allowed(payload, roots, cwd=base)
+        except Exception:
+            allowed = False
+        print(json.dumps({"decision": "allow" if allowed else "deny",
+                          "reason": "Quartz project read: only listing, reading and searching files inside the selected project are allowed."}))
+    elif "--operator-tools" in sys.argv:
         schema = "unreadable input"
         try:
             payload = json.loads(sys.stdin.read(65537))

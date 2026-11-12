@@ -105,6 +105,22 @@ class AntigravityRuntime:
                 pass
         return None
 
+    @staticmethod
+    def _read_guard_matches(workspace: Path, roots) -> bool:
+        """Fail closed unless the workspace carries exactly Quartz's read guard for these roots."""
+        agents = workspace / ".agents"
+        try:
+            hooks = json.loads((agents / "hooks.json").read_text(encoding="utf-8"))
+            expected = {"quartz-project-read": {"PreToolUse": [{"matcher": "*", "hooks": [
+                {"type": "command", "command": r".\read-guard.exe --project-read", "timeout": 5}]}]}}
+            listed = json.loads((agents / "read-roots.json").read_text(encoding="utf-8")).get("roots")
+            return (hooks == expected and (agents / "read-guard.exe").is_file()
+                    and isinstance(listed, list)
+                    and sorted(os.path.normcase(str(Path(r).resolve())) for r in listed)
+                    == sorted(os.path.normcase(str(r)) for r in roots))
+        except (OSError, ValueError, AttributeError, TypeError):
+            return False
+
     @classmethod
     def _is_scratch_workspace_path(cls, project_path: str | Path, file_path: str, *, tool_guard: bool = False) -> bool:
         if tool_guard:
@@ -247,7 +263,7 @@ class AntigravityRuntime:
     def start(self, prompt, project_path, *, write=False, full_access=False,
               squad_task_id=None, squad_agent_id=None, conversation_id=None,
               timeout="10m", model: str | None = None, effort: str | None = None,
-              desktop_connection=None, tool_guard=False) -> dict:
+              desktop_connection=None, tool_guard=False, read_dirs=()) -> dict:
         if not self.executable:
             raise RuntimeError(self._init_error or "Antigravity CLI was not found")
         text = str(prompt or "").strip()
@@ -270,6 +286,18 @@ class AntigravityRuntime:
         effective_write = bool(write or full_access)
         if effective_write and not full_access:
             raise PermissionError("Antigravity cannot enforce project-only writes on Windows; explicit full access is required.")
+        # Extra read roots are only for a read-only run whose workspace carries
+        # Quartz's read-only PreToolUse hook (see chat_coordination); the CLI
+        # sandbox alone is not trusted to stop built-in file writes on Windows.
+        extra_dirs = [Path(d).resolve(strict=True) for d in (read_dirs or ())]
+        if any(not d.is_dir() for d in extra_dirs):
+            raise NotADirectoryError("Antigravity read directory is not a folder")
+        # Only the agy CLI honours the workspace PreToolUse guard; the Gemini CLI
+        # subclass rewrites --mode auto to yolo and drops --add-dir (Gemini review).
+        if extra_dirs and (getattr(self, "backend", "agy") != "agy"
+                           or effective_write or desktop_connection is not None or tool_guard
+                           or not self._read_guard_matches(project, extra_dirs)):
+            raise PermissionError("Read directories need a read-only, hook-guarded Antigravity run")
         sandbox_label = "danger-full-access" if full_access else ("workspace-write" if effective_write else "sandbox")
 
         run_id = uuid.uuid4().hex
@@ -318,7 +346,9 @@ class AntigravityRuntime:
         if not effective_write:
             # A separately confirmed desktop capability needs execution, not
             # planning-only. Keep terminal sandbox; never silently add full access.
-            args += ["--mode", "auto" if desktop_connection is not None or tool_guard else "plan", "--sandbox"]
+            args += ["--mode", "auto" if desktop_connection is not None or tool_guard or extra_dirs else "plan", "--sandbox"]
+            for directory in extra_dirs:
+                args += ["--add-dir", str(directory)]
         else:
             args += ["--mode", "accept-edits", "--dangerously-skip-permissions"]
             home_dir = str(Path.home())
