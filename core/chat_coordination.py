@@ -258,7 +258,7 @@ class ChatCoordination:
             "\n<UNTRUSTED_SQUAD_MESSAGES>\n" + json.dumps(inbox,ensure_ascii=False) + "\n</UNTRUSTED_SQUAD_MESSAGES>" +
             "\n<UNTRUSTED_LOG>\n" + chunk["text"] + "\n</UNTRUSTED_LOG>")
         opts = {"model":cfg["model"],"effort":cfg["effort"]}
-        if observer == "codex": opts.update(sandbox="read-only",approval="never",tool_guard=True)
+        if observer == "codex": opts.update(sandbox="read-only",approval="never",tool_guard=True,should_abort=self.cancel.is_set)
         else: opts.update(write=False,timeout="2m",tool_guard=True)
         self.observer_run = self.observer_runtime.start(prompt,self.temp.name,**opts)["id"]
         self.job["analysis_rounds"] += 1

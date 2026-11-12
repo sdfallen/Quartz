@@ -83,6 +83,30 @@ class GuardedMcpTests(unittest.TestCase):
                 self.assertEqual(runtime._runs, {})
                 self.assertEqual(runtime._writers, {})
 
+    def test_probe_and_run_share_one_base_environment(self):
+        base = {"PATH": "x", "MARKER": "one-base"}
+        for options in ({"tool_guard": True}, {"desktop_connection": CONNECTION}):
+            with self.subTest(options=list(options)):
+                listing = mcp_listing("quartz_desktop") if "desktop_connection" in options else mcp_listing()
+                with patch("core.cli_installer.cli_environment", return_value=dict(base)) as made:
+                    _, probe, popen = self.start([listing], **options)
+                self.assertEqual(made.call_count, 1)  # built once, used by both stages
+                probe_env, run_env = probe.call_args.kwargs["env"], popen.call_args.kwargs["env"]
+                self.assertEqual(probe_env["MARKER"], "one-base")
+                self.assertEqual({k: v for k, v in run_env.items() if not k.startswith("QUARTZ_DESKTOP_")}, probe_env)
+                self.assertNotIn("QUARTZ_DESKTOP_TOKEN", probe_env)  # no bridge credential in the probe
+                if "desktop_connection" in options:
+                    self.assertEqual(run_env["QUARTZ_DESKTOP_TOKEN"], "secret-capability")
+
+    def test_entry_points_pass_stop_to_the_pre_start_check(self):
+        import inspect
+        from core import chat_coordination, desktop_agents, multi_agent_service
+        self.assertIn("should_abort=self.cancel.is_set", inspect.getsource(chat_coordination))
+        self.assertIn('should_abort=lambda: not self.broker.status()["active"]', inspect.getsource(desktop_agents))
+        source = inspect.getsource(multi_agent_service.MultiAgentService._text_conversation)
+        self.assertIn('"tool_guard": True,\n                           "sandbox": "read-only", "approval": "never", '
+                      '"should_abort": should_abort', source)
+
     def test_plain_project_run_is_not_probed(self):
         # Normal task runs keep the user's own Codex integrations.
         _, probe, popen = self.start([], sandbox="workspace-write", approval="on-request")
