@@ -12,7 +12,9 @@ JAVASCRIPT = r"""
   const previewAddress = document.getElementById('previewAddress');
   const previewNote = document.getElementById('previewNote');
   const btnPreview = document.getElementById('btnPreview');
-  const PREVIEW_LINK_RE = /\bhttps?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]|[a-z0-9-]+\.localhost)(?::\d{1,5})?(?:\/[^\s<>"'`)\]]*)?/gi;
+  const PREVIEW_LINK_RE = /\bhttps?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]|[a-z0-9-]+\.localhost)(?::\d{1,5})?(?:\/[^\s<>"'`)\]\\]*)?/gi;
+  // A backslash ends the address: technical details carry escaped "\r\n" text
+  // (live 13 Nov: "localhost:18431/login\r\nalembic.ini..." became one link).
   const PREVIEW_HINT = 'Sayfa boş kalırsa uygulama çerçeve içinde gösterilmeyi engelliyor olabilir; ayrı pencerede açın.';
   let previewUrl = '';
 

@@ -43,6 +43,18 @@ TOOLS_BY_SANDBOX = {
     # The user's explicit "Tam yetki" choice: shells too.
     "danger-full-access": READ_TOOLS + EDIT_TOOLS + SHELL_TOOLS,
 }
+# Pre-approved permission rules under --permission-mode dontAsk. Claude Code
+# lets the file tools read inside the working directory without a rule and
+# asks (= refuses, in dontAsk) for anything outside it; Edit(./**) approves
+# writes inside the project only (it also covers Write/NotebookEdit). Live
+# 13 Nov: an unscoped "Read" rule let a read-only run read another project.
+ALLOWED_BY_SANDBOX = {
+    "none": (),
+    "read-only": (),
+    "workspace-write": ("Edit(./**)",),
+    # Shells can reach any path anyway; the user's "Tam yetki" choice.
+    "danger-full-access": READ_TOOLS + EDIT_TOOLS + SHELL_TOOLS,
+}
 FILE_TOOLS = {"Edit": "update", "Write": "add", "NotebookEdit": "update"}
 # Variables that would make the child think it runs inside another Claude
 # session (desktop app, IDE, nested CLI) or reach that session's channels.
@@ -126,8 +138,9 @@ class ClaudeRuntime(CodexRuntime):
         args = ["-p", "--output-format", "stream-json", "--verbose",
                 "--strict-mcp-config", "--mcp-config", json.dumps({"mcpServers": {}}),
                 "--setting-sources", "", "--permission-mode", "dontAsk", "--tools", tools]
-        if tools:
-            args += ["--allowedTools", tools]
+        allowed = ",".join(ALLOWED_BY_SANDBOX[sandbox])
+        if allowed:
+            args += ["--allowedTools", allowed]
         if model:
             args += ["--model", model]
         if effort:

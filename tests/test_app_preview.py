@@ -150,6 +150,19 @@ class PreviewMarkupTests(unittest.TestCase):
         for name in ("preview_check_url", "preview_frame_policy", "preview_open_window"):
             self.assertTrue(callable(getattr(gui.Api, name, None)), name)
 
+    def test_reply_links_stop_at_escaped_newlines_and_skip_remote_hosts(self):
+        import json
+        import subprocess
+        start = PREVIEW_JS.index("  const PREVIEW_LINK_RE")
+        regex = PREVIEW_JS[start:PREVIEW_JS.index("\n", start)]
+        links = PREVIEW_JS[PREVIEW_JS.index("  function localPreviewLinks"):PREVIEW_JS.index("  // Adds \"Önizle\"")]
+        sample = ("Duman: http://localhost:18431/login\\r\\nalembic.ini\\napp ve http://127.0.0.1:8000/docs. "
+                  "Dış https://example.com ve http://localhost:18431/login tekrar")
+        script = regex + "\n" + links + f"\nconsole.log(JSON.stringify(localPreviewLinks({json.dumps(sample)})));"
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), ["http://localhost:18431/login", "http://127.0.0.1:8000/docs"])
+
 
 if __name__ == "__main__":
     unittest.main()
