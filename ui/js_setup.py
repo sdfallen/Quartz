@@ -106,10 +106,10 @@ JAVASCRIPT = r"""
   function renderCliStatus(data) {
     cliState = data;
     const providers = data.providers || {};
-    document.getElementById('cliProviderState').textContent = ['codex','gemini'].map(p => {
+    document.getElementById('cliProviderState').textContent = ['codex','gemini','claude'].filter(p => p !== 'claude' || providers.claude).map(p => {
       const state = providers[p] || {};
       const label = state.ready ? 'Bağlı' : !state.installed ? 'CLI kurulacak' : state.configured ? 'Bağlantı doğrulanmalı' : 'Hesap bağlantısı bekleniyor';
-      const name = p === 'codex' ? 'Codex' : state.backend === 'agy' ? 'Gemini · Antigravity CLI' : 'Gemini CLI';
+      const name = p === 'codex' ? 'Codex' : p === 'claude' ? 'Claude Code CLI' : state.backend === 'agy' ? 'Gemini · Antigravity CLI' : 'Gemini CLI';
       return `${name}: ${label}${state.auth_message ? '\n' + state.auth_message : ''}`;
     }).join('\n');
     document.getElementById('cliMessage').textContent = data.job?.message || '';
@@ -118,7 +118,7 @@ JAVASCRIPT = r"""
     document.getElementById('cliContinue').disabled = !Object.values(providers).some(p=>p.ready);
     document.querySelectorAll('.agent-seg-btn[data-agent]').forEach(button => {
       const agent = button.dataset.agent;
-      const ready = ['codex','antigravity','collaboration'].includes(agent) && (agent === 'collaboration' ? providers.codex?.ready && providers.gemini?.ready : providers[agent === 'antigravity' ? 'gemini' : agent]?.ready);
+      const ready = ['codex','antigravity','claude','collaboration'].includes(agent) && (agent === 'collaboration' ? providers.codex?.ready && providers.gemini?.ready : providers[agent === 'antigravity' ? 'gemini' : agent]?.ready);
       button.disabled = !ready;
       button.setAttribute('aria-disabled', ready ? 'false' : 'true');
       button.title = ready ? '' : 'Hesaplar ve CLI kurulumu bölümünden bu ajanı bağlayabilirsiniz';
@@ -148,6 +148,8 @@ JAVASCRIPT = r"""
     const rows = [
       ['codex', 'Codex', describe(known?.codex), active === 'codex' || active === 'collaboration'],
       ['antigravity', 'Antigravity', describe(known?.gemini), active === 'antigravity' || active === 'collaboration'],
+      // Shown once the backend reports Claude (older payloads keep two rows).
+      ...(known?.claude ? [['claude', 'Claude', describe(known.claude), active === 'claude']] : []),
     ];
     box.replaceChildren();
     for (const [id, name, [state, text], current] of rows) {

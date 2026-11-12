@@ -83,7 +83,7 @@ class CompactWindowTests(unittest.TestCase):
         css = (Path(gui.__file__).resolve().parent / "assets" / "workspace.css").read_text(encoding="utf-8")
         self.assertIn(".app { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; grid-template-rows: minmax(0, 1fr); }", css)
         self.assertIn(".app > .main, .app > .inspector, .app > .app-rail { min-height: 0; }", css)
-        self.assertIn('grid-template-rows: minmax(0, 1fr); grid-template-areas: "codex stream agy";', css)
+        self.assertIn('grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "codex stream agy" "claude stream agy";', css)
 
     def test_confirm_modal_replaces_window_confirm(self):
         self.assertIn('value="antigravity"', gui._HTML)

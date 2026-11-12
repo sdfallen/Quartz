@@ -9,6 +9,9 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
   const agyEffortSelect = document.getElementById('agyEffortSelect');
   const codexModelSelect = document.getElementById('codexModelSelect');
   const codexEffortSelect = document.getElementById('codexEffortSelect');
+  const claudeModelPill = document.getElementById('claudeModelPill');
+  const claudeModelSelect = document.getElementById('claudeModelSelect');
+  const claudeEffortSelect = document.getElementById('claudeEffortSelect');
   const btnContinueCollab = document.getElementById('btnContinueCollab');
 
   if (btnPanels) {
@@ -68,6 +71,10 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
         populateSelectOptions(codexModelSelect, modelsCatalog.codex.models || []);
         populateSelectOptions(codexEffortSelect, modelsCatalog.codex.efforts || []);
       }
+      if (modelsCatalog.claude) {
+        populateSelectOptions(claudeModelSelect, modelsCatalog.claude.models || []);
+        populateSelectOptions(claudeEffortSelect, modelsCatalog.claude.efforts || []);
+      }
     }
     if (convModels) {
       if (convModels.antigravity) {
@@ -98,6 +105,15 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
           codexEffortSelect.value = convModels.codex.effort;
         }
       }
+      if (convModels.claude) {
+        if (claudeModelSelect && document.activeElement !== claudeModelSelect && convModels.claude.model
+            && Array.from(claudeModelSelect.options).some(o => o.value === convModels.claude.model)) {
+          claudeModelSelect.value = convModels.claude.model;
+        }
+        if (claudeEffortSelect && document.activeElement !== claudeEffortSelect && convModels.claude.effort) {
+          claudeEffortSelect.value = convModels.claude.effort;
+        }
+      }
     }
   }
 
@@ -119,6 +135,9 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     } else if (agent === 'codex') {
       modelVal = codexModelSelect ? codexModelSelect.value : '';
       effortVal = codexEffortSelect ? codexEffortSelect.value : '';
+    } else if (agent === 'claude') {
+      modelVal = claudeModelSelect ? claudeModelSelect.value : '';
+      effortVal = claudeEffortSelect ? claudeEffortSelect.value : '';
     }
     try {
       await window.pywebview.api.chat_set_model(currentConvId, agent, modelVal, effortVal);
@@ -132,11 +151,13 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
   if (agyEffortSelect) agyEffortSelect.addEventListener('change', () => saveAgentModelSelection('antigravity', false));
   if (codexModelSelect) codexModelSelect.addEventListener('change', () => saveAgentModelSelection('codex', true));
   if (codexEffortSelect) codexEffortSelect.addEventListener('change', () => saveAgentModelSelection('codex', false));
+  if (claudeModelSelect) claudeModelSelect.addEventListener('change', () => saveAgentModelSelection('claude', true));
+  if (claudeEffortSelect) claudeEffortSelect.addEventListener('change', () => saveAgentModelSelection('claude', false));
 
   function syncAgentUI(agent) {
     if (!agent) return;
     // Old Notion conversations stay readable; the next turn uses a supported agent.
-    if (!['codex', 'antigravity', 'collaboration'].includes(agent)) agent = 'codex';
+    if (!['codex', 'antigravity', 'claude', 'collaboration'].includes(agent)) agent = 'codex';
     if (mainAgentSelect) mainAgentSelect.value = agent;
     document.querySelectorAll('.agent-seg-btn[data-agent]').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.agent === agent);
@@ -147,6 +168,9 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     }
     if (codexModelPill) {
       codexModelPill.classList.toggle('active-codex', agent === 'codex' || isCollab);
+    }
+    if (claudeModelPill) {
+      claudeModelPill.classList.toggle('active-claude', agent === 'claude');
     }
     if (btnContinueCollab) {
       btnContinueCollab.style.display = isCollab ? 'inline-flex' : 'none';
@@ -172,6 +196,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
   const CREW_LANES = {
     codex: {col: 'laneColCodex', card: 'laneCodex', state: 'laneCodexState', trail: 'laneCodexTrail', status: 'laneCodexStatus'},
     antigravity: {col: 'laneColAgy', card: 'laneAgy', state: 'laneAgyState', trail: 'laneAgyTrail', status: 'laneAgyStatus'},
+    claude: {col: 'laneColClaude', card: 'laneClaude', state: 'laneClaudeState', trail: 'laneClaudeTrail', status: 'laneClaudeStatus'},
   };
   let crewProgress = {};
   let crewTrail = {};  // Last run's steps per agent; kept after the run so the column is not blank.
@@ -276,7 +301,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     // Steps belong to the conversation they came from (live exam 8 Nov: a code
     // task's steps stayed in the columns of the next, unrelated conversation).
     if (crewTrailConversation !== currentConvId) { crewTrail = {}; crewResult = {}; crewTrailConversation = currentConvId; }
-    const focus = ['codex', 'antigravity', 'collaboration'].find(a => crewSeg(a)?.classList.contains('active')) || 'antigravity';
+    const focus = ['codex', 'antigravity', 'claude', 'collaboration'].find(a => crewSeg(a)?.classList.contains('active')) || 'antigravity';
     const control = document.body.classList.contains('screen-control-active');
     const flow = [];
     for (const [agent, lane] of Object.entries(CREW_LANES)) {
@@ -286,7 +311,8 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       const view = crewLaneView(agent, unavailable, control);
       card.disabled = unavailable;
       card.setAttribute('aria-pressed', focus === agent ? 'true' : 'false');
-      card.dataset.included = focus === agent || focus === 'collaboration' ? 'true' : 'false';
+      // Birlikte is Codex + Antigravity; Claude joins only when selected on its own.
+      card.dataset.included = focus === agent || (focus === 'collaboration' && agent !== 'claude') ? 'true' : 'false';
       card.dataset.state = view.state;
       if (view.state !== 'idle') flow.push(agent);
       const stateEl = document.getElementById(lane.state);
@@ -309,7 +335,8 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     const label = document.getElementById('crewCoreLabel');
     // Idle, the crystal names the selected mode (live exam 9 Nov: it said "Birlikte" while
     // only Antigravity was selected, and a two-agent exam ran with one agent).
-    const idleText = focus === 'collaboration' ? 'Birlikte' : focus === 'codex' ? 'Yalnız Codex' : 'Yalnız Antigravity';
+    const idleText = focus === 'collaboration' ? 'Birlikte' : focus === 'codex' ? 'Yalnız Codex'
+      : focus === 'claude' ? 'Yalnız Claude' : 'Yalnız Antigravity';
     const coreText = control ? 'Kontrolde' : flow.length === 2 ? 'İkisi çalışıyor' : flow.length ? 'Yönlendiriyor' : idleText;
     if (label && label.textContent !== coreText) label.textContent = coreText;
     // The label is upper-cased by CSS; in Turkish "Antigravity" would become "ANTİGRAVİTY".
@@ -340,7 +367,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     else crewDesktop = {operator, observer: operator === 'codex' ? 'antigravity' : 'codex', job};
     renderCrew();
   }
-  for (const id of ['laneCodex', 'laneAgy', 'crewCore']) {
+  for (const id of ['laneCodex', 'laneAgy', 'laneClaude', 'crewCore']) {
     document.getElementById(id)?.addEventListener('click', event => {
       const button = crewSeg(event.currentTarget.dataset.agent);
       if (button && !button.disabled) button.click();

@@ -488,6 +488,7 @@ body.low-spec .diagnostics-card, body.low-spec .diag-progress-fill, body.ui-idle
 #laneCodex, .lane-codex, .rail-codex, .beam-codex, .chat > .msg.sender-codex { --lane: var(--agent-codex); }
 #laneAgy, .lane-antigravity, .rail-agy, .beam-agy, .chat > .msg.sender-antigravity, .chat > .msg.sender-gemini { --lane: var(--agent-agy); }
 .chat > .msg.sender-quartz, .chat > .msg.bot.sender-bot { --lane: var(--agent-quartz); }
+#laneClaude, .lane-claude, .chat > .msg.sender-claude { --lane: var(--agent-claude); }
 
 /* Frame: rail | main | inspector. */
 .app { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; grid-template-rows: minmax(0, 1fr); }
@@ -518,13 +519,14 @@ body.sidebar-open .drawer-scrim { opacity: 1; visibility: visible; }
 
 /* Stage: Codex column | stream | Antigravity column. */
 .stage-shell { flex: 1; min-height: 0; display: flex; container-type: inline-size; }
-.stage { flex: 1; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(190px, 248px) minmax(0, 1fr) minmax(190px, 248px); grid-template-rows: minmax(0, 1fr); grid-template-areas: "codex stream agy"; }
+.stage { flex: 1; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(190px, 248px) minmax(0, 1fr) minmax(190px, 248px); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "codex stream agy" "claude stream agy"; }
 .lane-codex { grid-area: codex; }
 .lane-antigravity { grid-area: agy; }
+.lane-claude { grid-area: claude; border-top: 1px solid var(--line); }
 .stream { grid-area: stream; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 
 .lane-col { position: relative; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; overflow-y: auto; padding: 8px 14px 18px; background: linear-gradient(180deg, color-mix(in oklab, var(--lane) 7%, transparent), transparent 46%); transition: opacity var(--t-med) var(--ease); }
-.lane-codex { border-right: 1px solid color-mix(in oklab, var(--lane) 16%, var(--line)); }
+.lane-codex, .lane-claude { border-right: 1px solid color-mix(in oklab, var(--lane) 16%, var(--line)); }
 .lane-antigravity { border-left: 1px solid color-mix(in oklab, var(--lane) 16%, var(--line)); }
 .lane-col[data-included="false"] { opacity: .66; }
 .lane-col[data-included="false"]:hover { opacity: 1; }
@@ -596,6 +598,7 @@ body.sidebar-open .drawer-scrim { opacity: 1; visibility: visible; }
 .chat > .msg { position: relative; }
 .chat > .msg.sender-codex::before, .chat > .msg.sender-antigravity::before, .chat > .msg.sender-gemini::before, .chat > .msg.sender-quartz::before, .chat > .msg.bot.sender-bot::before { content: ""; position: absolute; top: 4px; width: 9px; height: 9px; border-radius: 2px; transform: rotate(45deg); background: var(--lane); box-shadow: 0 0 0 3px var(--bg), 0 0 12px color-mix(in oklab, var(--lane) 55%, transparent); }
 .chat > .msg.sender-codex::before { left: -36.5px; }
+.chat > .msg.sender-claude::before { content: ""; position: absolute; top: 4px; left: -36.5px; width: 9px; height: 9px; border-radius: 2px; transform: rotate(45deg); background: var(--lane); }
 .chat > .msg.sender-antigravity::before, .chat > .msg.sender-gemini::before { left: -20.5px; }
 .chat > .msg.sender-quartz::before, .chat > .msg.bot.sender-bot::before { left: -28.5px; width: 8px; height: 8px; }
 .chat > .msg.sender-codex::after, .chat > .msg.sender-antigravity::after, .chat > .msg.sender-gemini::after { content: ""; position: absolute; top: 8px; height: 1px; right: calc(100% + 6px); background: linear-gradient(90deg, color-mix(in oklab, var(--lane) 60%, transparent), transparent); }

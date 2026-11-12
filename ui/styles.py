@@ -28,6 +28,7 @@ _LIGHT_TOKENS = """
     --danger-soft: rgba(176,38,61,.09);
     --agent-codex: #855a00;
     --agent-agy: #6a3fc9;
+    --agent-claude: #a8492a;
     --agent-quartz: #1c1330;
     --amethyst: #6a3fc9;
     --amethyst-soft: rgba(106,63,201,.12);
@@ -69,6 +70,7 @@ BASE_CSS = r"""
   --on-stop: #ffffff;
   --agent-codex: #f5c85a;
   --agent-agy: #c6a6ff;
+  --agent-claude: #f0936f;
   --agent-quartz: #f7f3ff;
   --amethyst: #9d6cff;
   --amethyst-soft: rgba(157,108,255,.18);
