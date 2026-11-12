@@ -608,7 +608,8 @@ class IPCServer:
             if provider in {"collaboration", "both", "codex-antigravity"}:
                 model_kwargs = {"models": center.validate_model_selections(selections)}
             else:
-                agent = "antigravity" if provider in {"antigravity", "agy"} else "codex"
+                agent = ("antigravity" if provider in {"antigravity", "agy"} else
+                         "claude" if provider == "claude" else "codex")
                 model_kwargs = center.validate_model_selections(selections, agents=(agent,))[agent]
             result = self._get_agent_center().dispatch(
                 provider,
