@@ -111,6 +111,25 @@ class ProjectReaderTests(unittest.TestCase):
                 self.reader.read("core/a.py")
             self.assertNotIn("needle", self.reader.search("needle"))
 
+    def test_listing_is_verified_on_the_held_folder(self):
+        outside = str(Path(self.tmp.name))
+        with patch("core.project_read_mcp._handle_path", return_value=outside):
+            with self.assertRaises(ValueError):
+                self.reader.list("core")
+            self.assertEqual(self.reader.search("needle"), "(no matches)")
+
+    @unittest.skipUnless(os.name == "nt", "Windows handle sharing")
+    def test_listing_comes_from_the_verified_handle_even_if_the_name_is_swapped(self):
+        from core.project_read_mcp import _DirHandle
+        holder = _DirHandle(self.root / "core")
+        with holder:
+            os.rename(self.root / "core", self.root / "moved")       # swap after verification
+            (self.root / "core").mkdir()
+            (self.root / "core" / "planted.txt").write_text("x", encoding="utf-8")
+            names = [name for name, _, _ in holder.entries()]
+        self.assertIn("a.py", names)
+        self.assertNotIn("planted.txt", names)
+
     @unittest.skipUnless(os.name == "nt", "Windows junction")
     def test_link_inside_project_pointing_inside_is_also_not_followed(self):
         link = self.root / "alias"
@@ -252,6 +271,36 @@ class RuntimeProfileTests(unittest.TestCase):
                 popen.assert_not_called()
         self.assertEqual(runtime._runs, {}); self.assertEqual(runtime._writers, {})
 
+    def test_listing_rows_of_unknown_state_are_refused(self):
+        from types import SimpleNamespace
+        runtime = CodexRuntime(self.exe)
+        rows = SimpleNamespace(returncode=0, stderr="", stdout=json.dumps(
+            [{"name": "quartz_project", "enabled": True}, {"name": "mystery"}]))
+        with patch("core.codex_runtime.subprocess.run", return_value=rows), \
+                patch("core.codex_runtime.subprocess.Popen") as popen:
+            with self.assertRaises(RuntimeError):
+                runtime.start("x", self.work, project_read=self.project)
+            popen.assert_not_called()
+
+    def test_stop_during_project_read_checks_starts_no_process(self):
+        runtime = CodexRuntime(self.exe)
+        # Stopped before the first probe.
+        with patch("core.codex_runtime.subprocess.run") as probe, \
+                patch("core.codex_runtime.subprocess.Popen") as popen:
+            with self.assertRaises(RuntimeError):
+                runtime.start("x", self.work, project_read=self.project, should_abort=lambda: True)
+            probe.assert_not_called(); popen.assert_not_called()
+        self.assertEqual(runtime._runs, {})
+        # Stopped after the checks passed but before the process: run is cancelled, nothing spawned.
+        calls = iter([False, True])
+        with patch("core.codex_runtime.subprocess.run", return_value=mcp_listing("quartz_project")), \
+                patch("core.codex_runtime.subprocess.Popen") as popen:
+            with self.assertRaises(RuntimeError):
+                runtime.start("x", self.work, project_read=self.project, should_abort=lambda: next(calls, True))
+            popen.assert_not_called()
+        self.assertEqual([r["status"] for r in runtime._runs.values()], ["cancelled"])
+        self.assertEqual(runtime._writers, {})
+
     def test_codex_rejected_profiles_leave_no_run_or_writer_lock(self):
         runtime = CodexRuntime(self.exe)
         cases = [dict(project_read=self.project, **o) for o in (
@@ -371,7 +420,7 @@ class ServiceRoutingTests(unittest.TestCase):
                                          conversation_only=True, project_read=True)
         args, opts = agy.start.call_args.args, agy.start.call_args.kwargs
         hooks.assert_called_once()
-        self.assertEqual(Path(hooks.call_args.args[0]).resolve(), Path(args[1]).resolve())
+        self.assertEqual(os.path.normcase(str(hooks.call_args.args[0])), os.path.normcase(str(args[1])))
         self.assertNotEqual(Path(args[1]).resolve(), Path(".").resolve())  # never writes into the project
         self.assertEqual([Path(p).resolve() for p in opts["read_dirs"]], [Path(".").resolve()])
         self.assertFalse(opts["write"]); self.assertNotIn("tool_guard", opts)

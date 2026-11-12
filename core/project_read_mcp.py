@@ -42,26 +42,117 @@ for _tool in TOOLS:
     _tool["annotations"] = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False}
 
 
-def _final_path(fd):
-    """The real path of an open file (Windows GetFinalPathNameByHandleW), or None elsewhere."""
-    if os.name != "nt":
-        return None
+def _kernel32():
     import ctypes
-    import msvcrt
     from ctypes import wintypes
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.GetFinalPathNameByHandleW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
-    kernel32.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetFinalPathNameByHandleW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
+    k32.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    k32.CloseHandle.restype = wintypes.BOOL
+    return k32
+
+
+def _handle_path(handle):
+    """Real path of an open Windows handle, normalised WITHOUT asking the file system again."""
+    import ctypes
     buffer = ctypes.create_unicode_buffer(32768)
-    size = kernel32.GetFinalPathNameByHandleW(msvcrt.get_osfhandle(fd), buffer, len(buffer), 0)
+    size = _kernel32().GetFinalPathNameByHandleW(handle, buffer, len(buffer), 0)
     if not size or size >= len(buffer):
-        raise OSError("Cannot verify the opened file")
+        raise OSError("Cannot verify the opened object")
     value = buffer.value
     if value.startswith("\\\\?\\UNC\\"):
         value = "\\\\" + value[8:]
     elif value.startswith("\\\\?\\"):
         value = value[4:]
     return value
+
+
+def _final_path(fd):
+    """The real path of an open file descriptor (Windows), or None elsewhere."""
+    if os.name != "nt":
+        return None
+    import msvcrt
+    return _handle_path(msvcrt.get_osfhandle(fd))
+
+
+class _DirHandle:
+    """An open directory handle: verified by its real path, then listed FROM THE
+    HANDLE (GetFileInformationByHandleEx), never by reopening the name.
+
+    Holding a handle does not stop a rename on current Windows (POSIX rename
+    semantics; found by test), so the listing itself must come from the handle.
+    """
+
+    def __init__(self, path):
+        self.path, self.handle = str(path), None
+
+    def __enter__(self):
+        if os.name != "nt":
+            return os.path.realpath(self.path)
+        k32 = _kernel32()
+        handle = k32.CreateFileW(self.path, 0x0001 | 0x0080,  # FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES
+                                 0x1 | 0x2 | 0x4,  # share read/write/delete: never block the user's work
+                                 None, 3,  # OPEN_EXISTING
+                                 0x02000000 | 0x00200000,  # BACKUP_SEMANTICS | OPEN_REPARSE_POINT
+                                 None)
+        if handle in (None, 0, -1) or handle == ctypes_invalid():
+            raise OSError("Cannot open the folder")
+        self.handle = handle
+        return _handle_path(handle)
+
+    def entries(self):
+        """(name, is_dir, is_reparse) for every child, read from this handle."""
+        if os.name != "nt":
+            with os.scandir(self.path) as items:
+                return [(i.name, i.is_dir(follow_symlinks=False), i.is_symlink()) for i in items]
+        import ctypes
+        import struct
+        from ctypes import wintypes
+        k32 = _kernel32()
+        k32.GetFileInformationByHandleEx.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+        k32.GetFileInformationByHandleEx.restype = wintypes.BOOL
+        buffer = ctypes.create_string_buffer(64 * 1024)
+        out, info_class = [], 15  # FileFullDirectoryRestartInfo, then FileFullDirectoryInfo (14)
+        while True:
+            if not k32.GetFileInformationByHandleEx(self.handle, info_class, buffer, len(buffer)):
+                if ctypes.get_last_error() == 18:  # ERROR_NO_MORE_FILES
+                    return out
+                raise OSError("Cannot list the folder")
+            info_class, offset, raw = 14, 0, buffer.raw
+            while True:
+                next_offset, = struct.unpack_from("<I", raw, offset)
+                attributes, name_length = struct.unpack_from("<II", raw, offset + 56)
+                name = raw[offset + 68: offset + 68 + name_length].decode("utf-16-le")
+                if name not in (".", ".."):
+                    out.append((name, bool(attributes & 0x10), bool(attributes & 0x400)))
+                if not next_offset:
+                    break
+                offset += next_offset
+
+    def __exit__(self, *exc):
+        if self.handle is not None:
+            _kernel32().CloseHandle(self.handle)
+
+
+def ctypes_invalid():
+    import ctypes
+    return ctypes.c_void_p(-1).value
+
+
+def _same_or_under(real, root):
+    """Pure string comparison: no resolve(), so the decision is the handle's, not a fresh lookup."""
+    real_n = os.path.normcase(os.path.normpath(str(real)))
+    root_n = os.path.normcase(os.path.normpath(str(root)))
+    if real_n == root_n:
+        return ""
+    prefix = root_n.rstrip("\\/") + os.sep
+    if not real_n.startswith(prefix):
+        return None
+    return os.path.normpath(str(real))[len(prefix):]
 
 
 def _is_link(path):
@@ -103,19 +194,23 @@ class ProjectReader:
         return probe
 
     def _inside(self, real):
-        real = Path(real)
-        if real != self.root and not real.is_relative_to(self.root):
+        relative = _same_or_under(real, self.root)
+        if relative is None:
             return False
-        return not self._hidden(real.relative_to(self.root).parts)
+        return not self._hidden([p for p in re.split(r"[\\/]+", relative) if p])
 
     def _read_verified(self, path):
-        """Open first, then prove the OPENED object lives under the root (no check/use race)."""
+        """Open first, then prove the OPENED object lives under the root (no check/use race).
+
+        The CRT opens without delete sharing, so the file and its folders cannot
+        be renamed away between the handle check and the read.
+        """
         flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
         fd = os.open(str(path), flags)
         try:
             info = os.fstat(fd)
             real = _final_path(fd) or os.path.realpath(str(path))
-            if not self._inside(Path(real).resolve()):
+            if not self._inside(real):
                 raise ValueError("Path is outside the project")
             if info.st_size > MAX_FILE_BYTES:
                 raise ValueError("File is too large to read here")
@@ -124,15 +219,23 @@ class ProjectReader:
         finally:
             os.close(fd)
 
+    def _entries(self, folder):
+        """List a folder while it is held open and verified (names only, links marked)."""
+        holder = _DirHandle(folder)
+        with holder as real:
+            if not self._inside(real):
+                raise ValueError("Folder is outside the project")
+            return holder.entries()
+
     def list(self, path=""):
         folder = self.resolve(path)
-        if not folder.is_dir() or not self._inside(folder.resolve()):
+        if not folder.is_dir():
             raise NotADirectoryError("Not a folder in the project")
         entries = []
-        for child in sorted(folder.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
-            if SECRET_NAME.match(child.name):
+        for name, is_dir, linked in sorted(self._entries(folder), key=lambda e: (not e[1], e[0].lower())):
+            if SECRET_NAME.match(name) or linked:
                 continue
-            entries.append(child.name + ("/" if child.is_dir() else ""))
+            entries.append(name + ("/" if is_dir else ""))
             if len(entries) >= MAX_LIST:
                 entries.append("… (list truncated)")
                 break
@@ -159,14 +262,21 @@ class ProjectReader:
         if len(needle) < 2:
             raise ValueError("Query is too short")
         base = self.resolve(path)
-        if not base.is_dir() or not self._inside(base.resolve()):
+        if not base.is_dir():
             raise NotADirectoryError("Not a folder in the project")
         hits, scanned = [], 0
-        for folder, dirs, files in os.walk(base, followlinks=False):
-            # os.walk does not treat Windows junctions as links: skip every
-            # reparse point explicitly so a search never leaves the project.
-            dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not SECRET_NAME.match(d)
-                       and not _is_link(Path(folder) / d)]
+        pending = [base]
+        while pending:
+            folder = pending.pop(0)
+            try:
+                # Each folder is listed while held open and verified (same rule as project_list);
+                # links/junctions are never entered.
+                entries = self._entries(folder)
+            except (OSError, ValueError):
+                continue
+            pending.extend(folder / name for name, is_dir, linked in sorted(entries)
+                           if is_dir and not linked and name not in SKIP_DIRS and not SECRET_NAME.match(name))
+            files = sorted(name for name, is_dir, linked in entries if not is_dir and not linked)
             for name in files:
                 if SECRET_NAME.match(name) or (glob and not fnmatch.fnmatch(name, glob)):
                     continue

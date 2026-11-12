@@ -236,7 +236,7 @@ class CodexRuntime:
                                  "multi_agent_v2", "computer_use", "browser_use", "browser_use_external",
                                  "in_app_browser", "image_generation", "view_image", "memories", "hooks")
 
-    def _project_read_config(self, read_root, cwd):
+    def _project_read_config(self, read_root, cwd, should_abort=None):
         """Config flags that leave ONLY quartz_project enabled, proven with `codex mcp list`.
 
         The effective MCP set also comes from plugins and other layers (a live
@@ -254,6 +254,8 @@ class CodexRuntime:
 
         def enabled_extra(current):
             from core.cli_installer import cli_environment
+            if should_abort and should_abort():
+                raise RuntimeError("Project read cancelled before start")
             probe = subprocess.run(self._command(current + ["mcp", "list", "--json"]), cwd=str(cwd),
                                    capture_output=True, text=True, encoding="utf-8", errors="replace",
                                    timeout=30, env=cli_environment(),
@@ -263,7 +265,11 @@ class CodexRuntime:
             servers = _json.loads(probe.stdout)
             if not isinstance(servers, list):
                 raise RuntimeError("Unexpected Codex MCP listing")
-            names = [s.get("name") for s in servers if isinstance(s, dict) and s.get("enabled")]
+            # Every row must state its name and enabled flag; an unknown state is a refusal.
+            if not all(isinstance(s, dict) and isinstance(s.get("name"), str)
+                       and isinstance(s.get("enabled"), bool) for s in servers):
+                raise RuntimeError("Codex MCP listing has an entry of unknown state")
+            names = [s["name"] for s in servers if s["enabled"]]
             if "quartz_project" not in names:
                 raise RuntimeError("Quartz project tools are not active in Codex")
             return [n for n in names if n != "quartz_project"]
@@ -280,7 +286,7 @@ class CodexRuntime:
     def start(self, prompt, project_path, *, sandbox="read-only", approval="never",
               squad_task_id=None, squad_agent_id=None, resume_thread_id=None,
               timeout=None, model: str | None = None, effort: str | None = None,
-              desktop_connection=None, tool_guard=False, project_read=False) -> dict:
+              desktop_connection=None, tool_guard=False, project_read=False, should_abort=None) -> dict:
         if not self.executable:
             raise RuntimeError(self._init_error or "Codex CLI was not found")
         text = str(prompt or "").strip()
@@ -313,7 +319,7 @@ class CodexRuntime:
         if read_root:
             # Resolve the helper/config and PROVE the effective tool set now: a
             # failure must not leave a "starting" record without a process.
-            read_config = self._project_read_config(read_root, project)
+            read_config = self._project_read_config(read_root, project, should_abort)
 
         clean_model = str(model or "").strip() or None
         clean_effort = str(effort or "").strip().lower() or None
@@ -407,6 +413,14 @@ class CodexRuntime:
         command = self._command(args)
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | CREATE_SUSPENDED
         job_errors: list[str] = []
+        if should_abort and should_abort():
+            # Stop arrived while the project-read checks ran: no process starts.
+            with self._lock:
+                record["status"] = "cancelled"
+                record["finished_at"] = time.time()
+                if self._writers.get(project_key) == run_id:
+                    self._writers.pop(project_key, None)
+            raise RuntimeError("Codex run cancelled before start")
         try:
             from core.cli_installer import cli_environment
             process_options = {"env": desktop_env if desktop_env is not None else cli_environment()}

@@ -1522,6 +1522,7 @@ class AgentChatService:
             dispatch_kwargs["conversation_only"] = True
             if self._project_read(cid):
                 dispatch_kwargs["project_read"] = True
+                dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
         dispatch_res = self._dispatch_chat_run(self.agent_service.dispatch_antigravity, cid, msg_id,
             full_prompt, chat_mode=True, squad_task_id=squad_task_id,
             model=selected_model, effort=selected_effort, **dispatch_kwargs
@@ -1704,6 +1705,7 @@ class AgentChatService:
             dispatch_kwargs["conversation_only"] = True
             if self._project_read(cid):
                 dispatch_kwargs["project_read"] = True
+                dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
         dispatch_res = self._dispatch_chat_run(self.agent_service.dispatch_codex, cid, msg_id,
             full_prompt, chat_mode=True, squad_task_id=squad_task_id,
             model=selected_model, effort=selected_effort, **dispatch_kwargs

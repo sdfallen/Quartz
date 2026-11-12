@@ -494,7 +494,8 @@ class MultiAgentService:
         hist = squad.history(agent_id)
         return hist[-5:] if hist else []
 
-    def _text_conversation(self, provider, prompt, project, *, chat_mode, write, model, effort, project_read=False):
+    def _text_conversation(self, provider, prompt, project, *, chat_mode, write, model, effort, project_read=False,
+                           should_abort=None):
         if chat_mode is not True or write:
             raise PermissionError("Araçsız sohbet işlem/yazma yetkisi alamaz.")
         # Project read: a fresh, read-only, project-scoped inspection. Never for a
@@ -527,7 +528,7 @@ class MultiAgentService:
                 # the project is reachable only through Quartz's read-only MCP
                 # tools (root, secret files and result size enforced by Quartz).
                 options = {"model": model, "effort": effort, "sandbox": "read-only", "approval": "never",
-                           "project_read": str(root)}
+                           "project_read": str(root), "should_abort": should_abort}
             else:
                 options = {"model": model, "effort": effort, "tool_guard": True,
                            "sandbox": "read-only", "approval": "never"}
@@ -576,11 +577,12 @@ class MultiAgentService:
                        write=False, confirm_write=False, full_access=False,
                        resume_thread_id=None, chat_mode=False, squad_task_id=None,
                        model: str | None = None, effort: str | None = None, conversation_only=False,
-                       project_read=False) -> dict:
+                       project_read=False, should_abort=None) -> dict:
         project = self.projects.get(project_id) if project_id else self.projects.selected()
         if conversation_only:
             return self._text_conversation("codex", prompt, project, chat_mode=chat_mode,
-                write=write or full_access, model=model, effort=effort, project_read=project_read)
+                write=write or full_access, model=model, effort=effort, project_read=project_read,
+                should_abort=should_abort)
         if project.get("protected"):
             raise PermissionError("This project is protected")
         effective_write = bool(write or full_access)
@@ -669,13 +671,14 @@ class MultiAgentService:
                              write=False, confirm_write=False, full_access=False,
                              conversation_id=None, chat_mode=False, squad_task_id=None,
                              model: str | None = None, effort: str | None = None, conversation_only=False,
-                       project_read=False) -> dict:
+                       project_read=False, should_abort=None) -> dict:
         if self.antigravity is None:
             raise RuntimeError(self._antigravity_error or "Antigravity CLI is unavailable")
         project = self.projects.get(project_id) if project_id else self.projects.selected()
         if conversation_only:
             return self._text_conversation("antigravity", prompt, project, chat_mode=chat_mode,
-                write=write or full_access, model=model, effort=effort, project_read=project_read)
+                write=write or full_access, model=model, effort=effort, project_read=project_read,
+                should_abort=should_abort)
         if project.get("protected"):
             raise PermissionError("This project is protected")
         effective_write = bool(write or full_access)
