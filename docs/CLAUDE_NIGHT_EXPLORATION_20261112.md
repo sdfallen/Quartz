@@ -49,7 +49,11 @@ Dal `claude/project-read-20261112` (`6b8bcba` → `e29c38d`).
     ada bağlı listeleme; ön kontrolde Stop).
   - v4 `faf7053` → klasörler tanıtıcıdan listeleniyor (`GetFileInformationByHandleEx`); bilinmeyen durumlu MCP satırı
     ret; Stop ön kontrolde ve başlatmadan hemen önce denetleniyor. Test, tanıtıcı tutmanın bu Windows'ta yeniden
-    adlandırmayı engellemediğini gösterdi; çözüm buna göre seçildi. Codex'in v4 incelemesi bekleniyor.
+    adlandırmayı engellemediğini gösterdi; çözüm buna göre seçildi.
+  - v4 → Codex "değişiklik": yalnız P1 (aşağıdaki açık risk) + iki P2 (tanıtıcı kapanışı, Antigravity'de Stop).
+  - v5 `6e4e19d` → iki P2 kapandı. **Birleştirme engeli olarak tek P1 kaldı.** Codex'in önerisi: `exec` yerine
+    app-server ile `initialize → thread/start`, aynı oturumda `mcpServerStatus/list` ile yalnız `quartz_project` ve üç
+    aracını doğrulama, ancak ondan sonra `turn/start` ile istemi verme. Bu gece denenmedi (ayrı iş).
   - **Açık risk:** `codex mcp list` ön kontrolü ayrı süreçte; gerçek `exec` oturumuna bağlanmadı. Arada yapılandırma
     değişirse görülmez (pencere saniyeler; aynı bayraklar exec'e de veriliyor).
   - Testler ayrıca bir junction sızıntısını ve iki kilit sızıntısını yakaladı.
@@ -72,7 +76,7 @@ v1 (kabuklu Codex) aynı soruları 47–152 sn'de yanıtlıyordu; v2'nin Quartz 
 
 ## Kanıt seviyesi
 
-- SOURCE/TESTED: tam takım Ran 1760, OK (skipped=2) (v4); `tests/test_project_read.py` 34 test.
+- SOURCE/TESTED: tam takım Ran 1762, OK (skipped=2) (v5); `tests/test_project_read.py` 36 test.
 - LIVE v3 kısa kontrol: Codex 2/2, 0 kabuk; Antigravity 2/2 (2 komut denemesi kancada reddedildi); kopya temiz.
 - BUILT: derlenmiş yardımcı (okuma koruması 7/7, MCP sunucusu protokol duman testi).
 - LIVE (geliştirme koşusu, paket değil): yukarıdaki A/B; Quartz GUI'den uçtan uca denenmedi.
@@ -80,6 +84,7 @@ v1 (kabuklu Codex) aynı soruları 47–152 sn'de yanıtlıyordu; v2'nin Quartz 
 
 ## Sabah kararları
 
-1. Proje okuma v2'yi PR + CI ile main'e almak (iki ajanın v2 sahip incelemesi sonrası).
+1. Proje okuma için yol seçimi: (a) Codex'in app-server önerisini uygulayıp sonra PR; (b) önce yalnız Antigravity
+   yolunu (Gemini KABUL) ve dürüst istemleri PR'lamak, Codex proje okumasını app-server işine bırakmak.
 2. "Asla yetkim yok deme" istemlerinin kaldırılması (kanıtlı uydurma önleniyor; kullanıcı tercihi buydu, onay gerekli).
 3. Sıradaki dilim: D2 (Birlikte modunda proje okuma), K3 (Antigravity süresi), D3 (32 KB).
