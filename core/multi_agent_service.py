@@ -531,7 +531,7 @@ class MultiAgentService:
                            "project_read": str(root), "should_abort": should_abort}
             else:
                 options = {"model": model, "effort": effort, "tool_guard": True,
-                           "sandbox": "read-only", "approval": "never"}
+                           "sandbox": "read-only", "approval": "never", "should_abort": should_abort}
             if project_read:
                 instruction = (
                     f"Bu turda seçili projeyi ({root}) YALNIZ OKUYABİLİRSİN: dosya listeleme, okuma"

@@ -21,7 +21,9 @@ class DesktopRuntimeTests(unittest.TestCase):
             exe = Path(directory) / "codex.exe"; exe.touch()
             runtime = CodexRuntime(exe)
             fake = CodexProcess('{"type":"turn.completed","usage":{}}\n')
-            with patch("core.codex_runtime.subprocess.Popen", return_value=fake) as popen:
+            from tests.test_project_read import mcp_listing
+            with patch("core.codex_runtime.subprocess.run", return_value=mcp_listing("quartz_desktop")), \
+                    patch("core.codex_runtime.subprocess.Popen", return_value=fake) as popen:
                 runtime.start("test", directory, desktop_connection=connection)
             command = popen.call_args.args[0]
             self.assertIn("read-only", command)

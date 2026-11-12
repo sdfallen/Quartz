@@ -242,21 +242,59 @@ class CodexRuntime:
         back with the same flags; anything still enabled besides quartz_project
         is disabled by name and re-checked, and the start is refused otherwise.
         """
-        import json as _json
-        import re as _re
         from core.project_read_mcp import codex_override
         flags = []
         for feature in self.PROJECT_READ_FEATURES_OFF:
             flags += ["-c", f"features.{feature}=false"]
         flags += ["-c", 'web_search="disabled"', "-c", codex_override(read_root)]
+        return self._verified_mcp_flags(flags, cwd, {"quartz_project"}, should_abort)
+
+    # Chat/observer and desktop runs: same capability cut as before (per run,
+    # no user config change); the MCP set is now proven like project read.
+    GUARD_FEATURES_OFF = ("shell_tool", "unified_exec", "apps", "plugins", "multi_agent",
+                          "multi_agent_v2", "computer_use", "browser_use", "browser_use_external",
+                          "in_app_browser", "image_generation", "view_image", "memories")
+
+    def _guarded_config(self, cwd, desktop_connection=None, should_abort=None, env=None):
+        """Flags for tool_guard/desktop runs whose effective MCP set is verified.
+
+        Disabling only the names in the user's config.toml left plugin servers
+        (node_repl, which can run code) enabled; the set Codex itself reports
+        is the source of truth. Only quartz_desktop may stay, and only on the
+        desktop path.
+        """
+        flags = []
+        for feature in self.GUARD_FEATURES_OFF:
+            flags += ["-c", f"features.{feature}=false"]
+        flags += ["-c", 'web_search="disabled"']
+        allowed = set()
+        if desktop_connection is not None:
+            from core.desktop_agents import codex_mcp_override
+            flags += ["-c", codex_mcp_override(desktop_connection)]
+            allowed = {"quartz_desktop"}
+        return self._verified_mcp_flags(flags, cwd, allowed, should_abort, env)
+
+    def _verified_mcp_flags(self, flags, cwd, allowed, should_abort=None, env=None):
+        """Read the effective MCP set back with `flags`; disable extras by name and re-check.
+
+        Every name in `allowed` must be enabled; anything else enabled is
+        disabled by name, and the start is refused if it stays enabled.
+        `env` is the base environment the real run will also use (no bridge
+        credentials: listing starts no server).
+        """
+        import json as _json
+        import re as _re
+        flags = list(flags)
+        if env is None:
+            from core.cli_installer import cli_environment
+            env = cli_environment()
 
         def enabled_extra(current):
-            from core.cli_installer import cli_environment
             if should_abort and should_abort():
-                raise RuntimeError("Project read cancelled before start")
+                raise RuntimeError("Codex run cancelled before start")
             probe = subprocess.run(self._command(current + ["mcp", "list", "--json"]), cwd=str(cwd),
                                    capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                   timeout=30, env=cli_environment(),
+                                   timeout=30, env=env,
                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             if probe.returncode != 0:
                 raise RuntimeError("Cannot verify Codex's effective MCP servers")
@@ -268,9 +306,9 @@ class CodexRuntime:
                        and isinstance(s.get("enabled"), bool) for s in servers):
                 raise RuntimeError("Codex MCP listing has an entry of unknown state")
             names = [s["name"] for s in servers if s["enabled"]]
-            if "quartz_project" not in names:
-                raise RuntimeError("Quartz project tools are not active in Codex")
-            return [n for n in names if n != "quartz_project"]
+            if not set(allowed) <= set(names):
+                raise RuntimeError("Quartz tools are not active in Codex: " + ", ".join(sorted(set(allowed) - set(names))))
+            return [n for n in names if n not in allowed]
 
         extra = enabled_extra(flags)
         for name in extra:
@@ -278,7 +316,7 @@ class CodexRuntime:
                 raise RuntimeError("Cannot safely disable an inherited MCP server")
             flags += ["-c", f"mcp_servers.{name}.enabled=false"]
         if extra and enabled_extra(flags):
-            raise RuntimeError("Codex keeps other MCP servers enabled; project read refused")
+            raise RuntimeError("Codex keeps other MCP servers enabled; start refused")
         return flags
 
     def start(self, prompt, project_path, *, sandbox="read-only", approval="never",
@@ -318,6 +356,14 @@ class CodexRuntime:
             # Resolve the helper/config and PROVE the effective tool set now: a
             # failure must not leave a "starting" record without a process.
             read_config = self._project_read_config(read_root, project, should_abort)
+        guard_config = None
+        base_env = None
+        if not read_root and (tool_guard or desktop_connection is not None):
+            # Proven before any record/writer lock exists, like project read;
+            # the probe and the real run share one base environment.
+            from core.cli_installer import cli_environment
+            base_env = cli_environment()
+            guard_config = self._guarded_config(project, desktop_connection, should_abort, base_env)
 
         clean_model = str(model or "").strip() or None
         clean_effort = str(effort or "").strip().lower() or None
@@ -379,27 +425,14 @@ class CodexRuntime:
             common += ["-c", f'model_reasoning_effort="{clean_effort}"']
         if read_root:
             common += read_config  # verified effective tool set (see _project_read_config)
-        elif tool_guard or desktop_connection is not None:
-            # Per-run only: no user config changes. Disable inherited integrations
-            # as well as shell/browser/desktop capabilities.
-            for feature in ("shell_tool", "unified_exec", "apps", "plugins", "multi_agent",
-                            "multi_agent_v2", "computer_use", "browser_use", "browser_use_external",
-                            "in_app_browser", "image_generation", "view_image", "memories"):
-                common += ["-c", f"features.{feature}=false"]
-            common += ["-c", 'web_search="disabled"']
-            import tomllib
-            config_path = Path(os.getenv("CODEX_HOME") or Path.home()/".codex")/"config.toml"
-            configuration = tomllib.loads(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
-            for name in configuration.get("mcp_servers", {}):
-                import re
-                if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
-                    raise ValueError("Cannot safely override this inherited MCP name")
-                common += ["-c", "mcp_servers." + name + ".enabled=false"]
+        elif guard_config:
+            # Per-run only: verified MCP set (desktop override included) plus
+            # disabled shell/browser/desktop capabilities (see _guarded_config).
+            common += guard_config
         desktop_env = None
         if desktop_connection is not None:
-            from core.desktop_agents import codex_mcp_override, connection_environment
-            common += ["-c", codex_mcp_override(desktop_connection)]
-            desktop_env = connection_environment(desktop_connection)
+            from core.desktop_agents import connection_environment
+            desktop_env = connection_environment(desktop_connection, base_env)
         common.append("exec")
 
         if resume_thread_id:
@@ -428,7 +461,8 @@ class CodexRuntime:
             raise RuntimeError("Codex run cancelled before start")
         try:
             from core.cli_installer import cli_environment
-            process_options = {"env": desktop_env if desktop_env is not None else cli_environment()}
+            process_options = {"env": desktop_env if desktop_env is not None
+                               else base_env if base_env is not None else cli_environment()}
             process = subprocess.Popen(
                 command, cwd=str(project), stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,

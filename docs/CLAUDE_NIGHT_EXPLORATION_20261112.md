@@ -76,11 +76,24 @@ Dal `claude/project-read-20261112` (`6b8bcba` → `e29c38d`).
   - Tam çözüm, kimlik dosyaları kopyalanmış ayrı bir Codex ortamı olurdu. Proje kuralları kimlik bilgisine dokunmayı yasaklıyor.
   - Gelecekte Codex bir "yalnız bu MCP sunucuları" başlatma ayarı sunarsa bu kapatılmalı.
 
-## Yan bulgu (main'de, bu dalda düzeltilmedi)
+## Yan bulgu: sohbet/gözlemci/masaüstü yolunda etkin MCP kümesi (12 Kas, kullanıcı: "Evet, kapat")
 
-Main'deki "araçsız sohbet" ve gözlemci yolları Codex MCP sunucularını yalnız kullanıcı `config.toml` adlarından kapatıyor.
-Bu makinede eklentiden gelen `node_repl` (ve özellik bayrağına bağlı `cua_repl`) bu döngünün dışında kalıyor. v3'teki
-etkin küme doğrulaması bu yollara da uygulanmalı.
+Main'deki "araçsız sohbet" ve gözlemci yolları Codex MCP sunucularını yalnız kullanıcı `config.toml` adlarından kapatıyordu.
+Eklentiden gelen `node_repl` (kod çalıştırabilir) açık kalıyordu.
+
+- Dal `claude/codex-mcp-gap-20261112`: bu yollar artık `codex mcp list --json` ile kümeyi koşunun kendi bayraklarıyla
+  okuyor. Fazlalar adla kapatılıp yeniden denetleniyor; kapanmazsa başlatma reddediliyor. Masaüstünde yalnız
+  `quartz_desktop` serbest.
+- Canlı ölçüm: eski bayraklarla etkin küme `['node_repl']`, yeni bayraklarla `[]`.
+- İnceleme: Gemini KABUL. Codex DEĞİŞİKLİK: ön kontrol ile gerçek koşunun ortamı farklıydı, girişlerden Stop
+  bağlanmamıştı. İkisi de düzeltildi: tek temel ortam paylaşılıyor, üç girişten de Stop bağlandı.
+- **Açık artık risk (Codex P1):** ön kontrol ayrı süreçte. Arada Codex yapılandırmasına YENİ bir sunucu yazılırsa
+  gerçek koşu onu başlatabilir.
+  - Bu, project read'de belgelenen riskin aynı sınıfıdır ve Codex yapılandırmasına yazma yetkisi gerektirir.
+  - Codex başlangıçta "yalnız şu MCP'ler" izin listesi sunmuyor. App-server'a taşımak istemi korur ama sunucu
+    başlamasını önlemez (Codex de bunu belirtti).
+  - Codex böyle bir ayar sunduğunda kapatılmalı.
+- Main'e göre kesin iyileştirme: öncesinde `node_repl` her koşuda açıktı.
 
 ## Canlı deney (aynı 4–5 soru, main'in kopyasında; kopya her koşudan sonra temiz)
 

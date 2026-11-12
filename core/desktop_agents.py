@@ -28,9 +28,10 @@ def mcp_command():
     return [sys.executable, str(Path(__file__).with_name("desktop_mcp.py"))]
 
 
-def connection_environment(connection):
+def connection_environment(connection, base=None):
     if set(connection) != {"url", "token"}: raise ValueError("Invalid desktop capability")
-    env = os.environ.copy()
+    # `base` lets Codex reuse the exact environment its MCP pre-start check used.
+    env = dict(base) if base is not None else os.environ.copy()
     env["QUARTZ_DESKTOP_URL"] = connection["url"]
     env["QUARTZ_DESKTOP_TOKEN"] = connection["token"]
     return env
@@ -167,7 +168,10 @@ class DesktopAgentService:
                 self._workspace = tempfile.TemporaryDirectory(prefix="quartz-desktop-task-")
                 if provider == "antigravity": write_operator_hooks(self._workspace.name)
                 options = {"model": model, "effort": effort, "desktop_connection": connection}
-                if provider == "codex": options.update(sandbox="read-only", approval="never")
+                if provider == "codex":
+                    # Stop during the MCP pre-start check starts no operator.
+                    options.update(sandbox="read-only", approval="never",
+                                   should_abort=lambda: not self.broker.status()["active"])
                 else: options.update(write=False, timeout="10m")
                 run = runtime.start(INSTRUCTION + prompt, self._workspace.name, **options)
                 self._runtime, self._run_id = runtime, run["id"]
