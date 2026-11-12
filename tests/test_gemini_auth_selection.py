@@ -63,7 +63,9 @@ class GeminiAuthSelectionTests(unittest.TestCase):
         service.installer.status.return_value = {"codex": {"installed": False, "executable": None}, "gemini": {"installed": True, "executable": "fake.exe"}}
         runtime = Mock(executable="agy.exe")
         runtime.probe.return_value = {"installed": True, "ready": True, "executable": "agy.exe"}
-        with patch("core.antigravity_runtime.AntigravityRuntime", return_value=runtime), patch("core.onboarding.subprocess.Popen") as launch:
+        # The Claude row's own `claude auth status` check is not a Gemini login.
+        with patch("core.antigravity_runtime.AntigravityRuntime", return_value=runtime), patch("core.onboarding.subprocess.Popen") as launch, \
+                patch("core.claude_runtime.ClaudeRuntime.probe", return_value={"installed": False, "ready": False}):
             service._work("account_agy", "gemini", "")
             state = service.status()["providers"]["gemini"]
         self.assertEqual(service.job["state"], "done")

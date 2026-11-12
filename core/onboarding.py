@@ -142,6 +142,23 @@ class OnboardingService:
                 ready=ready,
                 login_pending=bool(pending.get(provider) and not ready),
             )
+        # Claude Code CLI: the user's own login, checked with `claude auth status`.
+        # Never installed or logged in by Quartz.
+        try:
+            from core.claude_runtime import ClaudeRuntime
+            claude = ClaudeRuntime().probe(force=force)
+        except Exception:
+            claude = {"installed": False, "ready": False}
+        claude_ready = bool(claude.get("ready"))
+        installed["claude"] = {
+            "installed": bool(claude.get("installed")), "executable": claude.get("executable"),
+            "backend": "claude", "method": "account", "configured": claude_ready, "connected": claude_ready,
+            "auth_verified": claude_ready, "verification_status": "verified" if claude_ready else "unverified",
+            "ready": claude_ready, "login_pending": False, "model_accessible": "unknown", "last_task_succeeded": None,
+            "auth_message": "Claude hesabı bağlı" if claude_ready else (
+                "Claude CLI kurulu değil" if not claude.get("installed")
+                else "Bir terminalde `claude` açıp /login ile giriş yapın"),
+        }
         with self.lock:
             result = {"providers": installed, "needs_setup": not any(p["ready"] for p in installed.values()),
                     "job": dict(self.job), "api_billing_note": "API anahtarı kullanımı sağlayıcının API kotasına tabidir; hesap girişi ayrı seçenektir."}

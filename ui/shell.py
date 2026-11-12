@@ -176,6 +176,35 @@ SHELL_MARKUP = r"""
           <p class="lane-empty">Çalışırken attığı adımlar burada akar.</p>
         </aside>
 
+        <aside class="lane-col lane-claude" id="laneColClaude" data-state="idle" aria-label="Claude">
+          <button type="button" class="lane-card" id="laneClaude" data-agent="claude" data-state="idle" aria-pressed="false" aria-describedby="laneClaudeState">
+            <span class="lane-gem" aria-hidden="true"></span>
+            <span class="lane-copy">
+              <span class="lane-name">Claude</span>
+              <span class="lane-state" id="laneClaudeState">Hazır</span>
+            </span>
+          </button>
+          <div class="model-selector-pill" id="claudeModelPill" title="Claude modeli ve düşünme seviyesi">
+              <span class="pill-agent-name">Claude</span>
+              <select id="claudeModelSelect" aria-label="Claude modeli">
+                <option value="sonnet" selected>Claude Sonnet (hızlı ve güçlü)</option>
+                <option value="opus">Claude Opus (en güçlü)</option>
+                <option value="haiku">Claude Haiku (en hızlı)</option>
+              </select>
+              <select id="claudeEffortSelect" aria-label="Claude düşünme seviyesi" title="Claude düşünme seviyesi (--effort)">
+                <option value="low">low</option>
+                <option value="medium" selected>medium</option>
+                <option value="high">high</option>
+                <option value="xhigh">xhigh</option>
+                <option value="max">max</option>
+              </select>
+            </div>
+          <dl class="lane-status" id="laneClaudeStatus" aria-label="Görev durumu" aria-live="polite" hidden></dl>
+          <div class="lane-title">Son adımlar</div>
+          <ol class="lane-trail" id="laneClaudeTrail"></ol>
+          <p class="lane-empty">Çalışırken attığı adımlar burada akar.</p>
+        </aside>
+
         <section class="stream" aria-label="Sohbet akışı">
           <div class="stream-head">
             <span class="core-beam beam-codex" aria-hidden="true"><b class="beam-flow"></b></span>
@@ -266,6 +295,7 @@ SHELL_MARKUP = r"""
             <span class="seg-thumb" id="agentSegThumb" aria-hidden="true"></span>
             <button type="button" class="agent-seg-btn active" data-agent="antigravity">Antigravity</button>
             <button type="button" class="agent-seg-btn" data-agent="codex">Codex</button>
+            <button type="button" class="agent-seg-btn" data-agent="claude">Claude</button>
             <button type="button" class="agent-seg-btn" data-agent="collaboration">Birlikte</button>
           </div>
                 <div class="composer-spacer"></div>
@@ -321,6 +351,7 @@ SHELL_MARKUP = r"""
       <select id="mainAgentSelect" aria-label="Aktif ajan">
         <option value="antigravity">Antigravity</option>
         <option value="codex">Codex</option>
+        <option value="claude">Claude</option>
         <option value="collaboration">Birlikte (Squad)</option>
       </select>
     </div>

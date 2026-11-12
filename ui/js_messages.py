@@ -162,7 +162,7 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       state = 'Önceki oturum onay beklerken kesildi; eski izin geçersiz. Devam için görevi yeniden yaz.';
     }
     const missing = Object.entries(outcome.participants || {}).filter(([, s]) => s !== 'completed')
-      .map(([agent]) => agent === 'codex' ? 'Codex' : agent === 'antigravity' ? 'Gemini' : String(agent));
+      .map(([agent]) => agent === 'codex' ? 'Codex' : agent === 'antigravity' ? 'Gemini' : agent === 'claude' ? 'Claude' : String(agent));
     if (status === 'completed') {
       const checks = outcome.goal_evidence?.checks;
       if (outcome.goal_verdict === 'VERIFIED' && outcome.goal_evidence?.level === 'HOST POSTCONDITION' && Array.isArray(checks) && checks.length) {
@@ -266,7 +266,7 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
   function renderAgentLive(progress) {
     const keep = new Set();
     for (const [agent, entry] of Object.entries(progress || {})) {
-      if (!['codex', 'antigravity'].includes(agent) || !entry || entry.status !== 'running') continue;
+      if (!['codex', 'antigravity', 'claude'].includes(agent) || !entry || entry.status !== 'running') continue;
       if (!entry.activity || !/^[\w-]{1,80}$/.test(String(entry.message_id || ''))) continue;
       const bubble = chatEl.querySelector(`.msg[data-msg-id="${entry.message_id}"] .bubble`);
       if (!bubble || !bubble.parentNode) continue;
