@@ -12,6 +12,7 @@ import copy
 from pathlib import Path
 
 from core.antigravity_runtime import AntigravityRuntime
+from core.claude_runtime import ClaudeRuntime
 from core.codex_runtime import CodexRuntime
 from core.project_registry import ProjectRegistry
 from core.squad_adapter import SquadAdapter
@@ -37,6 +38,7 @@ class WriterDispatchError(RuntimeError):
 class MultiAgentService:
     MANAGER_ID = "manager"
     CODEX_ID = "quartz-codex"
+    CLAUDE_ID = "quartz-claude"
     ANTIGRAVITY_ID = "quartz-antigravity"
     ANTIGRAVITY_WRITE_ERROR = (
         "Antigravity Windows CLI çalışma alanı dışına dosya yazabildiği için Proje Yetkisiyle "
@@ -49,10 +51,13 @@ class MultiAgentService:
     )
 
     def __init__(self, projects=None, squad_executable=None, codex_executable=None,
-                 antigravity_executable=None, project_store=None, evidence_store=None, journal_store=None):
+                 antigravity_executable=None, project_store=None, evidence_store=None, journal_store=None,
+                 claude_executable=None):
         from pathlib import Path
         self.projects = ProjectRegistry(projects, storage_path=project_store)
         self.codex = CodexRuntime(codex_executable)
+        # Third agent: the user's own Claude Code CLI. Construction never probes or logs in.
+        self.claude = ClaudeRuntime(claude_executable)
         self.antigravity = None
         self._antigravity_error = ""
         # Optional provider: construct lazily; never probe/login on app startup.
@@ -84,6 +89,16 @@ class MultiAgentService:
         self._text_workspaces = {}
         self._goal_oracle = TaskOracle()
 
+    def _runtime_for(self, provider):
+        provider = str(provider or "codex").strip().lower()
+        if provider == "notion":
+            return self.notion
+        if provider in {"antigravity", "agy"}:
+            return self.antigravity
+        if provider == "claude":
+            return self.claude
+        return self.codex
+
     def register_goal_oracle(self, run_id, checks):
         """Trusted host adapter only; intentionally absent from GUI/MCP tools.
 
@@ -93,7 +108,7 @@ class MultiAgentService:
         with self._lock: link = dict(self._links.get(run_id, {}))
         if not link.get('task_id') or not link.get('project_id'):
             raise PermissionError('Owned project task required')
-        runtime = self.antigravity if link.get('provider') == 'antigravity' else self.codex
+        runtime = self._runtime_for(link.get('provider'))
         if runtime.get(run_id).get('status') != 'running':
             raise PermissionError('Declare the goal before execution completes')
         self._goal_oracle.register(link['task_id'], run_id, self.projects.resolve(link['project_id']), checks)
@@ -101,7 +116,7 @@ class MultiAgentService:
     def goal_evaluation(self, run_id):
         with self._lock: link = dict(self._links.get(run_id, {}))
         if not link.get('task_id'): return None
-        runtime = self.antigravity if link.get('provider') == 'antigravity' else self.codex
+        runtime = self._runtime_for(link.get('provider'))
         if runtime is None or runtime.get(run_id).get('status') != 'completed': return None
         return self._goal_oracle.evaluate(link['task_id'], run_id)
 
@@ -140,7 +155,7 @@ class MultiAgentService:
             self._writer_journal.update(claim, stage='active', run_id=run['id'], pid=run.get('pid'))
             with self._lock:
                 self._writers[key] = {"owner": run["id"], "agent": provider, "pending": False, "exclusive": exclusive, "journal_claim":claim}
-            runtime = self.codex if provider == "codex" else self.antigravity
+            runtime = self._runtime_for(provider)
             worker = threading.Thread(target=self._watch_writer,
                              args=(key, run["id"], runtime, project["path"], before, claim),
                              name=f"quartz-writer-{run['id'][:8]}", daemon=True)
@@ -160,7 +175,7 @@ class MultiAgentService:
                         self._links[rid] = {"provider":provider, "project_id":project["id"],
                                             "journal_claim":claim, "dispatch_failed":True}
                 if rid:
-                    runtime = self.codex if provider == "codex" else self.antigravity
+                    runtime = self._runtime_for(provider)
                     try: runtime.cancel(rid)
                     except Exception: pass  # Ownership is retained; caller must confirm exit.
                 raise WriterDispatchError(provider, claim, rid) from exc
@@ -225,6 +240,7 @@ class MultiAgentService:
         return {
             "codex": codex_models,
             "antigravity": agy_models,
+            "claude": dict(self.claude.list_models(force=force), provider="claude"),
         }
 
     def add_project(self, path: str, name: str | None = None) -> dict:
@@ -363,6 +379,8 @@ class MultiAgentService:
             return self.dispatch_codex(prompt, **kwargs)
         if provider in {"antigravity", "agy"}:
             return self.dispatch_antigravity(prompt, **kwargs)
+        if provider == "claude":
+            return self.dispatch_claude(prompt, **kwargs)
         if provider == "notion":
             return self.dispatch_notion(prompt, session_id=kwargs.get("session_id"))
         if provider in {"collaboration", "both", "codex-antigravity"}:
@@ -500,9 +518,11 @@ class MultiAgentService:
             raise PermissionError("Araçsız sohbet işlem/yazma yetkisi alamaz.")
         # Project read: a fresh, read-only, project-scoped inspection. Never for a
         # protected project; never resumes a session that held other permissions.
-        runtime = self.codex if provider == "codex" else self.antigravity
-        # The Google path's read guard exists only for the agy backend.
-        guard_capable = provider == "codex" or getattr(runtime, "backend", "agy") == "agy"
+        runtime = self._runtime_for(provider)
+        # The Google path's read guard exists only for the agy backend; Claude's
+        # project-scoped read profile is not wired yet, so it answers tool-less.
+        guard_capable = provider == "codex" or (provider == "antigravity"
+                                                 and getattr(runtime, "backend", "agy") == "agy")
         project_read = (bool(project_read) and guard_capable and not project.get("protected")
                         and project.get("workflow") != "warband")
         root = Path(project["path"]).resolve(strict=True) if project_read else None
@@ -523,6 +543,10 @@ class MultiAgentService:
                 from core.chat_coordination import write_observer_hooks
                 write_observer_hooks(workspace.name)
                 options = {"model": model, "effort": effort, "tool_guard": True, "write": False, "timeout": "2m"}
+            elif provider == "claude":
+                # Tool-less chat: --tools "" proven from the CLI's init event.
+                options = {"model": model, "effort": effort, "sandbox": "none", "approval": "never",
+                           "should_abort": should_abort}
             elif project_read:
                 # Codex runs in the scratch folder with every built-in tool off;
                 # the project is reachable only through Quartz's read-only MCP
@@ -676,6 +700,45 @@ class MultiAgentService:
         ).start()
         return {"task": task, "run": run, "agent_id": agent_id}
 
+    def dispatch_claude(self, prompt, *, title=None, project_id=None,
+                        write=False, confirm_write=False, full_access=False,
+                        resume_thread_id=None, chat_mode=False, squad_task_id=None,
+                        model: str | None = None, effort: str | None = None, conversation_only=False,
+                        project_read=False, should_abort=None) -> dict:
+        """Claude Code as a developer agent. Chat tasks only in this release."""
+        project = self.projects.get(project_id) if project_id else self.projects.selected()
+        if conversation_only:
+            return self._text_conversation("claude", prompt, project, chat_mode=chat_mode,
+                write=write or full_access, model=model, effort=effort, project_read=project_read,
+                should_abort=should_abort)
+        if not chat_mode:
+            raise PermissionError("Claude yalnız sohbet görevleriyle çalışır (Squad görev yolu henüz yok).")
+        if project.get("protected"):
+            raise PermissionError("This project is protected")
+        effective_write = bool(write or full_access)
+        if effective_write and confirm_write is not True:
+            raise PermissionError("Write-capable Claude tasks require explicit confirmation")
+        status = self.claude.probe()
+        if not status["ready"]:
+            raise RuntimeError(status["error"] or "Claude is not ready")
+        squad_info = self.check_squad_connection(project["id"])
+        sandbox = "danger-full-access" if full_access else ("workspace-write" if effective_write else "read-only")
+        start_kwargs = {"sandbox": sandbox, "approval": "never", "squad_task_id": squad_task_id,
+                        "squad_agent_id": self.CLAUDE_ID, "resume_thread_id": resume_thread_id,
+                        "model": model, "effort": effort, "should_abort": should_abort}
+        run = (self._start_writer("claude", project, self.claude.start, str(prompt), project["path"], **start_kwargs)
+               if effective_write else self.claude.start(str(prompt), project["path"], **start_kwargs))
+        with self._lock:
+            self._links[run["id"]] = {
+                "provider": "claude", "project_id": project["id"],
+                "task_id": squad_task_id, "agent_id": self.CLAUDE_ID, "reported": True,
+                "coordination_status": "connected" if squad_info["connected"] else "disconnected",
+                "coordination_error": squad_info.get("error", ""),
+                "checkpoint": run.get("checkpoint"),
+            }
+        return {"task": {"id": squad_task_id} if squad_task_id else None,
+                "run": run, "agent_id": self.CLAUDE_ID, "squad": squad_info}
+
     def dispatch_antigravity(self, prompt, *, title=None, project_id=None,
                              write=False, confirm_write=False, full_access=False,
                              conversation_id=None, chat_mode=False, squad_task_id=None,
@@ -795,7 +858,8 @@ class MultiAgentService:
             model, effort = cfg.get("model"), cfg.get("effort")
             if not isinstance(model, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}", model):
                 raise ValueError(f"{agent}: geçerli, açık bir model seçimi gerekli.")
-            allowed = CodexRuntime.SUPPORTED_EFFORTS if agent == "codex" else AntigravityRuntime.SUPPORTED_EFFORTS
+            allowed = (CodexRuntime.SUPPORTED_EFFORTS if agent == "codex" else
+                       ClaudeRuntime.SUPPORTED_EFFORTS if agent == "claude" else AntigravityRuntime.SUPPORTED_EFFORTS)
             if not isinstance(effort, str) or effort not in allowed:
                 raise ValueError(f"{agent}: geçersiz düşünme seviyesi.")
             result[agent] = {"model": model, "effort": effort}
@@ -849,6 +913,8 @@ class MultiAgentService:
         if provider == "antigravity" and self.antigravity:
             run = self.antigravity.get(run_id)
             return with_checkpoint(self._project_goal_outcome(run, evidence))
+        if provider == "claude":
+            return with_checkpoint(self._project_goal_outcome(self.claude.get(run_id), evidence))
         if self.codex:
             try:
                 return with_checkpoint(self._project_goal_outcome(self.codex.get(run_id), evidence))
@@ -949,7 +1015,7 @@ class MultiAgentService:
                 self._links[run_id]["coordination_status"] = "cancelling"
         with self._lock:
             provider = self._links.get(run_id, {}).get("provider", "codex")
-        runtime = self.notion if provider == "notion" else self.antigravity if provider == "antigravity" else self.codex
+        runtime = self._runtime_for(provider)
         if runtime is None:
             raise RuntimeError("Runtime is unavailable")
         return runtime.cancel(run_id)
@@ -960,7 +1026,7 @@ class MultiAgentService:
         if tools is not None:
             try: tools.stop_all()   # local revocation before cloud runtimes stop
             except Exception as exc: errors.append(str(exc))
-        for runtime in (self.codex, self.antigravity, getattr(self, '_notion', None)):
+        for runtime in (self.codex, self.antigravity, getattr(self, 'claude', None), getattr(self, '_notion', None)):
             if runtime is not None:
                 try: runtime.shutdown()
                 except Exception as exc: errors.append(str(exc))
@@ -987,7 +1053,7 @@ class MultiAgentService:
         )["id"]
 
     def _report_completion(self, provider, run_id):
-        runtime = self.antigravity if provider == "antigravity" else self.codex
+        runtime = self._runtime_for(provider)
         if runtime is None:
             return
         while True:
@@ -1028,6 +1094,10 @@ class MultiAgentService:
             runs.append(run)
         if self.antigravity is not None:
             runs.extend(self.antigravity.list())
+        if getattr(self, "claude", None) is not None:
+            for run in self.claude.list():
+                run.setdefault("provider", "claude")
+                runs.append(run)
         if self._notion is not None:
             runs.extend(self._notion.list())
         runs.sort(key=lambda item: item.get("started_at", 0), reverse=True)

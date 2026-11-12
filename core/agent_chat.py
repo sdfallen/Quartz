@@ -21,6 +21,8 @@ from core.task_outcome import execution_outcome, group_execution_status
 log = logging.getLogger(__name__)
 
 
+_AGENT_LABELS = {"codex": "Codex", "antigravity": "Antigravity", "claude": "Claude"}
+
 class _WriterTimeout(RuntimeError):
     def __init__(self, message, run_id):
         super().__init__(message)
@@ -564,7 +566,7 @@ class AgentChatService:
 
     def set_agent(self, conversation_id: str, agent: str) -> None:
         agent = agent.strip().lower()
-        if agent not in {"antigravity", "codex", "collaboration", "notion"}:
+        if agent not in {"antigravity", "codex", "claude", "collaboration", "notion"}:
             raise ValueError(f"Geçersiz ajan türü: {agent}")
         with self._lock:
             self.store.update_agent(conversation_id, agent)
@@ -572,7 +574,7 @@ class AgentChatService:
     def set_agent_model(self, conversation_id: str | None, agent: str,
                         model: str | None = None, effort: str | None = None) -> dict:
         agent_key = str(agent or "").strip().lower()
-        if agent_key not in {"antigravity", "codex"}:
+        if agent_key not in {"antigravity", "codex", "claude"}:
             raise ValueError(f"Geçersiz ajan türü: {agent}")
         with self._lock:
             cid = conversation_id or self.store.get_active()["id"]
@@ -591,13 +593,13 @@ class AgentChatService:
         with self._lock:
             cid = conversation_id or self.store.get_active()["id"]
             return {agent: self.store.get_agent_model(cid, agent)
-                    for agent in ("codex", "antigravity")}
+                    for agent in ("codex", "antigravity", "claude")}
 
     def set_response_detail(self, level):
         return self.store.set_response_detail(level)
 
     def coordination_message(self, cid, sender, content, metadata=None):
-        if sender not in {"user", "quartz", "codex", "antigravity"}:
+        if sender not in {"user", "quartz", "codex", "antigravity", "claude"}:
             raise ValueError("Geçersiz koordinasyon katılımcısı")
         if not isinstance(content, str) or len(content) > 64000: raise ValueError("Geçersiz mesaj")
         meta = dict(metadata or {})
@@ -680,7 +682,7 @@ class AgentChatService:
     def _build_single_chat_prompt(cls, agent: str, user_text: str, prior_messages: list[dict],
                                   exclude_ids: set[str], write: bool, has_session: bool = False,
                                   full_access: bool = False) -> str:
-        agent_name = "Antigravity" if agent == "antigravity" else "Codex"
+        agent_name = _AGENT_LABELS.get(agent, "Codex")
         role_rules = (
             f"Sen Quartz ana sohbet ortamındaki {agent_name} yapay zeka ajanısın.\n"
             "- Kullanıcıyla doğal, akıcı ve bağlama duyarlı biçimde sohbet et.\n"
@@ -756,7 +758,7 @@ class AgentChatService:
             # Explicit opt-in per message; never route all tasks to a cloud agent.
             if re.match(r"^@notion\b", text, re.I):
                 selected_agent = "notion"
-            if selected_agent not in {"codex", "antigravity", "collaboration", "both", "notion"}:
+            if selected_agent not in {"codex", "antigravity", "claude", "collaboration", "both", "notion"}:
                 raise ValueError("Geçersiz ajan türü.")
             project_id = conv.get("project_id")
             repair_plan = self._repair_plans.get(cid)
@@ -818,7 +820,7 @@ class AgentChatService:
             # A question answered by the selected project's files gets a fresh,
             # read-only, project-scoped run instead of a blind scratch folder.
             project_read = False
-            if conversation_only and project_id and selected_agent in {"codex", "antigravity"}:
+            if conversation_only and project_id and selected_agent in {"codex", "antigravity", "claude"}:
                 from core.message_intent import project_question
                 try:
                     project = self.agent_service.projects.get(project_id)
@@ -1101,7 +1103,7 @@ class AgentChatService:
                 if not owned or turn.get("status") != "running" or self._is_turn_cancelled(owner):
                     return False
                 turn["progress_step"] = step_text
-                if agent in {"codex", "antigravity"}:
+                if agent in {"codex", "antigravity", "claude"}:
                     turn.setdefault("agent_progress", {})[agent] = {
                         "message_id":current_msg_id, "run_id":run_id, "step":step_text,
                         "status":"running", "updated_at":time.time()}
@@ -1325,6 +1327,9 @@ class AgentChatService:
                 self._run_antigravity_turn(cid, msg_id, prompt, project_id, write, confirm_write, full_access)
             elif agent == "codex":
                 self._run_codex_turn(cid, msg_id, prompt, project_id, write, confirm_write, full_access)
+            elif agent == "claude":
+                self._run_codex_turn(cid, msg_id, prompt, project_id, write, confirm_write, full_access,
+                                     agent="claude")
             elif agent in {"collaboration", "both"}:
                 self._run_collaboration_turn(cid, msg_id, prompt, project_id, write=write, confirm_write=confirm_write, full_access=full_access)
             else:
@@ -1669,16 +1674,20 @@ class AgentChatService:
     def _execute_codex_bubble(self, cid: str, msg_id: str, full_prompt: str,
                               project_id: str | None, write: bool, confirm_write: bool,
                               *, use_session: bool = True, squad_task_id: str | None = None,
-                              base_meta: dict | None = None, full_access: bool = False) -> str:
-        """Run a single Codex message bubble, stream its output, and return final text."""
+                              base_meta: dict | None = None, full_access: bool = False,
+                              agent: str = "codex") -> str:
+        """Run a single Codex (or Claude) message bubble, stream its output, and return final text."""
+        label = _AGENT_LABELS[agent]
+        runtime = getattr(self.agent_service, agent)
+        dispatch = self.agent_service.dispatch_claude if agent == "claude" else self.agent_service.dispatch_codex
         bubble_t0 = time.time()
         conversation_only = self._conversation_only(cid)
         if conversation_only:
             write = full_access = confirm_write = use_session = False
         full_prompt = self._communication_prompt(cid, full_prompt)
         conv = self.store.get(cid)
-        prev_session = conv.get("sessions", {}).get("codex") if use_session else None
-        model_cfg = self.store.get_agent_model(cid, "codex")
+        prev_session = conv.get("sessions", {}).get(agent) if use_session else None
+        model_cfg = self.store.get_agent_model(cid, agent)
         selected_model = model_cfg.get("model")
         selected_effort = model_cfg.get("effort")
         meta = dict(base_meta or {})
@@ -1686,9 +1695,9 @@ class AgentChatService:
         meta["model"] = selected_model
         meta["effort"] = selected_effort
 
-        probe = self.agent_service.codex.probe()
+        probe = runtime.probe()
         if not probe.get("ready"):
-            raise RuntimeError(f"Codex CLI hazır değil: {probe.get('error', 'Giriş yapılmamış veya binary eksik')}")
+            raise RuntimeError(f"{label} CLI hazır değil: {probe.get('error', 'Giriş yapılmamış veya binary eksik')}")
 
         if self._is_turn_cancelled(msg_id):
             return ""
@@ -1706,7 +1715,7 @@ class AgentChatService:
             if self._project_read(cid):
                 dispatch_kwargs["project_read"] = True
                 dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
-        dispatch_res = self._dispatch_chat_run(self.agent_service.dispatch_codex, cid, msg_id,
+        dispatch_res = self._dispatch_chat_run(dispatch, cid, msg_id,
             full_prompt, chat_mode=True, squad_task_id=squad_task_id,
             model=selected_model, effort=selected_effort, **dispatch_kwargs
         )
@@ -1721,10 +1730,10 @@ class AgentChatService:
             if squad_info.get("error"):
                 meta["squad_error"] = squad_info["error"]
 
-        if not self._set_turn_progress("Codex yanıtlıyor...", current_msg_id=msg_id, run_id=run_id, agent='codex'):
+        if not self._set_turn_progress(f"{label} yanıtlıyor...", current_msg_id=msg_id, run_id=run_id, agent=agent):
             return ""
 
-        run, status = self._stream_codex_run(cid, msg_id, run_id, meta, save_session=use_session)
+        run, status = self._stream_codex_run(cid, msg_id, run_id, meta, save_session=use_session, agent=agent)
         if self._is_turn_cancelled(msg_id) or status == "cancelled":
             return ""
 
@@ -1736,7 +1745,7 @@ class AgentChatService:
             )
             has_perm_err = any(k in errors_str for k in ("permission", "denied", "sandbox"))
             if not is_quota_or_model_err and not has_perm_err:
-                retry_res = self.agent_service.dispatch_codex(
+                retry_res = dispatch(
                     full_prompt, chat_mode=True, squad_task_id=squad_task_id,
                     title="Chat Retry", project_id=project_id,
                     write=False, confirm_write=False, full_access=False, resume_thread_id=None,
@@ -1744,14 +1753,14 @@ class AgentChatService:
                 )
                 run_id = retry_res["run"]["id"]
                 meta["run_id"] = run_id
-                self._set_turn_progress("Codex yeni oturumla yanıtlıyor...", current_msg_id=msg_id, run_id=run_id, agent='codex')
-                run, status = self._stream_codex_run(cid, msg_id, run_id, meta, save_session=use_session)
+                self._set_turn_progress(f"{label} yeni oturumla yanıtlıyor...", current_msg_id=msg_id, run_id=run_id, agent=agent)
+                run, status = self._stream_codex_run(cid, msg_id, run_id, meta, save_session=use_session, agent=agent)
 
         if self._is_turn_cancelled(msg_id) or status == "cancelled":
             return ""
 
         if status == "completed":
-            final_content = run.get("result", "").strip() or "Codex görevi tamamlandı."
+            final_content = run.get("result", "").strip() or f"{label} görevi tamamlandı."
             from core.runtime_evidence import runtime_evidence
             meta.update(runtime_evidence(run))
             meta.update({
@@ -1762,10 +1771,12 @@ class AgentChatService:
             return final_content if self._publish_run_update(cid, msg_id, final_content, meta) else ""
 
         errors = run.get("errors", [])
-        err_msg = "\n".join(errors) if errors else "Codex görevi tamamlayamadı."
+        err_msg = "\n".join(errors) if errors else f"{label} görevi tamamlayamadı."
         raise _writer_failed(err_msg, run, run_id)
 
-    def _stream_codex_run(self, cid: str, msg_id: str, run_id: str, meta: dict, save_session: bool = True):
+    def _stream_codex_run(self, cid: str, msg_id: str, run_id: str, meta: dict, save_session: bool = True,
+                          agent: str = "codex"):
+        runtime = getattr(self.agent_service, agent)
         run = {}
         status = None
         last_content = None
@@ -1775,7 +1786,7 @@ class AgentChatService:
             if self._is_turn_cancelled(msg_id):
                 self.agent_service.cancel(run_id)
                 return run, "cancelled"
-            run = self.agent_service.codex.get(run_id)
+            run = runtime.get(run_id)
             status = run.get("status")
             content = run.get("result", "")
             new_thread = run.get("thread_id")
@@ -1787,37 +1798,38 @@ class AgentChatService:
                 step_meta.update({"status": status})
                 from core.runtime_evidence import runtime_evidence
                 step_meta.update(runtime_evidence(run))
-            if not self._publish_run_update(cid, msg_id, content, step_meta, provider='codex', session=session):
+            if not self._publish_run_update(cid, msg_id, content, step_meta, provider=agent, session=session):
                 self.agent_service.cancel(run_id)
                 return run, "cancelled"
-            self._note_activity(msg_id, 'codex', run)
+            self._note_activity(msg_id, agent, run)
             last_content, last_status = content, status
             if session: last_thread_saved = session
 
-            if status in self.agent_service.codex.TERMINAL:
+            if status in runtime.TERMINAL:
                 break
             time.sleep(0.05)
         return run, status
 
     def _run_codex_turn(self, cid: str, msg_id: str, prompt: str,
-                        project_id: str | None, write: bool, confirm_write: bool, full_access: bool = False):
+                        project_id: str | None, write: bool, confirm_write: bool, full_access: bool = False,
+                        agent: str = "codex"):
         conv = self.store.get(cid)
         user_mid = (self._active_turn or {}).get("user_message_id")
         exclude = {msg_id, user_mid} if user_mid else {msg_id}
         msg_obj = next((m for m in conv.get("messages", []) if m["id"] == msg_id), None)
         base_meta = dict((msg_obj or {}).get("metadata") or {})
-        has_session = not self._conversation_only(cid) and bool((conv.get("sessions") or {}).get("codex"))
+        has_session = not self._conversation_only(cid) and bool((conv.get("sessions") or {}).get(agent))
 
         full_prompt = self._build_single_chat_prompt(
-            "codex", prompt, conv.get("messages", []), exclude, write, has_session=has_session, full_access=full_access
+            agent, prompt, conv.get("messages", []), exclude, write, has_session=has_session, full_access=full_access
         )
         self._execute_codex_bubble(
             cid, msg_id, full_prompt, project_id, write, confirm_write,
-            use_session=True, base_meta=base_meta, full_access=full_access,
+            use_session=True, base_meta=base_meta, full_access=full_access, agent=agent,
         )
         if self._is_turn_cancelled(msg_id):
             return
-        self._run_registered_repair(cid, msg_id, 'codex', full_prompt, project_id, write, confirm_write, full_access)
+        self._run_registered_repair(cid, msg_id, agent, full_prompt, project_id, write, confirm_write, full_access)
         with self._lock:
             self._finish_turn(msg_id, "completed")
 

@@ -22,6 +22,10 @@ class ConversationStore:
             "model": "gpt-6.1-sol",
             "effort": "low",
         },
+        "claude": {
+            "model": "sonnet",
+            "effort": "medium",
+        },
     }
 
     def __init__(self, path: str | Path):
@@ -135,7 +139,7 @@ class ConversationStore:
                     if not msg.get('content', '').strip():
                         msg['content'] = 'Önceki oturum kesildi. Görev otomatik sürdürülmedi; devam etmeden önce durumu kontrol edin.'
                     provider = msg.get('sender')
-                    if provider in {'codex', 'antigravity'}:
+                    if provider in {'codex', 'antigravity', 'claude'}:
                         conv.setdefault('sessions', {})[provider] = None
                     recovered.append({'conversation_id':cid, 'message_id':msg.get('id')})
             if not recovered:
