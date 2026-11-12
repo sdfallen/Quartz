@@ -107,10 +107,19 @@ class AppServerSession:
             return self._notifications.pop(0)
 
     # -- protocol --------------------------------------------------------
-    def open_verified_thread(self, *, cwd, model=None, should_abort=None):
-        """initialize -> thread/start -> prove the thread's tool set. Returns the thread id."""
+    def open_verified_thread(self, *, cwd, model=None, should_abort=None, expected_root=None):
+        """initialize -> config gate -> thread/start -> prove the thread's tool set. Returns the thread id."""
         self.request("initialize", {"clientInfo": {"name": "quartz", "version": "1"}})
         self.notify("initialized")
+        # Start gate: the effective config of THIS app-server, read before any
+        # thread exists, must already allow only Quartz's server (so no other
+        # MCP server can be launched by thread/start). Codex owner review.
+        config = self.request("config/read", {"cwd": str(cwd)}).get("config")
+        refusal = config_refusal(config, expected_root)
+        if refusal:
+            raise SessionRefused(f"Codex config would start more than Quartz's read tools ({refusal})")
+        if should_abort and should_abort():
+            raise SessionRefused("Cancelled before the thread was started")
         params = {"cwd": str(cwd), "sandbox": "read-only", "approvalPolicy": "never", "ephemeral": True}
         if model:
             params["model"] = model
@@ -151,27 +160,63 @@ class AppServerSession:
             time.sleep(0.5)
 
 
+def config_refusal(config, expected_root=None):
+    """None when the effective config can only start quartz_project; else a reason."""
+    if not isinstance(config, dict):
+        return "config unreadable"
+    features = config.get("features")
+    if not isinstance(features, dict):
+        return "features unreadable"
+    for name in ("plugins", "apps", "hooks", "shell_tool", "unified_exec", "computer_use", "browser_use",
+                 "multi_agent", "memories"):
+        if features.get(name) is not False:
+            return f"feature {name} not off"
+    servers = config.get("mcp_servers")
+    if not isinstance(servers, dict):
+        return "mcp_servers unreadable"
+    for name, server in servers.items():
+        if not isinstance(server, dict):
+            return f"server {str(name)[:40]} unreadable"
+        if name == ALLOWED_SERVER:
+            if server.get("enabled") is False:
+                return "quartz_project disabled"
+            args = server.get("args")
+            if not isinstance(args, list) or "--project-read-server" not in args:
+                return "quartz_project is not Quartz's read server"
+            if expected_root is not None and str(expected_root) not in [str(a) for a in args]:
+                return "quartz_project serves a different root"
+        elif server.get("enabled") is not False:
+            return f"server {str(name)[:40]} enabled"
+    if ALLOWED_SERVER not in servers:
+        return "quartz_project missing"
+    return None
+
+
 def inventory_state(rows):
-    """'ok', 'starting' (Quartz tools not listed yet) or a refusal reason."""
-    ours = None
+    """'ok', 'starting' (Quartz tools not ready yet) or a refusal reason."""
+    ours = []
     for row in rows:
         if not isinstance(row, dict) or not isinstance(row.get("name"), str):
             return "unknown row"
         status = row.get("runtimeStatus")
         if row["name"] == ALLOWED_SERVER:
-            ours = row
+            ours.append(row)
             continue
         if status != "disabled":
             return f"extra server {row['name'][:40]} is {status}"
-    if ours is None:
+    if not ours:
         return "quartz_project missing"
-    if ours.get("runtimeStatus") in {"failed", "disabled", "cancelled", "authenticationRequired"}:
-        return f"quartz_project {ours.get('runtimeStatus')}"
+    if len(ours) > 1:
+        return "quartz_project listed twice"
+    ours = ours[0]
+    status = ours.get("runtimeStatus")
+    if status in {"notStarted", "starting", None}:
+        return "starting"
+    if status != "connected":
+        return f"quartz_project {status}"
     tools = ours.get("tools")
     names = set(tools.keys()) if isinstance(tools, dict) else {
         t.get("name") for t in tools if isinstance(t, dict)} if isinstance(tools, list) else set()
-    if not names:
-        return "starting"
     if names != ALLOWED_TOOLS:
         return "quartz_project tools differ"
     return "ok"

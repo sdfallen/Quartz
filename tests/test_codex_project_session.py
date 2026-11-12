@@ -11,13 +11,21 @@ from core.codex_project_session import inventory_state
 from core.codex_runtime import CodexRuntime
 
 TOOLS = {"project_list": {}, "project_read": {}, "project_search": {}}
+OFF = ("plugins", "apps", "hooks", "shell_tool", "unified_exec", "computer_use", "browser_use", "multi_agent", "memories")
+
+
+def good_config(root=None):
+    args = ["desktop_mcp.py", "--project-read-server"] + ([str(root)] if root else [])
+    return {"features": {name: False for name in OFF},
+            "mcp_servers": {"quartz_project": {"enabled": True, "args": args},
+                            "node_repl": {"enabled": False}}}
 
 
 class FakeAppServer:
     """A scripted `codex app-server`: answers JSON-RPC requests and emits turn notifications."""
 
     def __init__(self, *, inventory=None, items=None, turn_status="completed", server_request=False,
-                 sandbox="readOnly"):
+                 sandbox="readOnly", config=None):
         self.pid = 7777
         self.sent = []
         self._out = queue.Queue()
@@ -30,6 +38,7 @@ class FakeAppServer:
         self.turn_status = turn_status
         self.server_request = server_request
         self.sandbox = sandbox
+        self.config = config if config is not None else good_config()
         self.stdin = self
         self.stdout = self
         self.returncode = None
@@ -56,6 +65,8 @@ class FakeAppServer:
             return
         if method == "initialize":
             self._emit({"id": rid, "result": {"userAgent": "fake"}})
+        elif method == "config/read":
+            self._emit({"id": rid, "result": {"config": self.config}})
         elif method == "thread/start":
             self._emit({"id": rid, "result": {"thread": {"id": "t-1"}, "sandbox": {"type": self.sandbox},
                                               "approvalPolicy": "never"}})
@@ -112,9 +123,23 @@ class InventoryStateTests(unittest.TestCase):
                       {"name": "x", "runtimeStatus": None}],
                      [{"name": "quartz_project", "runtimeStatus": "connected", "tools": {**TOOLS, "shell": {}}}],
                      [{"name": "quartz_project", "runtimeStatus": "failed", "tools": TOOLS}],
+                     [{"name": "quartz_project", "runtimeStatus": "connected", "tools": TOOLS}] * 2,
+                     [{"name": "quartz_project", "runtimeStatus": "connected", "tools": {}}],
                      [{"runtimeStatus": "disabled"}], []):
             with self.subTest(rows=rows):
                 self.assertNotIn(inventory_state(rows), {"ok", "starting"})
+
+    def test_start_gate_on_effective_config(self):
+        from core.codex_project_session import config_refusal
+        self.assertIsNone(config_refusal(good_config("C:/p"), "C:/p"))
+        bad = good_config("C:/p"); bad["mcp_servers"]["other"] = {"enabled": True}
+        self.assertIsNotNone(config_refusal(bad, "C:/p"))
+        unknown = good_config("C:/p"); unknown["mcp_servers"]["other"] = {}  # enabled not stated
+        self.assertIsNotNone(config_refusal(unknown, "C:/p"))
+        plugins = good_config("C:/p"); plugins["features"]["plugins"] = True
+        self.assertIsNotNone(config_refusal(plugins, "C:/p"))
+        self.assertIsNotNone(config_refusal(good_config("C:/other"), "C:/p"))
+        self.assertIsNotNone(config_refusal(None))
 
 
 class ProjectSessionRuntimeTests(unittest.TestCase):
@@ -128,11 +153,20 @@ class ProjectSessionRuntimeTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_read(self, fake, **options):
+    def run_read(self, fake, *, cleanup_ok=True, keep_config=False, **options):
         runtime = CodexRuntime(self.exe)
+        if not keep_config:
+            fake.config = good_config(self.project.resolve())
+
+        def cleanup(process, report_pending):
+            if not cleanup_ok:
+                raise RuntimeError("tree discovery incomplete")
+            return 0
+
         with patch.object(CodexRuntime, "_project_read_config", return_value=["-c", "features.shell_tool=false"]), \
                 patch("core.codex_runtime.subprocess.Popen", return_value=fake) as popen, \
                 patch("core.codex_runtime.bind_kill_on_close_job", return_value=True), \
+                patch("core.codex_runtime.wait_for_owned_cleanup", side_effect=cleanup), \
                 patch("core.codex_runtime.stop_process_tree", side_effect=lambda p, timeout=5: p.terminate()):
             run = runtime.start("README ne diyor?", self.work, project_read=self.project, **options)
             for _ in range(400):
@@ -161,6 +195,74 @@ class ProjectSessionRuntimeTests(unittest.TestCase):
         _, run, _ = self.run_read(fake)
         self.assertEqual(run["status"], "failed")
         self.assertNotIn("turn/start", fake.methods())
+
+    def test_config_gate_refuses_before_any_thread_starts(self):
+        fake = FakeAppServer()
+        fake.config = good_config(self.project.resolve())
+        fake.config["mcp_servers"]["surprise"] = {"enabled": True}
+        _, run, _ = self.run_read(fake, keep_config=True)
+        self.assertEqual(run["status"], "failed")
+        self.assertIn("config/read", fake.methods())
+        self.assertNotIn("thread/start", fake.methods())
+        self.assertNotIn("turn/start", fake.methods())
+
+    def test_unlisted_tool_on_quartz_server_fails_the_turn(self):
+        fake = FakeAppServer(items=[{"type": "mcpToolCall", "server": "quartz_project", "tool": "project_write"},
+                                    {"type": "agentMessage", "text": "x", "phase": "final_answer"}])
+        _, run, _ = self.run_read(fake)
+        self.assertEqual(run["status"], "failed")
+
+    def test_unconfirmed_cleanup_keeps_process_ownership(self):
+        fake = FakeAppServer()
+        runtime, run, _ = self.run_read(fake, cleanup_ok=False)
+        self.assertEqual(run["status"], "failed")
+        self.assertIn(run["id"], runtime._processes)
+        self.assertTrue(run["cleanup_pending"])
+        self.assertFalse(run["process_exit_confirmed"])
+
+    def test_confirmed_exit_is_reported_for_every_ending(self):
+        # The chat's stop receipt waits for process_exit_confirmed (Gemini review).
+        for fake, options in ((FakeAppServer(), {}),
+                              (FakeAppServer(sandbox="workspaceWrite"), {}),
+                              (FakeAppServer(), {"should_abort": iter([False, False, True]).__next__})):
+            with self.subTest(sandbox=fake.sandbox, options=bool(options)):
+                _, run, _ = self.run_read(fake, **options)
+                self.assertIs(run["process_exit_confirmed"], True)
+                self.assertFalse(run["cleanup_pending"])
+
+    def test_chat_accepts_the_next_message_after_a_codex_project_read(self):
+        import tempfile as _tempfile
+        from unittest.mock import MagicMock
+        from core.agent_chat import AgentChatService
+        runtime = CodexRuntime(self.exe)
+        fakes = [FakeAppServer(), FakeAppServer()]
+        for fake in fakes:
+            fake.config = good_config(self.project.resolve())
+        with _tempfile.TemporaryDirectory() as store, \
+                patch.object(CodexRuntime, "_project_read_config", return_value=["-c", "x=1"]), \
+                patch("core.codex_runtime.subprocess.Popen", side_effect=fakes), \
+                patch("core.codex_runtime.bind_kill_on_close_job", return_value=True), \
+                patch("core.codex_runtime.wait_for_owned_cleanup", return_value=0), \
+                patch("core.codex_runtime.stop_process_tree", side_effect=lambda p, timeout=5: p.terminate()):
+            from core.multi_agent_service import MultiAgentService
+            with patch("core.multi_agent_service.CodexRuntime", return_value=runtime), \
+                    patch("core.multi_agent_service.AntigravityRuntime"):
+                service = MultiAgentService(projects=[{"id": "p1", "name": "Quartz", "path": str(self.project),
+                                                       "protected": False}],
+                                            squad_executable=__file__, codex_executable=__file__,
+                                            antigravity_executable=__file__)
+            service.codex = runtime
+            runtime.probe = lambda force=False: {"ready": True, "authenticated": True, "error": ""}
+            chat = AgentChatService(service, Path(store) / "chats.json")
+            chat.set_project(chat.store.get_active()["id"], "p1")
+            for question in ("README dosyasında ne yazıyor?", "requirements.txt içinde ne var?"):
+                chat.send_message(question, agent="codex")  # second send raises if the stop receipt stays pending
+                for _ in range(500):
+                    if not chat.poll_active().get("active"):
+                        break
+                    time.sleep(0.01)
+                self.assertFalse(chat.poll_active().get("active"))
+            self.assertEqual(len([m for m in fakes if "turn/start" in m.methods()]), 2)
 
     def test_writable_thread_means_no_prompt(self):
         fake = FakeAppServer(sandbox="workspaceWrite")

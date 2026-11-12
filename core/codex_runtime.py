@@ -424,6 +424,7 @@ class CodexRuntime:
             with self._lock:
                 record["status"] = "cancelled"
                 record["finished_at"] = time.time()
+                record.update(cleanup_pending=False, process_exit_confirmed=True)
                 if self._writers.get(project_key) == run_id:
                     self._writers.pop(project_key, None)
             raise RuntimeError("Codex run cancelled before start")
@@ -495,10 +496,15 @@ class CodexRuntime:
                                model, effort, timeout_seconds, should_abort):
         """Spawn `codex app-server` with the project-read config and drive one verified turn."""
         from core.cli_installer import cli_environment
-        from core.codex_project_session import AppServerSession, SessionRefused, ALLOWED_SERVER
+        from core.codex_project_session import AppServerSession, SessionRefused, ALLOWED_SERVER, ALLOWED_TOOLS
 
-        def finish(status, error=None):
+        def read_root_of(rec):
+            return rec.get("_project_read")
+
+        def finish(status, error=None, *, no_process=False):
             with self._lock:
+                if no_process:  # nothing was spawned, so there is nothing left to stop
+                    record.update(cleanup_pending=False, process_exit_confirmed=True)
                 if record["status"] not in self.TERMINAL:
                     record["status"] = "cancelled" if record.get("cancel_requested") else status
                 if error and record["status"] != "cancelled":
@@ -506,7 +512,7 @@ class CodexRuntime:
                 record["finished_at"] = record.get("finished_at") or time.time()
 
         if should_abort and should_abort():
-            finish("cancelled")
+            finish("cancelled", no_process=True)
             raise RuntimeError("Codex run cancelled before start")
         args = list(read_config)
         if effort:
@@ -521,7 +527,7 @@ class CodexRuntime:
                 env=cli_environment())
             job_bound = bind_kill_on_close_job(process, resume=True, error_sink=job_errors.append)
         except Exception as exc:
-            finish("failed", exc)
+            finish("failed", exc, no_process=True)
             raise
         with self._lock:
             record["pid"] = process.pid
@@ -530,6 +536,7 @@ class CodexRuntime:
                 record["job_assignment_error"] = job_errors[-1]
             record["status"] = "running"
             record["transport"] = "app-server"
+            record["process_exit_confirmed"] = False
             self._processes[run_id] = process
 
         def note(event):
@@ -538,9 +545,11 @@ class CodexRuntime:
 
         def drive():
             deadline = time.monotonic() + float(timeout_seconds or 900)
+            outcome = ["failed", None]  # decided here, reported only after the process is gone
             try:
                 session = AppServerSession(process, on_event=note)
-                thread_id = session.open_verified_thread(cwd=project, model=model, should_abort=should_abort)
+                thread_id = session.open_verified_thread(cwd=project, model=model, should_abort=should_abort,
+                                                         expected_root=read_root_of(record))
                 with self._lock:
                     record["thread_id"] = thread_id
                     record["first_event_at"] = record.get("first_event_at") or time.time()
@@ -576,7 +585,7 @@ class CodexRuntime:
                             server, tool = item.get("server"), item.get("tool")
                             note({"type": "mcp_tool_call", "server": server, "tool": tool,
                                   "status": item.get("status")})
-                            if server != ALLOWED_SERVER:
+                            if server != ALLOWED_SERVER or tool not in ALLOWED_TOOLS:
                                 raise SessionRefused(f"Tool outside Quartz read set: {server}/{tool}")
                         elif kind not in {"userMessage", "reasoning"}:
                             # commandExecution, fileChange, webSearch, ... are not part of a project read.
@@ -587,18 +596,36 @@ class CodexRuntime:
                         with self._lock:
                             record["result"] = final_text or last_text
                         status = turn.get("status")
-                        finish("completed" if status == "completed" else "failed",
-                               None if status == "completed" else f"Turn ended: {status} {turn.get('error')}")
+                        outcome[:] = (["completed", None] if status == "completed"
+                                      else ["failed", f"Turn ended: {status} {turn.get('error')}"])
                         return
-            except Exception as exc:  # recorded; the process is stopped below either way
-                finish("failed", exc)
+            except Exception as exc:
+                outcome[:] = ["failed", exc]
             finally:
+                # Completion is reported only after the owned process tree is gone;
+                # an unconfirmed cleanup keeps ownership so shutdown() still sees it.
+                with self._lock:
+                    record["cleanup_pending"] = True
                 try:
                     stop_process_tree(process, timeout=5)
                 except Exception:
                     pass
+                try:
+                    wait_for_owned_cleanup(process, lambda: None)
+                    cleaned = True
+                except Exception:
+                    cleaned = False
                 with self._lock:
-                    self._processes.pop(run_id, None)
+                    record["cleanup_pending"] = not cleaned
+                    # The chat's stop receipt waits on this exact flag (Gemini review).
+                    record["process_exit_confirmed"] = cleaned
+                    if cleaned:
+                        record["exit_code"] = process.poll()
+                        self._processes.pop(run_id, None)
+                if cleaned:
+                    finish(*outcome)
+                else:
+                    finish("failed", "Codex app-server cleanup is not confirmed")
 
         threading.Thread(target=drive, name=f"codex-read-{run_id[:8]}", daemon=True).start()
         return self.get(run_id)
