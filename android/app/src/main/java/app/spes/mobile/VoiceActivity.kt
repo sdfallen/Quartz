@@ -53,7 +53,8 @@ import kotlin.concurrent.thread
  * Walkie-talkie voice mode: SpeS speaks, then listens. "Dur", "durum" and "tekrar dene"
  * are handled on the phone at once; anything else goes to the team (read-only, like every
  * phone message) and the replies are read aloud as they arrive. Speech recognition and
- * speech output are Android's own (no third-party service added by SpeS).
+ * speech output are Android's own. Quick answers come from the desktop (/api/voice); the
+ * phone never holds a model key or talks to a model provider itself.
  */
 class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private enum class Phase(val label: String) { Speaking("SpeS konuşuyor"), Listening("Dinliyorum"), Waiting("Ekip düşünüyor"), Idle("Mikrofona dokun") }
@@ -202,9 +203,13 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private fun ask(api: SpesApi, text: String) {
         phase.value = Phase.Waiting
         thread {
-            val before = runCatching { api.state(0, 0).lastSeq }.getOrDefault(0)
-            val sent = runCatching { api.send(text) }
-            if (sent.isFailure) { runOnUiThread { say(sent.exceptionOrNull()?.message ?: "Mesaj gönderilemedi.") }; return@thread }
+            // Fast path first: the desktop answers from what it already shows (its fast model,
+            // about 1 s) or hands the question to the team itself and says so.
+            val quick = runCatching { api.voice(text) }
+            if (quick.isFailure) { runOnUiThread { say(quick.exceptionOrNull()?.message ?: "Mesaj gönderilemedi.") }; return@thread }
+            val (route, reply, before) = quick.getOrThrow()
+            if (route == "answered") { runOnUiThread { say(reply) }; return@thread }
+            runOnUiThread { say(reply.ifBlank { "Ekibe soruyorum." }, listenAfter = false) }
             waitingSeq = before
             // Read replies aloud as they arrive; stop when the team is done (or after 3 minutes).
             val deadline = System.currentTimeMillis() + 180_000

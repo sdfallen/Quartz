@@ -54,8 +54,10 @@ class AndroidAppTests(unittest.TestCase):
         self.assertIn("TextToSpeech", voice)
         self.assertIn('"dur"', commands)
         self.assertIn("TEKNIK_AYRINTILAR", commands)  # technical details are never read aloud
-        for name in ("nvidia", "openai", "integrate.api"):
+        # The phone never holds the NVIDIA key or calls NVIDIA; the desktop does (/api/voice).
+        for name in ("nvidia", "nvapi", "openai", "integrate.api"):
             self.assertNotIn(name, voice.lower())
+        self.assertIn('"/api/voice"', (SOURCES / "SpesApi.kt").read_text(encoding="utf-8"))
 
     def test_personas_match_the_desktop(self):
         theme = (SOURCES / "Theme.kt").read_text(encoding="utf-8")
