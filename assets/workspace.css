@@ -805,3 +805,6 @@ body.show-preview .preview-pane { display: flex; }
 .msg-sender-tag::before, .lane-trail li::before { transform: none; border-radius: 50%; }
 .chat > .msg.sender-codex::before, .chat > .msg.sender-antigravity::before, .chat > .msg.sender-gemini::before,
 .chat > .msg.sender-quartz::before, .chat > .msg.bot.sender-bot::before, .chat > .msg.sender-claude::before { transform: none; border-radius: 50%; box-shadow: 0 0 0 3px var(--bg); }
+/* Accent swatches are round like every other status mark; no rails before the first message. */
+.swatches button { rotate: none; border-radius: 50%; }
+.chat-stage:has(.chat:empty) .lane-rails { display: none; }

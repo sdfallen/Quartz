@@ -35,12 +35,20 @@ def clamp_sentences(text: str, limit: int) -> str:
     flat = " ".join(str(text or "").split())
     if not flat:
         return ""
-    short = " ".join(_SENTENCE_END.split(flat)[:limit]).strip()
+    sentences = _SENTENCE_END.split(flat)[:limit]
     budget = limit * CHARS_PER_SENTENCE
-    if len(short) > budget:
-        cut = short[:budget].rsplit(" ", 1)[0].rstrip(",;:—-")
-        short = cut + "…"
-    return short
+    # Stop at the last whole sentence that fits (live 13 Nov: a mid-sentence "…"
+    # made the lead think the critic's message had been cut off). Only a single
+    # over-long first sentence is cut inside, and only that cut gets "…".
+    kept = []
+    for sentence in sentences:
+        if len(" ".join(kept + [sentence])) > budget:
+            break
+        kept.append(sentence)
+    if kept:
+        return " ".join(kept).strip()
+    cut = sentences[0][:budget].rsplit(" ", 1)[0].rstrip(",;:—-")
+    return cut + "…"
 
 
 def persona_name(agent: str) -> str:
@@ -133,8 +141,10 @@ class TeamTurnMixin:
                 seen = True
             if not seen or message.get("role") != "assistant":
                 continue
-            content = (message.get("content") or "").strip()
-            sender = (message.get("metadata") or {}).get("sender") or message.get("sender")
+            meta = message.get("metadata") or {}
+            # Teammates read the full reply; only the chat bubble is shortened.
+            content = (meta.get("team_full_text") or message.get("content") or "").strip()
+            sender = meta.get("sender") or message.get("sender")
             if content and sender in TEAM:
                 lines.append(f"{persona_name(sender)}: {content[:1200]}")
         return "\n".join(lines)

@@ -68,6 +68,11 @@ class PersonaTests(unittest.TestCase):
         short = clamp_sentences(long, 2)
         self.assertLessEqual(len(short), 2 * 160 + 1)
         self.assertTrue(short.endswith("…"))
+        # Several sentences over budget: keep whole sentences, never cut one in half.
+        many = "Kısa giriş cümlesi. " + "Bu ikinci cümle " + "epey " * 100 + "uzun. Üçüncü."
+        kept = clamp_sentences(many, 3)
+        self.assertEqual(kept, "Kısa giriş cümlesi.")
+        self.assertFalse(kept.endswith("…"))
 
 
 class TeamTurnTests(unittest.TestCase):
