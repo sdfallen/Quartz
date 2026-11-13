@@ -1,11 +1,11 @@
-"""Quartz diagnostics JavaScript fragment; composed in the shared application scope."""
+"""SpeS diagnostics JavaScript fragment; composed in the shared application scope."""
 
 JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) ──
   function renderRepairPlan(plan) {
-    if (!plan) { appendMsg('bot', 'QUARTZ', 'Referans seçimi iptal edildi; dosya değiştirilmedi.'); return; }
+    if (!plan) { appendMsg('bot', 'SPES', 'Referans seçimi iptal edildi; dosya değiştirilmedi.'); return; }
     const card = document.createElement('div');
     card.className = 'coordination-card diagnostics-card';
-    const title = document.createElement('strong'); title.textContent = 'Quartz kaynak onarımı';
+    const title = document.createElement('strong'); title.textContent = 'SpeS kaynak onarımı';
     const description = document.createElement('p'); description.textContent = plan.message;
     const files = document.createElement('pre'); files.textContent = (plan.files || []).join('\n') || 'Onarılacak kaynak farkı yok.';
     card.append(title, description, files);
@@ -296,14 +296,14 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
     if (!container) return null;
     const card = document.createElement('section');
     card.className = 'coordination-card diagnostics-card';
-    card.setAttribute('aria-label', 'Quartz Öğrenilen Uygulama Hafızası');
+    card.setAttribute('aria-label', 'SpeS Öğrenilen Uygulama Hafızası');
     const head = document.createElement('div');
     head.className = 'diag-head';
     const titleWrap = document.createElement('div');
     titleWrap.className = 'diag-title-wrap';
     const titleEl = document.createElement('strong');
     titleEl.className = 'diag-title';
-    titleEl.textContent = 'QUARTZ UYGULAMA HAFIZASI (REA + DENEYİM)';
+    titleEl.textContent = 'SPES UYGULAMA HAFIZASI (REA + DENEYİM)';
     const countTag = document.createElement('span');
     countTag.className = 'diag-rea-tag';
     countTag.textContent = `${Array.isArray(items) ? items.length : 0} Kayıtlı Profil`;
@@ -456,7 +456,7 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
       card = document.createElement('section');
       card.className = 'coordination-card diagnostics-card';
       card.dataset.diagnosticsJob = view.id;
-      card.setAttribute('aria-label', 'Quartz Öz Teşhis Kartı');
+      card.setAttribute('aria-label', 'SpeS Öz Teşhis Kartı');
       container.appendChild(card);
     }
 
@@ -472,7 +472,7 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
     titleWrap.className = 'diag-title-wrap';
     const titleEl = document.createElement('strong');
     titleEl.className = 'diag-title';
-    titleEl.textContent = job.scope === 'artifact' ? 'SEÇİLEN UYGULAMA İNCELEMESİ' : 'QUARTZ ÖZ TEŞHİS';
+    titleEl.textContent = job.scope === 'artifact' ? 'SEÇİLEN UYGULAMA İNCELEMESİ' : 'SPES ÖZ TEŞHİS';
     const reaTag = document.createElement('span');
     reaTag.className = 'diag-rea-tag';
     reaTag.textContent = view.reaTagText;
@@ -718,7 +718,7 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
     try {
       const resp = await window.pywebview.api.diagnostics_start(Boolean(includeRea));
       if (!resp || resp.status !== 'ok' || !resp.data) {
-        if (typeof appendMsg === 'function') appendMsg('err', 'QUARTZ', (resp && resp.data) || 'Öz teşhis başlatılamadı');
+        if (typeof appendMsg === 'function') appendMsg('err', 'SPES', (resp && resp.data) || 'Öz teşhis başlatılamadı');
         return null;
       }
       if (typeof chatEl !== 'undefined' && chatEl?.querySelectorAll) {
@@ -730,7 +730,7 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
       }
       return resp.data;
     } catch (e) {
-      if (typeof appendMsg === 'function') appendMsg('err', 'QUARTZ', String(e.message || e));
+      if (typeof appendMsg === 'function') appendMsg('err', 'SPES', String(e.message || e));
       return null;
     }
   }
@@ -740,7 +740,7 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
     try {
       const resp = await window.pywebview.api.diagnostics_cancel(jobId);
       if (!resp || resp.status !== 'ok' || !resp.data) {
-        if (typeof appendMsg === 'function') appendMsg('err', 'QUARTZ', (resp && resp.data) || 'Öz teşhis iptal edilemedi');
+        if (typeof appendMsg === 'function') appendMsg('err', 'SPES', (resp && resp.data) || 'Öz teşhis iptal edilemedi');
         return null;
       }
       renderSelfDiagnosticsCard(resp.data);
@@ -753,7 +753,7 @@ JAVASCRIPT = r"""  // ── Self-Diagnostics (REA-Supported Compact Chat Card) 
       }
       return resp.data;
     } catch (e) {
-      if (typeof appendMsg === 'function') appendMsg('err', 'QUARTZ', String(e.message || e));
+      if (typeof appendMsg === 'function') appendMsg('err', 'SPES', String(e.message || e));
       return null;
     }
   }

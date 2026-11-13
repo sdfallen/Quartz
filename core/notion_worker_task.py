@@ -33,7 +33,7 @@ MODE = "readonly-fixture"
 PROJECT_ID = "quartz-readonly-fixture"
 TOOL = "read_test_file"
 TERMINAL = {"completed", "blocked", "failed", "cancelled"}
-SCOPE_SUMMARY = "Quartz test projesi · yalnız fixture.txt · salt okunur · 15 dakika"
+SCOPE_SUMMARY = "SpeS test projesi · yalnız fixture.txt · salt okunur · 15 dakika"
 
 # Conservative intent: the user must name the test project/file AND ask to read
 # or inspect it. Anything else stays a normal cloud chat turn.
@@ -295,11 +295,11 @@ class NotionWorkerTasks:
         self._set_view(state="observing", message="Notion oturumu ve yerel kapsam hazırlanıyor.")
         # 1) Owned cloud session. Only sessions this adapter created are continued.
         if session_id and not self.runtime._owned(session_id, config):
-            text = "Bu Notion oturumu seçili Quartz bağlantısına ait değil; işlem başlatılmadı."
+            text = "Bu Notion oturumu seçili SpeS bağlantısına ait değil; işlem başlatılmadı."
             self._set_view(state="blocked", message=text)
             return "blocked", text, session_id
         if not session_id:
-            run = self.runtime.start("Quartz yerel test görevi için oturum açılıyor. Bu mesajda araç çağırma; "
+            run = self.runtime.start("SpeS yerel test görevi için oturum açılıyor. Bu mesajda araç çağırma; "
                                      "bir sonraki mesajda imzalı test iznini vereceğim.")
             run_id = run["id"]
             run = self._wait_run(run_id, cancelled, stop, self.clock() + self.RESULT_WAIT)
@@ -319,7 +319,7 @@ class NotionWorkerTasks:
         stop_path = folder / ".stopped"
         path = folder / "fixture.txt"
         proof = uuid.uuid4().hex + uuid.uuid4().hex
-        path.write_text("Quartz yerel test dosyası. Okuma kanıtı: " + proof, encoding="utf-8")
+        path.write_text("SpeS yerel test dosyası. Okuma kanıtı: " + proof, encoding="utf-8")
         stat = path.stat()
         manifest = {"task_id": task_id, "session_id": session_id, "project_id": PROJECT_ID,
                     "scope_ref": uuid.uuid4().hex, "request_id": uuid.uuid4().hex,
@@ -351,13 +351,13 @@ class NotionWorkerTasks:
             # 3) One submission. Persisted BEFORE the uncertain network boundary.
             manifest["request_submitted"] = True
             atomic_write_json(manifest_path, manifest)
-            message = (str(prompt).strip() + "\n\n[Quartz] Bu görev için yerel salt okunur test izni verildi. "
+            message = (str(prompt).strip() + "\n\n[SpeS] Bu görev için yerel salt okunur test izni verildi. "
                        "quartzReadTestFile aracını bir kez çağır: grant_page_id=" + row["id"] +
                        ", request_id=" + manifest["request_id"] + ", relative_path=fixture.txt. "
-                       "Kuyruğa alındıysa sonucu uydurma; Quartz'ın hazır bildirimini bekle.")
+                       "Kuyruğa alındıysa sonucu uydurma; SpeS'in hazır bildirimini bekle.")
             run_id = self.runtime.start(message, session_id=session_id)["id"]
             self._set_view(state="executing", operator="quartz",
-                           message="Notion aracı çağırıyor; Quartz yerel okuyucusu imzalı isteği bekliyor.")
+                           message="Notion aracı çağırıyor; SpeS yerel okuyucusu imzalı isteği bekliyor.")
             publish("Notion yerel okuma isteğini hazırlıyor…", self._view)
             local_result, done_without_request = None, 0
             end = min(self.clock() + self.REQUEST_WAIT, manifest["expires_at"])
@@ -379,7 +379,7 @@ class NotionWorkerTasks:
                 if local_result and run["status"] in self.runtime.TERMINAL:
                     break
                 if run["status"] == "blocked":
-                    text = "Notion ajanı kendi tarafında onay bekliyor; Quartz bunu otomatik onaylamadı."
+                    text = "Notion ajanı kendi tarafında onay bekliyor; SpeS bunu otomatik onaylamadı."
                     self._stop_remote(run_id)
                     self._set_view(state="blocked", message=text)
                     return "blocked", text, session_id

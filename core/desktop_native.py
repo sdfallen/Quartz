@@ -1,4 +1,4 @@
-"""Windows backend for Quartz's explicit desktop sessions.
+"""Windows backend for SpeS's explicit desktop sessions.
 
 No elevation, terminal execution, global screenshot, or arbitrary shell tool.
 Games with protected saves need their dedicated orchestration adapter first.
@@ -181,7 +181,7 @@ class NativeDesktopBackend:
 
     @staticmethod
     def acquire_lease():
-        # OS-released byte-range lock also excludes a second Quartz process.
+        # OS-released byte-range lock also excludes a second SpeS process.
         import msvcrt
         root = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Quartz"
         root.mkdir(parents=True, exist_ok=True)
@@ -194,7 +194,7 @@ class NativeDesktopBackend:
             return stream
         except Exception:
             stream.close()
-            raise RuntimeError("Another Quartz instance owns desktop input")
+            raise RuntimeError("Another SpeS instance owns desktop input")
 
     def _desk_name(self, hwnd):
         if not hwnd:

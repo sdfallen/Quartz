@@ -110,9 +110,9 @@ assert.equal(panel().dataset.availability, 'blocked');
 
     def test_awaiting_approval_points_to_existing_card_and_offers_no_controls(self):
         self.check(r"""
-Q.update(task({state: 'awaiting_approval', request: {tool_name: 'read_file', scope_summary: 'Quartz · settings.py (salt okunur)'}}), ctx);
+Q.update(task({state: 'awaiting_approval', request: {tool_name: 'read_file', scope_summary: 'SpeS · settings.py (salt okunur)'}}), ctx);
 assert.equal(title(), 'İzin bekleniyor');
-assert.match(panel().textContent, /İstenen kapsam: Quartz · settings\.py \(salt okunur\)\. Onay veya ret izin kartından verilir\./);
+assert.match(panel().textContent, /İstenen kapsam: SpeS · settings\.py \(salt okunur\)\. Onay veya ret izin kartından verilir\./);
 assert.equal(all(panel(), n => ['BUTTON', 'INPUT', 'A'].includes(n.tagName)).length, 0);
 assert.equal(panel().dataset.state, 'awaiting_approval');
 """)
@@ -174,7 +174,7 @@ assert.equal(panel().hidden, true);
     def test_verified_only_from_backend_verification_field(self):
         self.check(r"""
 Q.update(task({task_id: 'a', state: 'completed', message: 'Başardım, her şey doğrulandı ✓'}), ctx);
-assert.equal(title(), 'Ajan tamamlandığını bildirdi · Quartz doğrulamadı');
+assert.equal(title(), 'Ajan tamamlandığını bildirdi · SpeS doğrulamadı');
 assert.equal(panel().dataset.verification, 'unverified');
 Q.update(task({task_id: 'b', state: 'completed', verification: 'observed'}), ctx);
 assert.equal(title(), 'Tamamlandı · sonuç gözlendi, doğrulanmadı');

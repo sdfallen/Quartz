@@ -142,7 +142,7 @@ class ReaBoundaryTests(unittest.TestCase):
 
     def test_invalid_tool_receipt_cannot_fall_back_to_same_modified_script(self):
         with tempfile.TemporaryDirectory() as directory:
-            local=Path(directory)/'Quartz/tools/rea'
+            local=Path(directory)/'SpeS/tools/rea'
             entry=local/'node_modules/rea-agents/scripts/rea.mjs'
             entry.parent.mkdir(parents=True);entry.write_text('changed')
             (entry.parent.parent/'package.json').write_text(json.dumps({'name':'rea-agents','version':'6.8.0'}))

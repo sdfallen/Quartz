@@ -1,4 +1,4 @@
-"""Quartz advanced JavaScript fragment; composed in the shared application scope."""
+"""SpeS advanced JavaScript fragment; composed in the shared application scope."""
 
 JAVASCRIPT = r"""  function addAgentRow(container, title, details, status='') {
     const row = document.createElement('div'); row.className = 'agent-row';
@@ -321,7 +321,7 @@ JAVASCRIPT = r"""  function addAgentRow(container, title, details, status='') {
     }
     wakeBtn.classList.toggle('active', r.enabled);
     document.getElementById('wakeLabel').textContent = `Uyandırma kelimesi: ${r.enabled ? 'açık' : 'kapalı'}`;
-    logLine(r.enabled ? '"Hey Quartz" dinleniyor...' : 'Wake-word kapatıldı');
+    logLine(r.enabled ? '"Hey SpeS" dinleniyor...' : 'Wake-word kapatıldı');
   });
 
   // ── Voice: TTS toggle ────────────────────────────────────
@@ -335,7 +335,7 @@ JAVASCRIPT = r"""  function addAgentRow(container, title, details, status='') {
   // ── Voice: callbacks pushed from the Python wake-word thread ──
   window.onWakeDetected = function() {
     setOrb('listening');
-    logLine('"Quartz" duyuldu, dinleniyor...');
+    logLine('"SpeS" duyuldu, dinleniyor...');
   };
   window.onWakeTimeout = function() {
     setOrb('idle');

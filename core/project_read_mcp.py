@@ -1,6 +1,6 @@
-"""Quartz-owned read-only project tools as a stdio MCP server.
+"""SpeS-owned read-only project tools as a stdio MCP server.
 
-The agent gets only list/read/search over one project root. Quartz, not the
+The agent gets only list/read/search over one project root. SpeS, not the
 agent's shell, enforces the root, hides secret-looking files (in listings,
 reads and search results alike), skips binaries and bounds every result. No
 tool writes, executes, or reaches the network.
@@ -354,7 +354,7 @@ def main(root):
 
 
 def expected_server(root):
-    """The exact helper identity Quartz registers for a project read: program and arguments."""
+    """The exact helper identity SpeS registers for a project read: program and arguments."""
     from core.helper_command import mcp_command  # stdlib-only: keeps the guard exe small
     command = mcp_command()
     clean = str(Path(root).resolve(strict=True))

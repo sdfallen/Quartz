@@ -20,7 +20,7 @@ ACCESS_FILE = Path(BASE_DIR) / "mobile_access.json"
 
 _HTML = r"""<!doctype html><html lang="tr"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#030608"><title>Quartz Mobile</title>
+<meta name="theme-color" content="#030608"><title>SpeS Mobile</title>
 <style>
 :root{--cyan:#34eaff;--text:#eaf6ff;--dim:#6d8ea3;--glass:rgba(12,27,37,.78)}
 *{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 50% -10%,#0b1a24,#020405 62%);color:var(--text);font:14px Inter,Segoe UI,sans-serif}
@@ -34,10 +34,10 @@ main{max-width:720px;margin:auto;padding:13px 13px 104px}.card{background:var(--
 .composer{position:fixed;left:0;right:0;bottom:0;padding:10px max(12px,env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom));background:rgba(3,8,12,.94);border-top:1px solid rgba(52,234,255,.14)}.composer>div{max-width:720px;margin:auto;display:flex;gap:8px}input{flex:1;min-width:0;border:1px solid rgba(52,234,255,.18);border-radius:22px;background:#0b171f;color:var(--text);padding:12px 15px;outline:none}
 #login{position:fixed;inset:0;z-index:9;display:flex;align-items:center;padding:22px;background:#020405}#login .card{width:min(420px,100%);margin:auto}label{display:block;color:var(--dim);font-size:11px;margin:12px 0 6px}#login input{width:100%}.hidden{display:none!important}.error{color:#ffc2ca;font-size:11px;margin-top:8px}
 </style></head><body>
-<div id="login"><div class="card"><div class="brand">QUARTZ MOBILE</div><p style="color:var(--dim)">Bilgisayarındaki Quartz cihaz anahtarını gir.</p><label>CİHAZ ANAHTARI</label><input id="token" type="password" autocomplete="off"><button id="connect" type="button" style="width:100%;margin-top:12px">BAĞLAN</button><div id="loginError" class="error"></div></div></div>
-<header><div class="orb"></div><div class="brand">QUARTZ</div><div id="status" class="status">BAĞLANIYOR</div></header>
+<div id="login"><div class="card"><div class="brand">QUARTZ MOBILE</div><p style="color:var(--dim)">Bilgisayarındaki SpeS cihaz anahtarını gir.</p><label>CİHAZ ANAHTARI</label><input id="token" type="password" autocomplete="off"><button id="connect" type="button" style="width:100%;margin-top:12px">BAĞLAN</button><div id="loginError" class="error"></div></div></div>
+<header><div class="orb"></div><div class="brand">SpeS</div><div id="status" class="status">BAĞLANIYOR</div></header>
 <main><div class="card metrics"><div class="metric"><b id="provider">—</b><span>MODEL</span></div><div class="metric"><b id="safe">—</b><span>GÜVENLİ MOD</span></div><div class="metric"><b id="tasks">—</b><span>GÖREV</span></div></div><div id="chat"></div></main>
-<div class="composer"><div><input id="message" placeholder="Quartz'a bir şey söyle..."><button id="send">➤</button></div></div>
+<div class="composer"><div><input id="message" placeholder="SpeS'e bir şey söyle..."><button id="send">➤</button></div></div>
 <script>
 let key=localStorage.getItem('quartz_mobile_token')||'',refreshTimer=null;const $=id=>document.getElementById(id);
 const query=new URLSearchParams(location.search);if(query.get('token')){key=query.get('token');localStorage.setItem('quartz_mobile_token',key);history.replaceState({},'',location.pathname)}
@@ -106,7 +106,7 @@ class MobileGateway:
                     answer = gateway.assistant.chat(message)
                     self._json(200, {"data": answer, "ui_events": gateway.assistant.drain_ui_events()})
                 except ValueError as exc: self._json(400, {"error": str(exc)})
-                except Exception: log.exception("Mobile request failed"); self._json(500, {"error": "Quartz isteği tamamlayamadı"})
+                except Exception: log.exception("Mobile request failed"); self._json(500, {"error": "SpeS isteği tamamlayamadı"})
 
         self._server = ThreadingHTTPServer((self.host, self.port), Handler)
         log.info("Mobile gateway listening locally on %s:%d", self.host, self.port)

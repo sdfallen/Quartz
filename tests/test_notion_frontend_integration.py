@@ -62,7 +62,7 @@ class NotionGuiRoutingTests(unittest.TestCase):
         api = gui.Api()
         api._natural = MagicMock()
         with patch.object(api, 'natural_start') as start, patch('gui.ipc_send') as ipc:
-            for text, agent in (("Steam'i aç ve incele", 'notion'), ('@notion Quartz uygulamasını incele', 'codex')):
+            for text, agent in (("Steam'i aç ve incele", 'notion'), ('@notion SpeS uygulamasını incele', 'codex')):
                 result = api.coordination_route(text, 'c', 'p', {}, 'full', agent)
                 self.assertEqual(result, {'status':'ok','data':{'handled':False,'intent':'conversation'}})
             start.assert_not_called()

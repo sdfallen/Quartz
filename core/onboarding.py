@@ -143,7 +143,7 @@ class OnboardingService:
                 login_pending=bool(pending.get(provider) and not ready),
             )
         # Claude Code CLI: the user's own login, checked with `claude auth status`.
-        # Never installed or logged in by Quartz.
+        # Never installed or logged in by SpeS.
         try:
             from core.claude_runtime import ClaudeRuntime
             claude = ClaudeRuntime().probe(force=force)

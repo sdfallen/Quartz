@@ -1,4 +1,4 @@
-"""Opt-in, rate-limited screen change observer for Quartz."""
+"""Opt-in, rate-limited screen change observer for SpeS."""
 
 import threading
 import time
@@ -83,7 +83,7 @@ class ScreenAdvisor:
                     continue
                 self._last_analysis = now
                 advice = self._analyze(
-                    "Aktif Quartz görevi açısından bu ekran değişikliğini incele. "
+                    "Aktif SpeS görevi açısından bu ekran değişikliğini incele. "
                     "Yalnızca gerçekten faydalıysa Türkçe, kısa ve uygulanabilir bir "
                     "sonraki adım veya görünür engel bildir. Sorun yoksa yalnızca "
                     "NO_ADVICE yaz.", image=image)

@@ -2,14 +2,14 @@
 from PyInstaller.utils.hooks import collect_all
 from pathlib import Path
 root = Path(SPECPATH)
-brand_icon = root/'assets/branding/quartz-q.ico'
+brand_icon = root/'assets/branding/spes-mark.ico'
 if not brand_icon.is_file(): brand_icon = root/'quartz.ico'
 
 datas = [(str(root/'build/desktop-helper/QuartzDesktopMCP.exe'), 'operator'), (str(root/'quartz.ico'), '.')]
 # Explicit release resources: never copy an entire mutable assets/profile tree.
 # In particular the development brand manifest contains local source paths.
-for relative in ('workspace.css', 'branding/quartz-q.ico', 'branding/quartz-q.png',
-                 'branding/quartz-q-48.png', 'bin/squad.exe', 'bin/SQUAD-LICENSE.txt',
+for relative in ('workspace.css', 'branding/spes-mark.ico', 'branding/spes-mark.png',
+                 'branding/spes-mark-48.png', 'bin/squad.exe', 'bin/SQUAD-LICENSE.txt',
                  'bin/SQUAD-PROVENANCE.json'):
     asset = root/'assets'/relative
     datas.append((str(asset), 'assets/' + str(Path(relative).parent).replace('\\', '/')))

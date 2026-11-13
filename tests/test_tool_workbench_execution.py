@@ -1,6 +1,6 @@
 """
 tests/test_tool_workbench_execution.py
-Unit tests for isolated process execution in Quartz Tool Workbench:
+Unit tests for isolated process execution in SpeS Tool Workbench:
 - Argv schema validation and shell-injection rejection
 - Environment sanitization (secret and credential stripping)
 - Monotonic deadline and timeout handling

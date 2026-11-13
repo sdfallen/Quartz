@@ -1,5 +1,5 @@
 """
-advanced_controller.py  —  Quartz
+advanced_controller.py  —  SpeS
 Deep system control — browser automation, VS Code,
 media, YouTube, Spotify and more.
 Fixed:
@@ -542,9 +542,9 @@ def system_sleep() -> str:
 
 
 def quartz_mode() -> str:
-    """Enable Quartz's low-noise, always-online power profile on Windows."""
+    """Enable SpeS's low-noise, always-online power profile on Windows."""
     if platform.system() != "Windows":
-        return "Quartz Mode is only available on Windows."
+        return "SpeS Mode is only available on Windows."
 
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
@@ -560,16 +560,16 @@ def quartz_mode() -> str:
             r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}",
             line or "")
         if not match:
-            return "Quartz Mode güç planı bulunamadı."
+            return "SpeS Mode güç planı bulunamadı."
         subprocess.run(
             ["powercfg", "/setactive", match.group(0)], check=True,
             creationflags=flags)
-        log.info("Quartz Mode enabled: %s", match.group(0))
-        return ("Quartz Mode etkin: ekran kapanacak; Quartz, Wi-Fi ve "
+        log.info("SpeS Mode enabled: %s", match.group(0))
+        return ("SpeS Mode etkin: ekran kapanacak; SpeS, Wi-Fi ve "
                 "uzaktan erişim açık kalacak.")
     except (OSError, subprocess.CalledProcessError) as exc:
-        log.warning("Quartz Mode could not be enabled: %s", exc)
-        return f"Quartz Mode etkinleştirilemedi: {exc}"
+        log.warning("SpeS Mode could not be enabled: %s", exc)
+        return f"SpeS Mode etkinleştirilemedi: {exc}"
 
 
 def lock_screen() -> str:
@@ -830,7 +830,7 @@ def _steam_game_candidate(game_name: str) -> tuple[int, str]:
         "https://store.steampowered.com/api/storesearch/?cc=TR&l=turkish&term="
         + urllib.parse.quote(query))
     request = urllib.request.Request(url, headers={
-        "User-Agent": "Quartz/1.0 desktop assistant"})
+        "User-Agent": "SpeS/1.0 desktop assistant"})
     with urllib.request.urlopen(request, timeout=10) as response:
         payload = json.loads(response.read().decode("utf-8"))
     items = payload.get("items", []) if isinstance(payload, dict) else []

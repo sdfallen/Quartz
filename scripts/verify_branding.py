@@ -70,7 +70,7 @@ def main():
     parser.add_argument('--exe',type=Path)
     parser.add_argument('--sheet',type=Path)
     args=parser.parse_args()
-    ico=ROOT/'assets/branding/quartz-q.ico'
+    ico=ROOT/'assets/branding/spes-mark.ico'
     entries=ico_entries(ico)
     result={'entries':entries,'required_sizes_present':set((s,s) for s in SIZES).issubset(e['size'] for e in entries)}
     if args.exe: result['exe_icon_matches_supplied_ico']=check_exe_icon(args.exe,ico)

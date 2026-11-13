@@ -8,7 +8,7 @@ body.sidebar-collapsed .sidebar { display: none; }
 .side-head { display: flex; align-items: center; gap: 9px; height: 52px; padding: 0 14px; flex: none; }
 .orb-wrap { width: 24px; height: 24px; flex: none; }
 .q-mark { display: block; width: 100%; height: 100%; }
-.brand { font: 600 13px var(--font-display); letter-spacing: .16em; color: var(--text); }
+.brand { font: 650 17px var(--font-display); letter-spacing: .01em; color: var(--text); }
 .signature-mark { margin-left: auto; font: 600 10px var(--font); letter-spacing: .06em; color: var(--text-3); }
 .side-actions { display: flex; flex-direction: column; gap: 2px; padding: 2px 8px 10px; }
 .side-action { display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 8px; border-radius: var(--r-md); color: var(--text-2); font-size: var(--text-sm); text-align: left; transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease); }
@@ -276,10 +276,10 @@ body.show-panels .inspector { display: flex; }
 .swatches button { width: 22px; height: 22px; border-radius: 6px; rotate: 45deg; scale: .78; transition: scale var(--t-med) var(--spring), box-shadow var(--t-fast) var(--ease); }
 .swatches button:hover { scale: .9; }
 .swatches button[aria-pressed="true"] { scale: .86; box-shadow: 0 0 0 2px var(--surface-1), 0 0 0 3.5px var(--text-2); }
-.swatches [data-value="rose"] { background: #f4a9c6; }
-.swatches [data-value="citrine"] { background: #f5c85a; }
-.swatches [data-value="amethyst"] { background: #c6a6ff; }
-.swatches [data-value="smoky"] { background: #ebe5f5; }
+.swatches [data-value="rose"] { background: #f2a7c0; }
+.swatches [data-value="citrine"] { background: #8fcfb0; }
+.swatches [data-value="amethyst"] { background: #b4a7f5; }
+.swatches [data-value="smoky"] { background: #dde3df; }
 .agent-select, .api-panel select, .api-panel input { width: 100%; height: 34px; padding: 0 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md); font-size: var(--text-sm); transition: border-color var(--t-fast) var(--ease); }
 .agent-select:hover, .api-panel select:hover, .api-panel input:hover { border-color: var(--line-strong); }
 
@@ -355,7 +355,7 @@ body.show-panels .inspector { display: flex; }
 /* First paint --------------------------------------------------------- */
 .signature-intro { position: fixed; inset: 0; z-index: 800; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: var(--bg); }
 .signature-intro .q-mark { width: 72px; height: 72px; margin-bottom: 8px; }
-.intro-brand { font: 600 15px var(--font-display); letter-spacing: .3em; padding-left: .3em; }
+.intro-brand { font: 650 30px var(--font-display); letter-spacing: .01em; }
 .intro-credit { font-size: 11px; letter-spacing: .14em; color: var(--text-3); }
 .intro-credit strong { font-weight: 600; color: var(--text-2); }
 
@@ -434,7 +434,7 @@ body.low-spec .diagnostics-card, body.low-spec .diag-progress-fill, body.ui-idle
 .main { background: transparent; }
 .sidebar { background: color-mix(in oklab, var(--surface-1) 82%, transparent); border-right-color: var(--line); }
 .inspector { background: color-mix(in oklab, var(--surface-1) 86%, transparent); }
-.brand { background: linear-gradient(100deg, var(--text) 30%, var(--accent)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.brand { color: var(--text); }
 .side-action.primary .i { color: var(--accent); }
 .conversation-entry.active { background: linear-gradient(90deg, var(--amethyst-soft), color-mix(in oklab, var(--surface-3) 60%, transparent)); box-shadow: inset 2px 0 0 var(--accent); }
 .empty-state h1 { background: linear-gradient(100deg, var(--text) 20%, var(--agent-agy) 62%, var(--accent)); -webkit-background-clip: text; background-clip: text; color: transparent; }
@@ -443,8 +443,8 @@ body.low-spec .diagnostics-card, body.low-spec .diag-progress-fill, body.ui-idle
 .msg-sender-tag { letter-spacing: .08em; }
 .tag-codex { color: var(--agent-codex); }
 .tag-antigravity, .tag-gemini { color: var(--agent-agy); }
-.tag-quartz { color: var(--agent-quartz); }
-.tag-quartz::before { background: var(--agent-quartz); }
+.tag-quartz { color: var(--agent-spes); }
+.tag-quartz::before { background: var(--agent-spes); }
 .msg.user .bubble { background: linear-gradient(140deg, var(--amethyst-soft), color-mix(in oklab, var(--surface-2) 88%, transparent)); border: 1px solid color-mix(in oklab, var(--amethyst) 32%, transparent); box-shadow: var(--shadow-1); color: var(--text); }
 .msg.sender-codex .bubble, .msg.sender-antigravity .bubble, .msg.sender-gemini .bubble { padding-left: 13px; border-left: 2px solid color-mix(in oklab, var(--agent-agy) 45%, transparent); }
 .msg.sender-codex .bubble { border-left-color: color-mix(in oklab, var(--agent-codex) 50%, transparent); }
@@ -487,7 +487,7 @@ body.low-spec .diagnostics-card, body.low-spec .diag-progress-fill, body.ui-idle
    two rails, and each agent's message hangs on its own rail. */
 #laneCodex, .lane-codex, .rail-codex, .beam-codex, .chat > .msg.sender-codex { --lane: var(--agent-codex); }
 #laneAgy, .lane-antigravity, .rail-agy, .beam-agy, .chat > .msg.sender-antigravity, .chat > .msg.sender-gemini { --lane: var(--agent-agy); }
-.chat > .msg.sender-quartz, .chat > .msg.bot.sender-bot { --lane: var(--agent-quartz); }
+.chat > .msg.sender-quartz, .chat > .msg.bot.sender-bot { --lane: var(--agent-spes); }
 #laneClaude, .lane-claude, .chat > .msg.sender-claude { --lane: var(--agent-claude); }
 
 /* Frame: rail | main | inspector. */
@@ -784,3 +784,24 @@ body.show-preview .preview-pane { display: flex; }
 .work-items li[data-tone="fail"] { border-left: 3px solid var(--danger); }
 .work-empty { font-size: var(--text-xs); color: var(--text-3); }
 .work-list.has-items .work-empty { display: none; }
+
+/* ── SpeS calm layer (13 Nov 2026) ─────────────────────────────────────────
+   The user asked for a desk, not a cockpit: no glows, no neon gradients, round
+   quiet status dots, flat surfaces. Agent colour stays as a small dot and a
+   thin edge; the work itself (the conversation) carries the eye. */
+.lane-gem, .agent-live-gem { transform: none; border-radius: 50%; width: 9px; height: 9px; box-shadow: none; }
+.agent-live[data-agent="codex"] .agent-live-gem { box-shadow: none; }
+.lane-card:not([data-state="idle"]) .lane-gem { box-shadow: 0 0 0 3px color-mix(in oklab, var(--lane) 22%, transparent); }
+.lane-card { background: var(--surface-1); border-color: var(--line); box-shadow: none; }
+.lane-card[aria-pressed="true"], .lane-card[data-included="true"] { background: color-mix(in oklab, var(--lane) 7%, var(--surface-1)); border-color: color-mix(in oklab, var(--lane) 38%, var(--line)); }
+.lane-trail li.now::before { box-shadow: none; }
+.core-halo, .beam-flow, .rail-flow { display: none; }
+.core-beam { background: linear-gradient(90deg, transparent, var(--line-strong)); }
+.composer:focus-within { border-color: color-mix(in oklab, var(--accent) 50%, var(--line-strong)); box-shadow: 0 0 0 3px var(--accent-soft); }
+.send-btn { background: var(--accent); color: var(--on-accent); box-shadow: none; }
+.send-btn:hover:not(:disabled) { background: color-mix(in oklab, var(--accent) 88%, var(--text)); }
+.brand { background: none; -webkit-background-clip: border-box; background-clip: border-box; color: var(--text); }
+.chat { line-height: 1.62; }
+.msg-sender-tag::before, .lane-trail li::before { transform: none; border-radius: 50%; }
+.chat > .msg.sender-codex::before, .chat > .msg.sender-antigravity::before, .chat > .msg.sender-gemini::before,
+.chat > .msg.sender-quartz::before, .chat > .msg.bot.sender-bot::before, .chat > .msg.sender-claude::before { transform: none; border-radius: 50%; box-shadow: 0 0 0 3px var(--bg); }

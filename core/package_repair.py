@@ -16,7 +16,7 @@ from core.atomic_json import atomic_write_json
 
 
 class PackageRepair:
-    ALLOWED = ('_internal/assets/workspace.css', '_internal/assets/branding/quartz-q.ico')
+    ALLOWED = ('_internal/assets/workspace.css', '_internal/assets/branding/spes-mark.ico')
     MAX_BYTES = 8 * 1024 * 1024
 
     def __init__(self, base, backups):
@@ -55,7 +55,7 @@ class PackageRepair:
                 raise ValueError('Paket EXE dosyası eksik veya inceleme sınırını aşıyor')
             build = self.digest(target_exe)
             if build is None or build != self.digest(reference_exe):
-                raise ValueError('Referans aynı Quartz EXE sürümüyle eşleşmiyor')
+                raise ValueError('Referans aynı SpeS EXE sürümüyle eşleşmiyor')
             manifest = root / 'release-manifest.json'
             if manifest.is_symlink() or manifest.stat().st_size > 2 * 1024 * 1024:
                 raise ValueError('Referans manifesti geçersiz')

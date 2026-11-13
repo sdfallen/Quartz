@@ -99,7 +99,7 @@ def ensure_antigravity_tool_grants(settings_path=None):
     atomic_write_json(path, existing)
 
 
-INSTRUCTION = """You are the user-authorized Quartz desktop operator for this task's exact approved windows/apps.
+INSTRUCTION = """You are the user-authorized SpeS desktop operator for this task's exact approved windows/apps.
 Use ONLY quartz_desktop MCP tools, not shell, browser tools or other UI channels.
 First desktop_focus, then inspect the returned real screenshot and controls.
 Prefer a fresh UIA ref for ordinary controls. For a custom-rendered target
@@ -158,7 +158,7 @@ class DesktopAgentService:
                         completed = subprocess.run([runtime.executable, "mcp", "add", "quartz-desktop", *command],
                                                    capture_output=True, text=True, timeout=30,
                                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-                        if completed.returncode: raise RuntimeError("Could not register Quartz MCP: " + completed.stderr[:500])
+                        if completed.returncode: raise RuntimeError("Could not register SpeS MCP: " + completed.stderr[:500])
                     ensure_antigravity_tool_grants()
                 self._workspace = tempfile.TemporaryDirectory(prefix="quartz-desktop-task-")
                 if provider == "antigravity": write_operator_hooks(self._workspace.name)

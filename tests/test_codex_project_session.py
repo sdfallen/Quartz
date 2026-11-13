@@ -311,7 +311,7 @@ class ProjectSessionRuntimeTests(unittest.TestCase):
             from core.multi_agent_service import MultiAgentService
             with patch("core.multi_agent_service.CodexRuntime", return_value=runtime), \
                     patch("core.multi_agent_service.AntigravityRuntime"):
-                service = MultiAgentService(projects=[{"id": "p1", "name": "Quartz", "path": str(self.project),
+                service = MultiAgentService(projects=[{"id": "p1", "name": "SpeS", "path": str(self.project),
                                                        "protected": False}],
                                             squad_executable=__file__, codex_executable=__file__,
                                             antigravity_executable=__file__)

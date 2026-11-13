@@ -1,4 +1,4 @@
-"""Quartz desktop JavaScript fragment; composed in the shared application scope."""
+"""SpeS desktop JavaScript fragment; composed in the shared application scope."""
 
 JAVASCRIPT = r"""  let desktopView={code:'normal',stop_ref:null};
   function renderDesktopTaskState(view) {
@@ -41,7 +41,7 @@ JAVASCRIPT = r"""  let desktopView={code:'normal',stop_ref:null};
     if(typeof resolveActiveConfirm==='function'&&activeConfirmResolver)resolveActiveConfirm(false);
     const ref=desktopView.stop_ref;if(!ref)return;
     const r=await window.pywebview.api.desktop_task_stop(ref);
-    if(r.status!=='ok')appendMsg('err','QUARTZ',r.data);
+    if(r.status!=='ok')appendMsg('err','SPES',r.data);
     await refreshDesktopTaskState();
   };
 
@@ -95,7 +95,7 @@ JAVASCRIPT = r"""  let desktopView={code:'normal',stop_ref:null};
     if(pending.kind==='elevation') {
       title.textContent='Windows yönetici onayı gerekiyor';
       summary.textContent=(pending.launch?.exe || 'Doğrulanmış uygulama yolu bulunamadı')+
-        '\nUAC onayını Windows ekranında siz verirsiniz. Quartz yönetici yapılmaz. Bu onay yalnız başlatma içindir; ajana ayar değiştirme talimatı vermez.';
+        '\nUAC onayını Windows ekranında siz verirsiniz. SpeS yönetici yapılmaz. Bu onay yalnız başlatma içindir; ajana ayar değiştirme talimatı vermez.';
       trace.textContent=JSON.stringify({launch:pending.launch,phase:pending.phase,expires_at:pending.expires_at},null,2);
       approve.textContent='Windows UAC isteğini aç';
       approve.disabled=pending.phase==='prompting'||!pending.launch;

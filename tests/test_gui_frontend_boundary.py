@@ -45,7 +45,7 @@ def _fake_assets(root: Path, png: bytes | None = b"\x89PNG-test") -> Path:
     (assets / "branding").mkdir(parents=True)
     (assets / "workspace.css").write_text(".fake-workspace{color:red}", encoding="utf-8")
     if png is not None:
-        (assets / "branding" / "quartz-q-48.png").write_bytes(png)
+        (assets / "branding" / "spes-mark-48.png").write_bytes(png)
     return assets
 
 
@@ -81,7 +81,7 @@ class DocumentAssemblyTests(unittest.TestCase):
             self.skipTest("running inside a frozen bundle")
         self.assertEqual(document.asset_root(), ROOT / "assets")
         self.assertEqual(gui._ASSET_ROOT, ROOT / "assets")
-        self.assertEqual(gui._BRAND_MARK, ROOT / "assets" / "branding" / "quartz-q-48.png")
+        self.assertEqual(gui._BRAND_MARK, ROOT / "assets" / "branding" / "spes-mark-48.png")
 
     def test_brand_mark_does_not_depend_on_a_packaged_png(self):
         with tempfile.TemporaryDirectory() as directory:

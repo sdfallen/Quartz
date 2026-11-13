@@ -1,6 +1,6 @@
 """
 core/tool_workbench/execution.py
-Isolated and tracked process execution for Quartz Tool Workbench.
+Isolated and tracked process execution for SpeS Tool Workbench.
 Enforces argv schema validation, secrets filtering, output overflow bounding,
 process tree tracking, cancellation, and artifact generation.
 """
@@ -126,7 +126,7 @@ class ToolExecutor:
 
         if suffix == ".py":
             if getattr(sys, "frozen", False):
-                raise ExecutionError("Python script execution requires a verified managed interpreter in packaged Quartz")
+                raise ExecutionError("Python script execution requires a verified managed interpreter in packaged SpeS")
             argv.extend([sys.executable, str(exe_path)])
         elif suffix in {".js", ".mjs"}:
             from core.cli_installer import node_command

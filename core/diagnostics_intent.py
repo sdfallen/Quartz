@@ -8,9 +8,9 @@ def diagnostics_intent(text):
         return None
     value = instruction_text(text).strip().rstrip('.!').strip()
     value = re.sub(r'^(?:lütfen|codex|gemini|antigravity)[,:]?\s+', '', value)
-    if re.fullmatch(r"quartz(?:['’]?[ıi])?\s+(?:kontrol et|incele|teşhis et)", value):
+    if re.fullmatch(r"(?:quartz|spes)(?:['’]?[ıi])?\s+(?:kontrol et|incele|teşhis et)", value):
         return 'self'
-    if re.fullmatch(r"quartz(?:['’]?[ıi])?\s+(?:onar|onarım planı hazırla)", value):
+    if re.fullmatch(r"(?:quartz|spes)(?:['’]?[ıi])?\s+(?:onar|onarım planı hazırla)", value):
         return 'repair'
     if re.fullmatch(
         r'(?:başka (?:bir )?uygulamayı|uygulama dosyasını|seçtiğim uygulamayı|bir uygulamayı)\s+'

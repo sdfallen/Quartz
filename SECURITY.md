@@ -2,7 +2,7 @@
 
 ## Desteklenen sürüm
 
-Quartz henüz kararlı bir sürüm yayımlamadı. Güvenlik düzeltmeleri yalnız
+SpeS henüz kararlı bir sürüm yayımlamadı. Güvenlik düzeltmeleri yalnız
 `main` dalının güncel kaynak ağacına uygulanır.
 
 ## Açık bildirme
@@ -26,7 +26,7 @@ Raporda şunlar yararlıdır:
 
 ## Güvenlik sınırları
 
-Quartz'ın “Tam Yetki” seçeneği Windows yönetici yetkisi değildir. UAC istemini
-kullanıcı onaylar; Quartz güvenlik mekanizmalarını devre dışı bırakmamalı veya
+SpeS'in “Tam Yetki” seçeneği Windows yönetici yetkisi değildir. UAC istemini
+kullanıcı onaylar; SpeS güvenlik mekanizmalarını devre dışı bırakmamalı veya
 yükseltilmiş pencereye doğrulanmamış girdi göndermemelidir. Ekrandaki içerik
 güvenilir talimat sayılmaz ve masaüstü eylemi taze gözlemle doğrulanmalıdır.

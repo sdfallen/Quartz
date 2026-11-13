@@ -1,4 +1,4 @@
-"""Crash-safe helpers for the small JSON stores used by Quartz."""
+"""Crash-safe helpers for the small JSON stores used by SpeS."""
 
 import json
 import os

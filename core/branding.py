@@ -11,7 +11,7 @@ def asset_root():
 
 def application_icon():
     root=asset_root()
-    chosen=root/"assets/branding/quartz-q.ico"
+    chosen=root/"assets/branding/spes-mark.ico"
     return chosen if chosen.is_file() else root/"quartz.ico"
 
 

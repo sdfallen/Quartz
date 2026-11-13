@@ -128,7 +128,7 @@ class CleanupBeforeExitTests(unittest.TestCase):
 
     def test_ipc_error_and_exception_are_failures(self):
         api = gui.Api(make()[0])
-        with patch("gui.ipc_send", return_value={"status": "error", "data": "Quartz bağlantısı kapalı"}):
+        with patch("gui.ipc_send", return_value={"status": "error", "data": "SpeS bağlantısı kapalı"}):
             self.assertIs(api.cleanup_before_exit(), True)
         self.assertEqual(api._shutdown_receipt["components"]["backend"], FAILED)
         self.assertNotIn("bağlantısı", repr(api._shutdown_receipt))

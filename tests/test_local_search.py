@@ -10,7 +10,7 @@ class LocalSearchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "notes.txt").write_text(
-                "Quartz yerel belge araması özel ve hızlıdır.", encoding="utf-8")
+                "SpeS yerel belge araması özel ve hızlıdır.", encoding="utf-8")
             (root / "other.md").write_text(
                 "Bu belgede yalnızca hava durumu bilgisi var.", encoding="utf-8")
             engine = LocalSearchEngine(root / "index.json")
@@ -21,7 +21,7 @@ class LocalSearchTests(unittest.TestCase):
             self.assertEqual(summary["files"], 2)
             self.assertTrue(results)
             self.assertEqual(Path(results[0]["path"]).name, "notes.txt")
-            self.assertIn("Quartz", results[0]["snippet"])
+            self.assertIn("SpeS", results[0]["snippet"])
 
     def test_empty_query_returns_no_results(self):
         with tempfile.TemporaryDirectory() as directory:

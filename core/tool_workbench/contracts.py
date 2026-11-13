@@ -1,6 +1,6 @@
 """
 core/tool_workbench/contracts.py
-Typed data contracts and schemas for Quartz Tool Workbench (schema_version=1).
+Typed data contracts and schemas for SpeS Tool Workbench (schema_version=1).
 Fully compliant with docs/rea-system/TEAM_CONTRACT.md.
 """
 

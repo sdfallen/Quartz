@@ -23,7 +23,7 @@ class IntentCorpusTests(unittest.TestCase):
 
     def test_discussion_quoted_commands_and_denials_are_not_work(self):
         for value in ('How do I run tests?', 'What happens if I open Notepad?',
-                'Should we update Quartz?', 'Can you explain how to test this?',
+                'Should we update SpeS?', 'Can you explain how to test this?',
                 'Open source tools are interesting', '"Open Notepad" means what?',
                 'Nasıl çözebiliriz?', 'Bunu kapatmak mantıklı mı?',
                 'Just chat. Open Notepad', "Don't use tools. Inspect the logs",

@@ -1,4 +1,4 @@
-"""Explicit per-application UAC handoff; never elevate Quartz or automate consent."""
+"""Explicit per-application UAC handoff; never elevate SpeS or automate consent."""
 import os
 from pathlib import Path
 import shutil
@@ -68,7 +68,7 @@ def require_input_integrity(target):
     if current is None or other is None:
         raise PermissionError('İşlem yetki seviyesi doğrulanamadı; girdi gönderilmedi')
     if other > current:
-        raise PermissionError('UIPI: Hedef yönetici yetkisinde, Quartz normal yetkide. Otomatik girdi gönderilmedi; manuel kontrol gerekiyor.')
+        raise PermissionError('UIPI: Hedef yönetici yetkisinde, SpeS normal yetkide. Otomatik girdi gönderilmedi; manuel kontrol gerekiyor.')
 
 
 def token_integrity(pid):

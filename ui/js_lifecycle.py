@@ -1,4 +1,4 @@
-"""Quartz lifecycle JavaScript fragment; composed in the shared application scope."""
+"""SpeS lifecycle JavaScript fragment; composed in the shared application scope."""
 
 JAVASCRIPT = r"""  let lastUserActivityAt = Date.now();
   let lowSpecHardware = false;
@@ -170,9 +170,9 @@ JAVASCRIPT = r"""  let lastUserActivityAt = Date.now();
   }
 
   window.addEventListener('pywebviewready', async () => {
-    const welcome = appendMsg('bot', 'QUARTZ', 'Merhaba! Ben Quartz. Doğrudan Antigravity ve Codex ajanlarıyla çalışıyorum.\nÜstteki seçiciden Antigravity, Codex veya Birlikte modunu seçip mesaj gönderebilirsin.', '', 'quartz');
+    const welcome = appendMsg('bot', 'SPES', 'Merhaba! Ben SpeS. Doğrudan Antigravity ve Codex ajanlarıyla çalışıyorum.\nÜstteki seçiciden Antigravity, Codex veya Birlikte modunu seçip mesaj gönderebilirsin.', '', 'quartz');
     welcome.dataset.welcome = '1';
-    logLine('Quartz UI başlatıldı');
+    logLine('SpeS UI başlatıldı');
     await loadActiveConversation();
     pollPing();
     pollStats();

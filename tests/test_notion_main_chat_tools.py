@@ -59,7 +59,7 @@ class FakeQueue:
 
 
 class FakeCloud:
-    """Simulated Custom Agent + Worker: only acts on Quartz's own instructions."""
+    """Simulated Custom Agent + Worker: only acts on SpeS's own instructions."""
 
     def __init__(self, behaviour="honest"):
         self.behaviour, self.queue, self.messages = behaviour, None, []
@@ -109,7 +109,7 @@ class FakeRuntime:
         self.cancelled = []
 
     def configuration(self):
-        return {"workspace_id": WORKSPACE, "agent_id": AGENT, "agent_name": "Quartz"}
+        return {"workspace_id": WORKSPACE, "agent_id": AGENT, "agent_name": "SpeS"}
 
     def connection_status(self, force=False):
         return {"ready": self.ready, "checking": False, "error": "" if self.ready else "Giriş yapılmamış."}
@@ -142,7 +142,7 @@ class Harness:
         self.home = Path(self.temp.name)
         atomic_write_json(self.home / "worker-bridge.json", bridge if bridge is not None else {
             "mode": "readonly-fixture", "workspace_id": WORKSPACE, "queue_id": QUEUE,
-            "credential_target": "Quartz/Test", "main_chat": True})
+            "credential_target": "SpeS/Test", "main_chat": True})
         self.cloud = FakeCloud(behaviour)
         self.runtime = FakeRuntime(self.cloud, ready=ready)
         self.queues = []

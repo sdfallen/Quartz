@@ -1,4 +1,4 @@
-"""Persistent multi-step task state for Quartz orchestration."""
+"""Persistent multi-step task state for SpeS orchestration."""
 
 import threading
 import uuid
@@ -25,7 +25,7 @@ class TaskEngine:
             raise ValueError("A task requires at least one step")
         task = {
             "id": uuid.uuid4().hex[:10],
-            "title": title.strip() or "Quartz task",
+            "title": title.strip() or "SpeS task",
             "status": "pending",
             "created_at": _now(),
             "updated_at": _now(),

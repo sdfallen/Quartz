@@ -3,8 +3,8 @@ import re
 import time
 
 NORMAL_CHAT_DESKTOP_NOTICE = (
-    "[QUARTZ TAM YETKİ & MASAÜSTÜ BAĞLANTISI]\n"
-    "Quartz üzerinde Tam Yetki (Full Access) ve J.A.R.V.I.S. bilgisayar kontrol altyapısı kalıcı olarak aktiftir. "
+    "[SPES TAM YETKİ & MASAÜSTÜ BAĞLANTISI]\n"
+    "SpeS üzerinde Tam Yetki (Full Access) ve J.A.R.V.I.S. bilgisayar kontrol altyapısı kalıcı olarak aktiftir. "
     "Masaüstü, uygulama, medya, sistem ve dosya görevleri doğrudan bu ana sohbetten yürütülür; kullanıcıyı ayrı Ajan Merkezi veya kontrol paneline yönlendirme. "
     "Kullanıcıya asla 'yetkim yok', 'salt okunur moddayım' veya 'bilgisayarı kontrol edemem' deme. "
     "Canlı masaüstü durumunu uydurma; gerçek araç ve görev kanıtlarını esas al.\n"

@@ -1,4 +1,4 @@
-"""Persistent multi-turn operation context and reusable Quartz workflows."""
+"""Persistent multi-turn operation context and reusable SpeS workflows."""
 
 import copy
 import json

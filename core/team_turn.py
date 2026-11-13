@@ -5,12 +5,12 @@ They split the work by talking in the chat, plan and criticise the plan in front
 the user, and every team message is at most two or three sentences.
 
 Flow (one user turn):
-1. Usta (Claude, lead developer) posts the plan and who does what.
-2. Pusula (Codex) and Gözcü (Antigravity) criticise it in parallel.
-3. Usta posts the decision.
-4. Conversation turn: Usta answers. Task turn: Usta builds (single writer) while
-   Pusula prepares acceptance checks and Gözcü lists risks in parallel; then Pusula
-   and Gözcü check the result in parallel, read-only; Usta closes.
+1. Fatum (Claude, lead developer) posts the plan and who does what.
+2. Fides (Codex) and Eos (Antigravity) criticise it in parallel.
+3. Fatum posts the decision.
+4. Conversation turn: Fatum answers. Task turn: Fatum builds (single writer) while
+   Fides prepares acceptance checks and Eos lists risks in parallel; then Fides
+   and Eos check the result in parallel, read-only; Fatum closes.
 
 Planning messages are tool-less runs; only the lead's build step may write. The
 existing writer lock, Stop and evidence rules apply unchanged to every run.
@@ -118,7 +118,7 @@ class TeamTurnMixin:
     def _team_header(agent):
         others = ", ".join(f"{persona_name(a)} ({a.capitalize() if a != 'antigravity' else 'Antigravity'})"
                            for a in TEAM if a != agent)
-        return (f"Quartz ekibindesin; ekip: sen, {others} ve kullanıcı. Herkes sohbeti görüyor.\n"
+        return (f"SpeS ekibindesin; ekip: sen, {others} ve kullanıcı. Herkes sohbeti görüyor.\n"
                 + character_instruction(agent))
 
     @staticmethod
@@ -148,24 +148,24 @@ class TeamTurnMixin:
         user_block = f"\n--- KULLANICININ MESAJI ---\n{prompt}\n"
 
         # 1. Plan and work split by the lead (first bubble already belongs to Claude).
-        self._set_turn_progress("Usta planı ve iş bölümünü yazıyor…", current_msg_id=first_msg_id)
+        self._set_turn_progress("Fatum planı ve iş bölümünü yazıyor…", current_msg_id=first_msg_id)
         plan = self._team_say(cid, first_msg_id, LEAD, self._team_header(LEAD) + self._team_rules(3) + (
             "Görevin: kullanıcının isteği için kısa bir plan ve iş bölümü öner (kim ne yapacak: "
-            "Usta, Pusula, Gözcü). Sohbet sorusuysa nasıl yanıtlayacağınızı söyle.\n") + user_block,
+            "Fatum, Fides, Eos). Sohbet sorusuysa nasıl yanıtlayacağınızı söyle.\n") + user_block,
             project_id, step=1)
         if self._is_turn_cancelled(first_msg_id) or not plan:
             with self._lock:
                 self._finish_turn(first_msg_id, "failed")
             return
 
-        # 2. Pusula and Gözcü criticise the plan at the same time.
-        self._set_turn_progress("Pusula ve Gözcü planı eleştiriyor…", current_msg_id=first_msg_id)
+        # 2. Fides and Eos criticise the plan at the same time.
+        self._set_turn_progress("Fides ve Eos planı eleştiriyor…", current_msg_id=first_msg_id)
         critique_ids = {a: self._team_bubble(cid, a, 2, first_msg_id) for a in ("codex", "antigravity")}
         transcript = self._team_transcript(cid, first_msg_id)
 
         def critique(agent):
             return lambda: self._team_say(cid, critique_ids[agent], agent, self._team_header(agent) + self._team_rules(2) + (
-                "Görevin: Usta'nın planını eleştir. Katılıyorsan nedenini ve eklediğin şeyi, katılmıyorsan "
+                "Görevin: Fatum'un planını eleştir. Katılıyorsan nedenini ve eklediğin şeyi, katılmıyorsan "
                 "riski ve önerdiğin değişikliği söyle.\n") + user_block + f"\n--- EKİP SOHBETİ ---\n{transcript}\n",
                 project_id, step=2, limit=2)
         critiques = self._team_parallel({a: critique(a) for a in critique_ids})
@@ -173,7 +173,7 @@ class TeamTurnMixin:
             return
 
         # 3. The lead decides, taking the critiques into account.
-        self._set_turn_progress("Usta kararı yazıyor…", current_msg_id=first_msg_id)
+        self._set_turn_progress("Fatum kararı yazıyor…", current_msg_id=first_msg_id)
         decision_id = self._team_bubble(cid, LEAD, 3, first_msg_id)
         transcript = self._team_transcript(cid, first_msg_id)
         if chat_only:
@@ -191,8 +191,8 @@ class TeamTurnMixin:
         if self._is_turn_cancelled(first_msg_id):
             return
 
-        # 4. Build (lead, the only writer) while Pusula and Gözcü prepare in parallel.
-        self._set_turn_progress("Usta inşa ediyor; Pusula kontrolleri, Gözcü riskleri hazırlıyor…",
+        # 4. Build (lead, the only writer) while Fides and Eos prepare in parallel.
+        self._set_turn_progress("Fatum inşa ediyor; Fides kontrolleri, Eos riskleri hazırlıyor…",
                                 current_msg_id=first_msg_id)
         build_id = self._team_bubble(cid, LEAD, 4, first_msg_id)
         prep_ids = {a: self._team_bubble(cid, a, 4, first_msg_id) for a in ("codex", "antigravity")}
@@ -202,8 +202,8 @@ class TeamTurnMixin:
             "Bitince en fazla 5 cümleyle ne yaptığını ve kanıtını (test sonucu, dosyalar) yaz.\n"
             + user_block + f"\n--- EKİP KARARI ---\n{transcript}\n")
         prep_tasks = {
-            "codex": "Görevin: Usta inşa ederken bu iş için kabul kontrollerini belirle: neyi nasıl doğrulayacağız.",
-            "antigravity": "Görevin: Usta inşa ederken en önemli riskleri ve gözden kaçabilecek noktaları belirt.",
+            "codex": "Görevin: Fatum inşa ederken bu iş için kabul kontrollerini belirle: neyi nasıl doğrulayacağız.",
+            "antigravity": "Görevin: Fatum inşa ederken en önemli riskleri ve gözden kaçabilecek noktaları belirt.",
         }
         jobs = {LEAD: lambda: self._team_say(cid, build_id, LEAD, build_prompt, project_id, step=4, limit=0,
                                              tool_less=False, write=write, confirm_write=confirm_write,
@@ -220,14 +220,14 @@ class TeamTurnMixin:
                 self._finish_turn(first_msg_id, "failed")
             return
 
-        # 5. Pusula and Gözcü check the result in parallel, read-only.
-        self._set_turn_progress("Pusula ve Gözcü sonucu kontrol ediyor…", current_msg_id=first_msg_id)
+        # 5. Fides and Eos check the result in parallel, read-only.
+        self._set_turn_progress("Fides ve Eos sonucu kontrol ediyor…", current_msg_id=first_msg_id)
         check_ids = {a: self._team_bubble(cid, a, 5, first_msg_id) for a in ("codex", "antigravity")}
         transcript = self._team_transcript(cid, first_msg_id)
 
         def check(agent):
             return lambda: self._team_say(cid, check_ids[agent], agent, self._team_header(agent) + self._team_rules(3) + (
-                "Görevin: Usta'nın yaptığı işi proje dosyalarını okuyarak kontrol et; dosya yazma, komut çalıştırma. "
+                "Görevin: Fatum'un yaptığı işi proje dosyalarını okuyarak kontrol et; dosya yazma, komut çalıştırma. "
                 "Kabul kontrollerine "
                 "ve risklere göre ne gördüğünü, kanıtıyla söyle.\n") + user_block
                 + f"\n--- EKİP SOHBETİ ---\n{transcript}\n", project_id, step=5, tool_less=False,

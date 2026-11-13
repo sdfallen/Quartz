@@ -74,7 +74,7 @@ class CodexRuntimeTests(unittest.TestCase):
         self.assertEqual(fake.stdin.getvalue(), "inspect")
 
     def test_prompt_with_quotes_and_unicode_is_sent_through_stdin(self):
-        prompt = 'You are Codex. "Quartz" icin gorev: kendinizi tanitin. Türkçe.'
+        prompt = 'You are Codex. "SpeS" icin gorev: kendinizi tanitin. Türkçe.'
         fake = FakeProcess(
             '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n'
         )

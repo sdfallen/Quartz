@@ -195,7 +195,7 @@ class WorkPanelTests(unittest.TestCase):
         entries = dict(json.loads(lines[0]))
         self.assertEqual(sorted(entries), ["a", "c"])  # agent-reported paths never appear
         self.assertEqual(entries["a"]["files"], ["README.md"])
-        self.assertEqual(entries["a"]["agent"], "Usta")
+        self.assertEqual(entries["a"]["agent"], "Fatum")
         self.assertEqual(entries["a"]["check"], ["warn", "Sözdizimi doğrulandı; test kanıtı yok"])
         self.assertEqual(entries["c"]["check"], ["fail", "Kontrol başarısız"])
         self.assertEqual(lines[1], "0")  # switching conversation clears the panel

@@ -58,14 +58,14 @@ def ensure_webview2():
     root = tk.Tk()
     root.withdraw()
     try:
-        if not messagebox.askyesno("Quartz — İlk kurulum",
-                "Quartz arayüzü için Microsoft WebView2 gerekli.\n\n"
+        if not messagebox.askyesno("SpeS — İlk kurulum",
+                "SpeS arayüzü için Microsoft WebView2 gerekli.\n\n"
                 "Resmî Microsoft kurucusu indirilip bu kullanıcı için çalıştırılsın mı? "
                 "Yönetici izni istenmez. İnternet gerekir.", parent=root):
-            if messagebox.askyesno("Quartz — WebView2", "Resmî indirme sayfası açılsın mı?", parent=root):
+            if messagebox.askyesno("SpeS — WebView2", "Resmî indirme sayfası açılsın mı?", parent=root):
                 webbrowser.open(WEBVIEW_DOWNLOAD)
             return False
-        root.title("Quartz — WebView2 hazırlanıyor")
+        root.title("SpeS — WebView2 hazırlanıyor")
         root.geometry("460x130")
         root.resizable(False, False)
         root.protocol("WM_DELETE_WINDOW", lambda: None)
@@ -89,8 +89,8 @@ def ensure_webview2():
         threading.Thread(target=work, daemon=True, name="quartz-webview-install").start()
         root.deiconify(); root.after(100, poll); root.mainloop()
         if not result.get("ok"):
-            messagebox.showerror("Quartz — Kurulum tamamlanamadı",
-                                 "WebView2 kurulamadı veya doğrulanamadı. Quartz'ı yeniden açarak "
+            messagebox.showerror("SpeS — Kurulum tamamlanamadı",
+                                 "WebView2 kurulamadı veya doğrulanamadı. SpeS'i yeniden açarak "
                                  "tekrar deneyebilir ya da resmî Microsoft sayfasından kurabilirsiniz.", parent=root)
             webbrowser.open(WEBVIEW_DOWNLOAD)
         return bool(result.get("ok"))

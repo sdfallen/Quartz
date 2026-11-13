@@ -3,14 +3,14 @@
 Same record contract as :class:`core.codex_runtime.CodexRuntime` so chat,
 writer evidence, Stop and shutdown treat both agents alike. Every run is
 locked down on the command line and then PROVEN from the CLI's own ``init``
-event: the tool list and MCP server list must equal what Quartz asked for,
+event: the tool list and MCP server list must equal what SpeS asked for,
 otherwise the process tree is stopped before the model can act.
 
 Lock-down (verified on Claude Code 2.1.318):
 - ``--tools`` / ``--allowedTools``: exact built-in tool set per sandbox mode;
   the default set (30 tools, incl. SendMessage, scheduling, web, artifacts) is
   never used.
-- ``--strict-mcp-config --mcp-config``: only Quartz's MCP servers (none yet).
+- ``--strict-mcp-config --mcp-config``: only SpeS's MCP servers (none yet).
 - ``--setting-sources ""``: user/project/local settings and their hooks are
   not loaded. ``--bare`` is NOT used: it disables OAuth (subscription) login.
 - ``--permission-mode dontAsk``: anything not pre-approved is refused.
@@ -178,7 +178,7 @@ class ClaudeRuntime(CodexRuntime):
             raise ValueError("Claude prompt is too long")
         expected_tools = self.tools_for(sandbox)
         if desktop_connection is not None or tool_guard or project_read:
-            # Desktop/observer/project-read profiles need Quartz's MCP servers
+            # Desktop/observer/project-read profiles need SpeS's MCP servers
             # and guards; until they are wired for Claude they are refused.
             raise PermissionError("Claude does not run desktop, observer or project-read profiles yet")
         project = Path(project_path).resolve(strict=True)
@@ -288,7 +288,7 @@ class ClaudeRuntime(CodexRuntime):
             "exit_code": extra.get("exit_code"), "message": message})
 
     def _refuse_profile(self, record, event):
-        """Return a refusal message when the CLI did not load exactly what Quartz asked for."""
+        """Return a refusal message when the CLI did not load exactly what SpeS asked for."""
         tools = sorted(str(t) for t in (event.get("tools") or []))
         servers = [s.get("name") if isinstance(s, dict) else str(s) for s in (event.get("mcp_servers") or [])]
         if tools != record["_expected_tools"]:

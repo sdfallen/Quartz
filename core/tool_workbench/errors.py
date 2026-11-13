@@ -1,6 +1,6 @@
 """
 core/tool_workbench/errors.py
-Explicit typed exceptions for Quartz Tool Workbench.
+Explicit typed exceptions for SpeS Tool Workbench.
 """
 
 from __future__ import annotations

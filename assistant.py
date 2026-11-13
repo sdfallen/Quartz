@@ -1,5 +1,5 @@
 """
-assistant.py  —  Quartz
+assistant.py  —  SpeS
 Fixed:
   - History save race condition (lock)
   - Intent hint collision (Spotify vs YouTube)
@@ -165,7 +165,7 @@ def _extract_query(text: str,
 # ── System prompt (compact) ───────────────────────────
 
 SYSTEM_PROMPT = (
-    "You are Quartz, a powerful AI desktop "
+    "You are SpeS, a powerful AI desktop "
     "assistant running on Windows.\n\n"
 
     "CRITICAL RULES:\n"
@@ -325,7 +325,7 @@ def _locate_screen_target(target: str, window_title: str = "") -> str:
 
 
 def _screen_click_target(target: str, window_title: str = "") -> str:
-    """Locate and click a UI element after Quartz confirmation."""
+    """Locate and click a UI element after SpeS confirmation."""
     found = vision.locate_target(target, window_title)
     result = sc.mouse_click(found.x, found.y)
     return (
@@ -334,7 +334,7 @@ def _screen_click_target(target: str, window_title: str = "") -> str:
 
 
 def _analyze_window(window_title: str, question: str) -> str:
-    """Inspect only a named application window instead of the Quartz interface."""
+    """Inspect only a named application window instead of the SpeS interface."""
     return vision.analyze_window(window_title, question)
 
 
@@ -1068,7 +1068,7 @@ def _save_history(history: list) -> None:
 def _intent_hint(msg: str) -> str:
     m = msg.lower().strip()
 
-    if m in {"quartz mode", "quartz modu", "sessiz quartz mode"}:
+    if m in {"quartz mode", "quartz modu", "sessiz quartz mode", "spes mode", "spes modu", "sessiz spes mode"}:
         return "INSTRUCTION: Write this first:\nquartz_mode()"
 
     if "steam" in m or any(word in m for word in ["kütüphane", "oyununu indir"]):
@@ -1076,14 +1076,14 @@ def _intent_hint(msg: str) -> str:
             "STEAM INSTRUCTION: Managing legally owned games in the official Steam "
             "client is a normal desktop action. Prefer steam_open_library() and "
             "steam_install_game(). For visual inspection use analyze_window('Steam', "
-            "question), never analyze the Quartz chat window.")
+            "question), never analyze the SpeS chat window.")
 
     # Greetings — no hint needed
     greetings = {
         "hey", "hi", "hello", "sup", "yo",
         "merhaba", "selam", "naber",
-        "hey quartz", "hi quartz",
-        "hello quartz",
+        "hey quartz", "hi quartz", "hey spes", "hi spes",
+        "hello quartz", "hello spes",
     }
     if m in greetings:
         return ""
@@ -1103,7 +1103,7 @@ def _intent_hint(msg: str) -> str:
             skill = _extract_query(
                 m, ["install", "mcp",
                     "skill", "the",
-                    "please", "quartz"])
+                    "please", "quartz", "spes"])
             if skill:
                 return (
                     "INSTRUCTION: Write this "
@@ -1114,7 +1114,7 @@ def _intent_hint(msg: str) -> str:
             skill = _extract_query(
                 m, ["activate", "connect",
                     "mcp", "skill", "the",
-                    "please", "quartz"])
+                    "please", "quartz", "spes"])
             if skill:
                 return (
                     "INSTRUCTION: Write this "
@@ -1143,7 +1143,7 @@ def _intent_hint(msg: str) -> str:
                 "weather", "whats", "what's",
                 "what", "is", "the", "in", "for",
                 "it", "forecast", "temperature",
-                "today", "tomorrow", "quartz",
+                "today", "tomorrow", "quartz", "spes",
                 "please", "show", "tell", "me",
                 "get", "current", "outside",
                 "like", "check", "hava", "durumu",
@@ -1201,7 +1201,7 @@ def _intent_hint(msg: str) -> str:
             topic = _extract_query(
                 m, ["research", "search for",
                     "look up", "find info",
-                    "investigate", "quartz",
+                    "investigate", "quartz", "spes",
                     "please", "about",
                     "can you"])
             if topic:
@@ -1223,7 +1223,7 @@ def _intent_hint(msg: str) -> str:
                 cmd = _extract_query(
                     m, ["schedule", "task",
                         "at", t, "every",
-                        "daily", "quartz",
+                        "daily", "quartz", "spes",
                         "please", "a"])
                 return (
                     "INSTRUCTION: Write this "
@@ -1286,7 +1286,7 @@ def _intent_hint(msg: str) -> str:
 
     if "update" in m or "upgrade" in m:
         if ("yourself" in m
-                or ("quartz" in m
+                or (("quartz" in m or "spes" in m)
                     and "upgrade" in m)):
             return (
                 "INSTRUCTION: Write this "
@@ -1299,7 +1299,7 @@ def _intent_hint(msg: str) -> str:
             pname = _extract_query(
                 m, ["update", "upgrade",
                     "plugin", "the",
-                    "please", "quartz"])
+                    "please", "quartz", "spes"])
             if pname:
                 return (
                     "INSTRUCTION: Write this "
@@ -1310,7 +1310,7 @@ def _intent_hint(msg: str) -> str:
         pname = _extract_query(
             m, ["remove", "uninstall",
                 "delete", "plugin", "the",
-                "please", "quartz"])
+                "please", "quartz", "spes"])
         if pname:
             return (
                 "INSTRUCTION: Write this "
@@ -1325,7 +1325,7 @@ def _intent_hint(msg: str) -> str:
     if "rollback" in m:
         pname = _extract_query(
             m, ["rollback", "plugin",
-                "the", "please", "quartz"])
+                "the", "please", "quartz", "spes"])
         if pname:
             return (
                 "INSTRUCTION: Write this "
@@ -1384,7 +1384,7 @@ def _intent_hint(msg: str) -> str:
                     "add a note",
                     "note that", "remember",
                     "note", "please",
-                    "quartz"])
+                    "quartz", "spes"])
             if content:
                 return (
                     "INSTRUCTION: Write this "
@@ -1392,7 +1392,7 @@ def _intent_hint(msg: str) -> str:
                     f'add_note("{content}")')
         if "my name is" in m:
             name = _extract_query(
-                m, ["my name is", "quartz",
+                m, ["my name is", "quartz", "spes",
                     "remember", "please"])
             if name:
                 return (
@@ -1451,7 +1451,7 @@ def _intent_hint(msg: str) -> str:
                 'spotify_control("pause")')
         query = _extract_query(
             m, ["spotify", "play",
-                "please", "quartz"])
+                "please", "quartz", "spes"])
         if query:
             return (
                 "INSTRUCTION: Write this "
@@ -1472,7 +1472,7 @@ def _intent_hint(msg: str) -> str:
             m, ["play", "put on",
                 "on youtube", "youtube",
                 "song", "music", "video",
-                "please", "quartz",
+                "please", "quartz", "spes",
                 "can you", "for me",
                 "start playing"])
         if query:
@@ -1577,7 +1577,7 @@ def _intent_hint(msg: str) -> str:
     if "search" in m and "google" in m:
         query = _extract_query(
             m, ["search", "google", "for",
-                "please", "quartz"])
+                "please", "quartz", "spes"])
         if query:
             return (
                 "INSTRUCTION: Write this "
@@ -1874,7 +1874,7 @@ class AssistantOrchestrator:
             return "Bekleyen işlem iptal edildi."
 
         if user_message.casefold().strip() in {
-                "quartz mode", "quartz modu", "sessiz quartz mode"}:
+                "quartz mode", "quartz modu", "sessiz quartz mode", "spes mode", "spes modu", "sessiz spes mode"}:
             return self._handle_text_tool_call("quartz_mode()")
 
         normalized = user_message.casefold().strip()
@@ -2000,7 +2000,7 @@ class AssistantOrchestrator:
                 "operation. Do not refuse it merely because it concerns a game. Use "
                 "steam_open_library and steam_install_game instead of shell commands. "
                 "For other Steam UI questions, use analyze_window with window_title="
-                "'Steam'; never infer Steam state from the Quartz chat window.")
+                "'Steam'; never infer Steam state from the SpeS chat window.")
 
         if hint:
             system = system + "\n\n" + hint

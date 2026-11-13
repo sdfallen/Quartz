@@ -10,12 +10,12 @@ docs/CLAUDE_FRONTEND_REDESIGN_20261104.md.
 """
 
 # Same geometry as scripts/build_brand_assets.py; tests/test_branding.py keeps them equal.
-_MARK_FACETS = '<polygon class="f f1" points="122.00,14.00 212.07,66.00 165.30,93.00 122.00,68.00"/><polygon class="f f2" points="212.07,66.00 212.07,170.00 165.30,143.00 165.30,93.00"/><polygon class="f f3" points="212.07,170.00 122.00,222.00 122.00,168.00 165.30,143.00"/><polygon class="f f4" points="122.00,222.00 31.93,170.00 78.70,143.00 122.00,168.00"/><polygon class="f f5" points="31.93,170.00 31.93,66.00 78.70,93.00 78.70,143.00"/><polygon class="f f6" points="31.93,66.00 122.00,14.00 122.00,68.00 78.70,93.00"/><polygon class="f f7" points="122.00,122.00 152.00,106.00 236.00,222.00 200.00,240.00"/>'
+_MARK_FACETS = '<polygon class="f f1" points="72.00,164.00 72.21,159.12 72.85,154.28 73.91,149.51 75.38,144.85 77.25,140.33 79.50,136.00 82.13,131.88 85.10,128.00 88.40,124.40 92.00,121.10 95.88,118.13 100.00,115.50 104.33,113.25 108.85,111.38 113.51,109.91 118.28,108.85 123.12,108.21 128.00,108.00 132.88,108.21 137.72,108.85 142.49,109.91 147.15,111.38 151.67,113.25 156.00,115.50 160.12,118.13 164.00,121.10 167.60,124.40 170.90,128.00 173.87,131.88 176.50,136.00 178.75,140.33 180.62,144.85 182.09,149.51 183.15,154.28 183.79,159.12 184.00,164.00"/><polygon class="f f2" points="61.69,135.09 34.41,128.44 31.38,137.76 57.36,148.41"/><polygon class="f f3" points="91.34,101.64 73.19,80.22 65.26,85.98 80.02,109.87"/><polygon class="f f4" points="135.00,92.00 132.90,64.00 123.10,64.00 121.00,92.00"/><polygon class="f f5" points="175.98,109.87 190.74,85.98 182.81,80.22 164.66,101.64"/><polygon class="f f6" points="198.64,148.41 224.62,137.76 221.59,128.44 194.31,135.09"/><polygon class="f f7" points="20.00,178.00 236.00,178.00 236.00,194.00 20.00,194.00"/>'
 
 _MARK = ('<svg class="q-mark" viewBox="0 0 256 256" aria-hidden="true" focusable="false">'
          + _MARK_FACETS + '</svg>')
 _BRAND_MARK = ('<svg class="q-mark brand-icon" id="orbCore" data-state="idle" viewBox="0 0 256 256" '
-               'role="img" aria-label="Quartz" focusable="false">' + _MARK_FACETS + '</svg>')
+               'role="img" aria-label="SpeS" focusable="false">' + _MARK_FACETS + '</svg>')
 
 
 def _icon(name, size="md"):
@@ -60,7 +60,7 @@ SHELL_MARKUP = r"""
 <div class="screen-control-hud" id="screenControlHud" role="status" hidden>
   <span class="hud-dot" aria-hidden="true"></span>
   <div class="hud-meta">
-    <span class="hud-title" id="screenControlHudTitle">Quartz kontrolde</span>
+    <span class="hud-title" id="screenControlHudTitle">SpeS kontrolde</span>
     <span class="hud-sub" id="screenControlHudSub">Yalnız bu tuşla durdurulur</span>
   </div>
   <button type="button" class="hud-stop-btn" id="btnHudStopTask">@@i:stop:sm@@Görevi durdur</button>
@@ -68,16 +68,16 @@ SHELL_MARKUP = r"""
 
 <div class="app shell">
 
-  <!-- Quartz layout (7 Nov 2026, built from scratch): a slim rail, a drawer for
+  <!-- SpeS layout (7 Nov 2026, built from scratch): a slim rail, a drawer for
        conversations, and a stage where Codex and Antigravity each have a column
-       either side of the conversation with the Quartz crystal at its head. -->
-  <nav class="app-rail pywebview-drag-region" aria-label="Quartz">
+       either side of the conversation with the SpeS crystal at its head. -->
+  <nav class="app-rail pywebview-drag-region" aria-label="SpeS">
     <div class="rail-mark" id="orbWrap">@@BRAND_MARK@@</div>
     <button type="button" class="rail-btn primary" id="btnNewChat" title="Yeni sohbet başlat" aria-label="Yeni sohbet">@@i:plus@@<span class="rail-tip" aria-hidden="true">Yeni sohbet</span></button>
     <button type="button" class="rail-btn" id="btnSidebar" title="Sohbetler ve projeler (Ctrl+B)" aria-label="Sohbetler ve projeler" aria-controls="sidebar" aria-keyshortcuts="Control+B">@@i:sidebar@@<span class="rail-tip" aria-hidden="true">Sohbetler</span></button>
     <button type="button" class="rail-btn" id="btnCommand" title="Ara ve komutlar (Ctrl+K)" aria-label="Ara ve komutlar" aria-keyshortcuts="Control+K">@@i:search@@<span class="rail-tip" aria-hidden="true">Ara ve komutlar</span></button>
     <div class="rail-spacer"></div>
-    <button type="button" class="rail-btn" id="btnSelfDiagnostics" title="Quartz öz teşhisini bu sohbette başlat" aria-label="Öz teşhis">@@i:pulse@@<span class="rail-tip" aria-hidden="true">Öz teşhis</span></button>
+    <button type="button" class="rail-btn" id="btnSelfDiagnostics" title="SpeS öz teşhisini bu sohbette başlat" aria-label="Öz teşhis">@@i:pulse@@<span class="rail-tip" aria-hidden="true">Öz teşhis</span></button>
     <button type="button" class="rail-btn" id="btnPanels" title="Durum ve araç panelini aç/kapat (Ctrl+I)" aria-label="Durum ve araçlar" aria-keyshortcuts="Control+I">@@i:panel@@<span class="rail-tip" aria-hidden="true">Durum ve araçlar</span></button>
     <button type="button" class="rail-btn" id="btnPreview" title="İş panelini aç/kapat: önizleme, değişiklikler, kontroller (Ctrl+Shift+P)" aria-label="İş paneli" aria-controls="previewPane" aria-keyshortcuts="Control+Shift+P">@@i:globe@@<span class="rail-tip" aria-hidden="true">İş paneli</span></button>
     <div class="signature-mark" title="Ali Mehdi">AM</div>
@@ -86,7 +86,7 @@ SHELL_MARKUP = r"""
   <div class="drawer-scrim" id="drawerScrim"></div>
   <aside class="sidebar" id="sidebar" aria-label="Sohbetler ve projeler">
     <div class="side-head">
-      <div class="brand">QUARTZ</div>
+      <div class="brand">SpeS</div>
       <button type="button" class="icon-btn" id="btnDrawerClose" title="Kapat (Esc)" aria-label="Sohbetler panelini kapat">@@i:close:sm@@</button>
     </div>
     <div class="side-section">
@@ -118,9 +118,9 @@ SHELL_MARKUP = r"""
       </div>
       <div class="titlebar-spacer"></div>
       <div class="team-limits" id="teamLimits" role="group" aria-label="Ajan limitleri">
-        <span class="limit-chip" id="limitCodex" data-agent="codex" data-state="unknown" tabindex="0"><span class="limit-name">Pusula</span><span class="limit-meter" aria-hidden="true"><b></b></span><span class="limit-value">—</span></span>
-        <span class="limit-chip" id="limitClaude" data-agent="claude" data-state="unknown" tabindex="0"><span class="limit-name">Usta</span><span class="limit-meter" aria-hidden="true"><b></b></span><span class="limit-value">—</span></span>
-        <span class="limit-chip" id="limitAgy" data-agent="antigravity" data-state="unknown" tabindex="0"><span class="limit-name">Gözcü</span><span class="limit-meter" aria-hidden="true"><b></b></span><span class="limit-value">—</span></span>
+        <span class="limit-chip" id="limitCodex" data-agent="codex" data-state="unknown" tabindex="0"><span class="limit-name">Fides</span><span class="limit-meter" aria-hidden="true"><b></b></span><span class="limit-value">—</span></span>
+        <span class="limit-chip" id="limitClaude" data-agent="claude" data-state="unknown" tabindex="0"><span class="limit-name">Fatum</span><span class="limit-meter" aria-hidden="true"><b></b></span><span class="limit-value">—</span></span>
+        <span class="limit-chip" id="limitAgy" data-agent="antigravity" data-state="unknown" tabindex="0"><span class="limit-name">Eos</span><span class="limit-meter" aria-hidden="true"><b></b></span><span class="limit-value">—</span></span>
       </div>
       <div class="status-pill offline" id="statusPill"><span class="dot" aria-hidden="true"></span><span id="statusText">Bağlanıyor</span></div>
       <span class="squad-badge" id="squadBadge" title="Squad mesajlaşma altyapısı">Squad: Kontrol ediliyor</span>
@@ -151,7 +151,7 @@ SHELL_MARKUP = r"""
           <button type="button" class="lane-card" id="laneCodex" data-agent="codex" data-state="idle" aria-pressed="false" aria-describedby="laneCodexState">
             <span class="lane-gem" aria-hidden="true"></span>
             <span class="lane-copy">
-              <span class="lane-name">Pusula <span class="lane-agent">Codex</span></span>
+              <span class="lane-name">Fides <span class="lane-agent">Codex</span></span>
               <span class="lane-state" id="laneCodexState">Hazır</span>
             </span>
           </button>
@@ -185,7 +185,7 @@ SHELL_MARKUP = r"""
           <button type="button" class="lane-card" id="laneClaude" data-agent="claude" data-state="idle" aria-pressed="false" aria-describedby="laneClaudeState">
             <span class="lane-gem" aria-hidden="true"></span>
             <span class="lane-copy">
-              <span class="lane-name">Usta <span class="lane-agent">Claude</span></span>
+              <span class="lane-name">Fatum <span class="lane-agent">Claude</span></span>
               <span class="lane-state" id="laneClaudeState">Hazır</span>
             </span>
           </button>
@@ -229,7 +229,7 @@ SHELL_MARKUP = r"""
       <section class="empty-state" id="emptyState" aria-label="Başlangıç">
         @@MARK@@
         <h1 id="emptyGreeting">Merhaba.</h1>
-        <p>Usta, Pusula ve Gözcü burada. Birlikte modunda planı sohbette kurup işi birlikte yaparlar.</p>
+        <p>Fatum, Fides ve Eos burada. Birlikte modunda planı sohbette kurup işi birlikte yaparlar.</p>
         <div class="prompt-chips">
           <button type="button" class="prompt-chip" data-prompt="Bu projenin yapısını incele ve kısaca özetle.">Projeyi özetle</button>
           <button type="button" class="prompt-chip" data-prompt="Testleri çalıştır, başarısız olanların nedenini açıkla.">Testleri çalıştır</button>
@@ -317,7 +317,7 @@ SHELL_MARKUP = r"""
           <button type="button" class="lane-card" id="laneAgy" data-agent="antigravity" data-state="idle" aria-pressed="false" aria-describedby="laneAgyState">
             <span class="lane-gem" aria-hidden="true"></span>
             <span class="lane-copy">
-              <span class="lane-name">Gözcü <span class="lane-agent">Antigravity</span></span>
+              <span class="lane-name">Eos <span class="lane-agent">Antigravity</span></span>
               <span class="lane-state" id="laneAgyState">Hazır</span>
             </span>
           </button>
@@ -421,12 +421,12 @@ SHELL_MARKUP = r"""
           </div>
         </div>
         <div class="pref-row">
-          <span>Kristal</span>
+          <span>Vurgu</span>
           <div class="swatches" role="group" aria-label="Vurgu rengi" id="prefCrystal">
-            <button type="button" data-value="rose" title="Pembe kuvars" aria-label="Pembe kuvars"></button>
-            <button type="button" data-value="citrine" title="Sitrin" aria-label="Sitrin"></button>
-            <button type="button" data-value="amethyst" title="Ametist" aria-label="Ametist"></button>
-            <button type="button" data-value="smoky" title="Kaya kristali" aria-label="Kaya kristali"></button>
+            <button type="button" data-value="rose" title="Şafak pembesi" aria-label="Şafak pembesi"></button>
+            <button type="button" data-value="citrine" title="Umut yeşili" aria-label="Umut yeşili"></button>
+            <button type="button" data-value="amethyst" title="Lavanta" aria-label="Lavanta"></button>
+            <button type="button" data-value="smoky" title="Kül" aria-label="Kül"></button>
           </div>
         </div>
         <div class="pref-notice" id="prefNotice" role="status" hidden></div>
@@ -450,7 +450,7 @@ SHELL_MARKUP = r"""
       </section>
       <section class="card">
         <div class="card-label">Ses</div>
-        <button type="button" class="qa-btn voice-toggle" id="btnWake" title="Uyandırma kelimesi: &quot;Hey Quartz&quot;">@@i:wave@@ <span id="wakeLabel">Uyandırma kelimesi: kapalı</span></button>
+        <button type="button" class="qa-btn voice-toggle" id="btnWake" title="Uyandırma kelimesi: &quot;Hey SpeS&quot;">@@i:wave@@ <span id="wakeLabel">Uyandırma kelimesi: kapalı</span></button>
         <button type="button" class="qa-btn voice-toggle active" id="btnTts" title="Sesli yanıt aç/kapat">@@i:volume@@ <span id="ttsLabel">Sesli yanıt: açık</span></button>
       </section>
       <section class="card">
@@ -477,12 +477,12 @@ SHELL_MARKUP = r"""
       <button type="button" class="work-tab" role="tab" id="workTabChecks" data-tab="checks" aria-selected="false" aria-controls="workChecks">Kontroller <span class="work-count" id="workChecksCount"></span></button>
     </div>
     <section class="work-list" id="workChanges" role="tabpanel" aria-labelledby="workTabChanges">
-      <p class="work-note">Quartz'ın dosya sisteminde kendisinin gördüğü değişiklikler. Ajanın "değiştirdim" demesi buraya girmez.</p>
+      <p class="work-note">SpeS'in dosya sisteminde kendisinin gördüğü değişiklikler. Ajanın "değiştirdim" demesi buraya girmez.</p>
       <ol class="work-items" id="workChangesList"></ol>
       <p class="work-empty">Bu sohbette henüz doğrulanmış dosya değişikliği yok.</p>
     </section>
     <section class="work-list" id="workChecks" role="tabpanel" aria-labelledby="workTabChecks">
-      <p class="work-note">Her yazıcı turunun Quartz tarafından görülen kontrol sonucu. Kullanıcı kabulü ayrıdır.</p>
+      <p class="work-note">Her yazıcı turunun SpeS tarafından görülen kontrol sonucu. Kullanıcı kabulü ayrıdır.</p>
       <ol class="work-items" id="workChecksList"></ol>
       <p class="work-empty">Bu sohbette henüz kontrol kanıtı yok.</p>
     </section>
@@ -524,15 +524,15 @@ SHELL_MARKUP = r"""
 
 <div class="signature-intro" id="signatureIntro" aria-hidden="true">
   @@MARK@@
-  <div class="intro-brand">QUARTZ</div>
+  <div class="intro-brand">SpeS</div>
   <div class="intro-credit">CREATED BY <strong>ALI MEHDI</strong></div>
 </div>
 
 <div class="api-setup" id="cliSetup" role="dialog" aria-modal="true" aria-labelledby="cliWelcome">
   <div class="api-panel wide">
     <div class="panel-mark">@@MARK@@</div>
-    <h2 id="cliWelcome">Quartz'a Hoş Geldiniz</h2>
-    <p>Tek bir hesapla başlayabilirsiniz. Codex veya Antigravity masaüstü uygulaması gerekmez. Hafif CLI araçlarını Quartz sizin için kurar.</p>
+    <h2 id="cliWelcome">SpeS'e Hoş Geldiniz</h2>
+    <p>Tek bir hesapla başlayabilirsiniz. Codex veya Antigravity masaüstü uygulaması gerekmez. Hafif CLI araçlarını SpeS sizin için kurar.</p>
     <label for="cliProvider">Bağlantı</label>
     <select id="cliProvider"><option value="codex">Codex / OpenAI</option><option value="gemini">Gemini / Google</option></select>
     <div id="cliProviderState" class="log-box" aria-live="polite">Bağlantılar kontrol ediliyor…</div>
@@ -550,13 +550,13 @@ SHELL_MARKUP = r"""
       <button type="button" class="control-btn" id="cliLater">Şimdi değil</button>
       <button type="button" class="api-submit" id="cliContinue" disabled>Sohbete geç</button>
     </div>
-    <p class="privacy-note">Anahtar .env dosyasında; yalnız bağlantı bilgisi Quartz belleğinde tutulur. Sohbete ve günlüklere anahtar yazılmaz. Kurulum Quartz'a özel klasördedir; sistem PATH ayarı değişmez.</p>
+    <p class="privacy-note">Anahtar .env dosyasında; yalnız bağlantı bilgisi SpeS belleğinde tutulur. Sohbete ve günlüklere anahtar yazılmaz. Kurulum SpeS'e özel klasördedir; sistem PATH ayarı değişmez.</p>
   </div>
 </div>
 
 <div class="api-setup" id="apiSetup" role="dialog" aria-modal="true" aria-labelledby="apiSetupTitle">
   <div class="api-panel">
-    <h2 id="apiSetupTitle">Quartz bağlantısı</h2>
+    <h2 id="apiSetupTitle">SpeS bağlantısı</h2>
     <p>Asistanı kullanmaya başlamak için API anahtarını bir kez doğrula. Sonraki açılışlarda bu ekran tekrar gösterilmez.</p>
     <label for="apiProvider">Sağlayıcı</label>
     <select id="apiProvider">

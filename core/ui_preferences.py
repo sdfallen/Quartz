@@ -12,7 +12,7 @@ ALLOWED = {"theme": ("dark", "light", "system"), "crystal": ("rose", "citrine", 
 
 def preferences_path() -> Path:
     base = os.environ.get("LOCALAPPDATA") or str(Path.home())
-    return Path(base) / "Quartz" / "ui-preferences.json"
+    return Path(base) / "Quartz" / "ui-preferences.json"  # folder name kept: holds saved preferences
 
 
 def load_ui_preferences(path=None) -> dict:
@@ -40,4 +40,4 @@ def apply_to_document(html: str, path=None) -> str:
 
 
 def window_background(path=None) -> str:
-    return "#f7f3fd" if load_ui_preferences(path)["theme"] == "light" else "#130e1f"
+    return "#f5f6f3" if load_ui_preferences(path)["theme"] == "light" else "#121416"

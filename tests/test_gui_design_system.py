@@ -93,7 +93,7 @@ class PreferenceTests(unittest.TestCase):
         self.assertEqual(ui_preferences.load_ui_preferences(self.path), {"theme": "light", "crystal": "amethyst"})
         html = ui_preferences.apply_to_document(gui._HTML, self.path)
         self.assertIn('<html lang="tr" data-theme="light" data-crystal="amethyst">', html)
-        self.assertEqual(ui_preferences.window_background(self.path), "#f7f3fd")
+        self.assertEqual(ui_preferences.window_background(self.path), "#f5f6f3")
 
     def test_simultaneous_saves_keep_both_values(self):
         import threading

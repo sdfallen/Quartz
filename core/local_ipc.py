@@ -1,6 +1,6 @@
 """Same-process GUI/backend IPC capability. Never written to disk or UI logs.
 
-Quartz's entrypoint loads both components in one process. Independently started
+SpeS's entrypoint loads both components in one process. Independently started
 legacy clients have no capability; use quartz_entry.py rather than separate
 main.py/gui.py processes. This is not isolation from a compromised same-user OS.
 """

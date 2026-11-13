@@ -65,7 +65,7 @@ def project_question(text, project_names=()):
     Only a routing hint for a read-only, project-scoped turn: it never grants
     write, shell side effects, desktop input or network. Explicit "no tools"
     requests and withdrawn requests stay plain conversation. ``project_names``
-    (the selected project's name/folder) lets "Quartz nasıl çalışıyor?" count.
+    (the selected project's name/folder) lets "SpeS nasıl çalışıyor?" count.
     """
     value = instruction_text(text).strip()
     if not value or tools_disallowed(value) or request_withdrawn(value):

@@ -1,6 +1,6 @@
 """
 quartz_entry.py
-Main entry point for Quartz exe.
+Main entry point for SpeS exe.
 Starts backend + GUI together.
 Shows in taskbar.
 """
@@ -90,7 +90,7 @@ def start_gui():
             root = tk.Tk()
             root.withdraw()
             messagebox.showerror(
-                "Quartz Error",
+                "SpeS Error",
                 f"Failed to start GUI:\n{e}\n\n"
                 f"Check quartz_entry.log for details."
             )
@@ -138,7 +138,7 @@ if __name__ == "__main__":
         run_overlay_child()
         sys.exit(0)
     log("=" * 40)
-    log("Quartz Entry Point Started")
+    log("SpeS Entry Point Started")
     log(f"BASE_DIR: {BASE_DIR}")
     log(f"Frozen: {getattr(sys, 'frozen', False)}")
 
@@ -150,4 +150,4 @@ if __name__ == "__main__":
     backend_thread = start_backend_thread()
     app = start_gui()
     finish_backend(backend_thread, app)
-    log("Quartz Exit")
+    log("SpeS Exit")

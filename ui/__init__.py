@@ -1,4 +1,4 @@
-"""Quartz frontend resources and document assembly.
+"""SpeS frontend resources and document assembly.
 
 Every resource in this package is a Python module, not a data file, so a
 PyInstaller build that imports ``gui`` picks it up through normal import

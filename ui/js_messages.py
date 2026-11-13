@@ -1,4 +1,4 @@
-"""Quartz messages JavaScript fragment; composed in the shared application scope."""
+"""SpeS messages JavaScript fragment; composed in the shared application scope."""
 
 JAVASCRIPT = r"""  let ttsEnabled = true;
 
@@ -100,7 +100,7 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     });
   }
 
-  const TEAM_PERSONA = {claude: 'USTA', codex: 'ATLAS', antigravity: 'VISION'};
+  const TEAM_PERSONA = {claude: 'FATUM', codex: 'FIDES', antigravity: 'EOS'};
   const TEAM_STEP = {1: 'Plan', 2: 'Eleştiri', 3: 'Karar', 4: 'Hazırlık', 5: 'Kontrol', 6: 'Kapanış'};
   function teamStepLabel(m) {
     const meta = (m && m.metadata) || {};
@@ -108,7 +108,7 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     return meta.team_step === 4 && (m.sender || meta.sender) === 'claude' ? 'İnşa' : TEAM_STEP[meta.team_step];
   }
   function formatMessageLabel(m) {
-    if (!m) return 'QUARTZ';
+    if (!m) return 'SPES';
     if (m.metadata && m.metadata.team && TEAM_PERSONA[(m.sender || m.metadata.sender || '').toLowerCase()]) {
       const agent = (m.sender || m.metadata.sender).toLowerCase();
       return `${TEAM_PERSONA[agent]} · ${agent === 'antigravity' ? 'ANTIGRAVITY' : agent.toUpperCase()}`;
@@ -192,7 +192,7 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
         if (meta.host_evidence?.historical) state = 'Önceki oturumun kaynak kanıtı: ' + state;
       } else if (meta.natural_task && meta.host_check?.status === 'OBSERVED UI CRITERION VERIFIED'
                  && Array.isArray(meta.host_check.expected_text) && meta.host_check.expected_text.length) {
-        state = 'İstenen metin Quartz gözlemiyle ekranda görüldü; kullanıcı kabulü ayrı.';
+        state = 'İstenen metin SpeS gözlemiyle ekranda görüldü; kullanıcı kabulü ayrı.';
         [tone, label] = ['ok', 'Ekranda görüldü'];
       } else if (meta.review_scope || meta.natural_task) {
         state = 'Yürütme bitti, hedef henüz doğrulanmadı.';
@@ -210,7 +210,7 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     return {summary, details, state, tone, label, open:detailLevel === 'technical'};
   }
 
-  // Typing reveal for agent text that arrives while Quartz is open. History
+  // Typing reveal for agent text that arrives while SpeS is open. History
   // (first load, conversation switch) appears at once; a growing streamed
   // message continues from what is already visible. Off under reduced motion
   // (low-spec keeps it: one rAF loop over text nodes); the full text is always in the DOM model it is rebuilt from.
@@ -252,7 +252,7 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       if (target.parentNode) target.parentNode.insertBefore(caret, target.nextSibling);
     };
     const finish = () => { caret.remove(); for (const block of blocks) block.classList.remove('reveal-pending'); };
-    // A timer, not requestAnimationFrame: WebView2 stops frames while Quartz is
+    // A timer, not requestAnimationFrame: WebView2 stops frames while SpeS is
     // covered (e.g. by the app an agent is driving) and the text must not wait for
     // that. Progress follows elapsed time; a hidden window gets the whole text.
     let last = performance.now();
@@ -838,7 +838,7 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
 
   function renderResponse(resp) {
     renderUiEvents(resp.ui_events || []);
-    if (resp.status === 'ok') appendMsg('bot', 'QUARTZ', resp.data);
+    if (resp.status === 'ok') appendMsg('bot', 'SPES', resp.data);
     else appendMsg('err', 'HATA', resp.data || 'Bilinmeyen hata');
   }
 
