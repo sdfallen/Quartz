@@ -33,7 +33,11 @@ class FinishReportTests(unittest.TestCase):
         for text in ("Giriş sayfasını yap, bitince haber ver", "Testleri çalıştır tamamlanınca beni ara",
                      "iş bitince bildir", "Bitirdiğinde bana rapor ver"):
             self.assertTrue(wants_finish_report(text), text)
-        for text in ("Merhaba", "Bu ne zaman biter?", "Haber programını aç"):
+        # Live 14 Nov: plural and words in between were missed.
+        for text in ("Hesap Makinesi Kodu Yazın ve bitirdiğinizde rapor verin", "Bitince sonuna bitirdiğinde rapor ver",
+                     "bitince bana kısa bir rapor ver", "tamamladığınızda beni arayın"):
+            self.assertTrue(wants_finish_report(text), text)
+        for text in ("Merhaba", "Bu ne zaman biter?", "Haber programını aç", "bitince arabaya bineceğim"):
             self.assertFalse(wants_finish_report(text), text)
 
     def test_facts_come_from_host_evidence_and_stored_messages(self):
@@ -62,6 +66,59 @@ class FinishReportTests(unittest.TestCase):
         text = build_context(state)
         self.assertIn("SpeS GÖREV RAPORU", text)
         self.assertGreater(len(text.split("SpeS GÖREV RAPORU: ")[1]), 240)
+
+
+class VoiceRepeatTests(unittest.TestCase):
+    def test_same_answer_to_a_new_question_goes_to_the_team(self):
+        from core.voice_front import VoiceFront
+        said = "Fides hesap makinesini yazdı ve 12 artı 3 hesabını doğruladı."
+        front = VoiceFront(api_key="k", post=lambda body: {"choices": [{"message": {"content": said}}]})
+        history = [{"q": "Ne oldu?", "a": said}]
+        state = {"busy": False, "messages": []}
+        self.assertEqual(front.answer("Hangi tarayıcıda açıldı?", state, history)["reason"], "repeat")
+        self.assertEqual(front.answer("Ne oldu?", state, history)["route"], "answered")  # same question, same answer
+        seen = []
+        VoiceFront(api_key="k", post=lambda body: seen.append(body) or {"choices": [{"message": {"content": "Tamam."}}]}
+                   ).answer("Peki?", state, history)
+        self.assertEqual([m["role"] for m in seen[0]["messages"]], ["system", "user", "assistant", "user"])
+
+
+class DesktopTaskReportTests(unittest.TestCase):
+    """Desktop (bilgisayar kontrolü) tasks end in coordination_message, not in the chat turn."""
+
+    def chat_with_task(self, directory, request, status, final=True):
+        from tests.test_team_turn import make_chat
+        chat = make_chat(directory)
+        cid = chat.store.get_active()["id"]
+        chat.coordination_message(cid, "user", request, {})
+        chat.coordination_message(cid, "quartz", "Görev başladı.", {"natural_task": "t1", "task_status": "running"})
+        chat.coordination_message(cid, "codex", "HesapMakinesi.html kaydedildi, 12 + 3 = 15 görüldü.",
+                                  {"natural_task": "t1", "task_status": "running"})
+        meta = {"natural_task": "t1", "task_status": status,
+                "host_check": {"status": "OBSERVED UI CRITERION VERIFIED"}}
+        if final:
+            meta["final"] = True
+        chat.coordination_message(cid, "quartz", "Ajan yürütmesi tamamlandı.", meta)
+        chat.coordination_message(cid, "quartz", "Ajan yürütmesi tamamlandı.", meta)  # never twice
+        time.sleep(.4)
+        messages = chat.store.get(cid)["messages"]
+        chat._diagnostics.close()
+        return [m for m in messages if (m.get("metadata") or {}).get("report")]
+
+    def test_desktop_task_with_the_request_rings_once(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"NVIDIA_API_KEY": ""}):
+            reports = self.chat_with_task(directory, "Hesap makinesi yaz, bitirdiğinizde rapor verin", "completed")
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(reports[0]["metadata"]["notify"], "call")
+        self.assertIn("ekranda SpeS gözlemiyle görüldü", reports[0]["content"])
+        self.assertIn("Fides:", reports[0]["content"])
+
+    def test_no_report_without_request_on_stop_or_before_the_end(self):
+        for request, status, final in (("Hesap makinesi yaz", "completed", True),
+                                       ("Hesap makinesi yaz, bitince haber ver", "cancelled", True),
+                                       ("Hesap makinesi yaz, bitince haber ver", "completed", False)):
+            with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"NVIDIA_API_KEY": ""}):
+                self.assertEqual(self.chat_with_task(directory, request, status, final), [], (request, status, final))
 
 
 class ChatIntegrationTests(unittest.TestCase):

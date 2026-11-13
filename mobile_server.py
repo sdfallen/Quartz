@@ -69,6 +69,8 @@ class MobileGateway:
         self._agent_chat = agent_chat
         self._pair = None  # [code, expires_at, failures]; one at a time, single use
         self._pair_lock = threading.Lock()
+        self._voice_lock = threading.Lock()
+        self._voice_history = []  # last spoken exchanges, memory only
         self.host, self.port = host, port
         self._server = None
         self._attempts = defaultdict(deque)
@@ -144,7 +146,15 @@ class MobileGateway:
         """Voice mode: a fast spoken answer from the visible state, or the question goes to the team."""
         from core.voice_front import VoiceFront
         state = self.snapshot(0)
-        result = (front or VoiceFront()).answer(text, state)
+        cid = (state.get("conversation") or {}).get("id")
+        with self._voice_lock:
+            # Spoken exchanges of the last 10 minutes in this conversation (memory only).
+            history = [h for h in self._voice_history if h["cid"] == cid and time.time() - h["at"] < 600]
+        result = (front or VoiceFront()).answer(text, state, history)
+        with self._voice_lock:
+            if result.get("route") == "answered":
+                history.append({"cid": cid, "at": time.time(), "q": text, "a": result["reply"]})
+            self._voice_history = history[-3:]
         # Diagnosable fallback: route, reason and time only, never the question.
         log.info("Mobile voice route=%s reason=%s seconds=%s", result.get("route"), result.get("reason", ""),
                  result.get("seconds", ""))

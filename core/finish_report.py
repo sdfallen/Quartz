@@ -15,12 +15,17 @@ import re
 
 from core.voice_front import VoiceFront, _clean
 
+# Singular and plural ("bitirdiğinizde rapor verin"), with a few words between
+# ("bitince bana kısa bir rapor ver"). Live 14 Nov: the plural form was missed.
 _NOTIFY = re.compile(
-    r"(?:bitince|bittiğinde|bitirince|bitirdiğinde|tamamlanınca|tamamlandığında|tamamlayınca|sonunda|iş bitince|"
-    r"görev bitince|bitti(?:ği)?\s*zaman)\s*,?\s*(?:bana\s+|beni\s+)?"
-    r"(?:haber\s+ver|bildir|ara\b|arayın|arayın|söyle|haberdar\s+et|rapor\s+ver|uyar)", re.IGNORECASE)
+    r"(?:bitince|bittiğinde|bitirince|bitirdiğinde|bitirdiğinizde|bitirdikten\s+sonra|tamamlanınca|tamamlandığında|"
+    r"tamamlayınca|tamamladığında|tamamladığınızda|iş\s+bitince|görev\s+bitince|bitti(?:ği)?\s*zaman|sonunda)"
+    r"[\s,]+(?:[^\s.!?]+\s+){0,3}?"
+    r"(?:haber\s+ver(?:in)?|bildir(?:in)?|ara(?:yın)?\b|söyle(?:yin)?|haberdar\s+edin?|rapor\s+ver(?:in)?|"
+    r"rapor\s+çıkar(?:ın)?|uyar(?:ın)?)", re.IGNORECASE)
 
-STATUS_TR = {"completed": "tamamlandı", "partial": "kısmen tamamlandı", "failed": "başarısız oldu"}
+STATUS_TR = {"completed": "tamamlandı", "partial": "kısmen tamamlandı", "failed": "başarısız oldu",
+             "expired": "süresi doldu", "permission denied": "izin verilmediği için durdu"}
 PERSONA = {"claude": "Fatum", "codex": "Fides", "antigravity": "Eos", "gemini": "Eos"}
 REPORT_SYSTEM = (
     "Sen SpeS'in rapor yazarısın. Aşağıdaki GÖREV bilgisinden Türkçe, sesli okunacak kısa bir görev raporu yaz.\n"
@@ -53,7 +58,12 @@ def collect_facts(messages: list, user_message_id: str, status: str) -> dict:
         files.update(str(f) for f in ev.get("files_changed") or [])
         verdict = (meta.get("outcome") or {}).get("goal_verdict")
         source = (ev.get("source_validation") or {}).get("status")
-        if verdict or source:
+        observed = (meta.get("host_check") or {}).get("status") if isinstance(meta.get("host_check"), dict) else None
+        if observed:
+            # Desktop task: SpeS itself saw the requested text on screen.
+            checks.append("istenen metin ekranda SpeS gözlemiyle görüldü" if "VERIFIED" in str(observed)
+                          else "ekran gözlemi doğrulanmadı")
+        elif verdict or source:
             label = ("hedef doğrulandı" if verdict == "VERIFIED" else
                      "kontrol başarısız" if source == "FAILED" or verdict == "FAILED" else
                      "sözdizimi doğrulandı, test kanıtı yok" if source == "VERIFIED" else "bağımsız kanıt yok")
@@ -61,9 +71,9 @@ def collect_facts(messages: list, user_message_id: str, status: str) -> dict:
         if meta.get("status") == "failed" or meta.get("error"):
             failed.append(who)
         text = _clean(message.get("content"), 300)
-        if text:
+        if text and who != "SpeS":  # SpeS's own status lines are already in "status"
             lines.append(f"{who}: {text}")
-    return {"request": _clean(request, 300), "status": STATUS_TR.get(status, status),
+    return {"request": _clean(request, 300), "status": STATUS_TR.get(status, "durdu, hedef tamamlanmadı"),
             "files": len(files), "checks": checks[-4:], "failed": sorted(set(failed)), "last": lines[-4:]}
 
 
