@@ -27,7 +27,8 @@ class TeamRun:
     def _record(self, agent, kwargs):
         with self.lock:
             self.calls.append({"agent": agent, "tool_less": kwargs.get("tool_less", False), "project_scope": kwargs.get("project_scope", False),
-                               "write": kwargs.get("write", False), "step": (kwargs.get("base_meta") or {}).get("team_step")})
+                               "write": kwargs.get("write", False), "step": (kwargs.get("base_meta") or {}).get("team_step"),
+                               "prompt": kwargs.get("prompt", ""), "web": kwargs.get("web", False)})
             self.active["now"] += 1
             self.active["max"] = max(self.active["max"], self.active["now"])
         time.sleep(0.05)
@@ -36,11 +37,11 @@ class TeamRun:
         return self.reply
 
     def codex(self, cid, mid, prompt, project_id, write, confirm_write, **kwargs):
-        kwargs["write"] = write
+        kwargs["write"] = write; kwargs["prompt"] = prompt
         return self._record(kwargs.get("agent", "codex"), kwargs)
 
     def agy(self, cid, mid, prompt, project_id, write, confirm_write, **kwargs):
-        kwargs["write"] = write
+        kwargs["write"] = write; kwargs["prompt"] = prompt
         return self._record("antigravity", kwargs)
 
     def run(self, text, **send_kwargs):
@@ -76,7 +77,7 @@ class PersonaTests(unittest.TestCase):
 
 
 class TeamTurnTests(unittest.TestCase):
-    def test_conversation_turn_is_plan_parallel_critique_and_answer(self):
+    def test_small_talk_to_the_team_is_short_and_has_no_plan(self):
         with tempfile.TemporaryDirectory() as directory:
             chat = make_chat(directory)
             run = TeamRun(chat)
@@ -84,17 +85,73 @@ class TeamTurnTests(unittest.TestCase):
             chat._diagnostics.close()
             messages = chat.store.get(turn["conversation_id"])["messages"]
         steps = [(c["agent"], c["step"]) for c in run.calls]
-        self.assertEqual(steps[0], ("claude", 1))
-        self.assertEqual(sorted(steps[1:3]), [("antigravity", 2), ("codex", 2)])
-        self.assertEqual(steps[3], ("claude", 3))
-        self.assertEqual(len(steps), 4)
+        self.assertEqual(steps[0], ("claude", 0))
+        self.assertEqual(sorted(steps[1:]), [("antigravity", 0), ("codex", 0)])
         self.assertTrue(all(c["tool_less"] and not c["write"] for c in run.calls))
-        self.assertGreaterEqual(run.active["max"], 2, "critiques must run in parallel")
+        self.assertGreaterEqual(run.active["max"], 2, "teammates answer in parallel")
         team = [m for m in messages if (m.get("metadata") or {}).get("team")]
-        self.assertEqual([m["metadata"]["persona"] for m in team], ["Fatum", "Fides", "Eos", "Fatum"])
-        plan = team[0]["content"]
-        self.assertLessEqual(plan.count("."), 3, "planning messages are clamped to three sentences")
+        self.assertEqual([m["metadata"]["persona"] for m in team], ["Fatum", "Fides", "Eos"])
+        for message in team:
+            self.assertLessEqual(len(message["content"]), 2 * 110 + 1, "chat replies stay text-message short")
+        self.assertTrue(all("SOHBET MODU" in c["prompt"] for c in run.calls))
         self.assertIn(turn["status"], {"completed", "running"})
+
+    def test_the_team_remembers_earlier_turns(self):
+        for second, kwargs in (("Adım neydi?", {}),
+                               ("Bir giriş sayfası yap", {"write": True, "confirm_write": True, "full_access": True})):
+            with self.subTest(second=second), tempfile.TemporaryDirectory() as directory:
+                chat = make_chat(directory)
+                run = TeamRun(chat)
+                run.run("Benim adım Ali, bunu hatırla")
+                first_calls = len(run.calls)
+                run.run(second, **kwargs)
+                chat._diagnostics.close()
+                later = run.calls[first_calls:]
+                self.assertTrue(later)
+                for call in later:
+                    self.assertIn("Kullanıcı: Benim adım Ali, bunu hatırla", call["prompt"])
+                    self.assertIn("Fatum: Kısa bir cümle.", call["prompt"])
+                    self.assertEqual(call["prompt"].count(second), 1, "the new message is not repeated in the history")
+
+    def test_history_uses_persona_names_and_drops_errors_and_details(self):
+        from core.team_turn import team_history
+        messages = [
+            {"id": "1", "role": "user", "sender": "user", "content": "Selam"},
+            {"id": "2", "role": "assistant", "sender": "codex", "content": "Merhaba\n---TEKNIK_AYRINTILAR---\nrun 77"},
+            {"id": "3", "role": "assistant", "sender": "antigravity", "content": "Traceback", "metadata": {"status": "failed"}},
+            {"id": "4", "role": "assistant", "sender": "claude", "content": "x" * 900},
+            {"id": "5", "role": "user", "sender": "user", "content": "şimdiki"},
+        ]
+        text = team_history(messages, exclude_ids={"5"})
+        self.assertEqual(text.splitlines()[:2], ["Kullanıcı: Selam", "Fides: Merhaba"])
+        self.assertNotIn("Traceback", text)
+        self.assertNotIn("run 77", text)
+        self.assertNotIn("şimdiki", text)
+        self.assertLess(len(text.splitlines()[2]), 380)
+
+    def test_only_the_lead_may_search_the_web_and_never_while_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            chat = make_chat(directory)
+            run = TeamRun(chat)
+            run.run("Bugün İstanbul'da hava nasıl beyler?")
+            chat_calls = list(run.calls)
+            run.run("Bir giriş sayfası yap", write=True, confirm_write=True, full_access=True)
+            chat._diagnostics.close()
+        self.assertEqual([(c["agent"], c["web"]) for c in chat_calls],
+                         [("claude", True), ("codex", False), ("antigravity", False)])
+        self.assertIn("yalnız arama", chat_calls[0]["prompt"])
+        task_calls = run.calls[len(chat_calls):]
+        searching = [(c["agent"], c["step"]) for c in task_calls if c["web"]]
+        self.assertEqual(searching, [("claude", 1)])
+        self.assertFalse(any(c["web"] and c["write"] for c in run.calls))
+
+    def test_who_answers_small_talk(self):
+        from core.team_turn import addressed_agents
+        self.assertEqual(addressed_agents("Merhaba"), ["claude"])
+        self.assertEqual(addressed_agents("selam beyler"), ["claude", "codex", "antigravity"])
+        self.assertEqual(addressed_agents("Eos sen ne dersin?"), ["antigravity"])
+        self.assertEqual(addressed_agents("Fides ve Eos, nasılsınız?"), ["claude", "codex", "antigravity"])
+        self.assertEqual(addressed_agents("Fides bugün nasıl?"), ["codex"])
 
     def test_task_turn_only_the_lead_writes_and_checks_run_in_parallel(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -9,7 +9,9 @@ otherwise the process tree is stopped before the model can act.
 Lock-down (verified on Claude Code 2.1.318):
 - ``--tools`` / ``--allowedTools``: exact built-in tool set per sandbox mode;
   the default set (30 tools, incl. SendMessage, scheduling, web, artifacts) is
-  never used.
+  never used. The only web tool ever enabled is WebSearch, in the "web" mode
+  (team chat lead, user request 13 Nov); WebFetch stays off so a page can never
+  make the model send the conversation to an arbitrary URL.
 - ``--strict-mcp-config --mcp-config``: only SpeS's MCP servers (none yet).
 - ``--setting-sources ""``: user/project/local settings and their hooks are
   not loaded. ``--bare`` is NOT used: it disables OAuth (subscription) login.
@@ -37,6 +39,8 @@ SHELL_TOOLS = ("Bash", "PowerShell")
 TOOLS_BY_SANDBOX = {
     # Plain conversation: no tools at all (the init event must report []).
     "none": (),
+    # Conversation that may look things up: search only (verified name, CLI 2.1.323).
+    "web": ("WebSearch",),
     "read-only": READ_TOOLS,
     # No OS sandbox for Claude Code shells on Windows: file edits only.
     "workspace-write": READ_TOOLS + EDIT_TOOLS,
@@ -50,6 +54,7 @@ TOOLS_BY_SANDBOX = {
 # 13 Nov: an unscoped "Read" rule let a read-only run read another project.
 ALLOWED_BY_SANDBOX = {
     "none": (),
+    "web": ("WebSearch",),
     "read-only": (),
     "workspace-write": ("Edit(./**)",),
     # Shells can reach any path anyway; the user's "Tam yetki" choice.

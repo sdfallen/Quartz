@@ -105,11 +105,15 @@ class MobileGateway:
                 "id": message.get("id"), "seq": seq, "role": message.get("role"), "sender": sender,
                 "persona": PERSONA.get(sender.lower(), "SpeS" if sender.lower() in {"quartz", "bot", "assistant"} else ""),
                 "step": meta.get("team_step"), "text": str(message.get("content") or "")[:4000],
+                "model": str(meta.get("model") or ""),
                 "failed": meta.get("status") == "failed" or bool(meta.get("error")) or outcome.get("goal_verdict") == "FAILED",
             })
         if after <= 0:
             rows = rows[-MAX_MESSAGES:]
+        progress = turn.get("agent_progress") or {}
+        working = sorted(a for a, v in progress.items() if isinstance(v, dict) and v.get("status") in {"running", "working", "started"})
         return {"conversation": {"id": conv.get("id"), "title": conv.get("title") or "Sohbet"},
+                "mode": conv.get("agent") or "collaboration", "working": [PERSONA.get(a, a) for a in working],
                 "busy": bool(turn.get("active")), "status": turn.get("status") or "idle",
                 "progress": str((turn.get("metadata") or {}).get("progress_step") or ""),
                 "last_seq": last_seq, "messages": rows}
@@ -155,6 +159,100 @@ class MobileGateway:
                 self._pair = None
             return None
 
+    # -- desktop features for the app (v0.2) ---------------------------------
+    @staticmethod
+    def _evidence(messages):
+        """Host-observed changes and checks only (metadata.host_evidence), like the desktop work panel."""
+        changes, checks = {}, []
+        for index, message in enumerate(messages):
+            meta = message.get("metadata") or {}
+            ev = meta.get("host_evidence")
+            if not isinstance(ev, dict):
+                continue
+            sender = str(meta.get("sender") or message.get("sender") or "").lower()
+            who = PERSONA.get(sender, "SpeS")
+            seq = int(message.get("sequence") or meta.get("sequence") or index + 1)
+            files = [str(f) for f in ev.get("files_changed") or []][:50]
+            for name in files:
+                changes[name] = {"file": name, "persona": who, "seq": seq}
+            status = (ev.get("source_validation") or {}).get("status")
+            verdict = (meta.get("outcome") or {}).get("goal_verdict")
+            if status or verdict:
+                if verdict == "VERIFIED": tone, label = "ok", "Hedef doğrulandı"
+                elif status == "FAILED": tone, label = "fail", "Kontrol başarısız"
+                elif status == "VERIFIED": tone, label = "warn", "Sözdizimi doğrulandı; test kanıtı yok"
+                else: tone, label = "warn", "Bağımsız kanıt yok"
+                checks.append({"label": label, "tone": tone, "persona": who, "seq": seq, "files": len(files)})
+        return {"changes": list(changes.values())[-50:], "checks": checks[-30:]}
+
+    def overview(self):
+        """Everything the app's Team and Work tabs show; heavier than /api/state, fetched on demand."""
+        chat = self._chat()
+        status = chat.status()
+        conv = status.get("active_conversation") or {}
+        catalog = status.get("models") or {}
+        selected = conv.get("models") or {}
+        agents = {}
+        for agent in ("claude", "codex", "antigravity"):
+            entry = catalog.get(agent) or {}
+            chosen = selected.get(agent) or {}
+            agents[agent] = {
+                "persona": PERSONA[agent],
+                "model": chosen.get("model") or entry.get("default_model") or "",
+                "effort": chosen.get("effort") or entry.get("default_effort") or "",
+                "models": [str(m.get("id")) for m in entry.get("models") or [] if isinstance(m, dict) and m.get("id")][:30],
+                "efforts": [str(e) for e in entry.get("efforts") or []][:10],
+            }
+        try:
+            from core.agent_limits import snapshot as limits_snapshot
+            limits = limits_snapshot()
+        except Exception:
+            limits = {}
+        health = status.get("environment_health") or {}
+        warnings = [{"title": str(c.get("summary_tr") or c.get("id") or ""), "fix": str(c.get("fix_tr") or "")}
+                    for c in health.get("checks") or [] if isinstance(c, dict) and c.get("status") not in {"ok", "pass"}][:8]
+        projects, project = [], {}
+        try:
+            registry = chat.agent_service.projects
+            projects = [{"id": p.get("id"), "name": p.get("name")} for p in registry.list()][:50]
+            pid = conv.get("project_id")
+            project = next((p for p in projects if p["id"] == pid), {})
+        except Exception:
+            pass
+        return {"mode": conv.get("agent") or "collaboration", "conversation": {"id": conv.get("id"), "title": conv.get("title") or "Sohbet"},
+                "project": project, "projects": projects, "agents": agents, "limits": limits,
+                "health": {"status": health.get("status") or "unknown", "warnings": warnings},
+                "evidence": self._evidence(conv.get("messages") or [])}
+
+    def conversations(self):
+        chat = self._chat()
+        active = (chat.store.get_active() or {}).get("id")
+        items = sorted(chat.store.list(), key=lambda c: c.get("updated_at") or 0, reverse=True)[:60]
+        return {"active": active, "items": [{"id": c.get("id"), "title": c.get("title") or "Sohbet", "agent": c.get("agent"),
+                                             "updated_at": c.get("updated_at"), "project_id": c.get("project_id")} for c in items]}
+
+    def act(self, action, body):
+        """Settings the phone may change; none of them grants write access to a project."""
+        chat = self._chat()
+        if action == "new":
+            conv = chat.new_conversation(agent=str(body.get("agent") or "collaboration"))
+            return {"conversation_id": conv.get("id")}
+        if action == "select":
+            conv = chat.select_conversation(str(body.get("conversation_id") or ""))
+            return {"conversation_id": (conv or {}).get("id") if isinstance(conv, dict) else body.get("conversation_id")}
+        active = chat.store.get_active().get("id")
+        if action == "mode":
+            chat.set_agent(active, str(body.get("agent") or ""))
+            return {"mode": body.get("agent")}
+        if action == "model":
+            result = chat.set_agent_model(active, str(body.get("agent") or ""), model=body.get("model") or None,
+                                          effort=body.get("effort") or None)
+            return {"selection": result.get("selection")}
+        if action == "project":
+            conv = chat.switch_project(str(body.get("project_id") or ""))
+            return {"conversation_id": (conv or {}).get("id") if isinstance(conv, dict) else None}
+        raise ValueError("Bilinmeyen işlem")
+
     def access_info(self):
         code, expires_in = self.pairing_code()
         return {"local_url": f"http://{self.host}:{self.port}", "token": self.token,
@@ -187,7 +285,12 @@ class MobileGateway:
                 if not self._authorized(): self._json(401, {"error": "Yetkisiz erişim"}); return
                 if path == "/api/health": self._json(200, {"components": gateway.assistant.health_status()}); return
                 if path == "/api/tasks": self._json(200, gateway.assistant.list_tasks()); return
-                if path == "/api/ping": self._json(200, {"app": "SpeS", "api": 2}); return
+                if path == "/api/ping": self._json(200, {"app": "SpeS", "api": 3}); return
+                if path in ("/api/overview", "/api/conversations"):
+                    try: self._json(200, gateway.overview() if path == "/api/overview" else gateway.conversations())
+                    except LookupError as exc: self._json(503, {"error": str(exc)})
+                    except Exception: log.exception("Mobile %s failed", path); self._json(500, {"error": "Bilgi okunamadı"})
+                    return
                 if path == "/api/state":
                     query = parse_qs(urlparse(self.path).query)
                     try:
@@ -217,6 +320,18 @@ class MobileGateway:
                     try: self._json(200, {"data": gateway.stop_work()})
                     except LookupError as exc: self._json(503, {"error": str(exc)})
                     except Exception: log.exception("Mobile stop failed"); self._json(500, {"error": "Durdurma iletilemedi"})
+                    return
+                if path.startswith("/api/act/"):
+                    try:
+                        length = int(self.headers.get("Content-Length", "0"))
+                        if length < 0 or length > 4096: raise ValueError("Geçersiz istek boyutu")
+                        body = json.loads(self.rfile.read(length) or b"{}") if length else {}
+                        if not isinstance(body, dict): raise ValueError("Geçersiz istek")
+                        self._json(200, gateway.act(path.rsplit("/", 1)[-1], body))
+                    except (ValueError, KeyError) as exc: self._json(400, {"error": str(exc) or "Geçersiz istek"})
+                    except LookupError as exc: self._json(503, {"error": str(exc)})
+                    except RuntimeError as exc: self._json(409, {"error": str(exc)})
+                    except Exception: log.exception("Mobile action failed"); self._json(500, {"error": "İşlem yapılamadı"})
                     return
                 if path == "/api/send":
                     try:

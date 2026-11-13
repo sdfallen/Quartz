@@ -46,7 +46,7 @@ def init(rt, sandbox, **extra):
 class CommandTests(unittest.TestCase):
     def test_every_run_is_locked_down(self):
         rt = runtime()
-        for sandbox in ("none", "read-only", "workspace-write", "danger-full-access"):
+        for sandbox in ("none", "web", "read-only", "workspace-write", "danger-full-access"):
             with self.subTest(sandbox=sandbox):
                 args = rt.build_args(sandbox, model="sonnet", effort="high", session_id="s")
                 for flag in ("-p", "--strict-mcp-config", "--verbose"):
@@ -67,8 +67,15 @@ class CommandTests(unittest.TestCase):
         self.assertNotIn("Bash", rt.tools_for("workspace-write"))
         self.assertIn("Bash", rt.tools_for("danger-full-access"))
         for sandbox in claude_runtime.TOOLS_BY_SANDBOX:
-            for risky in ("SendMessage", "WebFetch", "WebSearch", "CronCreate", "Task", "Artifact", "Skill"):
+            for risky in ("SendMessage", "WebFetch", "CronCreate", "Task", "Artifact", "Skill"):
                 self.assertNotIn(risky, rt.tools_for(sandbox))
+        # Web search exists in exactly one mode, alone: no fetch, no files, no shell (13 Nov).
+        self.assertEqual([s for s in claude_runtime.TOOLS_BY_SANDBOX if "WebSearch" in rt.tools_for(s)], ["web"])
+        self.assertEqual(rt.tools_for("web"), ("WebSearch",))
+        args = rt.build_args("web")
+        self.assertEqual(args[args.index("--tools") + 1], "WebSearch")
+        self.assertEqual(args[args.index("--allowedTools") + 1], "WebSearch")
+        self.assertNotIn("WebFetch", " ".join(args))
         with self.assertRaises(ValueError):
             rt.tools_for("anything")
 
@@ -256,6 +263,19 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(args.args[0], "claude")
             self.assertEqual(args.kwargs["sandbox"], "danger-full-access")
             svc.claude.start.assert_not_called()
+
+    def test_web_search_only_for_tool_less_chat(self):
+        with tempfile.TemporaryDirectory() as folder:
+            svc = self.service(folder)
+            svc._text_workspaces = {}
+            for web, expected in ((True, "web"), (False, "none")):
+                svc.claude.start.reset_mock()
+                svc.dispatch_claude("x", project_id="p", chat_mode=True, conversation_only=True, web=web)
+                self.assertEqual(svc.claude.start.call_args.kwargs["sandbox"], expected)
+            for workspace in svc._text_workspaces.values():
+                workspace.cleanup()
+            with self.assertRaises(PermissionError):
+                svc.dispatch_claude("x", project_id="p", chat_mode=True, web=True)
 
     def test_squad_task_path_and_unready_cli_are_refused(self):
         with tempfile.TemporaryDirectory() as folder:

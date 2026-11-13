@@ -1686,7 +1686,7 @@ class AgentChatService(TeamTurnMixin):
                               project_id: str | None, write: bool, confirm_write: bool,
                               *, use_session: bool = True, squad_task_id: str | None = None,
                               base_meta: dict | None = None, full_access: bool = False,
-                              agent: str = "codex", tool_less: bool = False,
+                              agent: str = "codex", tool_less: bool = False, web: bool = False,
                               project_scope: bool = False) -> str:
         """Run a single Codex (or Claude) message bubble, stream its output, and return final text."""
         label = _AGENT_LABELS[agent]
@@ -1724,6 +1724,9 @@ class AgentChatService(TeamTurnMixin):
             "full_access": full_access,
             "resume_thread_id": prev_session,
         }
+        if web and agent == "claude" and conversation_only and not project_scope and not write and not full_access:
+            dispatch_kwargs["web"] = True
+            meta["web_search"] = True
         if conversation_only:
             dispatch_kwargs["conversation_only"] = True
             if project_scope or (self._project_read(cid) and not tool_less):

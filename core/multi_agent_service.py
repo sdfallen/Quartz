@@ -513,7 +513,7 @@ class MultiAgentService:
         return hist[-5:] if hist else []
 
     def _text_conversation(self, provider, prompt, project, *, chat_mode, write, model, effort, project_read=False,
-                           should_abort=None):
+                           should_abort=None, web=False):
         if chat_mode is not True or write:
             raise PermissionError("Araçsız sohbet işlem/yazma yetkisi alamaz.")
         # Project read: a fresh, read-only, project-scoped inspection. Never for a
@@ -545,8 +545,9 @@ class MultiAgentService:
                 options = {"model": model, "effort": effort, "tool_guard": True, "write": False, "timeout": "2m"}
             elif provider == "claude":
                 # Tool-less chat: --tools "" proven from the CLI's init event.
-                options = {"model": model, "effort": effort, "sandbox": "none", "approval": "never",
-                           "should_abort": should_abort}
+                # web=True: WebSearch only, still proven from the init event; never with project read.
+                options = {"model": model, "effort": effort, "approval": "never", "should_abort": should_abort,
+                           "sandbox": "web" if web and not project_read else "none"}
             elif project_read:
                 # Codex runs in the scratch folder with every built-in tool off;
                 # the project is reachable only through SpeS's read-only MCP
@@ -704,13 +705,15 @@ class MultiAgentService:
                         write=False, confirm_write=False, full_access=False,
                         resume_thread_id=None, chat_mode=False, squad_task_id=None,
                         model: str | None = None, effort: str | None = None, conversation_only=False,
-                        project_read=False, should_abort=None) -> dict:
+                        project_read=False, should_abort=None, web=False) -> dict:
         """Claude Code as a developer agent. Chat tasks only in this release."""
         project = self.projects.get(project_id) if project_id else self.projects.selected()
         if conversation_only:
             return self._text_conversation("claude", prompt, project, chat_mode=chat_mode,
                 write=write or full_access, model=model, effort=effort, project_read=project_read,
-                should_abort=should_abort)
+                should_abort=should_abort, web=web)
+        if web:
+            raise PermissionError("Web araması yalnız araçsız sohbette açılabilir.")
         if not chat_mode:
             raise PermissionError("Claude yalnız sohbet görevleriyle çalışır (Squad görev yolu henüz yok).")
         if project.get("protected"):
