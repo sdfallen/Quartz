@@ -39,8 +39,8 @@ class ClaudeScriptTests(unittest.TestCase):
         self.assertIn("saveAgentModelSelection('claude', true)", CHAT_JS)
         self.assertIn("['codex', 'antigravity', 'claude', 'collaboration'].includes(agent)", CHAT_JS)
 
-    def test_birlikte_mode_does_not_pull_claude_in(self):
-        self.assertIn("(focus === 'collaboration' && agent !== 'claude')", CHAT_JS)
+    def test_birlikte_mode_includes_claude_only_when_connected(self):
+        self.assertIn("(focus === 'collaboration' && (agent !== 'claude' || !unavailable))", CHAT_JS)
 
     def test_mode_button_readiness_comes_from_claude_provider(self):
         self.assertIn("['codex','antigravity','claude','collaboration'].includes(agent)", SETUP_JS)

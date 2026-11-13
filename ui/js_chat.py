@@ -173,7 +173,10 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       claudeModelPill.classList.toggle('active-claude', agent === 'claude');
     }
     if (btnContinueCollab) {
-      btnContinueCollab.style.display = isCollab ? 'inline-flex' : 'none';
+      // "1 tur daha" extends the classic pair debate; the team turn completes itself.
+      const claudeSeg = document.querySelector('.agent-seg-btn[data-agent="claude"]');
+      const teamMode = !!claudeSeg && !claudeSeg.disabled;
+      btnContinueCollab.style.display = isCollab && !teamMode ? 'inline-flex' : 'none';
     }
     renderAgentConnections(undefined, agent);
   }
@@ -312,7 +315,8 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       card.disabled = unavailable;
       card.setAttribute('aria-pressed', focus === agent ? 'true' : 'false');
       // Birlikte is Codex + Antigravity; Claude joins only when selected on its own.
-      card.dataset.included = focus === agent || (focus === 'collaboration' && agent !== 'claude') ? 'true' : 'false';
+      // Birlikte is the team: Usta leads when Claude is connected, else the Codex + Antigravity pair.
+      card.dataset.included = focus === agent || (focus === 'collaboration' && (agent !== 'claude' || !unavailable)) ? 'true' : 'false';
       card.dataset.state = view.state;
       if (view.state !== 'idle') flow.push(agent);
       const stateEl = document.getElementById(lane.state);
@@ -342,8 +346,9 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     // The label is upper-cased by CSS; in Turkish "Antigravity" would become "ANTİGRAVİTY".
     if (label) label.lang = coreText.includes('Antigravity') ? 'en' : 'tr';
     if (core) {
-      const coreTitle = focus === 'collaboration' ? 'Birlikte: Codex ve Antigravity aynı görevde'
-        : 'Birlikte moduna geç: Codex ve Antigravity aynı görevde';
+      const teamText = crewSeg('claude')?.disabled ? 'Atlas ve Vision' : 'Usta, Atlas ve Vision';
+      const coreTitle = focus === 'collaboration' ? `Birlikte: ${teamText} planlayıp birlikte çalışıyor`
+        : `Birlikte moduna geç: ${teamText} planlayıp birlikte çalışır`;
       if (core.getAttribute?.('title') !== coreTitle) core.setAttribute('title', coreTitle);
     }
   }

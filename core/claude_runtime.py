@@ -328,6 +328,9 @@ class ClaudeRuntime(CodexRuntime):
                         self._on_assistant(record, event)
                     elif kind == "user":
                         self._on_tool_results(record, event)
+                    elif kind == "rate_limit_event":
+                        from core.agent_limits import record_claude_event
+                        record["rate_limit"] = record_claude_event(event)
                     elif kind == "result":
                         record["usage"] = event.get("usage")
                         record["cost_usd"] = event.get("total_cost_usd")

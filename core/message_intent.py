@@ -85,6 +85,9 @@ def project_question(text, project_names=()):
 
 def message_intent(text):
     value = instruction_text(text).strip()
+    # "bakış açın/açısı" is a noun phrase (point of view), not the verb "aç"
+    # (live 13 Nov: a persona question was read as an "open" task).
+    value = re.sub(r'bakış\s+açı', 'bakış_açı', value, flags=re.I)
     if tools_disallowed(value) or request_withdrawn(value):
         return 'conversation'
     if re.fullmatch(r'\s*(?:(?:tamam\s+)?(?:devam et|devam|sürdür)|evet|olur|tamam|dur|durdur|görevi durdur|kontrolü durdur|iptal et)[.!]?\s*', value):

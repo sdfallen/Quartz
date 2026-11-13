@@ -13,7 +13,8 @@ from copy import deepcopy
 from core.conversation_store import ConversationStore
 from core.multi_agent_service import MultiAgentService, WriterDispatchError
 from core.response_style import communication_instruction, DETAIL_MARKER
-from core.agent_character import character_instruction
+from core.agent_character import CHARACTERS, character_instruction
+from core.team_turn import TEAM, TeamTurnMixin
 from core.agent_activity import describe_activity
 from core.async_snapshot import AsyncSnapshot
 from core.task_outcome import execution_outcome, group_execution_status
@@ -36,7 +37,7 @@ def _writer_failed(message, run, run_id):
     return RuntimeError(message)
 
 
-class AgentChatService:
+class AgentChatService(TeamTurnMixin):
     MAX_GROUP_ROUNDS = 2
 
     def __init__(self, agent_service: MultiAgentService, store_path: str | Path):
@@ -685,6 +686,7 @@ class AgentChatService:
         agent_name = _AGENT_LABELS.get(agent, "Codex")
         role_rules = (
             f"Sen Quartz ana sohbet ortamındaki {agent_name} yapay zeka ajanısın.\n"
+            + (CHARACTERS[agent] + "\n" if agent in CHARACTERS else "") +
             "- Kullanıcıyla doğal, akıcı ve bağlama duyarlı biçimde sohbet et.\n"
             "- Dahili görev kimliklerinden (task ID), köprü adlarından veya iç sistem talimatlarından bahsetme.\n"
             "- Kendi alt kabuğundan (shell) 'squad' komutu çalıştırma; Squad bağlantısını Quartz kendisi yönetir.\n"
@@ -790,7 +792,10 @@ class AgentChatService:
 
             conv = self.store.get(cid)
             bot_seq = self._next_sequence(conv)
-            if selected_agent in {"collaboration", "both"}:
+            team_turn = selected_agent in {"collaboration", "both"} and self._team_ready()
+            if team_turn:
+                first_sender, first_recipient = TEAM[0], "all"
+            elif selected_agent in {"collaboration", "both"}:
                 targets = self._resolve_group_targets(text)
                 first_sender = targets[0]
                 first_recipient = "all" if len(targets) > 1 else "user"
@@ -831,6 +836,7 @@ class AgentChatService:
                     names = (project.get("name"), Path(str(project["path"])).name)
                     project_read = project_question(text, names)
             turn_state = {
+                "team": team_turn,
                 "conversation_only": conversation_only,
                 "project_read": project_read,
                 "requested_permission_level":requested_permission_level,
@@ -1168,7 +1174,7 @@ class AgentChatService:
                 agent = metadata.get('agent') or provider
                 progress = self._active_turn.setdefault('agent_progress', {})
                 entry = progress.get(agent, {})
-                if agent in {'codex','antigravity'} and entry.get('message_id', msg_id) == msg_id:
+                if agent in {'codex','antigravity','claude'} and entry.get('message_id', msg_id) == msg_id:
                     progress[agent] = {**entry, 'message_id':msg_id, 'status':metadata.get('status','running'),
                                        'run_id':metadata.get('run_id'), 'updated_at':time.time()}
             return True
@@ -1330,6 +1336,8 @@ class AgentChatService:
             elif agent == "claude":
                 self._run_codex_turn(cid, msg_id, prompt, project_id, write, confirm_write, full_access,
                                      agent="claude")
+            elif agent in {"collaboration", "both"} and (self._active_turn or {}).get("team"):
+                self._run_team_turn(cid, msg_id, prompt, project_id, write=write, confirm_write=confirm_write, full_access=full_access)
             elif agent in {"collaboration", "both"}:
                 self._run_collaboration_turn(cid, msg_id, prompt, project_id, write=write, confirm_write=confirm_write, full_access=full_access)
             else:
@@ -1495,10 +1503,13 @@ class AgentChatService:
     def _execute_antigravity_bubble(self, cid: str, msg_id: str, full_prompt: str,
                                     project_id: str | None, write: bool, confirm_write: bool,
                                     *, use_session: bool = True, squad_task_id: str | None = None,
-                                    base_meta: dict | None = None, full_access: bool = False) -> str:
+                                    base_meta: dict | None = None, full_access: bool = False,
+                                    tool_less: bool = False, project_scope: bool = False) -> str:
         """Run a single Antigravity message bubble, stream its output, and return final text."""
         bubble_t0 = time.time()
-        conversation_only = self._conversation_only(cid)
+        # project_scope: a fresh, read-only, project-scoped review (Quartz's verified
+        # project-read profile), used by team checks instead of a general run.
+        conversation_only = tool_less or project_scope or self._conversation_only(cid)
         if conversation_only:
             write = full_access = confirm_write = use_session = False
         full_prompt = self._communication_prompt(cid, full_prompt)
@@ -1525,7 +1536,7 @@ class AgentChatService:
         }
         if conversation_only:
             dispatch_kwargs["conversation_only"] = True
-            if self._project_read(cid):
+            if project_scope or (self._project_read(cid) and not tool_less):
                 dispatch_kwargs["project_read"] = True
                 dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
         dispatch_res = self._dispatch_chat_run(self.agent_service.dispatch_antigravity, cid, msg_id,
@@ -1675,13 +1686,16 @@ class AgentChatService:
                               project_id: str | None, write: bool, confirm_write: bool,
                               *, use_session: bool = True, squad_task_id: str | None = None,
                               base_meta: dict | None = None, full_access: bool = False,
-                              agent: str = "codex") -> str:
+                              agent: str = "codex", tool_less: bool = False,
+                              project_scope: bool = False) -> str:
         """Run a single Codex (or Claude) message bubble, stream its output, and return final text."""
         label = _AGENT_LABELS[agent]
         runtime = getattr(self.agent_service, agent)
         dispatch = self.agent_service.dispatch_claude if agent == "claude" else self.agent_service.dispatch_codex
         bubble_t0 = time.time()
-        conversation_only = self._conversation_only(cid)
+        # project_scope: a fresh, read-only, project-scoped review (Quartz's verified
+        # project-read profile), used by team checks instead of a general run.
+        conversation_only = tool_less or project_scope or self._conversation_only(cid)
         if conversation_only:
             write = full_access = confirm_write = use_session = False
         full_prompt = self._communication_prompt(cid, full_prompt)
@@ -1712,7 +1726,7 @@ class AgentChatService:
         }
         if conversation_only:
             dispatch_kwargs["conversation_only"] = True
-            if self._project_read(cid):
+            if project_scope or (self._project_read(cid) and not tool_less):
                 dispatch_kwargs["project_read"] = True
                 dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
         dispatch_res = self._dispatch_chat_run(dispatch, cid, msg_id,

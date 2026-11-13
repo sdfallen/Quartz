@@ -690,6 +690,29 @@ body.repair-plan-open .empty-state { visibility: hidden; }
 .repair-chip .msg-badge { margin-right: auto; }
 @media (max-width: 560px) { .rp-grid { grid-template-columns: minmax(0, 1fr); } .rp-help { grid-column: 1; } }
 
+/* Team: personas, step labels and the limit indicator ------------------- */
+.lane-agent { font: 500 var(--text-xs) var(--font); color: var(--text-3); letter-spacing: .02em; margin-left: 4px; }
+.msg-sender-tag.tag-claude { color: var(--agent-claude); }
+.tag-claude::before { background: var(--agent-claude); }
+.msg-step-tag { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 99px; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-2); background: color-mix(in oklab, var(--lane, var(--amethyst)) 16%, transparent); border: 1px solid color-mix(in oklab, var(--lane, var(--amethyst)) 34%, transparent); }
+.chat > .msg[data-team-step] .bubble { max-width: min(var(--measure), 100%); }
+.chat > .msg[data-team-step="1"] .bubble, .chat > .msg[data-team-step="2"] .bubble, .chat > .msg[data-team-step="3"] .bubble { border-left: 2px solid color-mix(in oklab, var(--lane, var(--amethyst)) 60%, transparent); padding-left: 12px; }
+.team-limits { display: flex; align-items: center; gap: 6px; margin-right: 8px; }
+.limit-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 99px; font-size: var(--text-xs); color: var(--text-2); background: color-mix(in oklab, var(--surface-2) 70%, transparent); border: 1px solid var(--line); cursor: default; }
+.limit-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.limit-chip[data-agent="codex"] { --lane: var(--agent-codex); }
+.limit-chip[data-agent="claude"] { --lane: var(--agent-claude); }
+.limit-chip[data-agent="antigravity"] { --lane: var(--agent-agy); }
+.limit-name { font-weight: 600; color: var(--text); }
+.limit-meter { position: relative; width: 34px; height: 4px; border-radius: 4px; background: var(--line-strong); overflow: hidden; }
+.limit-meter b { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 4px; background: var(--lane); transition: width var(--t-slow) var(--ease); }
+.limit-chip[data-state="warn"] .limit-meter b { background: var(--warn); }
+.limit-chip[data-state="full"] .limit-meter b { background: var(--danger); }
+.limit-chip[data-state="unknown"] .limit-value { color: var(--text-3); }
+.limit-value { font-variant-numeric: tabular-nums; min-width: 28px; text-align: right; }
+@container (max-width: 900px) { .team-limits .limit-meter { display: none; } }
+@container (max-width: 760px) { .team-limits { display: none; } }
+
 /* App preview pane (loopback web apps) ---------------------------------- */
 .preview-pane { width: clamp(340px, 42vw, 820px); flex: none; display: none; flex-direction: column; min-height: 0; background: var(--surface-1); border-left: 1px solid var(--line); }
 body.show-preview .preview-pane { display: flex; }

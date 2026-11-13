@@ -100,8 +100,19 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     });
   }
 
+  const TEAM_PERSONA = {claude: 'USTA', codex: 'ATLAS', antigravity: 'VISION'};
+  const TEAM_STEP = {1: 'Plan', 2: 'Eleştiri', 3: 'Karar', 4: 'Hazırlık', 5: 'Kontrol', 6: 'Kapanış'};
+  function teamStepLabel(m) {
+    const meta = (m && m.metadata) || {};
+    if (!meta.team || !TEAM_STEP[meta.team_step]) return '';
+    return meta.team_step === 4 && (m.sender || meta.sender) === 'claude' ? 'İnşa' : TEAM_STEP[meta.team_step];
+  }
   function formatMessageLabel(m) {
     if (!m) return 'QUARTZ';
+    if (m.metadata && m.metadata.team && TEAM_PERSONA[(m.sender || m.metadata.sender || '').toLowerCase()]) {
+      const agent = (m.sender || m.metadata.sender).toLowerCase();
+      return `${TEAM_PERSONA[agent]} · ${agent === 'antigravity' ? 'ANTIGRAVITY' : agent.toUpperCase()}`;
+    }
     const sender = (m.sender || (m.role === 'user' ? 'user' : 'quartz')).toLowerCase();
     const recipient = (m.recipient || (m.metadata && m.metadata.recipient) || '').toLowerCase();
     if (sender === 'user' || m.role === 'user') {
@@ -576,6 +587,14 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
         senderTag.textContent = label;
         meta.append(senderTag);
       }
+      const stepText = teamStepLabel(msgObj);
+      if (stepText) {
+        const stepTag = document.createElement('span');
+        stepTag.className = 'msg-step-tag';
+        stepTag.textContent = stepText;
+        meta.append(stepTag);
+        wrap.dataset.teamStep = String(msgObj.metadata.team_step);
+      }
       if (seqNum) {
         const seqTag = document.createElement('span');
         seqTag.className = 'msg-seq-tag';
@@ -680,6 +699,16 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
           const desiredTagClass = `msg-sender-tag tag-${cleanSender}`;
           if (tagEl.className !== desiredTagClass) tagEl.className = desiredTagClass;
           if (tagEl.textContent !== label) tagEl.textContent = label;
+          // Team metadata can arrive after the bubble was first drawn.
+          const stepText = teamStepLabel(m);
+          let stepEl = wrap.querySelector('.msg-step-tag');
+          if (stepText && !stepEl) {
+            stepEl = document.createElement('span');
+            stepEl.className = 'msg-step-tag';
+            tagEl.after(stepEl);
+          }
+          if (stepEl && stepEl.textContent !== stepText) stepEl.textContent = stepText;
+          if (stepText) wrap.dataset.teamStep = String(m.metadata.team_step);
         }
         const seqNum = m.sequence || (m.metadata && m.metadata.sequence);
         let seqEl = wrap.querySelector('.msg-seq-tag');
