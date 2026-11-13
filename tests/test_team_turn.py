@@ -106,6 +106,13 @@ class TeamTurnTests(unittest.TestCase):
         checks = [c for c in run.calls if c["step"] == 5]
         self.assertTrue(all(c["project_scope"] and not c["write"] for c in checks), "checks are project-read runs")
 
+    def test_team_readiness_is_checked_fresh(self):
+        with tempfile.TemporaryDirectory() as directory:
+            chat = make_chat(directory)
+            self.assertTrue(chat._team_ready())
+            chat.agent_service.claude.probe.assert_called_with(force=True)
+            chat._diagnostics.close()
+
     def test_without_a_ready_claude_the_classic_pair_runs(self):
         with tempfile.TemporaryDirectory() as directory:
             chat = make_chat(directory, claude_ready=False)

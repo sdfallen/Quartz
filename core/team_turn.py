@@ -51,9 +51,13 @@ class TeamTurnMixin:
     """Methods mixed into AgentChatService; relies on its executors and store."""
 
     def _team_ready(self) -> bool:
-        """Team mode needs a logged-in Claude lead; otherwise the classic pair runs."""
+        """Team mode needs a logged-in Claude lead; otherwise the classic pair runs.
+
+        Checked fresh for every Birlikte turn (~1 s): a cached "ready" let a team
+        turn start after the CLI login had dropped (live 13 Nov 10:08).
+        """
         try:
-            return self.agent_service.claude.probe().get("ready") is True
+            return self.agent_service.claude.probe(force=True).get("ready") is True
         except Exception:
             return False
 
