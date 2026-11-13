@@ -106,6 +106,7 @@ class MobileGateway:
                 "persona": PERSONA.get(sender.lower(), "SpeS" if sender.lower() in {"quartz", "bot", "assistant"} else ""),
                 "step": meta.get("team_step"), "text": str(message.get("content") or "")[:4000],
                 "model": str(meta.get("model") or ""),
+                "report": bool(meta.get("report")),
                 "memory": ("saved" if (meta.get("memory") or {}).get("saved") else
                            "secret" if (meta.get("memory") or {}).get("reason") == "secret" else ""),
                 "failed": meta.get("status") == "failed" or bool(meta.get("error")) or outcome.get("goal_verdict") == "FAILED",

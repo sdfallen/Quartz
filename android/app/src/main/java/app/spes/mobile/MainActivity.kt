@@ -359,6 +359,7 @@ class MainActivity : ComponentActivity() {
                     Spacer(Modifier.width(6.dp))
                     Text(m.persona.ifBlank { "SpeS" }, color = SpesColors.persona(m.persona), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     STEP[m.step]?.let { Tag(it, SpesColors.text3) }
+                    if (m.report) Tag("Görev raporu", SpesColors.accent)
                     if (m.failed) Tag("başarısız", SpesColors.danger)
                 }
                 Spacer(Modifier.height(4.dp))
