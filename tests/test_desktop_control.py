@@ -65,7 +65,7 @@ class Window:
     def __init__(self): self.controls = [Control()]
     def is_visible(self): return True
     def process_id(self): return 42
-    def window_text(self): return "Quartz Test Window"
+    def window_text(self): return "SpeS Test Window"
     def descendants(self, **kwargs): return self.controls
     def children(self): return self.controls
     def wrapper_object(self): return self

@@ -1,7 +1,7 @@
 """
 voice_system.py  —  Quartz Voice I/O
 Push-to-talk speech-to-text, always-on wake-word
-listening ("hey quartz"), and text-to-speech.
+listening ("hey spes"), and text-to-speech.
 Used by gui.py — the backend (main.py/assistant.py)
 is untouched; voice just feeds transcribed text into
 the same IPC "chat" action typed messages already use.
@@ -47,7 +47,8 @@ except ImportError:
         "pyttsx3 not installed — "
         "voice output disabled. pip install pyttsx3")
 
-WAKE_WORDS = ("hey quartz", "hi quartz", "hello quartz", "quartz")
+# "spes" first; "quartz" stays accepted so the old wake word keeps working.
+WAKE_WORDS = ("hey spes", "hi spes", "hello spes", "spes", "hey quartz", "hi quartz", "hello quartz", "quartz")
 _MAX_SPEAK_CHARS = 600  # keep TTS replies from droning on
 
 

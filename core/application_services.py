@@ -45,7 +45,7 @@ CLOSE_ORDER = ("artifact_diagnostics", "natural", "coordination", "desktop",
 
 class ServicesClosed(RuntimeError):
     def __init__(self):
-        super().__init__("Quartz kapanıyor; yeni görev veya servis başlatılmadı.")
+        super().__init__("SpeS kapanıyor; yeni görev veya servis başlatılmadı.")
 
 
 def _onboarding():
@@ -76,7 +76,7 @@ def _artifact_diagnostics(path, *, question=None, registered_search=None):
 def _repair():
     from core.cli_installer import app_root
     from core.package_repair import PackageRepair
-    backups = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "Quartz/repair-backups"
+    backups = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "SpeS/repair-backups"
     return PackageRepair(app_root(), backups)
 
 

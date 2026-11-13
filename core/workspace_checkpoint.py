@@ -48,7 +48,7 @@ def create_checkpoint(workspace: str | Path, *, backup_root=None,
         commit = None
         paths = []
         if is_git:
-            snapshot = git("stash", "create", "Quartz agent pre-write checkpoint")
+            snapshot = git("stash", "create", "SpeS agent pre-write checkpoint")
             if snapshot.returncode != 0:
                 raise RuntimeError(snapshot.stderr.strip() or "Git checkpoint oluşturulamadı.")
             commit = snapshot.stdout.strip()

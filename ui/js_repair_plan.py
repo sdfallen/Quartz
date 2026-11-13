@@ -1,4 +1,4 @@
-"""Quartz repair-plan panel; composed in the shared application scope.
+"""SpeS repair-plan panel; composed in the shared application scope.
 
 docs/INTEGRATION_REQUEST_REPAIR_PLAN_UI_20261110.md: the user, never the model, names the host
 tests, their count and the Python path. Preview only reads and hashes on the host; registering

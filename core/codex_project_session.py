@@ -3,7 +3,7 @@
 Why not `exec`: a separate `codex mcp list` probe cannot prove what the real
 session loads (Codex owner review). Here the SAME session is opened first,
 its effective MCP inventory is read with that session's thread id, and only
-when it is exactly Quartz's three read tools (every other server disabled)
+when it is exactly SpeS's three read tools (every other server disabled)
 is the user's prompt delivered with `turn/start`. Server requests (approvals,
 elicitations) are refused; any tool call outside quartz_project ends the turn.
 """
@@ -57,7 +57,7 @@ class AppServerSession:
                     # a read-only project turn never grants anything.
                     try:
                         self._send({"jsonrpc": "2.0", "id": message["id"],
-                                    "error": {"code": -32000, "message": "Quartz project read: request refused"}})
+                                    "error": {"code": -32000, "message": "SpeS project read: request refused"}})
                     except Exception:
                         pass
                     self.on_event({"kind": "server_request_refused", "method": str(message.get("method"))[:80]})
@@ -113,18 +113,18 @@ class AppServerSession:
         self.request("initialize", {"clientInfo": {"name": "quartz", "version": "1"}})
         self.notify("initialized")
         # Start gate: the effective config of THIS app-server, read before any
-        # thread exists, must already allow only Quartz's server (so no other
+        # thread exists, must already allow only SpeS's server (so no other
         # MCP server can be launched by thread/start). Codex owner review.
         config = self.request("config/read", {"cwd": str(cwd)}).get("config")
         refusal = config_refusal(config, expected_root, expected_server)
         if refusal:
-            raise SessionRefused(f"Codex config would start more than Quartz's read tools ({refusal})")
+            raise SessionRefused(f"Codex config would start more than SpeS's read tools ({refusal})")
         known = sorted(config["mcp_servers"])
         if should_abort and should_abort():
             raise SessionRefused("Cancelled before the thread was started")
         # The thread's MCP table is given in full here: the thread-level override
         # REPLACES the table (observed live), so the thread's servers are exactly
-        # Quartz's read server plus explicitly disabled known names -- a name added
+        # SpeS's read server plus explicitly disabled known names -- a name added
         # by any layer meanwhile is simply not part of this thread.
         servers = {name: {"enabled": False} for name in known if name != ALLOWED_SERVER}
         servers[ALLOWED_SERVER] = quartz_server_entry(config["mcp_servers"][ALLOWED_SERVER])
@@ -170,7 +170,7 @@ class AppServerSession:
             if state == "ok":
                 return
             if state != "starting" or time.monotonic() >= deadline:
-                raise SessionRefused(f"Codex tool set is not Quartz's read-only set ({state})")
+                raise SessionRefused(f"Codex tool set is not SpeS's read-only set ({state})")
             time.sleep(0.5)
 
 
@@ -199,7 +199,7 @@ def _same_path(a, b):
 def config_refusal(config, expected_root=None, expected_server=None):
     """None when the effective config can only start quartz_project; else a reason.
 
-    ``expected_server`` ({"command", "args"}) pins Quartz's helper identity:
+    ``expected_server`` ({"command", "args"}) pins SpeS's helper identity:
     the exact executable and the exact argument list.
     """
     if not isinstance(config, dict):
@@ -221,7 +221,7 @@ def config_refusal(config, expected_root=None, expected_server=None):
                 return "quartz_project disabled"
             args = server.get("args")
             if not isinstance(args, list) or "--project-read-server" not in args:
-                return "quartz_project is not Quartz's read server"
+                return "quartz_project is not SpeS's read server"
             if expected_root is not None and str(expected_root) not in [str(a) for a in args]:
                 return "quartz_project serves a different root"
             if expected_server is not None:
@@ -240,7 +240,7 @@ def config_refusal(config, expected_root=None, expected_server=None):
 
 
 def inventory_state(rows):
-    """'ok', 'starting' (Quartz tools not ready yet) or a refusal reason."""
+    """'ok', 'starting' (SpeS tools not ready yet) or a refusal reason."""
     ours = []
     for row in rows:
         if not isinstance(row, dict) or not isinstance(row.get("name"), str):

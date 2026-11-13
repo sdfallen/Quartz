@@ -54,11 +54,11 @@ def main():
         checks["helper_schema_matches"]=reply.returncode==0 and len(rows)==1 and rows[0].get("result",{}).get("tools")==TOOLS
     css=exe.parent/"_internal/assets/workspace.css"
     checks["workspace_css_matches"]=css.is_file() and css.read_bytes()==(ROOT/"assets/workspace.css").read_bytes()
-    brand=ROOT/'assets/branding/quartz-q.ico'
+    brand=ROOT/'assets/branding/spes-mark.ico'
     if brand.is_file():
         from verify_branding import check_exe_icon
         checks['exe_q_icon_matches_supplied']=check_exe_icon(exe,brand)
-        for name in ('quartz-q.ico','quartz-q.png','quartz-q-48.png'):
+        for name in ('spes-mark.ico','spes-mark.png','spes-mark-48.png'):
             packaged=exe.parent/'_internal/assets/branding'/name
             checks['brand_'+name]=packaged.is_file() and packaged.read_bytes()==(brand.parent/name).read_bytes()
     result = {"exe": str(exe), "sha256": hashlib.sha256(exe.read_bytes()).hexdigest(), "checks": checks}

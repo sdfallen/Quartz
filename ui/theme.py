@@ -39,7 +39,7 @@ MODERN_CSS = r"""
 @keyframes q-hud-pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
 @keyframes q-caret { 0%,45% { opacity:1; } 55%,100% { opacity:.2; } }
 @keyframes q-live-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
-@keyframes q-gem { 0%,100% { opacity:1; transform:rotate(45deg) scale(1); } 50% { opacity:.55; transform:rotate(45deg) scale(.78); } }
+@keyframes q-gem { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.55; transform:scale(.78); } }
 @keyframes q-flow { from { transform:translateY(-100%); } to { transform:translateY(340%); } }
 @keyframes q-beam { from { transform:translateX(-100%); } to { transform:translateX(230%); } }
 @keyframes q-halo { 0%,100% { opacity:.55; transform:scale(.9); } 50% { opacity:1; transform:scale(1.1); } }

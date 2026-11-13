@@ -137,7 +137,7 @@ JAVASCRIPT = r"""
   document.getElementById('btnDeleteProjectChats').addEventListener('click', () =>
     requestChatDeletion(navigationConversations.filter(c=>(c.project_id||'squad-pilot')===mainProjectSelect.value), mainProjectSelect.value));
 
-  // Remove a project from the list. Only Quartz's registration and the project's
+  // Remove a project from the list. Only SpeS's registration and the project's
   // chats go (chats keep a local recovery copy); the folder is never touched.
   const btnRemoveProject = document.getElementById('btnRemoveProject');
   function syncRemoveProjectButton() {
@@ -167,7 +167,7 @@ JAVASCRIPT = r"""
       await loadActiveConversation();
       logLine(`“${name}” listeden kaldırıldı; ${result.data.deleted_count} sohbet silindi. Proje dosyaları silinmedi.`);
     } catch (error) {
-      appendMsg('err', 'QUARTZ', String(error.message || error));
+      appendMsg('err', 'SPES', String(error.message || error));
     } finally {
       deletionPending = false;
       syncRemoveProjectButton();
@@ -239,10 +239,10 @@ JAVASCRIPT = r"""
       ['Görünüm', 'Koyu tema', () => applyUiPreference('theme', 'dark')],
       ['Görünüm', 'Açık tema', () => applyUiPreference('theme', 'light')],
       ['Görünüm', 'Sistem teması', () => applyUiPreference('theme', 'system')],
-      ['Görünüm', 'Kristal: pembe kuvars', () => applyUiPreference('crystal', 'rose')],
-      ['Görünüm', 'Kristal: sitrin', () => applyUiPreference('crystal', 'citrine')],
-      ['Görünüm', 'Kristal: ametist', () => applyUiPreference('crystal', 'amethyst')],
-      ['Görünüm', 'Kristal: kaya kristali', () => applyUiPreference('crystal', 'smoky')],
+      ['Görünüm', 'Vurgu: şafak pembesi', () => applyUiPreference('crystal', 'rose')],
+      ['Görünüm', 'Vurgu: umut yeşili', () => applyUiPreference('crystal', 'citrine')],
+      ['Görünüm', 'Vurgu: lavanta', () => applyUiPreference('crystal', 'amethyst')],
+      ['Görünüm', 'Vurgu: kül', () => applyUiPreference('crystal', 'smoky')],
     ];
     if (desktopView.stop_ref) commands.unshift(['Görev', 'Masaüstü görevini durdur', () => pressIfUsable('btnDesktopTaskStop')]);
     if (thinking) commands.unshift(['Görev', 'Etkin görevi durdur', () => pressIfUsable('btnCancel')]);

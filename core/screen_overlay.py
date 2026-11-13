@@ -1,10 +1,10 @@
 """Native Windows top-left 'Görevi Durdur' HUD and subtle screen-edge glow effect.
 
-When Quartz / Agents control the computer screen:
+When SpeS / Agents control the computer screen:
 1. Displays a sleek, always-on-top control capsule at the top-left of the primary
    monitor with an active status indicator and a '⏹ GÖREVİ DURDUR' button.
 2. Renders a subtle, click-through (WS_EX_TRANSPARENT) breathing cyan border along
-   the edges of the screen to indicate that Quartz has active screen control.
+   the edges of the screen to indicate that SpeS has active screen control.
 3. Never steals keyboard focus (WS_EX_NOACTIVATE) and never intercepts mouse clicks
    outside the 'Görevi Durdur' button itself.
 """
@@ -26,17 +26,17 @@ class ScreenControlOverlay:
     def __init__(self):
         self._lock = threading.RLock()
         self._active = False
-        self._agent_label = "QUARTZ"
+        self._agent_label = "SPES"
         self._stop_callback: Callable[[], None] | None = None
         self._thread: threading.Thread | None = None
         self._close_event = threading.Event()
         self._process = None
 
-    def show(self, agent_label: str = "QUARTZ", on_stop: Callable[[], None] | None = None, *, force: bool = False):
+    def show(self, agent_label: str = "SPES", on_stop: Callable[[], None] | None = None, *, force: bool = False):
         if not force and ("unittest" in sys.modules or os.environ.get("QUARTZ_DISABLE_OVERLAY") == "1"):
             return
         with self._lock:
-            self._agent_label = str(agent_label or "QUARTZ").upper()[:80]
+            self._agent_label = str(agent_label or "SPES").upper()[:80]
             if on_stop is not None:
                 self._stop_callback = on_stop
             if self._active and self._process and self._process.poll() is None:
@@ -95,7 +95,7 @@ class ScreenControlOverlay:
 
     def update_label(self, agent_label: str):
         with self._lock:
-            self._agent_label = str(agent_label or "QUARTZ").upper()[:80]
+            self._agent_label = str(agent_label or "SPES").upper()[:80]
             self._send({'command':'label','label':self._agent_label})
 
     def hide(self):
@@ -192,7 +192,7 @@ class ScreenControlOverlay:
 
             # 2. Top-Left "Görevi Durdur" HUD Capsule (x=18, y=18)
             hud = tk.Toplevel(root)
-            hud.title("Quartz Ekran Kontrolü")
+            hud.title("SpeS Ekran Kontrolü")
             hud.overrideredirect(True)
             hud.attributes("-topmost", True)
             hud.attributes("-alpha", 0.94)
@@ -216,7 +216,7 @@ class ScreenControlOverlay:
 
             title_lbl = tk.Label(
                 text_frame,
-                text="QUARTZ KONTROLDE",
+                text="SPES KONTROLDE",
                 fg="#34eaff",
                 bg="#06121c",
                 font=("Segoe UI", 8, "bold"),
@@ -340,7 +340,7 @@ def run_overlay_child():
     if not isinstance(data,dict) or data.get('command')!='show': return
     hud=ScreenControlOverlay()
     hud._active=True
-    hud._agent_label=str(data.get('label','QUARTZ'))[:80]
+    hud._agent_label=str(data.get('label','SPES'))[:80]
     hud._stop_callback=lambda: print('STOP',flush=True)
     def listen():
         try:
@@ -352,7 +352,7 @@ def run_overlay_child():
                 if not isinstance(message,dict): break
                 if message.get('command')=='hide': break
                 if message.get('command')=='label':
-                    with hud._lock: hud._agent_label=str(message.get('label','QUARTZ'))[:80]
+                    with hud._lock: hud._agent_label=str(message.get('label','SPES'))[:80]
         finally: hud.hide()
     threading.Thread(target=listen,daemon=True,name='overlay-input').start()
     hud._run_tk_loop()

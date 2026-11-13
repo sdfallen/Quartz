@@ -1,4 +1,4 @@
-"""Comprehensive lifecycle tests for Quartz pyramid runtime layer.
+"""Comprehensive lifecycle tests for SpeS pyramid runtime layer.
 
 Verifies:
 1. Failed start (validation, missing dirs, missing executable)

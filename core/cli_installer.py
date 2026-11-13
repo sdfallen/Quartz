@@ -58,7 +58,7 @@ def resolve_cli(provider, explicit=None, *, root=None):
     candidates.append(shutil.which(provider + ".exe"))
     if provider == "agy" and os.getenv("LOCALAPPDATA"):
         candidates.append(Path(os.environ["LOCALAPPDATA"]) / "agy/bin/agy.exe")
-    # Optional existing CLI cache: preserve prior logins when Quartz is launched
+    # Optional existing CLI cache: preserve prior logins when SpeS is launched
     # from an IDE/Explorer with a different PATH. Never require/install Desktop.
     if provider == "codex" and os.getenv("LOCALAPPDATA"):
         cache = Path(os.environ["LOCALAPPDATA"]) / "OpenAI/Codex/bin"
@@ -90,14 +90,14 @@ def node_command(executable, args=()):
         except (OSError, ValueError):
             pass
         # Unknown wrappers are not executed through a shell with model text.
-        raise RuntimeError("CLI sarmalayıcısı tanınmadı; Quartz içinden yeniden kurun")
+        raise RuntimeError("CLI sarmalayıcısı tanınmadı; SpeS içinden yeniden kurun")
     return [str(path), *args]
 
 
 def cli_environment():
     env = os.environ.copy()
     env["PATH"] = os.pathsep.join([str(managed_root() / "node"), str(managed_root()), env.get("PATH", "")])
-    # Read only Quartz's config, regardless of the task's working directory.
+    # Read only SpeS's config, regardless of the task's working directory.
     from dotenv import dotenv_values
     values = dotenv_values(app_root() / ".env")
     for name in ("OPENAI_API_KEY", "GEMINI_API_KEY"):

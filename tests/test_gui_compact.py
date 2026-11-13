@@ -60,7 +60,7 @@ class CompactWindowTests(unittest.TestCase):
         self.assertIn("mobile-access-card", gui._HTML)
 
     def test_removed_tool_buttons_stay_removed(self):
-        # User, 7 Nov: Ajan merkezi, Açık pencereler, Quartz Mode and Ekran rehberi leave the UI.
+        # User, 7 Nov: Ajan merkezi, Açık pencereler, SpeS Mode and Ekran rehberi leave the UI.
         for marker in ('data-action="quartz_mode"', 'data-action="windows"', 'id="btnAdvisor"',
                        'id="btnAgentCenter"', "Ajan merkezini aç", "'Açık pencereler'"):
             self.assertNotIn(marker, gui._HTML)

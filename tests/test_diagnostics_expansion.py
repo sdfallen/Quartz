@@ -119,18 +119,18 @@ class ArtifactTests(unittest.TestCase):
 
 class RoutingTests(unittest.TestCase):
     def test_commands_and_discussion_are_separate(self):
-        for value, expected in [("Quartz'ı kontrol et", 'self'), ('Quartz’ı onar', 'repair'),
+        for value, expected in [("SpeS'i kontrol et", 'self'), ('SpeS’i onar', 'repair'),
                                 ('Başka bir uygulamayı incele', 'artifact')]:
             self.assertEqual(diagnostics_intent(value), expected)
-        for value in ['"Quartz onar" ne demek?', 'Araç kullanma, Quartz onar',
-                      'Quartz onarabilir mi?', 'Quartz ayarlarını değiştir', 'Quartz onar?']:
+        for value in ['"SpeS onar" ne demek?', 'Araç kullanma, SpeS onar',
+                      'SpeS onarabilir mi?', 'SpeS ayarlarını değiştir', 'SpeS onar?']:
             self.assertIsNone(diagnostics_intent(value))
 
     def test_main_chat_alias_uses_diagnostics_not_agents(self):
         import gui
         api = gui.Api()
         with patch.object(api, 'diagnostics_start', return_value={'status':'ok','data':{'id':'x'}}) as start:
-            result = api.coordination_route("Quartz'ı kontrol et", 'c', 'p', {})
+            result = api.coordination_route("SpeS'i kontrol et", 'c', 'p', {})
         self.assertTrue(result['data']['diagnostics_started'])
         start.assert_called_once()
 

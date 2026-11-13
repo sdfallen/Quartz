@@ -64,7 +64,7 @@ JARVIS_REPEAT_REFUSE_AFTER = 40
 JARVIS_REPEAT_STOP_AFTER = 44
 
 
-# CLAUDE.md: ASTER/Warband is officially shelved; Quartz must not start game or
+# CLAUDE.md: ASTER/Warband is officially shelved; SpeS must not start game or
 # Universal Modder work. The adapter code stays for a deliberate future revival.
 ASTER_SHELVED = True
 HOST_TEXT_SOURCE = "host_request_text"
@@ -112,7 +112,7 @@ def _within_job(job, seconds):
     deadline = job.get("expires_at")
     return limit if deadline is None else min(limit, deadline)
 
-INSTRUCTIONS = """You are part of a real Quartz main-chat task, using the user's existing CLI login.
+INSTRUCTIONS = """You are part of a real SpeS main-chat task, using the user's existing CLI login.
 WinError 740 is an elevation boundary. jarvis_open_app returns a task-bound elevation request;
 never repeat that launch, click UAC, run a shell workaround or claim the app opened. Use task_wait.
 Only the user can approve the inline per-EXE UAC request and the Windows prompt. Read elevation_outcomes
@@ -140,7 +140,7 @@ Operator: desktop_act action=key accepts up to 24 SAFE keys separated by spaces 
 e.g. key "1 2 3 4 * 5 6 enter" on Calculator. Prefer one sequence over one action per key; it stops
 at the first Stop or focus change. No chords (ctrl+...) in a sequence.
 Operator: after your input step and before finishing, send one short task_message with what you did and what you observed, so the collaborator can review it.
-task_context.task_id is the Quartz task; task_context.squad_task_id is the Squad task your task_message replies carry. They are the same task.
+task_context.task_id is the SpeS task; task_context.squad_task_id is the Squad task your task_message replies carry. They are the same task.
 After approval for bounded window control: desktop_focus once; interpret the actual IMAGE and UIA together.
 Prefer fresh UIA refs for ordinary controls, or use jarvis_input / desktop_act as appropriate.
 A focus change or the user working on the computer never ends this task: keep working until the user presses Stop.
@@ -404,7 +404,7 @@ class NaturalDesktopTask:
             for p, identity in self.agent_ids.items():
                 self.squad.join(identity, client="codex" if p == "codex" else "gemini")
             self.squad.join("manager", client="codex")
-            task = self.squad.create_task("manager", self.agent_ids[roles["operator"]], "Quartz ana sohbet görevi", text)
+            task = self.squad.create_task("manager", self.agent_ids[roles["operator"]], "SpeS ana sohbet görevi", text)
             self.squad.ack_task(self.agent_ids[roles["operator"]], task["id"])
             try:
                 connection = self.squad.status()
@@ -478,7 +478,7 @@ class NaturalDesktopTask:
                 command = [runtime.executable, "mcp", "add", "quartz-desktop", *mcp_cmd]
                 result = subprocess.run(command, capture_output=True, text=True, timeout=30,
                                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-                if result.returncode: raise RuntimeError("Quartz MCP kaydı başarısız: " + result.stderr[:300])
+                if result.returncode: raise RuntimeError("SpeS MCP kaydı başarısız: " + result.stderr[:300])
             ensure_antigravity_tool_grants()
             write_operator_hooks(workspace.name)
         is_gemini_backend = provider == "antigravity" and getattr(runtime, "backend", "agy") == "gemini"
@@ -829,7 +829,7 @@ class NaturalDesktopTask:
                 previous[key]=identity
                 job.setdefault('elevation_aliases',{})[str((request.get('arguments') or {}).get('target','')).strip().casefold()]=identity
                 self.pending={'id':identity,'kind':'elevation','phase':'awaiting_user','task_id':job['id'],
-                    'conversation_id':job['conversation_id'],'reason':'Bu uygulama yönetici erişimi istiyor. Yalnız uygulama için Windows UAC istemi açılabilir. UAC onayını siz verirsiniz; Quartz yükseltilmez. Yükseltilmiş pencerenin otomatik kontrolü ayrıca kısıtlı olabilir.',
+                    'conversation_id':job['conversation_id'],'reason':'Bu uygulama yönetici erişimi istiyor. Yalnız uygulama için Windows UAC istemi açılabilir. UAC onayını siz verirsiniz; SpeS yükseltilmez. Yükseltilmiş pencerenin otomatik kontrolü ayrıca kısıtlı olabilir.',
                     'targets':[],'logs':[],'launch':exc.approval,'operator':job['roles']['operator'],
                     'expires_at':_within_job(job, 600)}
                 job['permission_generation'] = job.get('permission_generation', 0)+1
@@ -1344,7 +1344,7 @@ class NaturalDesktopTask:
                         result = dict(result, host_verification={
                             "status": self.job["verification"]["status"],
                             "expected_text": self.job["verification"]["expected_text"],
-                            "next": "Quartz verified the text quoted in the user's request in its own observation. "
+                            "next": "SpeS verified the text quoted in the user's request in its own observation. "
                                     "This verifies only the quoted text. Continue any remaining user requirements. "
                                     "If none remain, summarize the observed result and end your turn."})
                 return result
@@ -1374,7 +1374,7 @@ class NaturalDesktopTask:
                 "status": "OBSERVED UI CRITERION VERIFIED", "source": HOST_TEXT_SOURCE,
                 "expected_text": list(literals), "snapshot_id": record["snapshot_id"],
                 "image_sha256": record["image_sha256"], "at": time.time(),
-                "scope": "Quartz found the text quoted in the user's request in its own post-input observation; "
+                "scope": "SpeS found the text quoted in the user's request in its own post-input observation; "
                          "not proof of all user requirements"}
 
     def _warband_call(self,token,request):
@@ -1436,7 +1436,7 @@ class NaturalDesktopTask:
 
     def _recheck_criterion(self, record):
         # A read-only look after desktop_verify must not erase it (live 7 Nov, task
-        # afdd5615): Quartz re-checks the same exact text in the new observation.
+        # afdd5615): SpeS re-checks the same exact text in the new observation.
         # Only when no input happened since; missing text keeps NOT VERIFIED.
         prior, self._prior_criterion = getattr(self, "_prior_criterion", None), None
         if (not isinstance(prior, dict) or prior.get("status") != "OBSERVED UI CRITERION VERIFIED"

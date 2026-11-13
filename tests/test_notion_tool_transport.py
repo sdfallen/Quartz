@@ -237,7 +237,7 @@ class NotionToolTransportTests(unittest.TestCase):
 
         msg = format_continuation_message(result)
         self.assertEqual(msg["session_id"], result.session_id)
-        self.assertIn("[Quartz Local Tool Result]", msg["message"])
+        self.assertIn("[SpeS Local Tool Result]", msg["message"])
         self.assertIn("tool_request_id: req-test-99", msg["message"])
         self.assertIn("verification: observed", msg["message"])
         self.assertIn("Not Defteri", msg["message"])

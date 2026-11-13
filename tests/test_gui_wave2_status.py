@@ -104,7 +104,7 @@ assert.equal(view('interrupted',{}),'Önceki oturum kesildi; otomatik sürdürü
     def test_quartz_text_check_has_its_own_scoped_label(self):
         self.view(r'''
 const ok={status:'OBSERVED UI CRITERION VERIFIED',expected_text:['deneme']};
-assert.equal(view('completed',{natural_task:'job',host_check:ok}),'İstenen metin Quartz gözlemiyle ekranda görüldü; kullanıcı kabulü ayrı.');
+assert.equal(view('completed',{natural_task:'job',host_check:ok}),'İstenen metin SpeS gözlemiyle ekranda görüldü; kullanıcı kabulü ayrı.');
 for (const fake of [{status:'VERIFIED',expected_text:['x']},{status:'OBSERVED UI CRITERION VERIFIED',expected_text:[]},{status:'OBSERVED UI CRITERION VERIFIED'}]) {
   assert.equal(view('completed',{natural_task:'job',host_check:fake}),'Yürütme bitti, hedef henüz doğrulanmadı.');
 }

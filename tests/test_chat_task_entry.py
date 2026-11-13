@@ -19,7 +19,7 @@ class ChatTaskEntryTests(unittest.TestCase):
         'Ekran görüntüsü al', 'Şu penceredeki düğmeye bas',
         'Click the button in the test application', 'Inspect the active window',
         'Take a screenshot of the application',
-        "Codex, Quartz'ın ayarlar ekranını aç, incele ve sorunu düzelt. Gemini, logları kontrol et.",
+        "Codex, SpeS'in ayarlar ekranını aç, incele ve sorunu düzelt. Gemini, logları kontrol et.",
     )
 
     def test_desktop_requests_reach_tools_from_the_same_chat_without_a_draft(self):
@@ -36,7 +36,7 @@ class ChatTaskEntryTests(unittest.TestCase):
                 self.assertIsNone(api._desktop_agents)
 
     def test_discussion_and_quoted_commands_never_start_a_desktop_task(self):
-        for text in ('Merhaba dostum', 'Quartz hakkında ne düşünüyorsun?',
+        for text in ('Merhaba dostum', 'SpeS hakkında ne düşünüyorsun?',
                 'Ekran görüntüsü nasıl alınır?', 'How do I click a button?',
                 '"Notepad aç" ne demek?', '```Ekrana bak``` komutunu açıkla',
                 'Araç kullanma, ekrana bak', 'Sadece sohbet edelim; uygulamayı aç'):

@@ -313,7 +313,7 @@ class CodexRuntime:
                 raise RuntimeError("Codex MCP listing has an entry of unknown state")
             names = [s["name"] for s in servers if s["enabled"]]
             if not set(allowed) <= set(names):
-                raise RuntimeError("Quartz tools are not active in Codex: " + ", ".join(sorted(set(allowed) - set(names))))
+                raise RuntimeError("SpeS tools are not active in Codex: " + ", ".join(sorted(set(allowed) - set(names))))
             return [n for n in names if n not in allowed]
 
         extra = enabled_extra(flags)
@@ -344,7 +344,7 @@ class CodexRuntime:
         # refused request leaves no record or project lock behind.
         if tool_guard and (desktop_connection is not None or sandbox != "read-only"):
             raise ValueError("Log observer cannot receive desktop/write permissions")
-        # project_read is the project ROOT to expose through Quartz's own
+        # project_read is the project ROOT to expose through SpeS's own
         # read-only MCP tools; the Codex process itself runs elsewhere with
         # every built-in tool (shell included) disabled.
         read_root = None
@@ -626,7 +626,7 @@ class CodexRuntime:
                             note({"type": "mcp_tool_call", "server": server, "tool": tool,
                                   "status": item.get("status")})
                             if server != ALLOWED_SERVER or tool not in ALLOWED_TOOLS:
-                                raise SessionRefused(f"Tool outside Quartz read set: {server}/{tool}")
+                                raise SessionRefused(f"Tool outside SpeS read set: {server}/{tool}")
                         elif kind not in {"userMessage", "reasoning"}:
                             # commandExecution, fileChange, webSearch, ... are not part of a project read.
                             note({"type": "unexpected_item", "item_type": str(kind)[:60]})

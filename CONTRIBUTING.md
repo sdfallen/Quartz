@@ -1,6 +1,6 @@
-# Quartz'a katkı
+# SpeS'e katkı
 
-Quartz şu anda geliştirme önizlemesidir. Issue ve pull request açmadan önce
+SpeS şu anda geliştirme önizlemesidir. Issue ve pull request açmadan önce
 değişikliğin mevcut güvenlik sınırlarını koruduğundan emin olun.
 
 ## Yerel hazırlık
@@ -11,7 +11,7 @@ py -3.13 -m venv .venv
 ```
 
 Küçük, tek amaçlı bir dal kullanın. ASTER/Warband varlıklarını, kullanıcı
-kayıtlarını veya Universal Modder kurulumunu Quartz reposuna eklemeyin.
+kayıtlarını veya Universal Modder kurulumunu SpeS deposuna eklemeyin.
 
 ## Zorunlu kontroller
 
@@ -43,5 +43,5 @@ değer kullanmayın. Güvenlik açığı ayrıntılarını public issue veya PR'
 ## Lisans notu
 
 Repo henüz açık kaynak lisansına sahip değildir. Bir katkının kabul edilmesi,
-Quartz'ın veya başka kodların yeniden dağıtım haklarını otomatik olarak
+SpeS'in veya başka kodların yeniden dağıtım haklarını otomatik olarak
 değiştirmez. Lisans koşulları proje sahibi tarafından ayrıca belirlenir.

@@ -13,8 +13,8 @@ from ui.styles import BASE_CSS
 from ui.theme import MODERN_CSS
 
 WORKSPACE_CSS = "workspace.css"
-BRAND_MARK = "branding/quartz-q-48.png"
-BRAND_PLACEHOLDER = '<div class="brand">QUARTZ</div>'
+BRAND_MARK = "branding/spes-mark-48.png"
+BRAND_PLACEHOLDER = '<div class="brand">SpeS</div>'
 
 
 def asset_root() -> Path:
@@ -57,9 +57,9 @@ NOTION_TOOLS_SCRIPT = r"""
   var COMPLETED = {
     verified: ['Tamamlandı ve doğrulandı', 'verified'],
     observed: ['Tamamlandı · sonuç gözlendi, doğrulanmadı', 'observed'],
-    none: ['Ajan tamamlandığını bildirdi · Quartz doğrulamadı', 'unverified']
+    none: ['Ajan tamamlandığını bildirdi · SpeS doğrulamadı', 'unverified']
   };
-  var OPERATORS = { notion: 'Notion', codex: 'Codex', antigravity: 'Antigravity', quartz: 'Quartz' };
+  var OPERATORS = { notion: 'Notion', codex: 'Codex', antigravity: 'Antigravity', quartz: 'SpeS' };
 
   var view = { el: null, key: '', task: null, retired: Object.create(null) };
 
@@ -185,7 +185,7 @@ NOTION_TOOLS_SCRIPT = r"""
     var who = make('span', 'notion-tools-operator');
     who.dataset.operator = OPERATORS[operatorId] ? operatorId : 'unknown';
     who.textContent = operatorId === 'notion' ? 'Yürüten: Notion'
-      : operatorId === 'quartz' ? 'Yürüten: Quartz yerel okuyucu · isteyen Notion'
+      : operatorId === 'quartz' ? 'Yürüten: SpeS yerel okuyucu · isteyen Notion'
       : OPERATORS[operatorId] ? 'Yürüten: ' + operator + ' · Notion bu işi devretti'
       : 'Yürüten: belirtilmedi';
     copy.append(who);
@@ -202,7 +202,7 @@ NOTION_TOOLS_SCRIPT = r"""
       copy.append(make('span', 'notion-tools-stop', stopWith === 'chat'
         ? 'Durdurmak için sohbetteki Görevi durdur düğmesini kullanın.'
         : stopWith === 'desktop' ? 'Durdurmak için görev şeridindeki Görevi durdur düğmesini kullanın.'
-        : 'Bu görev için Quartz durdurma yolu görünmüyor; görevi doğrulayın.'));
+        : 'Bu görev için SpeS durdurma yolu görünmüyor; görevi doğrulayın.'));
     }
     head.append(copy);
     el.append(head);
@@ -238,7 +238,7 @@ DOCUMENT_HEAD = (
     '<html lang="tr">\n'
     "<head>\n"
     '<meta charset="UTF-8">\n'
-    "<title>Quartz</title>\n"
+    "<title>SpeS</title>\n"
 )
 
 

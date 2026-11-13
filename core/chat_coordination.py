@@ -41,7 +41,7 @@ def write_observer_hooks(directory):
 def write_project_read_hooks(directory, roots):
     """PreToolUse guard for a read-only project inspection run.
 
-    The hook lives in Quartz's scratch workspace, never in the user's project;
+    The hook lives in SpeS's scratch workspace, never in the user's project;
     the project is reached only through --add-dir and every tool call must pass
     desktop_mcp.project_read_tool_allowed (read tools, inside roots, no secrets).
     """
@@ -204,7 +204,7 @@ class ChatCoordination:
             for agent, client in (("manager","codex"),(agent_ids["codex"],"codex"),(agent_ids["antigravity"],"gemini")):
                 if not any(row.get("id") == agent for row in squad.agents()): squad.join(agent, client=client)
             operator, observer = plan["roles"]["operator"], plan["roles"]["observer"]
-            task = squad.create_task("manager", agent_ids[operator], "Quartz onaylı pencere/log görevi", plan["scope"])
+            task = squad.create_task("manager", agent_ids[operator], "SpeS onaylı pencere/log görevi", plan["scope"])
             squad.ack_task(agent_ids[operator], task["id"])
             self.squad = squad; self.cancel.clear(); self.notes.clear(); self._released = False
             self.job = {**plan, "status":"starting", "target":target, "targets":targets, "launches":launches, "log":str(log.path),

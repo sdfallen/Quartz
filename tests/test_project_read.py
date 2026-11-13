@@ -18,7 +18,7 @@ from tests import test_antigravity_runtime as agy_tests
 from tests import test_codex_runtime as codex_tests
 from tests import test_multi_agent_service as service_tests
 
-NAMES = ("Quartz", "Jarvis config")
+NAMES = ("SpeS", "Jarvis config")
 
 
 def mcp_listing(*names, returncode=0):
@@ -40,9 +40,9 @@ class ProjectQuestionTests(unittest.TestCase):
                 self.assertTrue(project_question(text, NAMES))
 
     def test_project_name_needs_a_question_about_it(self):
-        self.assertFalse(project_question("Quartz ajanlara hangi süreleri koyuyor?"))
-        self.assertTrue(project_question("Quartz ajanlara hangi süreleri koyuyor?", NAMES))
-        for text in ("Quartz, nasılsın?", "Merhaba Quartz"):
+        self.assertFalse(project_question("SpeS ajanlara hangi süreleri koyuyor?"))
+        self.assertTrue(project_question("SpeS ajanlara hangi süreleri koyuyor?", NAMES))
+        for text in ("SpeS, nasılsın?", "Merhaba SpeS"):
             with self.subTest(text=text):
                 self.assertFalse(project_question(text, NAMES))
 
@@ -483,7 +483,7 @@ class ChatTurnTests(unittest.TestCase):
 
     def test_project_question_marks_turn_project_read(self):
         with tempfile.TemporaryDirectory() as directory:
-            chat = self.make_chat(directory, {"id": "p1", "name": "Quartz", "path": directory})
+            chat = self.make_chat(directory, {"id": "p1", "name": "SpeS", "path": directory})
             self.assertTrue(self.send(chat, "README dosyasında ne yazıyor?")["project_read"])
 
     def test_small_talk_tasks_protected_and_group_are_not_project_reads(self):

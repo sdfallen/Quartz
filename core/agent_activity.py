@@ -1,6 +1,6 @@
 """Short Turkish description of what an agent is doing right now, for the chat.
 
-Reads only the provider run record Quartz already keeps (events). The text is a
+Reads only the provider run record SpeS already keeps (events). The text is a
 display hint: it is never evidence, permission or a success claim. Commands are
 shortened and paths reduced to their last part so the line cannot carry a whole
 secret-bearing command line or a private folder structure.
@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 
 TOOL_LABELS = {
-    # Quartz MCP tools (both providers).
+    # SpeS MCP tools (both providers).
     "desktop_request_access": "Pencere erişimi istiyor",
     "desktop_focus": "Pencereyi öne alıyor",
     "desktop_observe": "Ekranı inceliyor",

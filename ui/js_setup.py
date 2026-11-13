@@ -1,4 +1,4 @@
-"""Quartz setup JavaScript fragment; composed in the shared application scope."""
+"""SpeS setup JavaScript fragment; composed in the shared application scope."""
 
 JAVASCRIPT = r"""
   const chatEl      = document.getElementById('chat');
@@ -209,7 +209,7 @@ JAVASCRIPT = r"""
       apiKey.value = '';
       if (result.status !== 'ok') throw new Error(result.data || 'Anahtar doğrulanamadı');
       closeModalOverlay(apiSetup);
-      appendMsg('bot', 'QUARTZ', 'API bağlantısı doğrulandı. Quartz kullanıma hazır.');
+      appendMsg('bot', 'SPES', 'API bağlantısı doğrulandı. SpeS kullanıma hazır.');
     } catch (error) {
       apiError.textContent = 'Doğrulama başarısız: ' + String(error.message || error);
     } finally {

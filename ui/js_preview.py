@@ -2,7 +2,7 @@
 
 The pane frames a web app running on this computer. Python decides which
 addresses are allowed (``core/preview_url.py``); this script only asks, shows
-and refuses the Quartz page's own origin. Reply text is never parsed as HTML.
+and refuses the SpeS page's own origin. Reply text is never parsed as HTML.
 """
 
 JAVASCRIPT = r"""
@@ -32,9 +32,9 @@ JAVASCRIPT = r"""
   async function checkPreviewUrl(raw) {
     const result = await window.pywebview.api.preview_check_url(String(raw ?? ''));
     if (result.status !== 'ok') throw new Error(String(result.data || 'Adres açılamadı'));
-    // The previewed page must never share the Quartz page's origin.
+    // The previewed page must never share the SpeS page's origin.
     if (location.origin && location.origin !== 'null' && new URL(result.data).origin === location.origin) {
-      throw new Error('Quartz arayüzünün kendi adresi önizlenemez');
+      throw new Error('SpeS arayüzünün kendi adresi önizlenemez');
     }
     return result.data;
   }
@@ -124,7 +124,7 @@ JAVASCRIPT = r"""
   // Work panel tabs: preview, host-observed file changes and host checks for this conversation.
   // Only host evidence (metadata.host_evidence) is listed; agent text never adds a row.
   const workEvidence = new Map();
-  const WORK_AGENT = {codex: 'Pusula', claude: 'Usta', antigravity: 'Gözcü', gemini: 'Gözcü'};
+  const WORK_AGENT = {codex: 'Fides', claude: 'Fatum', antigravity: 'Eos', gemini: 'Eos'};
   function setWorkTab(tab) {
     previewPane.dataset.workTab = tab;
     previewPane.querySelectorAll('.work-tab').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === tab ? 'true' : 'false'));
@@ -173,7 +173,7 @@ JAVASCRIPT = r"""
       if (!m || !m.id || !ev || typeof ev !== 'object') continue;
       const files = Array.isArray(ev.files_changed) ? ev.files_changed.map(String) : [];
       const hasCheck = !!(ev.source_validation || meta.outcome?.goal_verdict);
-      workEvidence.set(m.id, {files, seq: m.sequence || meta.sequence, agent: WORK_AGENT[String(m.sender || '').toLowerCase()] || 'Quartz',
+      workEvidence.set(m.id, {files, seq: m.sequence || meta.sequence, agent: WORK_AGENT[String(m.sender || '').toLowerCase()] || 'SpeS',
                               check: hasCheck ? workCheckLabel(ev, meta) : null});
     }
     renderWorkEvidence();

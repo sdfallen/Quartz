@@ -1,5 +1,5 @@
 """
-gui.py  —  Quartz  |  Designed by Ali Mehdi
+gui.py  —  SpeS  |  Designed by Ali Mehdi
 Modern glass/HUD interface rendered with pywebview
 (HTML/CSS/JS) instead of tkinter. Replaces the old
 radar/hex/core canvas UI with a single breathing
@@ -55,7 +55,7 @@ def ipc_send(action: str, data=None) -> dict:
     except ConnectionRefusedError:
         return {
             "status": "error",
-            "data": "Quartz bağlantısı kapalı. Uygulamayı Quartz.exe veya quartz_entry.py ile birlikte başlatın.",
+            "data": "SpeS bağlantısı kapalı. Uygulamayı Quartz.exe veya quartz_entry.py ile birlikte başlatın.",
         }
     except Exception as exc:
         return {"status": "error", "data": str(exc)}
@@ -68,7 +68,7 @@ _QUICK_ACTIONS = {
     "desktop":    "List all files on my Desktop",
     "plugins":    "list plugins",
     "update_all": "update all plugins",
-    "quartz_mode": "Quartz Mode",
+    "quartz_mode": "SpeS Mode",
     "windows": "pencereleri listele",
 }
 
@@ -237,7 +237,7 @@ class Api:
                 if task is not None:
                     task.attach_job(started['id'])
                     if search:
-                        task.request_scope('execute_tool','Seçilen dosyada dize araması için resmî ripgrep 14.1.1 aracı indirilsin ve çalıştırılsın mı? Yalnız seçilen dosya okunur; araç ve çıktılar Quartz çalışma alanına yazılır.')
+                        task.request_scope('execute_tool','Seçilen dosyada dize araması için resmî ripgrep 14.1.1 aracı indirilsin ve çalıştırılsın mı? Yalnız seçilen dosya okunur; araç ve çıktılar SpeS çalışma alanına yazılır.')
                     started['chat_task']=task.summary();started['conversation_id']=conversation_id
                 return {'status':'ok','data':started,'chat_task':task.summary() if task else None}
             except Exception:
@@ -891,7 +891,7 @@ class Api:
     def project_pick_add(self) -> dict:
         window = webview.windows[0] if webview.windows else None
         if window is None:
-            return {"status": "error", "data": "Quartz penceresi hazır değil"}
+            return {"status": "error", "data": "SpeS penceresi hazır değil"}
         folders = window.create_file_dialog(webview.FileDialog.FOLDER)
         if not folders:
             return {"status": "cancelled", "data": None}
@@ -923,13 +923,13 @@ class Api:
         """Open a loopback app in its own window.
 
         The window gets no ``js_api``: the previewed page can never reach the
-        Quartz bridge. Used when a page refuses to be framed in the side panel.
+        SpeS bridge. Used when a page refuses to be framed in the side panel.
         """
         try:
             target = normalize_preview_url(url)
         except PreviewUrlError as exc:
             return {"status": "error", "data": str(exc)}
-        webview.create_window("Quartz önizleme", url=target, width=1100, height=760,
+        webview.create_window("SpeS önizleme", url=target, width=1100, height=760,
                               min_size=(360, 300), text_select=True)
         return {"status": "ok", "data": target}
 
@@ -1331,7 +1331,7 @@ class QuartzUI:
         set_windows_app_id()
         self._api = Api()
         self._window = webview.create_window(
-            "Quartz",
+            "SpeS",
             html=apply_to_document(_HTML),
             js_api=self._api,
             min_size=(360, 420),

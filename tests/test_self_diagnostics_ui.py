@@ -79,7 +79,7 @@ class SelfDiagnosticsBridgeTests(unittest.TestCase):
         self.assertIn("body.low-spec .diagnostics-card", css)
         self.assertIn("body.ui-idle .diagnostics-card", css)
         self.assertIn('id="btnSelfDiagnostics"', gui._HTML)
-        self.assertIn('aria-label="Quartz"', gui._HTML)
+        self.assertIn('aria-label="SpeS"', gui._HTML)
 
 
 class SelfDiagnosticsJavaScriptTests(unittest.TestCase):
@@ -190,7 +190,7 @@ const passView = buildSelfDiagnosticsView({
   verdict: 'PASS',
   finished_at: 1700000005,
   rea_used: true,
-  report_path: 'C:\\Users\\secret\\AppData\\Local\\Quartz\\diagnostics\\job-pass.json',
+  report_path: 'C:\\Users\\secret\\AppData\\Local\\SpeS\\diagnostics\\job-pass.json',
   checks: [
     { id: 'scope', status: 'PASS', title: 'Kapsam', message: 'Tamam', evidence: { sha256: 'abc', api_key: 'fixture-private-value' } },
     { id: 'manifest', status: 'PASS', title: 'Manifest', message: 'Tamam', evidence: { compared: 45 } },

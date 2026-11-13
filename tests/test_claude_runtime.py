@@ -1,4 +1,4 @@
-"""Claude Code as Quartz's third agent: locked-down command, proven profile, record contract."""
+"""Claude Code as SpeS's third agent: locked-down command, proven profile, record contract."""
 import json
 import tempfile
 import unittest

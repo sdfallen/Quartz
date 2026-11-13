@@ -1,4 +1,4 @@
-#define MyAppName "Quartz"
+#define MyAppName "SpeS"
 #ifndef MyAppVersion
 #define MyAppVersion "1.0.0"
 #endif
@@ -11,7 +11,7 @@
 #define MyAppPublisher "Ali Mehdi"
 #define MyAppExeName "Quartz.exe"
 ; Require the approved Q rather than silently falling back to legacy ring art.
-#define BrandIcon "..\assets\branding\quartz-q.ico"
+#define BrandIcon "..\assets\branding\spes-mark.ico"
 
 [Setup]
 AppId={{7EC663D2-123D-4DBD-9C6B-7C3A2F8B0E42}
@@ -20,11 +20,11 @@ AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 VersionInfoCompany={#MyAppPublisher}
-VersionInfoDescription=Quartz Desktop Assistant Setup
+VersionInfoDescription=SpeS Workspace Setup
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
 DefaultDirName={localappdata}\Programs\Quartz
-DefaultGroupName=Quartz
+DefaultGroupName=SpeS
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
@@ -32,7 +32,7 @@ OutputDir={#ReleaseOutput}
 OutputBaseFilename=QuartzSetup-{#MyAppVersion}
 SetupIconFile={#BrandIcon}
 UninstallDisplayIcon={app}\{#MyAppExeName}
-UninstallDisplayName=Quartz {#MyAppVersion}
+UninstallDisplayName=SpeS {#MyAppVersion}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
@@ -48,7 +48,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
-Name: "startup"; Description: "Quartz'ı Windows açılışında başlat"; GroupDescription: "Başlangıç"; Flags: unchecked
+Name: "startup"; Description: "SpeS'i Windows açılışında başlat"; GroupDescription: "Başlangıç"; Flags: unchecked
 
 [Files]
 Source: "{#PackageDir}\Quartz.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -58,13 +58,13 @@ Source: "{#PackageDir}\README.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PackageDir}\release-manifest.json"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\Quartz"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"; AppUserModelID: "AliMehdi.Quartz.Workspace"
-Name: "{autodesktop}\Quartz"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"; AppUserModelID: "AliMehdi.Quartz.Workspace"; Tasks: desktopicon
-Name: "{userstartup}\Quartz"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"; AppUserModelID: "AliMehdi.Quartz.Workspace"; Tasks: startup
-Name: "{group}\Quartz'ı Kaldır"; Filename: "{uninstallexe}"
+Name: "{group}\SpeS"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"; AppUserModelID: "AliMehdi.Quartz.Workspace"
+Name: "{autodesktop}\SpeS"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"; AppUserModelID: "AliMehdi.Quartz.Workspace"; Tasks: desktopicon
+Name: "{userstartup}\SpeS"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"; AppUserModelID: "AliMehdi.Quartz.Workspace"; Tasks: startup
+Name: "{group}\SpeS'i Kaldır"; Filename: "{uninstallexe}"
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Quartz'ı şimdi başlat"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "SpeS'i şimdi başlat"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 Type: files; Name: "{app}\assistant.log"

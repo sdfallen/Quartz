@@ -2,7 +2,7 @@
 
 The preview shows an application the user or an agent is building on this
 computer. It is limited to loopback web addresses so that a reply, a page or a
-log line can never turn the preview into a general browser inside Quartz.
+log line can never turn the preview into a general browser inside SpeS.
 Standard library only; the JavaScript twin lives in ``ui/js_preview.py``.
 """
 import urllib.error
@@ -89,7 +89,7 @@ def frame_policy(url, timeout=PROBE_TIMEOUT_SECONDS, opener=None):
     target = normalize_preview_url(url)
     opener = opener or urllib.request.build_opener(_NoRedirect, urllib.request.ProxyHandler({}))
     for _hop in range(4):
-        request = urllib.request.Request(target, method="GET", headers={"User-Agent": "Quartz-Preview"})
+        request = urllib.request.Request(target, method="GET", headers={"User-Agent": "SpeS-Preview"})
         try:
             with opener.open(request, timeout=timeout) as response:
                 return "blocked" if _forbids_framing(response.headers) else "allowed"

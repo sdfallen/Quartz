@@ -70,7 +70,7 @@ class ReaAdapter:
 
     @staticmethod
     def discover():
-        local = (Path(os.environ.get('LOCALAPPDATA') or Path.home()) / 'Quartz/tools/rea').resolve()
+        local = (Path(os.environ.get('LOCALAPPDATA') or Path.home()) / 'SpeS/tools/rea').resolve()
         script = os.environ.get('QUARTZ_REA_SCRIPT')
         recorded_node = None
         receipt = local / 'tool.json'

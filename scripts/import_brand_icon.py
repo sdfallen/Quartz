@@ -17,7 +17,7 @@ def import_assets(source, target, supplied_ico=None):
         if original.format!="PNG" or original.width!=original.height or original.width<256:
             raise ValueError("Approved original must be a square PNG of at least 256 px; no invented padding/upscale")
         image=original.convert("RGBA")
-    png,ico=target/"quartz-q.png",target/"quartz-q.ico"
+    png,ico=target/"spes-mark.png",target/"spes-mark.ico"
     if png.exists() or ico.exists(): raise FileExistsError("Preserve existing branding; checkpoint and replace explicitly")
     supplied=Path(supplied_ico).resolve(strict=True) if supplied_ico else None
     if supplied:
@@ -35,7 +35,7 @@ def import_assets(source, target, supplied_ico=None):
         sizes=sorted(check.ico.sizes())
         if not {(size,size) for size in SIZES}.issubset(sizes): raise RuntimeError("ICO size verification failed")
         # Small, mechanically decoded UI asset; original supplied PNG/ICO remain byte-identical.
-        check.ico.getimage((48,48)).save(target/"quartz-q-48.png")
+        check.ico.getimage((48,48)).save(target/"spes-mark-48.png")
     manifest={"source_png":str(source),"source_ico":str(supplied) if supplied else None,
               "supplied_ico_preserved":bool(supplied),"sizes":sizes,
               "png_sha256":hashlib.sha256(png.read_bytes()).hexdigest(),

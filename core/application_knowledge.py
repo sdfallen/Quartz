@@ -32,7 +32,7 @@ class ApplicationKnowledge:
     ALLOWED_OUTCOMES = {'completed', 'partial', 'blocked', 'failed', 'cancelled'}
 
     def __init__(self, root=None):
-        self.root = Path(root or Path(os.getenv('LOCALAPPDATA', str(Path.home()))) / 'Quartz/application-knowledge')
+        self.root = Path(root or Path(os.getenv('LOCALAPPDATA', str(Path.home()))) / 'SpeS/application-knowledge')
         self.lock = threading.RLock()
 
     def location(self, path):

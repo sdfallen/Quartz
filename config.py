@@ -1,5 +1,5 @@
 """
-config.py  —  Quartz Configuration
+config.py  —  SpeS Configuration
 """
 import os
 import sys
@@ -115,7 +115,7 @@ def get_vision_provider() -> dict:
     }
 
 # ── Assistant ─────────────────────────────────────────
-ASSISTANT_NAME       = "Quartz"
+ASSISTANT_NAME       = "SpeS"
 MAX_HISTORY_MESSAGES = 20
 COMMAND_TIMEOUT      = 30
 MAX_OUTPUT_CHARS     = 4000

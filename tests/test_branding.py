@@ -16,7 +16,7 @@ class BrandingTests(unittest.TestCase):
         import hashlib, json
         from scripts.build_brand_assets import build
         manifest=json.loads((ROOT/'assets/branding/brand-manifest.json').read_text(encoding='utf-8'))
-        for name,key in (('quartz-q.svg','svg_sha256'),('quartz-q.png','png_sha256'),('quartz-q.ico','ico_sha256')):
+        for name,key in (('spes-mark.svg','svg_sha256'),('spes-mark.png','png_sha256'),('spes-mark.ico','ico_sha256')):
             self.assertEqual(hashlib.sha256((ROOT/'assets/branding'/name).read_bytes()).hexdigest(),manifest[key])
         with tempfile.TemporaryDirectory() as directory:
             self.assertEqual(build(directory),manifest)
@@ -25,12 +25,12 @@ class BrandingTests(unittest.TestCase):
         import subprocess
         if not (ROOT/'.git').exists():
             self.skipTest('git checkout gerekli')
-        result=subprocess.run(['git','-C',str(ROOT),'check-attr','text','--','assets/branding/quartz-q.svg'],capture_output=True,text=True,timeout=30)
+        result=subprocess.run(['git','-C',str(ROOT),'check-attr','text','--','assets/branding/spes-mark.svg'],capture_output=True,text=True,timeout=30)
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertTrue(result.stdout.strip().endswith('text: unset'),result.stdout)
     def test_small_icon_frames_are_generated_not_downscaled(self):
         from scripts.build_brand_assets import ICO_SIZES,SOLID_TONE
-        with Image.open(ROOT/'assets/branding/quartz-q.ico') as icon:
+        with Image.open(ROOT/'assets/branding/spes-mark.ico') as icon:
             self.assertEqual(sorted(icon.ico.sizes()),[(s,s) for s in ICO_SIZES])
             small=icon.ico.getimage((16,16)).convert('RGBA')
         tone=[int(SOLID_TONE[i:i+2],16) for i in (1,3,5)]
@@ -42,7 +42,7 @@ class BrandingTests(unittest.TestCase):
         from ui.shell import SHELL_MARKUP
         for polygon in [*facets(),TAIL]: self.assertIn(_points(polygon),SHELL_MARKUP)
     def test_required_sizes_present_and_decodable(self):
-        path=ROOT/'assets/branding/quartz-q.ico'
+        path=ROOT/'assets/branding/spes-mark.ico'
         sizes={tuple(e['size']) for e in ico_entries(path)}
         self.assertTrue({(s,s) for s in (16,32,48,128,256)}.issubset(sizes))
         with Image.open(path) as image:
@@ -52,16 +52,16 @@ class BrandingTests(unittest.TestCase):
             root=Path(directory); (root/'assets/branding').mkdir(parents=True)
             with patch.object(branding,'asset_root',return_value=root):
                 self.assertEqual(branding.application_icon(),root/'quartz.ico')
-                (root/'assets/branding/quartz-q.ico').touch()
-                self.assertEqual(branding.application_icon(),root/'assets/branding/quartz-q.ico')
+                (root/'assets/branding/spes-mark.ico').touch()
+                self.assertEqual(branding.application_icon(),root/'assets/branding/spes-mark.ico')
     def test_import_preserves_provided_extra_sizes_and_refuses_overwrite(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
             result=import_assets(ROOT/'715d52a3-0f49-49c1-9fe1-b6733ea89145.png',root,ROOT/'download.ico')
             self.assertTrue(result['supplied_ico_preserved']); self.assertEqual(len(result['sizes']),7)
-            before=(root/'quartz-q.ico').read_bytes()
+            before=(root/'spes-mark.ico').read_bytes()
             with self.assertRaises(FileExistsError): import_assets(ROOT/'quartz.png',root)
-            self.assertEqual((root/'quartz-q.ico').read_bytes(),before)
+            self.assertEqual((root/'spes-mark.ico').read_bytes(),before)
     def test_mismatched_ico_rejected_before_copy(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory); ico=root/'wrong.ico'; target=root/'out'
@@ -70,7 +70,7 @@ class BrandingTests(unittest.TestCase):
             self.assertFalse(target.exists())
     def test_gui_header_embeds_small_local_q_mark(self):
         import gui
-        self.assertIn('aria-label="Quartz"',gui._HTML)
+        self.assertIn('aria-label="SpeS"',gui._HTML)
         self.assertIn('brand-icon"',gui._HTML)
         self.assertNotIn('fonts.googleapis.com',gui._HTML)
     @unittest.skipUnless(os.name=='nt','Windows shell-link file test')
@@ -81,8 +81,8 @@ class BrandingTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as directory:
                 root=Path(directory); exe=root/'Quartz.exe';exe.touch()
-                backup=root/'backup';backup.mkdir();path=root/'Quartz.lnk'
-                icon=(ROOT/'assets/branding/quartz-q.ico').resolve()
+                backup=root/'backup';backup.mkdir();path=root/'SpeS.lnk'
+                icon=(ROOT/'assets/branding/spes-mark.ico').resolve()
                 first=deliver_link(path,backup,exe,icon)
                 self.assertEqual(first['status'],'CREATED');self.assertEqual(first['after']['app_id'],branding.APP_ID)
                 original=path.read_bytes();second=deliver_link(path,backup,exe,icon)
@@ -96,7 +96,7 @@ class BrandingTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as directory:
                 root=Path(directory); exe=root/'Quartz.exe';exe.touch();other=root/'Other.exe';other.touch()
-                backup=root/'backup';backup.mkdir();path=root/'Quartz.lnk';icon=(ROOT/'assets/branding/quartz-q.ico').resolve()
+                backup=root/'backup';backup.mkdir();path=root/'SpeS.lnk';icon=(ROOT/'assets/branding/spes-mark.ico').resolve()
                 deliver_link(path,backup,other,icon);original=path.read_bytes()
                 result=deliver_link(path,backup,exe,icon)
                 self.assertEqual(result['status'],'SKIPPED_UNRELATED');self.assertEqual(path.read_bytes(),original)

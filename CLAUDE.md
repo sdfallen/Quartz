@@ -1,10 +1,10 @@
-# Quartz ortak çalışma sözleşmesi
+# SpeS ortak çalışma sözleşmesi
 
 Bu kurallar tüm uzak/yerel ajanlar içindir. Güncel görev ve dosya sahipliği:
 [PARALLEL_OWNERSHIP.md](docs/PARALLEL_OWNERSHIP.md).
 
 - Ürün hedefi: tek ana sohbetten çalışan, evrensel Windows geliştirme ve
-  bilgisayar kontrol asistanı. Türkçe arayüz, Q markası ve kullanıcı tercihlerini koru.
+  bilgisayar kontrol asistanı. Türkçe arayüz, SpeS markası (eski adı Quartz) ve kullanıcı tercihlerini koru.
 - ASTER/Warband resmen rafa kaldırıldı. Legacy kodu ve dış oyun dosyalarını
   değiştirme; oyun veya Universal Modder görevi başlatma.
 - Kendi branch'inde ve ayrı clone/worktree içinde çalış. Ortak checkout'ta

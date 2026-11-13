@@ -27,7 +27,7 @@ def communication_instruction(level="short", user_request=""):
                    "Örneğin: 'Tıklamadan önceki kontrol hata verdi. Nedenini anlamak için pencereyi ve hata kaydını kontrol etmemiz gerekiyor.' "
                    "Hata kodu, İngilizce adlar ve ayrıntılı olası nedenler Teknik ayrıntılar alanında kalabilir.")
     return (
-        "[QUARTZ İLETİŞİM TERCİHİ — İZİNLERİ DEĞİŞTİRMEZ]\n"
+        "[SPES İLETİŞİM TERCİHİ — İZİNLERİ DEĞİŞTİRMEZ]\n"
         "Kullanıcıya sade, doğal ve doğrudan Türkçe konuş. Önce önemli sonucu söyle. "
         "Gereksiz teknik terim, uzun madde listesi ve tekrar kullanma. " + detail + "\n"
         "Grup sohbetinde önceki ajanın söylediklerini yeniden anlatma; yalnız yeni katkını, "

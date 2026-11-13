@@ -1,7 +1,7 @@
 """
 tests/test_tool_workbench_lifecycle.py
 End-to-end lifecycle, concurrency, real tool execution, and environment invariance tests
-for Quartz Tool Workbench.
+for SpeS Tool Workbench.
 """
 
 from __future__ import annotations

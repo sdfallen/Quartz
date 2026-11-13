@@ -46,13 +46,13 @@ class SelfDiagnosticsService:
     MAX_BYTES = 1536 * 1024 * 1024
     DEADLINE_SECONDS = 180
     REQUIRED = ('Quartz.exe', '_internal/operator/QuartzDesktopMCP.exe',
-                '_internal/assets/workspace.css', '_internal/assets/branding/quartz-q.ico',
+                '_internal/assets/workspace.css', '_internal/assets/branding/spes-mark.ico',
                 '_internal/assets/bin/squad.exe')
 
     def __init__(self, base=None, reports=None, rea=None):
         self.base = (Path(base) if base is not None else app_root()).resolve()
         self.reports = Path(reports) if reports is not None else Path(
-            os.environ.get('LOCALAPPDATA') or Path.home()) / 'Quartz/diagnostics'
+            os.environ.get('LOCALAPPDATA') or Path.home()) / 'SpeS/diagnostics'
         self.rea = rea
         self.lock = threading.RLock()
         self.jobs = {}
@@ -73,7 +73,7 @@ class SelfDiagnosticsService:
             self.latest = identity
             self.jobs[identity] = {
                 'schema_version': 1, 'scope': self.SCOPE, 'id': identity, 'state': 'running', 'phase': 'queued',
-                'progress': 0, 'message': 'Quartz öz teşhisi hazırlanıyor…', 'checks': [],
+                'progress': 0, 'message': 'SpeS öz teşhisi hazırlanıyor…', 'checks': [],
                 'verdict': 'UNKNOWN', 'limitations': ['Salt okunur paket incelemesi; çalışma zamanı ve model erişimi testi değildir.',
                     'Manifest karşılaştırması kendi içinde tutarlılığı ölçer; yayıncı imzasını doğrulamaz.'],
                 'started_at': time.time(), 'finished_at': None, 'report_path': None, 'rea_used': False}
@@ -184,11 +184,11 @@ class SelfDiagnosticsService:
         target = safe_member(self.base, 'Quartz.exe')
         if not target.is_file():
             self._check(identity, 'scope', 'NOT_TESTED', 'Çalışma biçimi',
-                        'Kaynak modunda çalışılıyor; paket denetimi için paketlenmiş Quartz kullanılmalı.')
+                        'Kaynak modunda çalışılıyor; paket denetimi için paketlenmiş SpeS kullanılmalı.')
         else:
             digest = self._hash(target, event, deadline)
             self._check(identity, 'scope', 'PASS', 'İncelenen uygulama',
-                        'Yalnız bu Quartz paketinin ikilisi seçildi; ikili çalıştırılmayacak.', sha256=digest, bytes=target.stat().st_size)
+                        'Yalnız bu SpeS paketinin ikilisi seçildi; ikili çalıştırılmayacak.', sha256=digest, bytes=target.stat().st_size)
             self._update(identity, phase='resources', progress=15, message='Gerekli kaynaklar kontrol ediliyor…')
             missing = [name for name in self.REQUIRED if not safe_member(self.base, name).is_file()]
             self._check(identity, 'resources', 'FAIL' if missing else 'PASS', 'Gerekli bileşenler',

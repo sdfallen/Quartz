@@ -107,7 +107,7 @@ class AntigravityRuntime:
 
     @staticmethod
     def _read_guard_matches(workspace: Path, roots) -> bool:
-        """Fail closed unless the workspace carries exactly Quartz's read guard for these roots."""
+        """Fail closed unless the workspace carries exactly SpeS's read guard for these roots."""
         from core.helper_command import HOOK_TIMEOUT_SECONDS
         agents = workspace / ".agents"
         try:
@@ -288,7 +288,7 @@ class AntigravityRuntime:
         if effective_write and not full_access:
             raise PermissionError("Antigravity cannot enforce project-only writes on Windows; explicit full access is required.")
         # Extra read roots are only for a read-only run whose workspace carries
-        # Quartz's read-only PreToolUse hook (see chat_coordination); the CLI
+        # SpeS's read-only PreToolUse hook (see chat_coordination); the CLI
         # sandbox alone is not trusted to stop built-in file writes on Windows.
         extra_dirs = [Path(d).resolve(strict=True) for d in (read_dirs or ())]
         if any(not d.is_dir() for d in extra_dirs):

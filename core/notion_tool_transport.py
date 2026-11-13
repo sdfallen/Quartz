@@ -467,7 +467,7 @@ def format_continuation_message(result: NotionToolResult) -> dict[str, Any]:
 
     clean_output = clean_dict.get("output")
     formatted_content = (
-        f"[Quartz Local Tool Result]\n"
+        f"[SpeS Local Tool Result]\n"
         f"status: {result.status}\n"
         f"tool_request_id: {result.request_id}\n"
         f"verification: {result.verification}\n"

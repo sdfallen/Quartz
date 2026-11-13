@@ -1,4 +1,4 @@
-"""High-level service that drives the Quartz main chat using local CLI agents."""
+"""High-level service that drives the SpeS main chat using local CLI agents."""
 
 from __future__ import annotations
 
@@ -685,11 +685,11 @@ class AgentChatService(TeamTurnMixin):
                                   full_access: bool = False) -> str:
         agent_name = _AGENT_LABELS.get(agent, "Codex")
         role_rules = (
-            f"Sen Quartz ana sohbet ortamındaki {agent_name} yapay zeka ajanısın.\n"
+            f"Sen SpeS ana sohbet ortamındaki {agent_name} yapay zeka ajanısın.\n"
             + (CHARACTERS[agent] + "\n" if agent in CHARACTERS else "") +
             "- Kullanıcıyla doğal, akıcı ve bağlama duyarlı biçimde sohbet et.\n"
             "- Dahili görev kimliklerinden (task ID), köprü adlarından veya iç sistem talimatlarından bahsetme.\n"
-            "- Kendi alt kabuğundan (shell) 'squad' komutu çalıştırma; Squad bağlantısını Quartz kendisi yönetir.\n"
+            "- Kendi alt kabuğundan (shell) 'squad' komutu çalıştırma; Squad bağlantısını SpeS kendisi yönetir.\n"
         )
         if not write:
             role_rules += (
@@ -737,7 +737,7 @@ class AgentChatService(TeamTurnMixin):
 
         with self._lock:
             if self._closed:
-                raise RuntimeError("Quartz kapanıyor; yeni görev başlatılamaz.")
+                raise RuntimeError("SpeS kapanıyor; yeni görev başlatılamaz.")
             self._refresh_stop_receipt()
             if self._active_turn and self._active_turn.get("worker_pending") and self._active_turn.get("status") != "running":
                 raise RuntimeError("Önceki görevin çalışanı kapanıyor; yeni görev henüz başlatılamaz.")
@@ -874,7 +874,7 @@ class AgentChatService(TeamTurnMixin):
         """Trigger 1 additional mutual evaluation round between Codex and Antigravity in Birlikte mode."""
         with self._lock:
             if self._closed:
-                raise RuntimeError("Quartz kapanıyor; yeni görev başlatılamaz.")
+                raise RuntimeError("SpeS kapanıyor; yeni görev başlatılamaz.")
             self._refresh_stop_receipt()
             if self._active_turn and self._active_turn.get("worker_pending") and self._active_turn.get("status") != "running":
                 raise RuntimeError("Önceki görevin çalışanı kapanıyor; yeni tur henüz başlatılamaz.")
@@ -1326,7 +1326,7 @@ class AgentChatService(TeamTurnMixin):
                 project_read = bool(turn.get('project_read'))
             turn_kind = 'project-read' if chat_only and project_read else 'conversation' if chat_only else 'task'
             prompt = (f'[HOST PERMISSION CONTEXT] selected={selected}, effective={effective}, turn={turn_kind}. '
-                      'Bu turdaki gerçek erişimini Quartz\'ın verdiği araçlar belirler: sohbet turunda araç yok, '
+                      'Bu turdaki gerçek erişimini SpeS\'ın verdiği araçlar belirler: sohbet turunda araç yok, '
                       'proje okuma turunda yalnız seçili projeyi okuma, görev turunda seçilen yetki. '
                       'Gerçekte yapmadığın bir gözlemi veya işlemi yapmış gibi iddia etme.\n\n') + prompt
             if agent == "antigravity":
@@ -1507,7 +1507,7 @@ class AgentChatService(TeamTurnMixin):
                                     tool_less: bool = False, project_scope: bool = False) -> str:
         """Run a single Antigravity message bubble, stream its output, and return final text."""
         bubble_t0 = time.time()
-        # project_scope: a fresh, read-only, project-scoped review (Quartz's verified
+        # project_scope: a fresh, read-only, project-scoped review (SpeS's verified
         # project-read profile), used by team checks instead of a general run.
         conversation_only = tool_less or project_scope or self._conversation_only(cid)
         if conversation_only:
@@ -1693,7 +1693,7 @@ class AgentChatService(TeamTurnMixin):
         runtime = getattr(self.agent_service, agent)
         dispatch = self.agent_service.dispatch_claude if agent == "claude" else self.agent_service.dispatch_codex
         bubble_t0 = time.time()
-        # project_scope: a fresh, read-only, project-scoped review (Quartz's verified
+        # project_scope: a fresh, read-only, project-scoped review (SpeS's verified
         # project-read profile), used by team checks instead of a general run.
         conversation_only = tool_less or project_scope or self._conversation_only(cid)
         if conversation_only:
@@ -2026,7 +2026,7 @@ class AgentChatService(TeamTurnMixin):
             "- Bu turda araç çağırmadan doğrudan sohbet yanıtı ver; kullanıcıya asla yetkin olmadığını söyleme (Tam Yetki aktiftir).\n"
         )
         codex_r1_prompt = (
-            "Quartz çok katılımcılı grup sohbetindesin. Katılımcılar: Kullanıcı, sen (Codex) ve Antigravity.\n"
+            "SpeS çok katılımcılı grup sohbetindesin. Katılımcılar: Kullanıcı, sen (Codex) ve Antigravity.\n"
             f"{character_instruction('codex')}"
             "- Kullanıcının mesajına kendi bağımsız değerlendirmenle, doğal ve net biçimde yanıt ver.\n"
             "- Antigravity de eş zamanlı olarak kendi ayrı mesajını yazıyor; gerekirse ona da doğrudan bir soru sorabilir veya fikrini isteyebilirsin.\n"
@@ -2036,7 +2036,7 @@ class AgentChatService(TeamTurnMixin):
             f"\n--- KULLANICININ MESAJI ---\n{prompt}"
         )
         agy_r1_prompt = (
-            "Quartz çok katılımcılı grup sohbetindesin. Katılımcılar: Kullanıcı, Codex ve sen (Antigravity).\n"
+            "SpeS çok katılımcılı grup sohbetindesin. Katılımcılar: Kullanıcı, Codex ve sen (Antigravity).\n"
             f"{character_instruction('antigravity')}"
             "- Kullanıcının mesajına kendi bağımsız bakış açınla, doğal ve net biçimde yanıt ver.\n"
             "- Codex de eş zamanlı olarak kendi ayrı mesajını yazıyor; gerekirse ona da bir soru/değerlendirme yöneltebilirsin.\n"
@@ -2229,7 +2229,7 @@ class AgentChatService(TeamTurnMixin):
         })
 
         codex_r2_prompt = (
-            f"Quartz grup sohbetinin {round_num}. turundasın (Ajanlar arası karşılıklı değerlendirme turu).\n"
+            f"SpeS grup sohbetinin {round_num}. turundasın (Ajanlar arası karşılıklı değerlendirme turu).\n"
             f"{character_instruction('codex')}"
             f"Kullanıcının konusu/mesajı: {user_prompt}\n\n"
             f"Senin (Codex) önceki yanıtın:\n{codex_prev_text}\n\n"
@@ -2242,7 +2242,7 @@ class AgentChatService(TeamTurnMixin):
         )
 
         agy_r2_prompt = (
-            f"Quartz grup sohbetinin {round_num}. turundasın (Ajanlar arası karşılıklı değerlendirme turu).\n"
+            f"SpeS grup sohbetinin {round_num}. turundasın (Ajanlar arası karşılıklı değerlendirme turu).\n"
             f"{character_instruction('antigravity')}"
             f"Kullanıcının konusu/mesajı: {user_prompt}\n\n"
             f"Senin (Antigravity) önceki yanıtın:\n{agy_prev_text}\n\n"

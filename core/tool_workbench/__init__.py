@@ -1,6 +1,6 @@
 """
 core/tool_workbench
-Quartz Tool Workbench package for capability resolution, isolated tool acquisition,
+SpeS Tool Workbench package for capability resolution, isolated tool acquisition,
 and supervised execution.
 """
 

@@ -1,5 +1,5 @@
 """
-upgrade_manager.py  —  Quartz Self-Upgrade System
+upgrade_manager.py  —  SpeS Self-Upgrade System
 True plug-and-play plugin loading.
 Plugins register their own tools automatically.
 No code changes needed after install.
@@ -119,7 +119,7 @@ class UpgradeManager:
         """
         Read PLUGIN_INFO from the module and
         automatically register all its functions
-        as Quartz tools.
+        as SpeS tools.
         """
         info = getattr(
             module, "PLUGIN_INFO", {})
@@ -201,7 +201,7 @@ class UpgradeManager:
             auto_activate: bool = True) -> str:
         """
         Download and install a GitHub repo
-        as a Quartz plugin.
+        as a SpeS plugin.
         Tools register automatically.
         """
         url = url.strip().rstrip("/")
@@ -744,7 +744,7 @@ class UpgradeManager:
             git_dir = BASE_DIR / ".git"
             if not git_dir.exists():
                 return (
-                    "Quartz core is not a "
+                    "SpeS core is not a "
                     "Git repository.\n"
                     "Cannot self-upgrade."
                 )
@@ -766,7 +766,7 @@ class UpgradeManager:
             if ("Already up to date"
                     in result.stdout):
                 return (
-                    "✅ Quartz core is already "
+                    "✅ SpeS core is already "
                     "up to date."
                 )
 
@@ -778,7 +778,7 @@ class UpgradeManager:
             })
 
             return (
-                "✅ Quartz core updated!\n"
+                "✅ SpeS core updated!\n"
                 "Please restart to apply "
                 "all changes."
             )

@@ -171,7 +171,7 @@ class NotionRuntime:
             session_id = identifier(session_id)
         with self._lock:
             if session_id and not self._owned(session_id, config):
-                raise PermissionError("Bu Notion oturumu seçili Quartz bağlantısına ait değil.")
+                raise PermissionError("Bu Notion oturumu seçili SpeS bağlantısına ait değil.")
             if session_id in self._busy_sessions or any(r["status"] not in self.TERMINAL for r in self._runs.values()):
                 raise RuntimeError("Devam eden Notion görevi bitmeden yeni görev başlatılamaz.")
             rid = "notion-" + uuid.uuid4().hex

@@ -70,7 +70,7 @@ class DurableCheckpointTests(unittest.TestCase):
         (self.root/'tracked.py').write_text('committed',encoding='utf-8')
         deleted=self.root/'deleted.py';deleted.write_text('deleted',encoding='utf-8')
         self.git('add','.')
-        self.git('-c','user.name=Quartz Test','-c','user.email=test@example.invalid','commit','-m','test fixture')
+        self.git('-c','user.name=SpeS Test','-c','user.email=test@example.invalid','commit','-m','test fixture')
         (self.root/'tracked.py').write_text('dirty',encoding='utf-8')
         (self.root/'untracked.py').write_text('not committed',encoding='utf-8')
         (self.root/'.env').write_text('SYNTHETIC_TEST_ONLY=1',encoding='utf-8')

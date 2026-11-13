@@ -303,7 +303,7 @@ class ToolAcquirer:
                 staging = root / (".staging_" + token)
                 staging.mkdir()
                 archive = staging / "download.pkg"
-                request = urllib.request.Request(source, headers={"User-Agent": "Quartz-Workbench/1.0"})
+                request = urllib.request.Request(source, headers={"User-Agent": "SpeS-Workbench/1.0"})
                 opener = urllib.request.build_opener(_CheckedRedirect(pol.allowed_sources, source))
                 hasher = hashlib.sha256()
                 total = 0
@@ -343,7 +343,7 @@ class ToolAcquirer:
                 data = {"schema_version": 1, "tool_id": manifest.tool_id, "pinned_revision": manifest.pinned_revision,
                         "package_digest": computed, "manifest_fingerprint": manifest_fingerprint(manifest),
                         "manifest": manifest.to_dict(), "files": files, "acquired_at": now_ts,
-                        "managed_by": "Quartz-ToolWorkbench"}
+                        "managed_by": "SpeS-ToolWorkbench"}
                 (extracted / _RECEIPT).write_text(json.dumps(data, sort_keys=True, allow_nan=False), encoding="utf-8")
                 with self._lock:
                     check()  # Same fence as stop/close; no later publication after cancellation.

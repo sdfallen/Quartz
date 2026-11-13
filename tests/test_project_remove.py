@@ -1,6 +1,6 @@
 """Removing a project from the list (user request 8 Nov: "projeleri silme seçeneği yok").
 
-Only Quartz's registration and the project's chats go; the chats keep a local
+Only SpeS's registration and the project's chats go; the chats keep a local
 recovery copy and the project folder is never touched.
 """
 import json

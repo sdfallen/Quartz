@@ -1,4 +1,4 @@
-"""Pre-task environment health checks for Quartz agent runs.
+"""Pre-task environment health checks for SpeS agent runs.
 
 Contract: docs/INTEGRATION_REQUEST_ENVIRONMENT_HEALTH_20261109.md
 Acceptance gate 1 of docs/THREE_AGENT_WEEK_PLAN_20261109.md.
@@ -129,7 +129,7 @@ def _is_windows_store_alias(path_str: str | None) -> bool:
 
 
 def _probe_environment(base_env: dict | None = None) -> dict:
-    """Build a key-free environment with Quartz's managed PATH order."""
+    """Build a key-free environment with SpeS's managed PATH order."""
     env = dict(base_env) if base_env is not None else os.environ.copy()
     if base_env is None:
         try:
@@ -661,7 +661,7 @@ def _check_cli_agent(
     status = "blocked" if selected else "warn"
     if not installed:
         summary = f"{label} kurulu değil." if selected else f"{label} kurulu değil (bu görevde seçili değil)."
-        fix = f"Quartz kurulum ekranından veya terminalden {label} kurulumunu tamamlayın."
+        fix = f"SpeS kurulum ekranından veya terminalden {label} kurulumunu tamamlayın."
     elif not authenticated:
         summary = (
             f"{label} oturumu açık değil."

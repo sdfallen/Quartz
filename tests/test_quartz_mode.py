@@ -7,7 +7,7 @@ import assistant
 
 class QuartzModeTests(unittest.TestCase):
     def test_intent_hint_recognizes_quartz_mode(self):
-        self.assertIn("quartz_mode()", assistant._intent_hint("Quartz Mode"))
+        self.assertIn("quartz_mode()", assistant._intent_hint("SpeS Mode"))
 
     def test_quartz_mode_activates_named_plan(self):
         listed = (

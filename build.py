@@ -18,7 +18,7 @@ def main():
     parser.add_argument("--deploy",action="store_true")
     parser.add_argument("--require-brand",action="store_true",help="Refuse legacy icon fallback")
     args=parser.parse_args()
-    if args.require_brand and not (ROOT/"assets/branding/quartz-q.ico").is_file():
+    if args.require_brand and not (ROOT/"assets/branding/spes-mark.ico").is_file():
         raise RuntimeError("Approved Q artwork missing; no substitute will be generated")
     for module in ("PyInstaller","webview","psutil","PIL"):
         __import__(module)

@@ -1,4 +1,4 @@
-"""Project isolation for Quartz's local agent runtimes."""
+"""Project isolation for SpeS's local agent runtimes."""
 
 from __future__ import annotations
 

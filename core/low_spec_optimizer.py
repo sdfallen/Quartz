@@ -1,6 +1,6 @@
 """Low-spec hardware detection, memory trimming, lazy client proxies, and WebView2 optimization.
 
-Designed to allow Quartz to run smoothly on older / low-RAM (4GB-8GB) and dual-core laptops
+Designed to allow SpeS to run smoothly on older / low-RAM (4GB-8GB) and dual-core laptops
 by minimizing startup imports, capping background WebView2 processes, throttling idle polling,
 and reclaiming unused working-set pages after heavy tasks.
 """
@@ -79,7 +79,7 @@ def _query_windows_memory() -> tuple[float, float, float]:
 
 
 def detect_hardware_profile(force_refresh: bool = False) -> dict[str, Any]:
-    """Return hardware capabilities and adaptive resource limits for Quartz."""
+    """Return hardware capabilities and adaptive resource limits for SpeS."""
     global _PROFILE_CACHE, _PROFILE_CACHE_AT
     now = time.monotonic()
     if not force_refresh and _PROFILE_CACHE is not None and (now - _PROFILE_CACHE_AT) < 30.0:
@@ -156,7 +156,7 @@ def trim_working_set(
     include_children: bool = True,
 ) -> dict[str, Any]:
     """Run garbage collection and ask the OS to reclaim unused working-set pages
-    across both the main Quartz process and owned WebView2 child processes."""
+    across both the main SpeS process and owned WebView2 child processes."""
     global _LAST_TRIM_AT
     now = time.monotonic()
     with _TRIM_LOCK:
@@ -214,7 +214,7 @@ def measure_process_tree_resources(
     root_pid: int | None = None,
     cpu_interval: float = 0.0,
 ) -> dict[str, Any]:
-    """Measure total RAM (RSS & private USS), CPU and threads across Quartz + WebView2 + CLI children."""
+    """Measure total RAM (RSS & private USS), CPU and threads across SpeS + WebView2 + CLI children."""
     try:
         import psutil
         root = psutil.Process(root_pid) if root_pid else psutil.Process()

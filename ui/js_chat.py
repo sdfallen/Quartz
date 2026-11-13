@@ -1,4 +1,4 @@
-"""Quartz chat JavaScript fragment; composed in the shared application scope."""
+"""SpeS chat JavaScript fragment; composed in the shared application scope."""
 
 JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ────────────
   let conversationLoaded = false;
@@ -315,7 +315,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       card.disabled = unavailable;
       card.setAttribute('aria-pressed', focus === agent ? 'true' : 'false');
       // Birlikte is Codex + Antigravity; Claude joins only when selected on its own.
-      // Birlikte is the team: Usta leads when Claude is connected, else the Codex + Antigravity pair.
+      // Birlikte is the team: Fatum leads when Claude is connected, else the Codex + Antigravity pair.
       card.dataset.included = focus === agent || (focus === 'collaboration' && (agent !== 'claude' || !unavailable)) ? 'true' : 'false';
       card.dataset.state = view.state;
       if (view.state !== 'idle') flow.push(agent);
@@ -346,7 +346,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     // The label is upper-cased by CSS; in Turkish "Antigravity" would become "ANTİGRAVİTY".
     if (label) label.lang = coreText.includes('Antigravity') ? 'en' : 'tr';
     if (core) {
-      const teamText = crewSeg('claude')?.disabled ? 'Pusula ve Gözcü' : 'Usta, Pusula ve Gözcü';
+      const teamText = crewSeg('claude')?.disabled ? 'Fides ve Eos' : 'Fatum, Fides ve Eos';
       const coreTitle = focus === 'collaboration' ? `Birlikte: ${teamText} planlayıp birlikte çalışıyor`
         : `Birlikte moduna geç: ${teamText} planlayıp birlikte çalışır`;
       if (core.getAttribute?.('title') !== coreTitle) core.setAttribute('title', coreTitle);
@@ -582,7 +582,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       unreadWhileScrolledUp = 0;
       updateJumpBottomBtn();
       if (!conv.messages || !conv.messages.length) {
-        const welcome = appendMsg('bot', 'QUARTZ', 'Merhaba! Ben Quartz. Doğrudan Antigravity ve Codex ajanlarıyla çalışıyorum.\nÜstteki seçiciden Antigravity, Codex veya Birlikte modunu seçip mesaj gönderebilirsin.', '', 'quartz');
+        const welcome = appendMsg('bot', 'SPES', 'Merhaba! Ben SpeS. Doğrudan Antigravity ve Codex ajanlarıyla çalışıyorum.\nÜstteki seçiciden Antigravity, Codex veya Birlikte modunu seçip mesaj gönderebilirsin.', '', 'quartz');
         welcome.dataset.welcome = '1';
       } else {
         syncConversationMessages(conv.messages, true);
@@ -833,13 +833,13 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     let coordinated;
     try { coordinated = await window.pywebview.api.coordination_route(text, currentConvId, mainProjectSelect.value,
       {codex:{model:codexModelSelect.value,effort:codexEffortSelect.value},antigravity:{model:agyModelSelect.value,effort:agyEffortSelect.value}},selectedPermissionLevel, submittedAgent); }
-    catch(e) { appendMsg('err','QUARTZ',String(e)); return; }
+    catch(e) { appendMsg('err','SPES',String(e)); return; }
     finally {
       coordinationRouting = false;
       if (!wasThinking && submitEpoch === chatControlEpoch && !chatCleanupUnconfirmed() && typeof setThinking === 'function') setThinking(false);
     }
     if (submitEpoch !== chatControlEpoch) return;
-    if (coordinated.status !== 'ok') { appendMsg('err','QUARTZ',coordinated.data); return; }
+    if (coordinated.status !== 'ok') { appendMsg('err','SPES',coordinated.data); return; }
     if (coordinated.data?.handled) {
       if (inputEl.value.trim() === text) inputEl.value = '';
       if (coordinated.data.diagnostics_repair) {
@@ -857,19 +857,19 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       if (coordinated.data.diagnostics_started || coordinated.data.diagnostics_cancelled || coordinated.data.diagnostics_status) {
         if (coordinated.data.user_text && typeof appendMsg === 'function') appendMsg('user', 'SEN', coordinated.data.user_text, '', 'user', null, false, true);
         const diagJob = coordinated.data.diagnostics || coordinated.data.diagnostics_status;
-        if (!diagJob) appendMsg('bot', 'QUARTZ', 'Dosya seçimi iptal edildi; inceleme başlatılmadı.');
+        if (!diagJob) appendMsg('bot', 'SPES', 'Dosya seçimi iptal edildi; inceleme başlatılmadı.');
         if (typeof renderSelfDiagnosticsCard === 'function' && diagJob) renderSelfDiagnosticsCard(diagJob);
         if (typeof scheduleSelfDiagnosticsPoll === 'function' && diagJob?.state === 'running' && diagJob?.id) scheduleSelfDiagnosticsPoll(diagJob.id);
         return;
       }
       if(coordinated.data.permission_status || coordinated.data.desktop_help || coordinated.data.continuation_status) await loadActiveConversation();
-      else if(!coordinated.data.natural_started) appendMsg('bot','QUARTZ',coordinated.data.stopped ? 'Durdurma isteği iletildi.' : 'Talimat iletildi; yetki kapsamı değişmedi.');
+      else if(!coordinated.data.natural_started) appendMsg('bot','SPES',coordinated.data.stopped ? 'Durdurma isteği iletildi.' : 'Talimat iletildi; yetki kapsamı değişmedi.');
       await refreshDesktopTaskState();
       await pollNaturalTask();
       return;
     }
     if (chatCleanupUnconfirmed()) {
-      appendMsg('err', 'QUARTZ', 'Önceki görevin durdurulması henüz doğrulanmadı. Durdurmayı yeniden deneyin.');
+      appendMsg('err', 'SPES', 'Önceki görevin durdurulması henüz doğrulanmadı. Durdurmayı yeniden deneyin.');
       return;
     }
 
@@ -897,7 +897,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       const resp = await window.pywebview.api.chat_send(text, agent, currentConvId, isWrite, confirmWrite, permissionLevel, selectedPermissionLevel);
       if (submitEpoch !== chatControlEpoch) return;
       if (resp.status !== 'ok') {
-        appendMsg('err', 'QUARTZ', 'Talimat kabul edilmedi: ' + (resp.data || 'Bilinmeyen hata'));
+        appendMsg('err', 'SPES', 'Talimat kabul edilmedi: ' + (resp.data || 'Bilinmeyen hata'));
         if (!wasThinking) setThinking(false);
         return;
       }
@@ -935,7 +935,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       ensureChatPolling();
       await pollAgentTurn();
     } catch (e) {
-      appendMsg('err', 'QUARTZ', 'Talimat gönderilemedi: ' + String(e));
+      appendMsg('err', 'SPES', 'Talimat gönderilemedi: ' + String(e));
       if (!wasThinking && submitEpoch === chatControlEpoch && !chatCleanupUnconfirmed()) setThinking(false);
     } finally {
       chatSubmissionBusy = false;
@@ -997,7 +997,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       await loadActiveConversation();
       logLine(`${result.data.deleted_count} sohbet silindi; yerel kurtarma yedeği oluşturuldu.`);
     } catch (error) {
-      appendMsg('err', 'QUARTZ', String(error));
+      appendMsg('err', 'SPES', String(error));
     } finally { deletionPending = false; }
   }
 

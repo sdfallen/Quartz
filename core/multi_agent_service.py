@@ -1,4 +1,4 @@
-"""Quartz facade that ties real Squad tasks to real local CLI runtimes."""
+"""SpeS facade that ties real Squad tasks to real local CLI runtimes."""
 
 from __future__ import annotations
 
@@ -549,8 +549,8 @@ class MultiAgentService:
                            "should_abort": should_abort}
             elif project_read:
                 # Codex runs in the scratch folder with every built-in tool off;
-                # the project is reachable only through Quartz's read-only MCP
-                # tools (root, secret files and result size enforced by Quartz).
+                # the project is reachable only through SpeS's read-only MCP
+                # tools (root, secret files and result size enforced by SpeS).
                 options = {"model": model, "effort": effort, "sandbox": "read-only", "approval": "never",
                            "project_read": str(root), "should_abort": should_abort}
             else:
@@ -659,7 +659,7 @@ class MultiAgentService:
         agent_id = self._ensure_agent(squad, self.CODEX_ID)
         task = squad.create_task(
             self.MANAGER_ID, agent_id,
-            title or str(prompt).strip()[:80] or "Quartz Codex task",
+            title or str(prompt).strip()[:80] or "SpeS Codex task",
             str(prompt),
         )
         squad.ack_task(agent_id, task["id"])
@@ -667,7 +667,7 @@ class MultiAgentService:
             f"You are the real Codex runtime assigned to Squad task {task['id']}.\n"
             f"Project: {project['path']}\n"
             f"Task: {prompt}\n\n"
-            "Return a concise factual result. Do not run squad CLI commands from shell; Quartz manages Squad reporting on the host. "
+            "Return a concise factual result. Do not run squad CLI commands from shell; SpeS manages Squad reporting on the host. "
             "Do not claim an action succeeded unless you observed it."
         )
         try:
@@ -801,12 +801,12 @@ class MultiAgentService:
         )
         task = squad.create_task(
             self.MANAGER_ID, agent_id,
-            title or str(prompt).strip()[:80] or "Quartz Antigravity task",
+            title or str(prompt).strip()[:80] or "SpeS Antigravity task",
             str(prompt),
         )
         squad.ack_task(agent_id, task["id"])
         instruction = (
-            f"You are the real Google Antigravity runtime connected through the Quartz Squad bridge.\n"
+            f"You are the real Google Antigravity runtime connected through the SpeS Squad bridge.\n"
             f"Squad task: {task['id']}\nProject: {project['path']}\nTask: {prompt}\n\n"
             "Return a concise factual result. Do not claim success without observed evidence. "
             + ("You may modify project files as requested." if effective_write else
@@ -1201,7 +1201,7 @@ class MultiAgentService:
             if self._is_collaboration_cancelled(collaboration_id):
                 return
             first = self.dispatch_codex(
-                "You are ONLY the first Codex analyst. Quartz will invoke the real Antigravity reviewer "
+                "You are ONLY the first Codex analyst. SpeS will invoke the real Antigravity reviewer "
                 "and the final synthesis separately AFTER you finish. Do not spawn or simulate reviewers, "
                 "perform later phases, or claim another provider was unavailable. Return only your analysis.\n\n"
                 + record["prompt"], title=f"{record['title']} · Codex analysis",
@@ -1368,4 +1368,4 @@ class MultiAgentService:
         text = str(value or "")
         if len(text) <= limit:
             return text
-        return text[:limit] + "\n[Quartz bridge truncated this message]"
+        return text[:limit] + "\n[SpeS bridge truncated this message]"

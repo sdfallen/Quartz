@@ -2,7 +2,7 @@
 
 Scenario letters refer to docs/rea-system/CLAUDE_CHAT_FINALIZATION_PROMPT.md.
 These are SOURCE-level regressions with real local persistence where a store is
-needed; no Quartz GUI, no packaged build and no real tool acquisition is implied.
+needed; no SpeS GUI, no packaged build and no real tool acquisition is implied.
 """
 import json
 from copy import deepcopy
@@ -71,7 +71,7 @@ class OrdinaryChatTests(unittest.TestCase):
     def test_ordinary_messages_are_not_investigation_requests(self):
         for text in ('Merhaba, nasılsın?', 'Python listesi nasıl sıralanır?',
                      'Bugün hava nasıl?', 'Teşekkürler, harika oldu',
-                     'Quartz nedir ve neler yapabilir?', '', '   '):
+                     'SpeS nedir ve neler yapabilir?', '', '   '):
             self.assertIsNone(classify_investigation_request(text), text)
 
     def test_discussion_and_no_tools_requests_never_authorize(self):
@@ -464,7 +464,7 @@ class ChatBridgeRoutingTests(unittest.TestCase):
     def test_ordinary_chat_opens_no_picker_and_no_investigation(self):
         from unittest.mock import patch
         api = self.api()
-        for text in ('Merhaba dostum', 'Quartz hakkında ne düşünüyorsun?',
+        for text in ('Merhaba dostum', 'SpeS hakkında ne düşünüyorsun?',
                      'Sadece sohbet edelim; uygulamadaki hatayı incele'):
             with self.subTest(text=text), \
                  patch.object(api, 'diagnostics_select_application',

@@ -1,4 +1,4 @@
-"""Where Quartz's desktop/guard helper lives. Standard library only.
+"""Where SpeS's desktop/guard helper lives. Standard library only.
 
 The packaged helper (QuartzDesktopMCP.exe) is also the PreToolUse guard that
 Antigravity starts for every tool call. Anything the helper imports is bundled

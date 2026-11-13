@@ -10,7 +10,7 @@ class PublishAuditTests(unittest.TestCase):
 
     def test_source_sample_and_approved_assets_allowed(self):
         for path in ('.env.example', 'core/desktop_broker.py', 'requirements.txt',
-                     'assets/branding/quartz-q.png', '.github/workflows/tests.yml'):
+                     'assets/branding/spes-mark.png', '.github/workflows/tests.yml'):
             with self.subTest(path=path): self.assertFalse(forbidden_path(path))
 
     def test_provider_token_is_identified_without_returning_value(self):

@@ -56,9 +56,9 @@ class TeamRun:
 class PersonaTests(unittest.TestCase):
     def test_three_agents_have_their_own_persona(self):
         self.assertEqual({a: p["name"] for a, p in PERSONAS.items()},
-                         {"codex": "Pusula", "antigravity": "Gözcü", "claude": "Usta"})
+                         {"codex": "Fides", "antigravity": "Eos", "claude": "Fatum"})
         self.assertEqual(len(set(CHARACTERS.values())), 3)
-        self.assertIn("Adın Usta", character_instruction("claude"))
+        self.assertIn("Adın Fatum", character_instruction("claude"))
 
     def test_clamp_keeps_at_most_the_given_sentences(self):
         self.assertEqual(clamp_sentences("Bir. İki! Üç? Dört.", 3), "Bir. İki! Üç?")
@@ -68,6 +68,11 @@ class PersonaTests(unittest.TestCase):
         short = clamp_sentences(long, 2)
         self.assertLessEqual(len(short), 2 * 160 + 1)
         self.assertTrue(short.endswith("…"))
+        # Several sentences over budget: keep whole sentences, never cut one in half.
+        many = "Kısa giriş cümlesi. " + "Bu ikinci cümle " + "epey " * 100 + "uzun. Üçüncü."
+        kept = clamp_sentences(many, 3)
+        self.assertEqual(kept, "Kısa giriş cümlesi.")
+        self.assertFalse(kept.endswith("…"))
 
 
 class TeamTurnTests(unittest.TestCase):
@@ -86,7 +91,7 @@ class TeamTurnTests(unittest.TestCase):
         self.assertTrue(all(c["tool_less"] and not c["write"] for c in run.calls))
         self.assertGreaterEqual(run.active["max"], 2, "critiques must run in parallel")
         team = [m for m in messages if (m.get("metadata") or {}).get("team")]
-        self.assertEqual([m["metadata"]["persona"] for m in team], ["Usta", "Pusula", "Gözcü", "Usta"])
+        self.assertEqual([m["metadata"]["persona"] for m in team], ["Fatum", "Fides", "Eos", "Fatum"])
         plan = team[0]["content"]
         self.assertLessEqual(plan.count("."), 3, "planning messages are clamped to three sentences")
         self.assertIn(turn["status"], {"completed", "running"})

@@ -1,6 +1,6 @@
 """
 core/tool_workbench/catalog.py
-Tool Catalog and Capability Resolver for Quartz Tool Workbench.
+Tool Catalog and Capability Resolver for SpeS Tool Workbench.
 Maps investigation capability requirements to manifest-backed tools.
 """
 

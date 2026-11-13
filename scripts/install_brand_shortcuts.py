@@ -83,7 +83,7 @@ def main():
     pythoncom.CoInitialize()
     try:
         exe=(ROOT/'dist/Quartz/Quartz.exe').resolve(strict=True)
-        icon=(ROOT/'assets/branding/quartz-q.ico').resolve(strict=True)
+        icon=(ROOT/'assets/branding/spes-mark.ico').resolve(strict=True)
         desktop=Path(shell.SHGetFolderPath(0,shellcon.CSIDL_DESKTOPDIRECTORY,0,0))
         programs=Path(shell.SHGetFolderPath(0,shellcon.CSIDL_PROGRAMS,0,0))
         backup=args.backup_dir.resolve();backup.mkdir(parents=True,exist_ok=False)

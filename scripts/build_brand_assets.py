@@ -1,9 +1,10 @@
-"""Build the Quartz Q mark from one geometry: SVG, PNG and multi-size ICO.
+"""Build the SpeS mark from one geometry: SVG, PNG and multi-size ICO.
 
-The mark is a six-sided quartz crystal seen end-on: six flat facets form the
-bowl of the Q and one shard forms the tail. All geometry lives here so the
-window icon, packaged PNGs and the SVG never drift apart. ``ui/brand.py`` holds
-the same facets for the theme-aware in-app mark; a test keeps them identical.
+The mark is a sun rising over a horizon ("spes" = hope): a smooth half disc,
+five short rays that do not touch it, and one horizon bar. All geometry lives
+here so the window icon, packaged PNGs and the SVG never drift apart.
+``ui/shell.py`` holds the same polygons for the theme-aware in-app mark; a test
+keeps them identical.
 """
 import argparse
 import hashlib
@@ -16,26 +17,33 @@ from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parents[1]
 ICO_SIZES = (16, 24, 32, 48, 64, 128, 256)
 VIEW = 256
-CENTER = (122.0, 118.0)
-OUTER = 104.0
-INNER = 50.0
-# Light falls from the upper left: the facets step from pale to deep rose.
-FACET_TONES = ("#F4C4B7", "#E8A392", "#CE7E6D", "#A5513F", "#B8654F", "#DB8F7C")
-TAIL_TONE = "#E8A392"
-TAIL = ((122.0, 122.0), (152.0, 106.0), (236.0, 222.0), (200.0, 240.0))
-# Below this size facet tones blur into noise, so the mark becomes one solid tone.
+CENTER = (128.0, 164.0)
+SUN = 56.0
+RAY_FROM, RAY_TO, RAY_HALF = 72.0, 100.0, 7.0
+RAY_ANGLES = (162, 126, 90, 54, 18)
+SUN_STEPS = 36
+# Sun first, then the rays from left to right: dawn gold to rose.
+FACET_TONES = ("#F0AC72", "#F6C98A", "#F2B57B", "#EDA073", "#E68A6E", "#DD756D")
+# The horizon is the ground of hope: sage green.
+TAIL_TONE = "#8FCFB0"
+TAIL = ((20.0, 178.0), (236.0, 178.0), (236.0, 194.0), (20.0, 194.0))
+# Below this size the rays blur into noise, so the mark becomes one solid tone.
 SOLID_BELOW = 32
-SOLID_TONE = "#DB8F7C"
+SOLID_TONE = "#EDA073"
 
 
-def _hexagon(radius):
-    return [(CENTER[0] + radius * math.sin(math.radians(60 * i)),
-             CENTER[1] - radius * math.cos(math.radians(60 * i))) for i in range(6)]
+def _at(radius, angle, shift=0.0):
+    """Point at ``radius`` along ``angle`` (degrees, 0 = right, 90 = up), moved sideways by ``shift``."""
+    a = math.radians(angle)
+    return (round(CENTER[0] + radius * math.cos(a) - shift * math.sin(a), 2),
+            round(CENTER[1] - radius * math.sin(a) - shift * math.cos(a), 2))
 
 
 def facets():
-    outer, inner = _hexagon(OUTER), _hexagon(INNER)
-    return [(outer[i], outer[(i + 1) % 6], inner[(i + 1) % 6], inner[i]) for i in range(6)]
+    sun = tuple(_at(SUN, 180 - 180 * k / SUN_STEPS) for k in range(SUN_STEPS + 1))
+    rays = [(_at(RAY_FROM, a, -RAY_HALF), _at(RAY_TO, a, -RAY_HALF * .7),
+             _at(RAY_TO, a, RAY_HALF * .7), _at(RAY_FROM, a, RAY_HALF)) for a in RAY_ANGLES]
+    return [sun, *rays]
 
 
 def _points(polygon):
@@ -43,7 +51,7 @@ def _points(polygon):
 
 
 def svg():
-    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {VIEW} {VIEW}" role="img" aria-label="Quartz">']
+    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {VIEW} {VIEW}" role="img" aria-label="SpeS">']
     for polygon, tone in zip(facets(), FACET_TONES):
         parts.append(f'<polygon points="{_points(polygon)}" fill="{tone}"/>')
     parts.append(f'<polygon points="{_points(TAIL)}" fill="{TAIL_TONE}"/>')
@@ -73,17 +81,17 @@ def render(size):
 def build(target):
     target = Path(target)
     target.mkdir(parents=True, exist_ok=True)
-    (target / "quartz-q.svg").write_text(svg(), encoding="utf-8", newline="\n")
+    (target / "spes-mark.svg").write_text(svg(), encoding="utf-8", newline="\n")
     frames = {size: render(size) for size in ICO_SIZES}
-    render(1024).save(target / "quartz-q.png", optimize=True)
-    frames[48].save(target / "quartz-q-48.png", optimize=True)
+    render(1024).save(target / "spes-mark.png", optimize=True)
+    frames[48].save(target / "spes-mark-48.png", optimize=True)
     # Pillow scales one image unless given exact frames; small sizes must stay solid.
-    frames[256].save(target / "quartz-q.ico", format="ICO", sizes=[(s, s) for s in ICO_SIZES],
+    frames[256].save(target / "spes-mark.ico", format="ICO", sizes=[(s, s) for s in ICO_SIZES],
                      append_images=[frames[s] for s in ICO_SIZES if s != 256])
     digest = lambda name: hashlib.sha256((target / name).read_bytes()).hexdigest()
     manifest = {"source": "scripts/build_brand_assets.py", "sizes": [[s, s] for s in ICO_SIZES],
-                "svg_sha256": digest("quartz-q.svg"), "png_sha256": digest("quartz-q.png"),
-                "ico_sha256": digest("quartz-q.ico")}
+                "svg_sha256": digest("spes-mark.svg"), "png_sha256": digest("spes-mark.png"),
+                "ico_sha256": digest("spes-mark.ico")}
     (target / "brand-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
     return manifest
 
