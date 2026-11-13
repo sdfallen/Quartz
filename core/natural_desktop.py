@@ -1615,7 +1615,7 @@ class NaturalDesktopTask:
             cleanup_step(report, "chat-event", lambda: self._event("quartz",
                 summary_text +
                 "\n\n---TEKNIK_AYRINTILAR---\nDurum: " + summary_text + "; kanıt: " + self.job["verification"]["status"] +
-                "\nKanıt klasörü: " + str(self.evidence),
+                "\nKanıt klasörü: " + str(self.evidence), final=True,
                 **({"host_check": {k: self.job["verification"][k] for k in ("status", "expected_text", "snapshot_id", "scope")}}
                    if reason == "completed" and self.job["verification"].get("source") == HOST_TEXT_SOURCE else {})))
             cleanup_step(report, "squad-close", lambda: self.squad.complete_task(

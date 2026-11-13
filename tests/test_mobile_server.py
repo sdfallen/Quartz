@@ -256,13 +256,15 @@ class MobileGatewayTests(unittest.TestCase):
     def test_voice_answers_fast_or_hands_the_question_to_the_team(self):
         class Front:
             def __init__(self, route): self.route, self.seen = route, None
-            def answer(self, text, state):
-                self.seen = state
+            def answer(self, text, state, history=None):
+                self.seen, self.history = state, list(history or [])
                 return {"route": "answered", "reply": "Fides'in testi başarısız."} if self.route == "answered" else {"route": "team", "reason": "team_only"}
         fast = Front("answered")
         result = self.gateway.voice("Ne oldu?", front=fast)
         self.assertEqual((result["route"], result["after"]), ("answered", 3))
         self.assertEqual(self.chat.sent, [])  # nothing reached the team
+        self.gateway.voice("Peki şimdi?", front=fast)
+        self.assertEqual(fast.history[0]["q"], "Ne oldu?")  # Bolt sees what it already said
         result = self.gateway.voice("Güvenli mi?", front=Front("team"))
         self.assertEqual(result["route"], "team")
         self.assertEqual(self.chat.sent[0][0], "Güvenli mi?")

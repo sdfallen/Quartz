@@ -72,7 +72,13 @@ class WatchService : Service() {
                 }
                 val fresh = s.messages.filter { it.seq > after && !it.fromUser }
                 val failed = fresh.lastOrNull { it.failed }
+                // "Bitince haber ver": SpeS's finish report rings like a call and is read aloud on Konuş.
+                val report = fresh.lastOrNull { it.report }
                 when {
+                    report != null && Prefs.alarms(this) ->
+                        Notifier.alarm(this, if ("başarısız" in report.text) "Görev bitti: başarısız" else "Görev bitti",
+                            report.text.removePrefix("Görev raporu: ").take(600))
+                    report != null -> Notifier.update(this, "Görev bitti", report.text.take(400))
                     failed != null && Prefs.alarms(this) ->
                         Notifier.alarm(this, "${failed.persona.ifBlank { "SpeS" }}: iş başarısız", failed.text.take(240))
                     fresh.isNotEmpty() -> {

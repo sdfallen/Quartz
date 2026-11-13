@@ -15,7 +15,7 @@ class SpesApi(baseUrl: String, private val token: String) {
     data class Msg(
         val id: String, val seq: Int, val role: String, val sender: String,
         val persona: String, val step: Int?, val text: String, val failed: Boolean, val model: String = "",
-        val memory: String = "",
+        val memory: String = "", val report: Boolean = false,
     ) {
         val fromUser get() = role == "user" || sender == "user"
     }
@@ -53,7 +53,7 @@ class SpesApi(baseUrl: String, private val token: String) {
                 sender = m.optString("sender"), persona = m.optString("persona"),
                 step = if (m.isNull("step")) null else m.optInt("step"),
                 text = m.optString("text"), failed = m.optBoolean("failed"), model = m.optString("model"),
-                memory = m.optString("memory"),
+                memory = m.optString("memory"), report = m.optBoolean("report"),
             )
         }
         return State(

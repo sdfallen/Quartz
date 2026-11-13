@@ -608,7 +608,31 @@ class AgentChatService(TeamTurnMixin):
         if not isinstance(content, str) or len(content) > 64000: raise ValueError("Geçersiz mesaj")
         meta = dict(metadata or {})
         meta.update(status="completed", recipient="all")
-        return self.store.append_message(cid, "user" if sender == "user" else "assistant", content, sender=sender, metadata=meta)
+        message = self.store.append_message(cid, "user" if sender == "user" else "assistant", content, sender=sender, metadata=meta)
+        if sender == "quartz" and meta.get("final") and meta.get("natural_task"):
+            self._natural_finish_report(cid, str(meta["natural_task"]), str(meta.get("task_status") or ""))
+        return message
+
+    def _natural_finish_report(self, cid, task, status):
+        """Desktop tasks (bilgisayar kontrolü) end here, not in _run_chat_turn (live 14 Nov:
+        "hesap makinesi yaz, bitirdiğinde rapor ver" never rang)."""
+        if status == "cancelled":  # Stop: the user already knows
+            return
+        with self._lock:
+            reported = self.__dict__.setdefault("_natural_reported", set())
+            if task in reported:
+                return
+            reported.add(task)
+        from core.finish_report import wants_finish_report
+        messages = self.store.get(cid).get("messages", [])
+        first = next((i for i, m in enumerate(messages) if (m.get("metadata") or {}).get("natural_task") == task), None)
+        if first is None:
+            return
+        request = next((m for m in reversed(messages[:first]) if m.get("role") == "user"), None)
+        if not request or not wants_finish_report(request.get("content")):
+            return
+        threading.Thread(target=self._post_finish_report, args=(cid, request.get("id"), status),
+                         daemon=True, name="spes-finish-report").start()
 
     def _communication_prompt(self, cid, full_prompt):
         conv = self.store.get(cid)
@@ -900,6 +924,11 @@ class AgentChatService(TeamTurnMixin):
                 "started_at": time.time(),
             }
             turn_state["all_message_ids"] = [bot_msg["id"]]
+            # "Bitince haber ver": SpeS writes a short report when this turn ends (core.finish_report).
+            from core.finish_report import wants_finish_report
+            if wants_finish_report(text):
+                turn_state["notify_on_finish"] = True
+                turn_state["notify_user_message_id"] = user_msg["id"]
             self._active_turn = turn_state
 
         self._launch_worker(self._run_chat_turn,
@@ -1350,7 +1379,37 @@ class AgentChatService(TeamTurnMixin):
                             "Görev devam ettirilemedi. Süreç ve dosya denetimi tamamlanmadan yeniden başlatılmayacak.",
                             metadata={"status":"failed", "error_type":type(exc).__name__})
         finally:
+            self._schedule_finish_report(task_id, cid)
             self._worker_finished(task_id)
+
+    def _schedule_finish_report(self, task_id, cid):
+        """After a "bitince haber ver" turn ends (not on Stop), post SpeS's report off-thread."""
+        with self._lock:
+            turn = self._active_turn or {}
+            if turn.get("turn_id") != task_id or not turn.get("notify_on_finish"):
+                return
+            status = turn.get("status")
+            user_mid = turn.get("notify_user_message_id") or turn.get("user_message_id")
+            turn["notify_on_finish"] = False
+            if status not in ("completed", "partial", "failed") or turn.get("cancel_requested"):
+                return
+            if turn.get("conversation_only"):
+                # A tool-less chat reply is not a finished task; ringing the phone for
+                # "bu turda yazamıyorum" would be noise.
+                return
+        threading.Thread(target=self._post_finish_report, args=(cid, user_mid, status),
+                         daemon=True, name="spes-finish-report").start()
+
+    def _post_finish_report(self, cid, user_mid, status):
+        from core.finish_report import collect_facts, write_report
+        try:
+            conv = self.store.get(cid)
+            text = write_report(collect_facts(conv.get("messages", []), user_mid, status))
+            self.store.append_message(cid, "assistant", "Görev raporu: " + text, sender="quartz", metadata={
+                "sender": "quartz", "recipient": "user", "report": True, "notify": "call", "turn_status": status,
+                "sequence": self._next_sequence(self.store.get(cid))})
+        except Exception:
+            log.exception("Finish report could not be written")
 
     def _run_chat_step(self, cid: str, msg_id: str, agent: str, prompt: str,
                        project_id: str | None, write: bool, confirm_write: bool, full_access: bool = False):
