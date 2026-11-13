@@ -96,6 +96,39 @@ class TeamTurnTests(unittest.TestCase):
         self.assertTrue(all("SOHBET MODU" in c["prompt"] for c in run.calls))
         self.assertIn(turn["status"], {"completed", "running"})
 
+    def test_the_team_remembers_earlier_turns(self):
+        for second, kwargs in (("Adım neydi?", {}),
+                               ("Bir giriş sayfası yap", {"write": True, "confirm_write": True, "full_access": True})):
+            with self.subTest(second=second), tempfile.TemporaryDirectory() as directory:
+                chat = make_chat(directory)
+                run = TeamRun(chat)
+                run.run("Benim adım Ali, bunu hatırla")
+                first_calls = len(run.calls)
+                run.run(second, **kwargs)
+                chat._diagnostics.close()
+                later = run.calls[first_calls:]
+                self.assertTrue(later)
+                for call in later:
+                    self.assertIn("Kullanıcı: Benim adım Ali, bunu hatırla", call["prompt"])
+                    self.assertIn("Fatum: Kısa bir cümle.", call["prompt"])
+                    self.assertEqual(call["prompt"].count(second), 1, "the new message is not repeated in the history")
+
+    def test_history_uses_persona_names_and_drops_errors_and_details(self):
+        from core.team_turn import team_history
+        messages = [
+            {"id": "1", "role": "user", "sender": "user", "content": "Selam"},
+            {"id": "2", "role": "assistant", "sender": "codex", "content": "Merhaba\n---TEKNIK_AYRINTILAR---\nrun 77"},
+            {"id": "3", "role": "assistant", "sender": "antigravity", "content": "Traceback", "metadata": {"status": "failed"}},
+            {"id": "4", "role": "assistant", "sender": "claude", "content": "x" * 900},
+            {"id": "5", "role": "user", "sender": "user", "content": "şimdiki"},
+        ]
+        text = team_history(messages, exclude_ids={"5"})
+        self.assertEqual(text.splitlines()[:2], ["Kullanıcı: Selam", "Fides: Merhaba"])
+        self.assertNotIn("Traceback", text)
+        self.assertNotIn("run 77", text)
+        self.assertNotIn("şimdiki", text)
+        self.assertLess(len(text.splitlines()[2]), 380)
+
     def test_who_answers_small_talk(self):
         from core.team_turn import addressed_agents
         self.assertEqual(addressed_agents("Merhaba"), ["claude"])

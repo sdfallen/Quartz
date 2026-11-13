@@ -72,6 +72,37 @@ def clamp_sentences(text: str, limit: int, per_sentence: int = CHARS_PER_SENTENC
     return cut + "…"
 
 
+HISTORY_MESSAGES = 10
+HISTORY_CHARS = 360
+_SPEAKER = {"user": "Kullanıcı", "quartz": "SpeS", "bot": "SpeS", "assistant": "SpeS"}
+
+
+def team_history(messages, exclude_ids=(), limit=HISTORY_MESSAGES, chars=HISTORY_CHARS) -> str:
+    """Earlier turns of this conversation, as the team sees them (live 13 Nov: "they have no memory").
+
+    Persona names instead of CLI ids, the visible (short) text only, technical details cut,
+    failed or error bubbles skipped so stack traces never become memory.
+    """
+    from core.response_style import DETAIL_MARKER
+    lines = []
+    for message in messages:
+        meta = message.get("metadata") or {}
+        if message.get("id") in exclude_ids or meta.get("instruction_state") in {"queued", "cancelled", "interrupted"}:
+            continue
+        if meta.get("status") == "failed" or meta.get("error"):
+            continue
+        text = str(message.get("content") or "").split(DETAIL_MARKER, 1)[0].strip()
+        if not text:
+            continue
+        text = " ".join(text.split())
+        if len(text) > chars:
+            text = text[:chars].rsplit(" ", 1)[0] + "…"
+        sender = str(meta.get("sender") or message.get("sender") or message.get("role") or "user").lower()
+        name = _SPEAKER.get(sender) or (PERSONAS.get("antigravity" if sender == "gemini" else sender) or {}).get("name") or "SpeS"
+        lines.append(f"{name}: {text}")
+    return "\n".join(lines[-limit:])
+
+
 def persona_name(agent: str) -> str:
     return PERSONAS.get(agent, {}).get("name", agent)
 
@@ -171,11 +202,12 @@ class TeamTurnMixin:
         return "\n".join(lines)
 
     # -- small talk ----------------------------------------------------------
-    def _run_team_chat(self, cid, first_msg_id, project_id, user_block, agents):
+    def _run_team_chat(self, cid, first_msg_id, project_id, user_block, agents, history_block=""):
         """Plain conversation: the first speaker answers, the others add one short line each."""
         lead = LEAD if LEAD in agents else agents[0]
+        # History first, then the chat rule: the rule closest to the message is the one followed.
         say = lambda agent, msg_id, extra="": self._team_say(
-            cid, msg_id, agent, self._team_header(agent) + CHAT_RULE + extra + user_block, project_id,
+            cid, msg_id, agent, self._team_header(agent) + history_block + CHAT_RULE + extra + user_block, project_id,
             step=0, limit=2, per_sentence=CHAT_CHARS_PER_SENTENCE)
         self._set_turn_progress(f"{persona_name(lead)} yazıyor…", current_msg_id=first_msg_id)
         # The opening bubble is reused even when the user addressed only Fides or Eos:
@@ -197,10 +229,17 @@ class TeamTurnMixin:
         if self._is_turn_cancelled(first_msg_id):
             return
         chat_only = self._conversation_only(cid) or not (write and confirm_write)
+        # Memory of this conversation: earlier turns, built once before anyone speaks.
+        user_mid = (self._active_turn or {}).get("user_message_id")
+        history = team_history(self.store.get(cid).get("messages", []),
+                               exclude_ids={first_msg_id, user_mid} - {None})
+        history_block = (f"\n--- BU SOHBETİN ÖNCEKİ MESAJLARI (hatırla; tekrar etme) ---\n{history}\n"
+                         if history else "")
         user_block = f"\n--- KULLANICININ MESAJI ---\n{prompt}\n"
         if self._conversation_only(cid):
-            self._run_team_chat(cid, first_msg_id, project_id, user_block, addressed_agents(prompt))
+            self._run_team_chat(cid, first_msg_id, project_id, user_block, addressed_agents(prompt), history_block)
             return
+        user_block = history_block + user_block
 
         # 1. Plan and work split by the lead (first bubble already belongs to Claude).
         self._set_turn_progress("Fatum planı ve iş bölümünü yazıyor…", current_msg_id=first_msg_id)
