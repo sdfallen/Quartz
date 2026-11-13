@@ -67,6 +67,9 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var pendingSpeech: String? = null
     @Volatile private var open = true
     @Volatile private var waitingSeq = -1
+    // Conversation loop (live 13 Nov: it answered once and stopped listening).
+    @Volatile private var listenWhenQuiet = false
+    private var silentTries = 0
 
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) listen() else say("Mikrofon izni olmadan seni duyamam. Yazarak da konuşabilirsin.", listenAfter = false)
@@ -101,7 +104,18 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     private fun afterSpeech(id: String?) {
         if (!open) return
-        if (id == UTTER_LISTEN) listen() else if (phase.value == Phase.Speaking) phase.value = if (waitingSeq >= 0) Phase.Waiting else Phase.Idle
+        val stillTalking = tts?.isSpeaking == true
+        if (id == UTTER_LISTEN || (listenWhenQuiet && !stillTalking)) {
+            listenWhenQuiet = false
+            listen()
+        } else if (phase.value == Phase.Speaking && !stillTalking) {
+            phase.value = if (waitingSeq >= 0) Phase.Waiting else Phase.Idle
+        }
+    }
+
+    /** Back to listening once the last queued sentence has been read. */
+    private fun listenWhenDone() {
+        if (tts?.isSpeaking == true) listenWhenQuiet = true else listen()
     }
 
     private fun say(text: String, listenAfter: Boolean = true, queue: Boolean = false) {
@@ -138,9 +152,16 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 override fun onEndOfSpeech() {}
                 override fun onError(error: Int) {
                     phase.value = if (waitingSeq >= 0) Phase.Waiting else Phase.Idle
-                    if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) micPermission.launch(Manifest.permission.RECORD_AUDIO)
+                    if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) { micPermission.launch(Manifest.permission.RECORD_AUDIO); return }
+                    // Silence: listen twice more, then wait for the Konuş button.
+                    if ((error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)
+                        && waitingSeq < 0 && silentTries < 2) {
+                        silentTries++
+                        window.decorView.postDelayed({ if (open) listen() }, 400)
+                    }
                 }
                 override fun onResults(results: Bundle?) {
+                    silentTries = 0
                     val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
                     if (text.isNotBlank()) handle(text) else phase.value = Phase.Idle
                 }
@@ -195,12 +216,14 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 val fresh = s.messages.filter { !it.fromUser && it.text.isNotBlank() && spoken.add(it.id) }
                 if (fresh.isNotEmpty()) {
                     val speech = fresh.joinToString(" ") { "${it.persona.ifBlank { "SpeS" }}: ${VoiceCommands.forSpeech(it.text)}" }
-                    runOnUiThread { say(speech, listenAfter = !s.busy, queue = true) }
+                    runOnUiThread { say(speech, listenAfter = false, queue = true) }
                 }
                 after = maxOf(after, s.lastSeq)
-                if (!s.busy && s.lastSeq > before && fresh.isEmpty()) break
+                // The team is done as soon as it is idle and has answered; do not wait for another poll.
+                if (!s.busy && s.lastSeq > before) break
             }
             waitingSeq = -1
+            runOnUiThread { if (open) listenWhenDone() }
         }
     }
 
@@ -233,7 +256,7 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 }
             }
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = { tts?.stop(); listen() }, modifier = Modifier.fillMaxWidth().height(64.dp), shape = CircleShape) {
+                Button(onClick = { tts?.stop(); silentTries = 0; listen() }, modifier = Modifier.fillMaxWidth().height(64.dp), shape = CircleShape) {
                     Text(if (p == Phase.Listening) "Dinliyorum…" else "Konuş", fontSize = 18.sp)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
