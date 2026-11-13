@@ -625,6 +625,16 @@ class AgentChatService(TeamTurnMixin):
         else:
             mode = ""
         memory = self.user_memory.prompt_block() if getattr(self, "user_memory", None) else ""
+        # SpeS, not the agent, stores memory: tell the agent what happened so it never says
+        # "I cannot save this" after SpeS has saved it (live 13 Nov).
+        note = next(((m.get("metadata") or {}).get("memory") for m in reversed(conv.get("messages", []))
+                     if m.get("role") == "user"), None)
+        if isinstance(note, dict) and note.get("saved"):
+            memory += ("[SPES HAFIZA] Kullanıcının son mesajındaki bilgi SpeS tarafından kalıcı hafızaya kaydedildi; "
+                       "bütün sohbetlerde hatırlanacak. 'Kaydedemedim' deme; kısaca kaydedildiğini söyle.\n")
+        elif isinstance(note, dict) and note.get("reason") == "secret":
+            memory += ("[SPES HAFIZA] Kullanıcının son mesajı gizli bilgi (şifre, kart, anahtar vb.) içerdiği için "
+                       "SpeS onu kaydetmedi. Bunu kısaca söyle.\n")
         return (communication_instruction(self.store.preferences()["response_detail"], request) + "\n"
                 + NORMAL_CHAT_DESKTOP_NOTICE + memory + mode + full_prompt)
 
@@ -798,8 +808,13 @@ class AgentChatService(TeamTurnMixin):
             # SpeS records the memory write itself; an agent saying "I'll remember" is not evidence.
             memory_note = None
             from core.message_intent import tools_disallowed
-            from core.user_memory import remember_request
+            from core.user_memory import bare_remember, remember_request
             fact = "" if tools_disallowed(text) else remember_request(text)
+            if not tools_disallowed(text) and bare_remember(text):
+                # "Bunu hatırla" alone points at the user's previous message.
+                earlier = [m for m in self.store.get(cid).get("messages", []) if m.get("role") == "user"]
+                previous = str(earlier[-1].get("content") or "").strip() if earlier else ""
+                fact = "" if (not previous or bare_remember(previous)) else (remember_request(previous) or previous)
             if fact:
                 memory_note = self.user_memory.add(fact)
             user_msg = self.store.append_message(

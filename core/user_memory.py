@@ -58,6 +58,15 @@ def remember_request(text: str):
     return fact
 
 
+def bare_remember(text: str) -> bool:
+    """"Bunu hatırla" on its own: the fact is the user's previous message (live 13 Nov)."""
+    value = " ".join(str(text or "").split())
+    if not value or _QUESTION.search(value) or _QUOTED.search(value) or not _TRIGGER.search(value):
+        return False
+    rest = _TRIGGER.sub(" ", value).strip(" ,.;:-!").lower()
+    return rest in {"", "bunu", "şunu", "bunları", "onu", "lütfen", "bunu lütfen", "lütfen bunu"}
+
+
 def contains_secret(text: str) -> bool:
     return any(p.search(str(text or "")) for p in _SECRETS)
 

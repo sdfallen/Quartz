@@ -21,6 +21,13 @@ class CaptureTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(remember_request(text), fact)
 
+    def test_bare_requests_are_recognised(self):
+        from core.user_memory import bare_remember
+        for text in ("Bunu hatırla", "hatırla", "Bunu unutma!", "Lütfen bunu aklında tut"):
+            self.assertTrue(bare_remember(text), text)
+        for text in ("Benim adım Ali, bunu hatırla", "Bunu hatırlıyor musun?", "Merhaba"):
+            self.assertFalse(bare_remember(text), text)
+
     def test_questions_quotes_and_other_words_are_not_requests(self):
         for text in ("Adımı hatırlıyor musun?", "Bunu hatırladın mı", "Bana yarın hatırlatır mısın?",
                      '"Bunu hatırla" ne demek', "Toplantıyı unutmayalım", "Hatırlattı mı sana?", "Merhaba"):
@@ -93,6 +100,19 @@ class ChatIntegrationTests(unittest.TestCase):
         self.assertIn("Benim adım Ali", prompt)
         self.assertNotIn("1234", prompt)
         self.assertLess(prompt.index("HATIRLANANLAR"), prompt.index("Adım neydi?"))
+
+    def test_bare_remember_stores_the_previous_message_and_agents_are_told(self):
+        from tests.test_team_turn import TeamRun, make_chat
+        with tempfile.TemporaryDirectory() as directory:
+            chat = make_chat(directory)
+            run = TeamRun(chat)
+            run.run("Benim adım Ali")
+            run.run("Bunu hatırla")
+            self.assertEqual([i["text"] for i in chat.memory_list()], ["Benim adım Ali"])
+            cid = chat.store.get_active()["id"]
+            prompt = chat._communication_prompt(cid, "x")
+            chat._diagnostics.close()
+        self.assertIn("SpeS tarafından kalıcı hafızaya kaydedildi", prompt)
 
     def test_clearing_memory_needs_explicit_confirmation(self):
         from tests.test_team_turn import make_chat
