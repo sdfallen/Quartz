@@ -134,12 +134,12 @@ class TeamTurnMixin:
             text = self._execute_antigravity_bubble(
                 cid, msg_id, prompt, project_id, write, confirm_write, use_session=False,
                 base_meta=base_meta, full_access=full_access, tool_less=tool_less,
-                project_scope=project_scope)
+                project_scope=project_scope, web=web)
         else:
             text = self._execute_codex_bubble(
                 cid, msg_id, prompt, project_id, write, confirm_write, use_session=False,
                 base_meta=base_meta, full_access=full_access, agent=agent, tool_less=tool_less,
-                project_scope=project_scope, web=web and agent in ("claude", "codex"))
+                project_scope=project_scope, web=web)
         short = clamp_sentences(text, limit, per_sentence) if (limit and text) else text
         with self._lock:
             # Same cancellation fence as the executors' own publishing.
@@ -180,9 +180,9 @@ class TeamTurnMixin:
     def _team_header(agent):
         others = ", ".join(f"{persona_name(a)} ({a.capitalize() if a != 'antigravity' else 'Antigravity'})"
                            for a in TEAM if a != agent)
-        # Fatum and Fides may search the web in conversation steps (core.web_policy); Eos not yet.
+        # Every agent may search the web in conversation steps (core.web_policy).
         return (f"SpeS ekibindesin; ekip: sen, {others} ve kullanıcı. Herkes sohbeti görüyor.\n"
-                + character_instruction(agent) + ("\n" + WEB_RULE if agent in ("claude", "codex") else ""))
+                + character_instruction(agent) + "\n" + WEB_RULE)
 
     @staticmethod
     def _team_rules(limit):

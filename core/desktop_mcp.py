@@ -180,6 +180,29 @@ def _path_values(value, key=""):
             yield text
 
 
+def web_search_tool_allowed(payload):
+    """Eos web search (14 Nov, live-verified tool name): only search_web with a short query.
+
+    Everything else stays denied, including read_url_content, open_browser_url and
+    read_browser_page: no page is ever fetched, so a page cannot steer the agent into
+    sending the conversation to an arbitrary address.
+    """
+    if not isinstance(payload, dict):
+        return False
+    native_call = payload.get("toolCall")
+    name = native_call.get("name") if isinstance(native_call, dict) else payload.get("tool_name")
+    if name != "search_web":
+        return False
+    params = native_call.get("args") if isinstance(native_call, dict) else payload.get("tool_input")
+    if isinstance(params, str):
+        try: params = json.loads(params)
+        except (ValueError, TypeError): return False
+    if not isinstance(params, dict) or set(params) - {"query"}:
+        return False
+    query = params.get("query")
+    return isinstance(query, str) and 0 < len(query.strip()) <= 400
+
+
 def project_read_tool_allowed(payload, roots, cwd=None):
     """Read-only project inspection: listed read tools, inside the given roots, no secrets.
 
@@ -259,6 +282,13 @@ if __name__ == "__main__":
         except Exception:
             allowed = False
         print(json.dumps({"decision":"allow" if allowed else "deny", "reason":"SpeS operator: only task-capability desktop MCP tools are allowed." + (" Hook schema: "+schema if not allowed else "")}))
+    elif "--web-search-only" in sys.argv:
+        try:
+            allowed = web_search_tool_allowed(json.loads(sys.stdin.read(65537)))
+        except Exception:
+            allowed = False
+        print(json.dumps({"decision": "allow" if allowed else "deny",
+                          "reason": "SpeS chat: only web search is allowed; no page fetch, files or commands."}))
     elif "--deny-tools" in sys.argv:
         print(json.dumps({"decision": "deny", "reason": "SpeS log observer: all model tools disabled; analyze supplied evidence only."}))
     else:

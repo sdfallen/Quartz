@@ -8,14 +8,15 @@ access, no desktop connection. Build steps and project checks never search.
 - Fides (Codex): the per-run web_search setting of the guarded config. Default "cached"
   (answers from the search index, no live page fetch); "live" is fresher but lets a page
   steer the agent, so it is opt-in with SPES_CODEX_WEB=live. Never written to config.toml.
-- Eos (Antigravity): not yet. Its tool name and hook payload could not be verified
-  (quota exhausted 14 Nov); the observer guard keeps denying every tool until then.
+- Eos (Antigravity): the observer guard's --web-search-only mode allows search_web with
+  a plain query and denies every other tool (read_url_content, open_browser_url, files,
+  commands). Tool name and hook path verified live on 14 Nov with gemini-3.8-flash.
 """
 from __future__ import annotations
 
 import os
 
-WEB_AGENTS = frozenset({"claude", "codex"})
+WEB_AGENTS = frozenset({"claude", "codex", "antigravity"})
 CODEX_MODES = ("cached", "live", "disabled")
 
 

@@ -26,7 +26,7 @@ from core.squad_adapter import SquadAdapter
 from core.task_outcome import cleanup_step, execution_outcome
 
 
-def write_observer_hooks(directory):
+def write_observer_hooks(directory, web=False):
     hooks = Path(directory)/".agents/hooks.json"
     hooks.parent.mkdir(exist_ok=True)
     command=mcp_command()
@@ -34,7 +34,8 @@ def write_observer_hooks(directory):
     if not helper.is_file(): raise RuntimeError("Build the observer deny helper before starting coordination")
     shutil.copy2(helper,hooks.parent/"observer-guard.exe")
     hooks.write_text(json.dumps({"quartz-readonly-observer":{"PreToolUse":[{"matcher":"*","hooks":[
-        {"type":"command","command":r".\observer-guard.exe --deny-tools","timeout":HOOK_TIMEOUT_SECONDS}]}]}}),encoding="utf-8")
+        {"type":"command","command":r".\observer-guard.exe --web-search-only" if web else r".\observer-guard.exe --deny-tools",
+         "timeout":HOOK_TIMEOUT_SECONDS}]}]}}),encoding="utf-8")
     return hooks
 
 
