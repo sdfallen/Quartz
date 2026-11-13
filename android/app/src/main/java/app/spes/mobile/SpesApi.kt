@@ -15,6 +15,7 @@ class SpesApi(baseUrl: String, private val token: String) {
     data class Msg(
         val id: String, val seq: Int, val role: String, val sender: String,
         val persona: String, val step: Int?, val text: String, val failed: Boolean, val model: String = "",
+        val memory: String = "",
     ) {
         val fromUser get() = role == "user" || sender == "user"
     }
@@ -52,6 +53,7 @@ class SpesApi(baseUrl: String, private val token: String) {
                 sender = m.optString("sender"), persona = m.optString("persona"),
                 step = if (m.isNull("step")) null else m.optInt("step"),
                 text = m.optString("text"), failed = m.optBoolean("failed"), model = m.optString("model"),
+                memory = m.optString("memory"),
             )
         }
         return State(
@@ -106,7 +108,14 @@ class SpesApi(baseUrl: String, private val token: String) {
         return Conversations(json.optString("active"), list)
     }
 
-    /** new | select | mode | model | project; never a write permission. */
+    data class Memory(val id: String, val text: String)
+
+    fun memory(): List<Memory> {
+        val items = request("GET", "/api/memory", null, 20_000).optJSONArray("items") ?: return emptyList()
+        return (0 until items.length()).map { items.getJSONObject(it) }.map { Memory(it.optString("id"), it.optString("text")) }
+    }
+
+    /** new | select | mode | model | project | forget; never a write permission. */
     fun act(action: String, body: JSONObject = JSONObject()) {
         request("POST", "/api/act/$action", body, 20_000)
     }

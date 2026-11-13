@@ -104,6 +104,11 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
   const TEAM_STEP = {1: 'Plan', 2: 'Eleştiri', 3: 'Karar', 4: 'Hazırlık', 5: 'Kontrol', 6: 'Kapanış'};
   function teamStepLabel(m) {
     const meta = (m && m.metadata) || {};
+    // SpeS's own record of a "bunu hatırla" request, shown on the user's message.
+    if (meta.memory && typeof meta.memory === 'object') {
+      if (meta.memory.saved) return 'Hafızaya alındı';
+      return meta.memory.reason === 'secret' ? 'Kaydedilmedi: gizli bilgi' : '';
+    }
     if (!meta.team || !TEAM_STEP[meta.team_step]) return '';
     return meta.team_step === 4 && (m.sender || meta.sender) === 'claude' ? 'İnşa' : TEAM_STEP[meta.team_step];
   }

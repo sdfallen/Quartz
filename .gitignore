@@ -6,6 +6,7 @@
 # User data and runtime state
 chat_history.json
 quartz_conversations.json
+quartz_user_memory.json
 jarvis_memory.json
 quartz_memory.json
 quartz_operation.json

@@ -24,7 +24,7 @@ SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "bu
 SECRET_NAME = re.compile(r"^(?:\.env(?:\..*)?|.*\.(?:pem|key|pfx|p12|kdbx)|id_(?:rsa|ed25519|ecdsa)(?:\.pub)?|"
                          r"\.ssh|\.codex|\.gemini|\.aws|\.azure|\.git-credentials|\.npmrc|\.pypirc|"
                          r"credentials(?:\.json)?|secrets?(?:\.json|\.toml|\.ya?ml)?|token(?:s)?(?:\.json)?|"
-                         r"quartz_(?:memory|conversations|projects)\.json|mobile_access\.json|cli_connections\.json)$", re.I)
+                         r"quartz_(?:memory|user_memory|conversations|projects)\.json|mobile_access\.json|cli_connections\.json)$", re.I)
 
 TOOLS = [
     {"name": "project_list", "description": "List files and folders in a project folder (relative path, '' for the project root). Secret files are hidden.",

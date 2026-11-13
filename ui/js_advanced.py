@@ -240,6 +240,32 @@ JAVASCRIPT = r"""  function addAgentRow(container, title, details, status='') {
     logLine('Sohbet temizlendi');
   });
 
+  // Long-term memory: only what the user explicitly asked to remember; built with textContent.
+  async function renderMemory() {
+    const list = document.getElementById('memoryList');
+    if (!list) return;
+    let result;
+    try { result = await window.pywebview.api.memory_list(); } catch (_) { return; }
+    const items = result && result.status === 'ok' && Array.isArray(result.data) ? result.data : [];
+    list.replaceChildren(...items.slice().reverse().map(item => {
+      const li = document.createElement('li');
+      const text = document.createElement('span'); text.textContent = String(item.text || '');
+      const del = document.createElement('button'); del.type = 'button'; del.className = 'icon-btn memory-del';
+      del.textContent = '×'; del.title = 'Bunu unut'; del.setAttribute('aria-label', 'Bunu unut: ' + String(item.text || ''));
+      del.addEventListener('click', async () => { await window.pywebview.api.memory_forget(String(item.id)); renderMemory(); });
+      li.append(text, del); return li;
+    }));
+    document.getElementById('memoryEmpty').hidden = items.length > 0;
+    document.getElementById('btnMemoryClear').hidden = items.length === 0;
+  }
+  window.SpesMemory = Object.freeze({ refresh: renderMemory });
+  document.getElementById('btnMemoryClear')?.addEventListener('click', async () => {
+    if (!(await requestUiConfirm('Hatırlanan bütün bilgiler silinsin mi? Bu geri alınamaz.', {title: 'Hafızayı temizle', confirmLabel: 'Sil', danger: true}))) return;
+    await window.pywebview.api.memory_clear(); renderMemory();
+  });
+  document.getElementById('btnPanels')?.addEventListener('click', () => setTimeout(renderMemory, 50));
+  if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('pywebviewready', () => renderMemory());
+
   document.getElementById('btnMobile').addEventListener('click', async () => {
     const response = await window.pywebview.api.mobile_access();
     if (response.status !== 'ok') { appendMsg('err', 'HATA', response.data); return; }

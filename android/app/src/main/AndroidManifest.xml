@@ -8,6 +8,13 @@
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Voice mode only: Android's own speech recognition, asked at first use. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <queries>
+        <intent><action android:name="android.speech.RecognitionService" /></intent>
+        <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
+    </queries>
 
     <!-- Only HTTPS (Tailscale Serve); no cleartext, no backups of the device key. -->
     <application
@@ -37,6 +44,14 @@
             android:launchMode="singleTop"
             android:showWhenLocked="true"
             android:taskAffinity=""
+            android:turnScreenOn="true" />
+
+        <activity
+            android:name=".VoiceActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:showWhenLocked="true"
             android:turnScreenOn="true" />
 
         <service

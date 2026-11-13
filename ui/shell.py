@@ -458,6 +458,13 @@ SHELL_MARKUP = r"""
         <button type="button" class="qa-btn" id="btnSafe">@@i:shield@@ <span id="safeLabel">Güvenli mod: kapalı</span></button>
         <div class="log-box plugin-permissions" id="pluginPermissions"></div>
       </section>
+      <section class="card" id="memoryCard">
+        <div class="card-label">Hafıza</div>
+        <p class="work-note">Ajanlar yalnız senin "bunu hatırla" dediğin bilgileri sohbetler arasında hatırlar. Şifre, kart ve anahtar kaydedilmez.</p>
+        <ul class="memory-list" id="memoryList" aria-label="Hatırlanan bilgiler"></ul>
+        <p class="work-empty" id="memoryEmpty">Henüz hatırlanan bir şey yok.</p>
+        <button type="button" class="qa-btn danger" id="btnMemoryClear" hidden>@@i:trash@@ Hafızayı temizle</button>
+      </section>
       <section class="card danger-zone">
         <div class="card-label">Sohbet</div>
         <button type="button" class="qa-btn danger" id="btnClear">@@i:trash@@ Sohbeti temizle</button>

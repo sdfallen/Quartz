@@ -23,7 +23,7 @@ def safe_member(root, relative):
     """Manifest paths are untrusted. Never follow them to secrets or other projects."""
     path = PurePosixPath(relative)
     forbidden = {'.env', '.quartz', '.gemini', '.codex', 'cookies', 'auth.json',
-                 'oauth_creds.json', 'quartz_memory.json', 'quartz_conversations.json',
+                 'oauth_creds.json', 'quartz_memory.json', 'quartz_user_memory.json', 'quartz_conversations.json',
                  'quartz_projects.json', 'mobile_access.json', 'credentials.json'}
     if (not isinstance(relative, str) or not relative or '\\' in relative or ':' in relative
             or path.is_absolute() or '..' in path.parts

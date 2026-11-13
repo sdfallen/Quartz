@@ -15,7 +15,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 PRIVATE_NAMES = {
-    '.env', 'chat_history.json', 'quartz_conversations.json', 'jarvis_memory.json',
+    '.env', 'chat_history.json', 'quartz_conversations.json', 'quartz_user_memory.json', 'jarvis_memory.json',
     'quartz_memory.json', 'quartz_projects.json', 'quartz_operation.json',
     'quartz_tasks.json', 'quartz_workflows.json', 'quartz_agent_runs.json',
     'mobile_access.json', 'mcp_skills.json', 'credentials.json', 'token.json',

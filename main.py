@@ -396,6 +396,22 @@ class IPCServer:
             service._antigravity_probe_cache = (0.0, None)
             return {"status": "ok", "data": {"refreshed": True}}
 
+        if action in {"memory_list", "memory_forget", "memory_clear"}:
+            data = req.get("data") or {}
+            if not isinstance(data, dict) or set(data) - {"id", "confirmed"}:
+                return {"status": "error", "data": "Geçersiz hafıza isteği"}
+            chat = self._get_agent_chat()
+            if chat is None:
+                return {"status": "error", "data": "Sohbet servisi hazır değil"}
+            try:
+                if action == "memory_list":
+                    return {"status": "ok", "data": chat.memory_list()}
+                if action == "memory_forget":
+                    return {"status": "ok", "data": chat.memory_forget(str(data.get("id") or ""))}
+                return {"status": "ok", "data": chat.memory_clear(confirmed=data.get("confirmed") is True)}
+            except PermissionError as exc:
+                return {"status": "error", "data": str(exc)}
+
         if action == "chat_status":
             return {"status": "ok", "data": self._get_agent_chat().status()}
 

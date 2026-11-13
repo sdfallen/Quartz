@@ -45,6 +45,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -320,6 +321,11 @@ class MainActivity : ComponentActivity() {
                 OutlinedTextField(draft, { draft = it }, modifier = Modifier.weight(1f).animateContentSize(),
                     placeholder = { Text("Ekibe yaz (yalnız okuma)") }, maxLines = 5, shape = RoundedCornerShape(18.dp))
                 Spacer(Modifier.width(8.dp))
+                OutlinedButton(onClick = { startActivity(Intent(this@MainActivity, VoiceActivity::class.java)) },
+                    shape = CircleShape, modifier = Modifier.size(52.dp), contentPadding = PaddingValues(0.dp)) {
+                    Text("Ses", fontSize = 13.sp, color = SpesColors.text2)
+                }
+                Spacer(Modifier.width(8.dp))
                 val scale by animateFloatAsState(if (draft.isNotBlank()) 1f else .86f, tween(180), label = "send")
                 Button(enabled = draft.isNotBlank(), onClick = {
                     val text = draft.trim(); draft = ""; onNote("Gönderiliyor…")
@@ -342,6 +348,11 @@ class MainActivity : ComponentActivity() {
     private fun MessageRow(m: SpesApi.Msg) {
         val mine = m.fromUser
         Column(Modifier.fillMaxWidth(), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
+            if (mine && m.memory.isNotEmpty()) {
+                Row { Tag(if (m.memory == "saved") "Hafızaya alındı" else "Kaydedilmedi: gizli bilgi",
+                          if (m.memory == "saved") SpesColors.accent else SpesColors.danger) }
+                Spacer(Modifier.height(4.dp))
+            }
             if (!mine) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(8.dp).clip(CircleShape).background(SpesColors.persona(m.persona)))
@@ -519,7 +530,7 @@ class MainActivity : ComponentActivity() {
     private fun SettingsScreen(onBack: () -> Unit, onForget: () -> Unit) {
         var watching by remember { mutableStateOf(Prefs.watching(this)) }
         var alarms by remember { mutableStateOf(Prefs.alarms(this)) }
-        Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Brand("Ayarlar")
                 Spacer(Modifier.weight(1f))
@@ -540,9 +551,37 @@ class MainActivity : ComponentActivity() {
             }
             OutlinedButton(onClick = { Notifier.alarm(this@MainActivity, "Deneme araması", "SpeS acil uyarısı böyle görünür.") },
                 modifier = Modifier.fillMaxWidth()) { Text("Acil uyarıyı dene") }
+            MemorySection()
             Text("SpeS ${packageManager.getPackageInfo(packageName, 0).versionName}", color = SpesColors.text3, fontSize = 12.sp)
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(12.dp))
             OutlinedButton(onClick = onForget, modifier = Modifier.fillMaxWidth()) { Text("Eşleştirmeyi kaldır", color = SpesColors.danger) }
+        }
+    }
+
+    /** What the agents remember about you: only what you said "bunu hatırla" for; each line deletable. */
+    @Composable
+    private fun MemorySection() {
+        val scope = rememberCoroutineScope()
+        var items by remember { mutableStateOf<List<SpesApi.Memory>?>(null) }
+        var reload by remember { mutableIntStateOf(0) }
+        LaunchedEffect(reload) { items = io { api().memory() }.getOrNull() ?: emptyList() }
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Hafıza", color = SpesColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Text("Mesajda \"bunu hatırla\" dediğin bilgiler. Şifre ve kart bilgisi kaydedilmez.", color = SpesColors.text3, fontSize = 12.sp)
+            val list = items
+            when {
+                list == null -> TypingDots(SpesColors.text3)
+                list.isEmpty() -> Text("Henüz hatırlanan bir şey yok.", color = SpesColors.text3, fontSize = 13.sp)
+                else -> list.asReversed().forEach { item ->
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(SpesColors.surface1).padding(start = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text(item.text, color = SpesColors.text, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                        TextButton(onClick = {
+                            scope.launch { io { api().act("forget", JSONObject().put("id", item.id)) }; reload++ }
+                        }) { Text("Unut", color = SpesColors.danger) }
+                    }
+                }
+            }
         }
     }
 

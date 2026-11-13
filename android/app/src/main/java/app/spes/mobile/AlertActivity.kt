@@ -89,11 +89,14 @@ class AlertActivity : ComponentActivity() {
                         Button(
                             onClick = {
                                 silence()
-                                startActivity(Intent(this@AlertActivity, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                // Answering the "call" opens a voice conversation that starts by saying what happened.
+                                startActivity(Intent(this@AlertActivity, VoiceActivity::class.java)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    .putExtra(VoiceActivity.EXTRA_OPENING, "$title. ${VoiceCommands.forSpeech(text)} Ne yapmak istersin?"))
                                 finish()
                             },
                             modifier = Modifier.weight(1f).height(56.dp),
-                        ) { Text("Aç", fontSize = 17.sp) }
+                        ) { Text("Konuş", fontSize = 17.sp) }
                     }
                     Spacer(Modifier.height(12.dp))
                     OutlinedButton(onClick = { silence(); finish() }, modifier = Modifier.fillMaxWidth().height(52.dp)) {

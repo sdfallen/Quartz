@@ -25,7 +25,7 @@ def main():
             if (proc.info["name"] or "").lower() == "quartz.exe":
                 raise RuntimeError("Quartz is running; no deployment performed")
     ensure_quartz_closed()
-    user_files = [ROOT / name for name in (".env", "quartz_memory.json", "quartz_conversations.json")]
+    user_files = [ROOT / name for name in (".env", "quartz_memory.json", "quartz_conversations.json", "quartz_user_memory.json")]
     baseline = {str(path): digest(path) for path in user_files}
     tests = subprocess.run([sys.executable, str(ROOT / "scripts/run_safe_tests.py")], cwd=ROOT, capture_output=True)
     (PACKAGE / "regression-final.log").write_bytes(tests.stdout + tests.stderr)

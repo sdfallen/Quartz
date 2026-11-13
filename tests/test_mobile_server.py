@@ -98,6 +98,12 @@ class FakeChat:
     def switch_project(self, pid):
         self.actions.append(("project", pid)); return {"id": "c3"}
 
+    def memory_list(self):
+        return [{"id": "m1", "text": "Benim adım Ali", "created_at": 1}]
+
+    def memory_forget(self, item_id):
+        self.actions.append(("forget", item_id)); return {"removed": True, "items": []}
+
 
 class MobileGatewayTests(unittest.TestCase):
     def setUp(self):
@@ -239,6 +245,13 @@ class MobileGatewayTests(unittest.TestCase):
             self.request("/api/act/delete", token=self.gateway.token, payload={})
         self.assertEqual(error.exception.code, 400)
         error.exception.close()
+
+    def test_memory_is_listed_and_forgettable_from_the_phone(self):
+        with self.request("/api/memory", token=self.gateway.token) as response:
+            self.assertEqual(json.loads(response.read())["items"][0]["text"], "Benim adım Ali")
+        with self.request("/api/act/forget", token=self.gateway.token, payload={"id": "m1"}) as response:
+            self.assertTrue(json.loads(response.read())["removed"])
+        self.assertIn(("forget", "m1"), self.chat.actions)
 
     def test_device_key_is_never_read_from_the_address(self):
         self.assertNotIn("query.get('token')", mobile_server._HTML)
