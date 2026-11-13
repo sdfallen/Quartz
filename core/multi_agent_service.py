@@ -556,7 +556,8 @@ class MultiAgentService:
                            "project_read": str(root), "should_abort": should_abort}
             else:
                 options = {"model": model, "effort": effort, "tool_guard": True,
-                           "sandbox": "read-only", "approval": "never", "should_abort": should_abort}
+                           "sandbox": "read-only", "approval": "never", "should_abort": should_abort,
+                           **({"web": True} if web else {})}
             if project_read:
                 instruction = (
                     f"Bu turda seçili projeyi ({root}) YALNIZ OKUYABİLİRSİN: dosya listeleme, okuma"
@@ -611,12 +612,14 @@ class MultiAgentService:
                        write=False, confirm_write=False, full_access=False,
                        resume_thread_id=None, chat_mode=False, squad_task_id=None,
                        model: str | None = None, effort: str | None = None, conversation_only=False,
-                       project_read=False, should_abort=None) -> dict:
+                       project_read=False, should_abort=None, web=False) -> dict:
         project = self.projects.get(project_id) if project_id else self.projects.selected()
         if conversation_only:
             return self._text_conversation("codex", prompt, project, chat_mode=chat_mode,
                 write=write or full_access, model=model, effort=effort, project_read=project_read,
-                should_abort=should_abort)
+                should_abort=should_abort, web=web and not project_read)
+        if web:
+            raise PermissionError("Web araması yalnız araçsız sohbette açılabilir.")
         if project.get("protected"):
             raise PermissionError("This project is protected")
         effective_write = bool(write or full_access)

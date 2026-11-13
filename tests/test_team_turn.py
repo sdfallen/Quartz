@@ -129,21 +129,28 @@ class TeamTurnTests(unittest.TestCase):
         self.assertNotIn("şimdiki", text)
         self.assertLess(len(text.splitlines()[2]), 380)
 
-    def test_only_the_lead_may_search_the_web_and_never_while_writing(self):
+    def test_fatum_and_fides_may_search_eos_not_yet(self):
         with tempfile.TemporaryDirectory() as directory:
             chat = make_chat(directory)
             run = TeamRun(chat)
             run.run("Bugün İstanbul'da hava nasıl beyler?")
-            chat_calls = list(run.calls)
-            run.run("Bir giriş sayfası yap", write=True, confirm_write=True, full_access=True)
             chat._diagnostics.close()
-        self.assertEqual([(c["agent"], c["web"]) for c in chat_calls],
-                         [("claude", True), ("codex", False), ("antigravity", False)])
-        self.assertIn("yalnız arama", chat_calls[0]["prompt"])
-        task_calls = run.calls[len(chat_calls):]
-        searching = [(c["agent"], c["step"]) for c in task_calls if c["web"]]
-        self.assertEqual(searching, [("claude", 1)])
-        self.assertFalse(any(c["web"] and c["write"] for c in run.calls))
+        self.assertEqual([(c["agent"], c["web"]) for c in run.calls],
+                         [("claude", True), ("codex", True), ("antigravity", False)])
+        for call in run.calls[:2]:
+            self.assertIn("yalnız arama", call["prompt"])  # results are data, not instructions
+        self.assertNotIn("yalnız arama", run.calls[2]["prompt"])
+
+    def test_web_policy_table(self):
+        from core.web_policy import codex_web_mode, web_allowed
+        self.assertTrue(web_allowed("claude", conversation_only=True))
+        self.assertTrue(web_allowed("codex", conversation_only=True))
+        self.assertFalse(web_allowed("antigravity", conversation_only=True))
+        for blocked in (dict(project_read=True), dict(write=True), dict(full_access=True), dict(desktop=True)):
+            self.assertFalse(web_allowed("claude", conversation_only=True, **blocked), blocked)
+        self.assertFalse(web_allowed("codex", conversation_only=False))
+        self.assertEqual(codex_web_mode(False), "disabled")
+        self.assertEqual(codex_web_mode(True), "cached")
 
     def test_who_answers_small_talk(self):
         from core.team_turn import addressed_agents

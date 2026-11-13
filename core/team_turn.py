@@ -126,7 +126,7 @@ class TeamTurnMixin:
     # -- one team message ---------------------------------------------------
     def _team_say(self, cid, msg_id, agent, prompt, project_id, *, step, limit=3,
                   tool_less=True, write=False, confirm_write=False, full_access=False,
-                  project_scope=False, per_sentence=CHARS_PER_SENTENCE, web=False):
+                  project_scope=False, per_sentence=CHARS_PER_SENTENCE, web=True):
         """Run one agent into its bubble; planning messages are clamped to ``limit`` sentences."""
         base_meta = {"sender": agent, "agent": agent, "recipient": "all", "collaboration": True,
                      "team": True, "team_step": step, "persona": persona_name(agent)}
@@ -139,7 +139,7 @@ class TeamTurnMixin:
             text = self._execute_codex_bubble(
                 cid, msg_id, prompt, project_id, write, confirm_write, use_session=False,
                 base_meta=base_meta, full_access=full_access, agent=agent, tool_less=tool_less,
-                project_scope=project_scope, web=web and agent == LEAD)
+                project_scope=project_scope, web=web and agent in ("claude", "codex"))
         short = clamp_sentences(text, limit, per_sentence) if (limit and text) else text
         with self._lock:
             # Same cancellation fence as the executors' own publishing.
@@ -180,8 +180,9 @@ class TeamTurnMixin:
     def _team_header(agent):
         others = ", ".join(f"{persona_name(a)} ({a.capitalize() if a != 'antigravity' else 'Antigravity'})"
                            for a in TEAM if a != agent)
+        # Fatum and Fides may search the web in conversation steps (core.web_policy); Eos not yet.
         return (f"SpeS ekibindesin; ekip: sen, {others} ve kullanıcı. Herkes sohbeti görüyor.\n"
-                + character_instruction(agent))
+                + character_instruction(agent) + ("\n" + WEB_RULE if agent in ("claude", "codex") else ""))
 
     @staticmethod
     def _team_rules(limit):
@@ -210,9 +211,8 @@ class TeamTurnMixin:
         # History first, then the chat rule: the rule closest to the message is the one followed.
         # Only the lead (Claude) may search the web; teammates stay tool-less.
         say = lambda agent, msg_id, extra="": self._team_say(
-            cid, msg_id, agent, self._team_header(agent) + history_block + CHAT_RULE
-            + (WEB_RULE if agent == LEAD else "") + extra + user_block, project_id,
-            step=0, limit=2, per_sentence=CHAT_CHARS_PER_SENTENCE, web=agent == LEAD)
+            cid, msg_id, agent, self._team_header(agent) + history_block + CHAT_RULE + extra + user_block, project_id,
+            step=0, limit=2, per_sentence=CHAT_CHARS_PER_SENTENCE)
         self._set_turn_progress(f"{persona_name(lead)} yazıyor…", current_msg_id=first_msg_id)
         # The opening bubble is reused even when the user addressed only Fides or Eos:
         # the stored sender follows the agent that actually answers.
@@ -247,10 +247,10 @@ class TeamTurnMixin:
 
         # 1. Plan and work split by the lead (first bubble already belongs to Claude).
         self._set_turn_progress("Fatum planı ve iş bölümünü yazıyor…", current_msg_id=first_msg_id)
-        plan = self._team_say(cid, first_msg_id, LEAD, self._team_header(LEAD) + self._team_rules(3) + WEB_RULE + (
+        plan = self._team_say(cid, first_msg_id, LEAD, self._team_header(LEAD) + self._team_rules(3) + (
             "Görevin: kullanıcının isteği için kısa bir plan ve iş bölümü öner (kim ne yapacak: "
             "Fatum, Fides, Eos). Sohbet sorusuysa nasıl yanıtlayacağınızı söyle.\n") + user_block,
-            project_id, step=1, web=True)
+            project_id, step=1)
         if self._is_turn_cancelled(first_msg_id) or not plan:
             with self._lock:
                 self._finish_turn(first_msg_id, "failed")

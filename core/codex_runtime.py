@@ -255,7 +255,7 @@ class CodexRuntime:
                           "multi_agent_v2", "computer_use", "browser_use", "browser_use_external",
                           "in_app_browser", "image_generation", "view_image", "memories")
 
-    def _guarded_config(self, cwd, desktop_connection=None, should_abort=None, env=None):
+    def _guarded_config(self, cwd, desktop_connection=None, should_abort=None, env=None, web=False):
         """Flags for tool_guard/desktop runs, checked against Codex's own MCP listing.
 
         Disabling only the names in the user's config.toml left plugin servers
@@ -272,7 +272,9 @@ class CodexRuntime:
         flags = []
         for feature in self.GUARD_FEATURES_OFF:
             flags += ["-c", f"features.{feature}=false"]
-        flags += ["-c", 'web_search="disabled"']
+        from core.web_policy import codex_web_mode
+        # Web only for a tool-less chat run, never with the desktop connection (core.web_policy).
+        flags += ["-c", f'web_search="{codex_web_mode(web and desktop_connection is None)}"']
         allowed = set()
         if desktop_connection is not None:
             from core.desktop_agents import codex_mcp_override
@@ -328,9 +330,12 @@ class CodexRuntime:
     def start(self, prompt, project_path, *, sandbox="read-only", approval="never",
               squad_task_id=None, squad_agent_id=None, resume_thread_id=None,
               timeout=None, model: str | None = None, effort: str | None = None,
-              desktop_connection=None, tool_guard=False, project_read=False, should_abort=None) -> dict:
+              desktop_connection=None, tool_guard=False, project_read=False, should_abort=None,
+              web=False) -> dict:
         if not self.executable:
             raise RuntimeError(self._init_error or "Codex CLI was not found")
+        if web and (not tool_guard or desktop_connection is not None or project_read or sandbox != "read-only"):
+            raise PermissionError("Codex web araması yalnız araçsız, salt okunur sohbette açılır.")
         text = str(prompt or "").strip()
         if not text:
             raise ValueError("Codex prompt cannot be empty")
@@ -369,7 +374,7 @@ class CodexRuntime:
             # the probe and the real run share one base environment.
             from core.cli_installer import cli_environment
             base_env = cli_environment()
-            guard_config = self._guarded_config(project, desktop_connection, should_abort, base_env)
+            guard_config = self._guarded_config(project, desktop_connection, should_abort, base_env, web=web)
 
         clean_model = str(model or "").strip() or None
         clean_effort = str(effort or "").strip().lower() or None

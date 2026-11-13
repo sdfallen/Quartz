@@ -125,3 +125,33 @@ class GuardedMcpTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CodexWebFlagTests(unittest.TestCase):
+    """Fides' web search: only on the guarded tool-less chat path, cached by default (14 Nov)."""
+
+    def runtime(self):
+        from core.codex_runtime import CodexRuntime
+        rt = CodexRuntime.__new__(CodexRuntime)
+        rt.executable = "codex.exe"
+        rt._verified_mcp_flags = lambda flags, cwd, allowed, should_abort=None, env=None: list(flags)
+        return rt
+
+    def test_guarded_chat_flags_switch_only_the_web_value(self):
+        rt = self.runtime()
+        off = rt._guarded_config("C:/x")
+        on = rt._guarded_config("C:/x", web=True)
+        self.assertIn('web_search="disabled"', off)
+        self.assertIn('web_search="cached"', on)
+        self.assertEqual([f for f in on if f.startswith("features.")], [f for f in off if f.startswith("features.")])
+
+    def test_web_never_with_desktop_project_read_or_write(self):
+        from unittest.mock import patch
+        rt = self.runtime()
+        with patch("core.desktop_agents.codex_mcp_override", return_value='mcp_servers={}'):
+            flags = rt._guarded_config("C:/x", desktop_connection=object(), web=True)
+        self.assertIn('web_search="disabled"', flags)
+        for kwargs in (dict(tool_guard=False), dict(tool_guard=True, project_read=True),
+                       dict(tool_guard=True, sandbox="workspace-write")):
+            with self.assertRaises(PermissionError):
+                rt.start("soru", "C:/x", web=True, **kwargs)
