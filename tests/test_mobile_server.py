@@ -253,6 +253,22 @@ class MobileGatewayTests(unittest.TestCase):
             self.assertTrue(json.loads(response.read())["removed"])
         self.assertIn(("forget", "m1"), self.chat.actions)
 
+    def test_voice_answers_fast_or_hands_the_question_to_the_team(self):
+        class Front:
+            def __init__(self, route): self.route, self.seen = route, None
+            def answer(self, text, state):
+                self.seen = state
+                return {"route": "answered", "reply": "Fides'in testi başarısız."} if self.route == "answered" else {"route": "team", "reason": "team_only"}
+        fast = Front("answered")
+        result = self.gateway.voice("Ne oldu?", front=fast)
+        self.assertEqual((result["route"], result["after"]), ("answered", 3))
+        self.assertEqual(self.chat.sent, [])  # nothing reached the team
+        result = self.gateway.voice("Güvenli mi?", front=Front("team"))
+        self.assertEqual(result["route"], "team")
+        self.assertEqual(self.chat.sent[0][0], "Güvenli mi?")
+        for flag in ("write", "confirm_write", "full_access"):
+            self.assertNotIn(flag, self.chat.sent[0][1])
+
     def test_device_key_is_never_read_from_the_address(self):
         self.assertNotIn("query.get('token')", mobile_server._HTML)
         self.assertNotIn("QUARTZ", mobile_server._HTML)

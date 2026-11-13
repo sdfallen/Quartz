@@ -68,5 +68,18 @@ class HelperFootprintTests(unittest.TestCase):
                     self.assertEqual(entry["PreToolUse"][0]["hooks"][0]["timeout"], HOOK_TIMEOUT_SECONDS)
 
 
+    def test_observer_hook_switches_to_web_search_only_when_asked(self):
+        from core.chat_coordination import write_observer_hooks
+        with tempfile.TemporaryDirectory() as work:
+            helper = Path(work) / "helper.exe"; helper.write_bytes(b"x")
+            for web, flag in ((False, "--deny-tools"), (True, "--web-search-only")):
+                with self.subTest(web=web), tempfile.TemporaryDirectory() as directory,                         patch("core.chat_coordination.mcp_command", return_value=[str(helper)]):
+                    hooks = Path(write_observer_hooks(directory, web=web))
+                    entry = next(iter(json.loads(hooks.read_text(encoding="utf-8")).values()))
+                    command = entry["PreToolUse"][0]["hooks"][0]["command"]
+                    self.assertTrue(command.endswith(flag), command)
+                    self.assertEqual(entry["PreToolUse"][0]["matcher"], "*")
+
+
 if __name__ == "__main__":
     unittest.main()

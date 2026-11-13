@@ -12,8 +12,8 @@ android {
         applicationId = "app.spes.mobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 6
+        versionName = "0.4.1"
     }
 
     // The release key lives only on the build computer (scripts/build_android_apk.py);

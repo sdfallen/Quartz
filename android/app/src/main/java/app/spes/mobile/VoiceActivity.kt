@@ -53,7 +53,8 @@ import kotlin.concurrent.thread
  * Walkie-talkie voice mode: SpeS speaks, then listens. "Dur", "durum" and "tekrar dene"
  * are handled on the phone at once; anything else goes to the team (read-only, like every
  * phone message) and the replies are read aloud as they arrive. Speech recognition and
- * speech output are Android's own (no third-party service added by SpeS).
+ * speech output are Android's own. Quick answers come from the desktop (/api/voice); the
+ * phone never holds a model key or talks to a model provider itself.
  */
 class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private enum class Phase(val label: String) { Speaking("SpeS konuşuyor"), Listening("Dinliyorum"), Waiting("Ekip düşünüyor"), Idle("Mikrofona dokun") }
@@ -67,6 +68,11 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var pendingSpeech: String? = null
     @Volatile private var open = true
     @Volatile private var waitingSeq = -1
+    // Bumped by Dur: any reply loop or answer from before Dur is dropped, nothing is read later.
+    @Volatile private var generation = 0
+    // Conversation loop (live 13 Nov: it answered once and stopped listening).
+    @Volatile private var listenWhenQuiet = false
+    private var silentTries = 0
 
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) listen() else say("Mikrofon izni olmadan seni duyamam. Yazarak da konuşabilirsin.", listenAfter = false)
@@ -101,7 +107,18 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     private fun afterSpeech(id: String?) {
         if (!open) return
-        if (id == UTTER_LISTEN) listen() else if (phase.value == Phase.Speaking) phase.value = if (waitingSeq >= 0) Phase.Waiting else Phase.Idle
+        val stillTalking = tts?.isSpeaking == true
+        if (id == UTTER_LISTEN || (listenWhenQuiet && !stillTalking)) {
+            listenWhenQuiet = false
+            listen()
+        } else if (phase.value == Phase.Speaking && !stillTalking) {
+            phase.value = if (waitingSeq >= 0) Phase.Waiting else Phase.Idle
+        }
+    }
+
+    /** Back to listening once the last queued sentence has been read. */
+    private fun listenWhenDone() {
+        if (tts?.isSpeaking == true) listenWhenQuiet = true else listen()
     }
 
     private fun say(text: String, listenAfter: Boolean = true, queue: Boolean = false) {
@@ -138,9 +155,16 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 override fun onEndOfSpeech() {}
                 override fun onError(error: Int) {
                     phase.value = if (waitingSeq >= 0) Phase.Waiting else Phase.Idle
-                    if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) micPermission.launch(Manifest.permission.RECORD_AUDIO)
+                    if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) { micPermission.launch(Manifest.permission.RECORD_AUDIO); return }
+                    // Silence: listen twice more, then wait for the Konuş button.
+                    if ((error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)
+                        && waitingSeq < 0 && silentTries < 2) {
+                        silentTries++
+                        window.decorView.postDelayed({ if (open) listen() }, 400)
+                    }
                 }
                 override fun onResults(results: Bundle?) {
+                    silentTries = 0
                     val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
                     if (text.isNotBlank()) handle(text) else phase.value = Phase.Idle
                 }
@@ -159,13 +183,7 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         val command = VoiceCommands.parse(text)
         val api = Prefs.api(this)
         when (command) {
-            VoiceCommands.Command.Stop -> {
-                phase.value = Phase.Waiting
-                thread {
-                    val ok = runCatching { api.stop() }.isSuccess
-                    runOnUiThread { waitingSeq = -1; say(if (ok) "Durdurdum. Başka bir şey var mı?" else "Durduramadım, bilgisayara ulaşamıyorum.") }
-                }
-            }
+            VoiceCommands.Command.Stop -> stopEverything(api)
             VoiceCommands.Command.Status -> {
                 phase.value = Phase.Waiting
                 thread {
@@ -178,29 +196,60 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
     }
 
+    /**
+     * Dur (button or spoken): silence at once, close the microphone, drop pending replies and
+     * stop the team's work. Then wait; the user taps Konuş to talk again (live 13 Nov: it asked
+     * whether there was anything else and started listening again).
+     */
+    private fun stopEverything(api: SpesApi) {
+        generation++
+        tts?.stop()
+        runCatching { recognizer?.cancel() }
+        listenWhenQuiet = false
+        waitingSeq = -1
+        silentTries = 2
+        phase.value = Phase.Waiting
+        val mine = generation
+        thread {
+            val ok = runCatching { api.stop() }.isSuccess
+            runOnUiThread {
+                if (mine == generation) say(if (ok) "Durdurdum." else "Durduramadım, bilgisayara ulaşamıyorum.", listenAfter = false)
+            }
+        }
+    }
+
     private fun ask(api: SpesApi, text: String) {
         phase.value = Phase.Waiting
+        val mine = ++generation
         thread {
-            val before = runCatching { api.state(0, 0).lastSeq }.getOrDefault(0)
-            val sent = runCatching { api.send(text) }
-            if (sent.isFailure) { runOnUiThread { say(sent.exceptionOrNull()?.message ?: "Mesaj gönderilemedi.") }; return@thread }
+            // Fast path first: the desktop answers from what it already shows (its fast model,
+            // about 1 s) or hands the question to the team itself and says so.
+            val quick = runCatching { api.voice(text) }
+            if (mine != generation) return@thread
+            if (quick.isFailure) { runOnUiThread { if (mine == generation) say(quick.exceptionOrNull()?.message ?: "Mesaj gönderilemedi.") }; return@thread }
+            val (route, reply, before) = quick.getOrThrow()
+            if (route == "answered") { runOnUiThread { if (mine == generation) say(reply) }; return@thread }
+            runOnUiThread { if (mine == generation) say(reply.ifBlank { "Ekibe soruyorum." }, listenAfter = false) }
             waitingSeq = before
             // Read replies aloud as they arrive; stop when the team is done (or after 3 minutes).
             val deadline = System.currentTimeMillis() + 180_000
             val spoken = HashSet<String>()
             var after = before
-            while (open && System.currentTimeMillis() < deadline) {
+            while (open && mine == generation && System.currentTimeMillis() < deadline) {
                 val s = runCatching { api.state(after, 20) }.getOrNull()
                 if (s == null) { Thread.sleep(3_000); continue }
                 val fresh = s.messages.filter { !it.fromUser && it.text.isNotBlank() && spoken.add(it.id) }
                 if (fresh.isNotEmpty()) {
                     val speech = fresh.joinToString(" ") { "${it.persona.ifBlank { "SpeS" }}: ${VoiceCommands.forSpeech(it.text)}" }
-                    runOnUiThread { say(speech, listenAfter = !s.busy, queue = true) }
+                    runOnUiThread { if (mine == generation) say(speech, listenAfter = false, queue = true) }
                 }
                 after = maxOf(after, s.lastSeq)
-                if (!s.busy && s.lastSeq > before && fresh.isEmpty()) break
+                // The team is done as soon as it is idle and has answered; do not wait for another poll.
+                if (!s.busy && s.lastSeq > before) break
             }
+            if (mine != generation) return@thread
             waitingSeq = -1
+            runOnUiThread { if (open && mine == generation) listenWhenDone() }
         }
     }
 
@@ -233,7 +282,7 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 }
             }
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = { tts?.stop(); listen() }, modifier = Modifier.fillMaxWidth().height(64.dp), shape = CircleShape) {
+                Button(onClick = { tts?.stop(); silentTries = 0; listen() }, modifier = Modifier.fillMaxWidth().height(64.dp), shape = CircleShape) {
                     Text(if (p == Phase.Listening) "Dinliyorum…" else "Konuş", fontSize = 18.sp)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {

@@ -2,7 +2,7 @@
 
 Telefonundan SpeS ekibini (Fatum, Fides, Eos) izlemek ve yönlendirmek için yerel
 Android uygulaması. Google/Firebase kullanmaz: telefon yalnız **Tailscale**
-üzerinden kendi bilgisayarındaki SpeS'e bağlanır.
+üzerinden kendi bilgisayarındaki SpeS'e bağlanır; model sağlayıcılarına bilgisayar bağlanır.
 
 ## Neler yapar
 - Ekip sohbetini gösterir; mesaj gönderir. Telefondan başlayan işler **yalnız
@@ -10,7 +10,14 @@ Android uygulaması. Google/Firebase kullanmaz: telefon yalnız **Tailscale**
 - **Dur** düğmesi her zaman görünür; çalışan işi durdurur.
 - Arka planda dinler: yeni ekip mesajı ve "iş bitti" bildirimi.
 - **Acil uyarı (arama):** Bir iş başarısız olursa zil çalar, titrer ve kilit
-  ekranında tam ekran açılır (Dur / Aç / Sustur). 45 saniye sonra kendiliğinden susar.
+  ekranında tam ekran açılır (Dur / Konuş / Sustur). 45 saniye sonra kendiliğinden susar.
+- **Sesli mod:** "Konuş" ya da sohbetteki "Ses" düğmesi. Ses tanıma ve konuşma Android'in
+  kendisi. "Dur", "durum", "tekrar dene" telefonda işlenir. Diğer sorular önce bilgisayara
+  gider: bilgisayar ekibin görünen durumundan ~1 saniyede kısa bir cevap üretir (NVIDIA'nın
+  barındırdığı Nemotron Bolt modeli) ya da soruyu ekibe iletir ve "Ekibe soruyorum" der.
+  NVIDIA'ya yalnız ekip durumu ve son mesajların kısaltılmış metni gider; kod, dosya,
+  hafıza (ve "bunu hatırla" dediğin mesajlar), yol ve gizli değerler gitmez. İş isteği ve risk/güvenlik soruları her zaman ekibe gider.
+- **Hafıza:** Ayarlar'da ajanların hatırladıkları görünür; her satır silinebilir.
 
 ## Kurulum (bir kez)
 1. Bilgisayarda Tailscale yayınını aç (tailnet içi, internete açık değil):

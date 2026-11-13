@@ -139,6 +139,19 @@ class MobileGateway:
     def stop_work(self):
         return self._chat().cancel_active()
 
+    def voice(self, text, front=None):
+        """Voice mode: a fast spoken answer from the visible state, or the question goes to the team."""
+        from core.voice_front import VoiceFront
+        state = self.snapshot(0)
+        result = (front or VoiceFront()).answer(text, state)
+        # Diagnosable fallback: route, reason and time only, never the question.
+        log.info("Mobile voice route=%s reason=%s seconds=%s", result.get("route"), result.get("reason", ""),
+                 result.get("seconds", ""))
+        if result.get("route") == "answered":
+            return {"route": "answered", "reply": result["reply"], "after": state["last_seq"]}
+        self.send(text)
+        return {"route": "team", "reply": "Ekibe soruyorum.", "after": state["last_seq"], "reason": result.get("reason")}
+
     def pairing_code(self):
         """Current six-digit pairing code; a new one once the old is used or expired."""
         with self._pair_lock:
@@ -289,7 +302,7 @@ class MobileGateway:
                 if not self._authorized(): self._json(401, {"error": "Yetkisiz erişim"}); return
                 if path == "/api/health": self._json(200, {"components": gateway.assistant.health_status()}); return
                 if path == "/api/tasks": self._json(200, gateway.assistant.list_tasks()); return
-                if path == "/api/ping": self._json(200, {"app": "SpeS", "api": 4}); return
+                if path == "/api/ping": self._json(200, {"app": "SpeS", "api": 5}); return
                 if path in ("/api/overview", "/api/conversations", "/api/memory"):
                     try: self._json(200, gateway.overview() if path == "/api/overview" else
                                     gateway.conversations() if path == "/api/conversations" else {"items": gateway._chat().memory_list()})
@@ -337,6 +350,19 @@ class MobileGateway:
                     except LookupError as exc: self._json(503, {"error": str(exc)})
                     except RuntimeError as exc: self._json(409, {"error": str(exc)})
                     except Exception: log.exception("Mobile action failed"); self._json(500, {"error": "İşlem yapılamadı"})
+                    return
+                if path == "/api/voice":
+                    try:
+                        length = int(self.headers.get("Content-Length", "0"))
+                        if length < 1 or length > 8192: raise ValueError("Geçersiz istek boyutu")
+                        text = str(json.loads(self.rfile.read(length)).get("text", "")).strip()
+                        if not text: raise ValueError("Boş soru")
+                        self._json(200, gateway.voice(text))
+                    except ValueError as exc: self._json(400, {"error": str(exc)})
+                    except PermissionError as exc: self._json(403, {"error": str(exc)})
+                    except LookupError as exc: self._json(503, {"error": str(exc)})
+                    except RuntimeError as exc: self._json(409, {"error": str(exc)})
+                    except Exception: log.exception("Mobile voice failed"); self._json(500, {"error": "Sesli istek yapılamadı"})
                     return
                 if path == "/api/send":
                     try:

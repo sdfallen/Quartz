@@ -123,6 +123,12 @@ class SpesApi(baseUrl: String, private val token: String) {
     private fun strings(array: org.json.JSONArray?): List<String> =
         if (array == null) emptyList() else (0 until array.length()).map { array.optString(it) }
 
+    /** Voice mode: ("answered" | "team", spoken reply, last sequence before the question). */
+    fun voice(text: String): Triple<String, String, Int> {
+        val json = request("POST", "/api/voice", JSONObject().put("text", text), 30_000)
+        return Triple(json.optString("route", "team"), json.optString("reply"), json.optInt("after"))
+    }
+
     fun send(text: String) {
         request("POST", "/api/send", JSONObject().put("message", text), 20_000)
     }
