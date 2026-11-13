@@ -789,6 +789,16 @@ class Api:
     def chat_status(self) -> dict:
         return ipc_send("chat_status")
 
+    def memory_list(self) -> dict:
+        return ipc_send("memory_list")
+
+    def memory_forget(self, item_id: str) -> dict:
+        return ipc_send("memory_forget", {"id": str(item_id or "")})
+
+    def memory_clear(self) -> dict:
+        # The UI asks first; the backend refuses without the explicit flag.
+        return ipc_send("memory_clear", {"confirmed": True})
+
     def environment_health(self, force: bool = False) -> dict:
         """Read-only environment check (integration request 9 Nov); the backend action is Codex's."""
         try:

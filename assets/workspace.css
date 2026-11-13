@@ -809,3 +809,11 @@ body.show-preview .preview-pane { display: flex; }
 .swatches button { rotate: none; border-radius: 50%; }
 .chat-stage:has(> .chat:empty) .lane-rails,
 .chat-stage:has(> .chat > .msg[data-welcome="1"]:only-child) .lane-rails { display: none; }
+
+/* Memory card: what the user asked SpeS to remember, each line deletable. */
+.memory-list { list-style: none; display: grid; gap: 6px; margin: 8px 0; }
+.memory-list li { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: var(--r-md); background: var(--surface-2); color: var(--text); font-size: var(--text-sm); }
+.memory-list li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.memory-del { width: 26px; height: 26px; color: var(--text-3); }
+.memory-del:hover { color: var(--danger); }
+#memoryCard .work-empty[hidden] { display: none; }

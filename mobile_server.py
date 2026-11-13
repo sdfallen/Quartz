@@ -106,6 +106,8 @@ class MobileGateway:
                 "persona": PERSONA.get(sender.lower(), "SpeS" if sender.lower() in {"quartz", "bot", "assistant"} else ""),
                 "step": meta.get("team_step"), "text": str(message.get("content") or "")[:4000],
                 "model": str(meta.get("model") or ""),
+                "memory": ("saved" if (meta.get("memory") or {}).get("saved") else
+                           "secret" if (meta.get("memory") or {}).get("reason") == "secret" else ""),
                 "failed": meta.get("status") == "failed" or bool(meta.get("error")) or outcome.get("goal_verdict") == "FAILED",
             })
         if after <= 0:
@@ -234,6 +236,8 @@ class MobileGateway:
     def act(self, action, body):
         """Settings the phone may change; none of them grants write access to a project."""
         chat = self._chat()
+        if action == "forget":
+            return chat.memory_forget(str(body.get("id") or ""))
         if action == "new":
             conv = chat.new_conversation(agent=str(body.get("agent") or "collaboration"))
             return {"conversation_id": conv.get("id")}
@@ -285,9 +289,10 @@ class MobileGateway:
                 if not self._authorized(): self._json(401, {"error": "Yetkisiz erişim"}); return
                 if path == "/api/health": self._json(200, {"components": gateway.assistant.health_status()}); return
                 if path == "/api/tasks": self._json(200, gateway.assistant.list_tasks()); return
-                if path == "/api/ping": self._json(200, {"app": "SpeS", "api": 3}); return
-                if path in ("/api/overview", "/api/conversations"):
-                    try: self._json(200, gateway.overview() if path == "/api/overview" else gateway.conversations())
+                if path == "/api/ping": self._json(200, {"app": "SpeS", "api": 4}); return
+                if path in ("/api/overview", "/api/conversations", "/api/memory"):
+                    try: self._json(200, gateway.overview() if path == "/api/overview" else
+                                    gateway.conversations() if path == "/api/conversations" else {"items": gateway._chat().memory_list()})
                     except LookupError as exc: self._json(503, {"error": str(exc)})
                     except Exception: log.exception("Mobile %s failed", path); self._json(500, {"error": "Bilgi okunamadı"})
                     return

@@ -43,6 +43,9 @@ class AgentChatService(TeamTurnMixin):
     def __init__(self, agent_service: MultiAgentService, store_path: str | Path):
         self.agent_service = agent_service
         self.store = ConversationStore(store_path)
+        from core.user_memory import FILE_NAME, UserMemory
+        # Facts the user explicitly asked to remember, shared by every conversation.
+        self.user_memory = UserMemory(Path(store_path).parent / FILE_NAME)
         self.recovery = self.store.recover_interrupted()
         self._lock = threading.RLock()
         self._active_turn: dict | None = None
@@ -621,7 +624,21 @@ class AgentChatService(TeamTurnMixin):
                     "görmediğini görmüş gibi yazma.\n")
         else:
             mode = ""
-        return communication_instruction(self.store.preferences()["response_detail"], request) + "\n" + NORMAL_CHAT_DESKTOP_NOTICE + mode + full_prompt
+        memory = self.user_memory.prompt_block() if getattr(self, "user_memory", None) else ""
+        return (communication_instruction(self.store.preferences()["response_detail"], request) + "\n"
+                + NORMAL_CHAT_DESKTOP_NOTICE + memory + mode + full_prompt)
+
+    # -- long-term memory (user-visible, user-deletable) --------------------
+    def memory_list(self) -> list:
+        return self.user_memory.items()
+
+    def memory_forget(self, item_id: str) -> dict:
+        return {"removed": self.user_memory.remove(str(item_id or "")), "items": self.user_memory.items()}
+
+    def memory_clear(self, *, confirmed=False) -> dict:
+        if confirmed is not True:
+            raise PermissionError("Hafızayı silmek için açık onay gerekli.")
+        return {"removed": self.user_memory.clear(), "items": []}
 
     def _project_read(self, cid):
         with self._lock:
@@ -778,6 +795,13 @@ class AgentChatService(TeamTurnMixin):
             task_id = "turn-" + uuid.uuid4().hex
             user_seq = self._next_sequence(conv)
             recipient_for_user = "all" if selected_agent in {"collaboration", "both"} else selected_agent
+            # SpeS records the memory write itself; an agent saying "I'll remember" is not evidence.
+            memory_note = None
+            from core.message_intent import tools_disallowed
+            from core.user_memory import remember_request
+            fact = "" if tools_disallowed(text) else remember_request(text)
+            if fact:
+                memory_note = self.user_memory.add(fact)
             user_msg = self.store.append_message(
                 cid, "user", text, sender="user",
                 metadata={
@@ -787,6 +811,7 @@ class AgentChatService(TeamTurnMixin):
                     "squad_task_id": None,
                     "sequence": user_seq,
                     "requested_permission_level":requested_permission_level,
+                    **({"memory": memory_note} if memory_note else {}),
                 },
             )
 

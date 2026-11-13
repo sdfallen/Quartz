@@ -68,7 +68,7 @@ def create_checkpoint(workspace: str | Path, *, backup_root=None,
         else:
             skipped = {".git", ".squad", ".quartz", "node_modules", ".venv", "venv",
                        "__pycache__", ".pytest_cache", "dist", "build", "vision_captures"}
-            private = {"mobile_access.json", "chat_history.json", "quartz_conversations.json",
+            private = {"mobile_access.json", "chat_history.json", "quartz_conversations.json", "quartz_user_memory.json",
                        "quartz_memory.json", "jarvis_memory.json", "quartz_operation.json"}
             for folder, dirs, names in os.walk(root):
                 dirs[:] = sorted(name for name in dirs if name not in skipped)

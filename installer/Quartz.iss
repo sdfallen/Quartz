@@ -92,6 +92,7 @@ begin
     begin
       DeleteFile(ExpandConstant('{app}\chat_history.json'));
       DeleteFile(ExpandConstant('{app}\quartz_memory.json'));
+      DeleteFile(ExpandConstant('{app}\quartz_user_memory.json'));
       DeleteFile(ExpandConstant('{app}\quartz_tasks.json'));
       DeleteFile(ExpandConstant('{app}\quartz_operation.json'));
       DeleteFile(ExpandConstant('{app}\quartz_workflows.json'));
