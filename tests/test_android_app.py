@@ -44,6 +44,19 @@ class AndroidAppTests(unittest.TestCase):
             first = f"M{polygon[0][0]:.2f},{polygon[0][1]:.2f}"
             self.assertIn(first, icon)
 
+    def test_voice_mode_uses_android_speech_and_stays_read_only(self):
+        manifest = (APP / "src/main/AndroidManifest.xml").read_text(encoding="utf-8")
+        self.assertIn("android.permission.RECORD_AUDIO", manifest)
+        self.assertIn('android:name=".VoiceActivity"', manifest)
+        voice = (SOURCES / "VoiceActivity.kt").read_text(encoding="utf-8")
+        commands = (SOURCES / "VoiceCommands.kt").read_text(encoding="utf-8")
+        self.assertIn("SpeechRecognizer", voice)
+        self.assertIn("TextToSpeech", voice)
+        self.assertIn('"dur"', commands)
+        self.assertIn("TEKNIK_AYRINTILAR", commands)  # technical details are never read aloud
+        for name in ("nvidia", "openai", "integrate.api"):
+            self.assertNotIn(name, voice.lower())
+
     def test_personas_match_the_desktop(self):
         theme = (SOURCES / "Theme.kt").read_text(encoding="utf-8")
         import mobile_server
