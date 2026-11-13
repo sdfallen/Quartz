@@ -16,7 +16,7 @@ Android uygulaması. Google/Firebase kullanmaz: telefon yalnız **Tailscale**
   gider: bilgisayar ekibin görünen durumundan ~1 saniyede kısa bir cevap üretir (NVIDIA'nın
   barındırdığı Nemotron Bolt modeli) ya da soruyu ekibe iletir ve "Ekibe soruyorum" der.
   NVIDIA'ya yalnız ekip durumu ve son mesajların kısaltılmış metni gider; kod, dosya,
-  hafıza, yol ve gizli değerler gitmez. İş isteği ve risk/güvenlik soruları her zaman ekibe gider.
+  hafıza (ve "bunu hatırla" dediğin mesajlar), yol ve gizli değerler gitmez. İş isteği ve risk/güvenlik soruları her zaman ekibe gider.
 - **Hafıza:** Ayarlar'da ajanların hatırladıkları görünür; her satır silinebilir.
 
 ## Kurulum (bir kez)

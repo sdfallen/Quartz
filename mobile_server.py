@@ -144,6 +144,9 @@ class MobileGateway:
         from core.voice_front import VoiceFront
         state = self.snapshot(0)
         result = (front or VoiceFront()).answer(text, state)
+        # Diagnosable fallback: route, reason and time only, never the question.
+        log.info("Mobile voice route=%s reason=%s seconds=%s", result.get("route"), result.get("reason", ""),
+                 result.get("seconds", ""))
         if result.get("route") == "answered":
             return {"route": "answered", "reply": result["reply"], "after": state["last_seq"]}
         self.send(text)

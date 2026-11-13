@@ -93,7 +93,9 @@ def build_context(state: dict) -> str:
     lines = [f"Ekip: {'çalışıyor' if state.get('busy') else 'boşta'}."]
     if state.get("progress"):
         lines.append(f"Şu an: {_clean(state['progress'], 120)}")
-    for m in (state.get("messages") or [])[-6:]:
+    # Messages that carry a memory note ("bunu hatırla") never leave the computer.
+    visible = [m for m in (state.get("messages") or []) if not m.get("memory")]
+    for m in visible[-6:]:
         who = "Kullanıcı" if m.get("role") == "user" or m.get("sender") == "user" else (m.get("persona") or "SpeS")
         flag = " (başarısız)" if m.get("failed") else ""
         lines.append(f"{who}{flag}: {_clean(m.get('text'), 240)}")

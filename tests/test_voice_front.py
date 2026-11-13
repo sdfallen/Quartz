@@ -71,6 +71,14 @@ class VoiceFrontTests(unittest.TestCase):
         for value in ("şifrem 1234", "password: hunter2", "Parolam kedi99", "kart 4111 1111 1111 1111"):
             self.assertTrue(contains_secret(value), value)
 
+    def test_remembered_facts_are_not_sent(self):
+        state = {"busy": False, "messages": [
+            {"role": "user", "sender": "user", "memory": "saved", "text": "Benim adım Ali, bunu hatırla"},
+            {"role": "assistant", "persona": "Fatum", "text": "Tamam."}]}
+        text = build_context(state)
+        self.assertNotIn("Ali", text)
+        self.assertIn("Fatum: Tamam.", text)
+
     def test_context_redacts_secrets_and_keeps_six_messages(self):
         many = {"busy": False, "messages": [{"role": "assistant", "persona": "Eos", "text": f"mesaj {i}"} for i in range(10)]
                 + [{"role": "assistant", "persona": "Eos", "text": "parolam kedi99"}]}
