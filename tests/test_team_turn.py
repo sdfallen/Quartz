@@ -115,5 +115,13 @@ class TeamTurnTests(unittest.TestCase):
         self.assertNotIn("claude", {c["agent"] for c in run.calls})
 
 
+class IntentRegressionTests(unittest.TestCase):
+    def test_point_of_view_is_not_an_open_command(self):
+        from core.message_intent import message_intent
+        self.assertEqual(message_intent("Senin karakterin ne olurdu: işe bakış açın ve rolün nedir?"), "conversation")
+        self.assertEqual(message_intent("Not defterini aç"), "task")
+        self.assertEqual(message_intent("uygulamayı açın"), "task")
+
+
 if __name__ == "__main__":
     unittest.main()
