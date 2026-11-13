@@ -30,13 +30,34 @@ _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-ZÇĞİÖŞÜ0-9\"'(“])")
 CHARS_PER_SENTENCE = 160  # semicolon chains still read as a paragraph (live 13 Nov)
 
 
-def clamp_sentences(text: str, limit: int) -> str:
-    """Keep at most ``limit`` sentences and about ``limit * 160`` characters (one paragraph)."""
+CHAT_CHARS_PER_SENTENCE = 110  # small talk reads like a text message, not a report
+
+# Small talk (13 Nov): "selam beyler" produced plan, two critiques and a decision about
+# architecture and risk. Conversation turns are now a chat: short, friendly, no process.
+CHAT_RULE = ("SOHBET MODU: Bu bir iş değil, günlük sohbet. Arkadaşça ve doğal konuş, sade Türkçe kullan. "
+             "En fazla 2 kısa cümle (yaklaşık 25 kelime). Plan, süreç, iş bölümü, mimari veya risk anlatma; "
+             "teknik terim kullanma. Başlık, liste ve kod yok. Dahili kimlik veya araç adı yazma.\n")
+_GROUP_WORDS = ("beyler", "arkadaşlar", "ekip", "herkes", "hepiniz", "millet", "takım", "çocuklar", "gençler")
+_NAMES = {"claude": ("fatum", "claude"), "codex": ("fides", "codex"), "antigravity": ("eos", "antigravity", "gemini")}
+
+
+def addressed_agents(text: str) -> list:
+    """Who should answer a chat message: named agents, everyone for a group greeting, else the lead."""
+    words = set(re.findall(r"[a-zçğıöşü]+", str(text or "").lower()))
+    # A group word or a plural "you" ("ne düşünüyorsunuz?", "siz") asks the whole team.
+    if words & set(_GROUP_WORDS) or "siz" in words or any(re.search(r"(?:sınız|siniz|sunuz|sünüz)$", w) for w in words):
+        return list(TEAM)
+    named = [agent for agent, names in _NAMES.items() if words & set(names)]
+    return named or [LEAD]
+
+
+def clamp_sentences(text: str, limit: int, per_sentence: int = CHARS_PER_SENTENCE) -> str:
+    """Keep at most ``limit`` sentences and about ``limit * per_sentence`` characters (one paragraph)."""
     flat = " ".join(str(text or "").split())
     if not flat:
         return ""
     sentences = _SENTENCE_END.split(flat)[:limit]
-    budget = limit * CHARS_PER_SENTENCE
+    budget = limit * per_sentence
     # Stop at the last whole sentence that fits (live 13 Nov: a mid-sentence "…"
     # made the lead think the critic's message had been cut off). Only a single
     # over-long first sentence is cut inside, and only that cut gets "…".
@@ -72,7 +93,7 @@ class TeamTurnMixin:
     # -- one team message ---------------------------------------------------
     def _team_say(self, cid, msg_id, agent, prompt, project_id, *, step, limit=3,
                   tool_less=True, write=False, confirm_write=False, full_access=False,
-                  project_scope=False):
+                  project_scope=False, per_sentence=CHARS_PER_SENTENCE):
         """Run one agent into its bubble; planning messages are clamped to ``limit`` sentences."""
         base_meta = {"sender": agent, "agent": agent, "recipient": "all", "collaboration": True,
                      "team": True, "team_step": step, "persona": persona_name(agent)}
@@ -86,7 +107,7 @@ class TeamTurnMixin:
                 cid, msg_id, prompt, project_id, write, confirm_write, use_session=False,
                 base_meta=base_meta, full_access=full_access, agent=agent, tool_less=tool_less,
                 project_scope=project_scope)
-        short = clamp_sentences(text, limit) if (limit and text) else text
+        short = clamp_sentences(text, limit, per_sentence) if (limit and text) else text
         with self._lock:
             # Same cancellation fence as the executors' own publishing.
             if text and not self._is_turn_cancelled(msg_id):
@@ -149,6 +170,27 @@ class TeamTurnMixin:
                 lines.append(f"{persona_name(sender)}: {content[:1200]}")
         return "\n".join(lines)
 
+    # -- small talk ----------------------------------------------------------
+    def _run_team_chat(self, cid, first_msg_id, project_id, user_block, agents):
+        """Plain conversation: the first speaker answers, the others add one short line each."""
+        lead = LEAD if LEAD in agents else agents[0]
+        say = lambda agent, msg_id, extra="": self._team_say(
+            cid, msg_id, agent, self._team_header(agent) + CHAT_RULE + extra + user_block, project_id,
+            step=0, limit=2, per_sentence=CHAT_CHARS_PER_SENTENCE)
+        self._set_turn_progress(f"{persona_name(lead)} yazıyor…", current_msg_id=first_msg_id)
+        # The opening bubble is reused even when the user addressed only Fides or Eos:
+        # the stored sender follows the agent that actually answers.
+        first = say(lead, first_msg_id)
+        others = [a for a in agents if a != lead]
+        if others and first and not self._is_turn_cancelled(first_msg_id):
+            self._set_turn_progress(" ve ".join(persona_name(a) for a in others) + " yazıyor…",
+                                    current_msg_id=first_msg_id)
+            ids = {a: self._team_bubble(cid, a, 0, first_msg_id) for a in others}
+            heard = f"\n--- {persona_name(lead).upper()} ŞÖYLE DEDİ ---\n{first}\nOnu tekrar etme; kendi kısa cümleni söyle.\n"
+            self._team_parallel({a: (lambda a=a: say(a, ids[a], heard)) for a in others})
+        with self._lock:
+            self._finish_turn(first_msg_id, "completed" if first else "partial")
+
     # -- the turn ----------------------------------------------------------
     def _run_team_turn(self, cid, first_msg_id, prompt, project_id, *, write=False, confirm_write=False,
                        full_access=False):
@@ -156,6 +198,9 @@ class TeamTurnMixin:
             return
         chat_only = self._conversation_only(cid) or not (write and confirm_write)
         user_block = f"\n--- KULLANICININ MESAJI ---\n{prompt}\n"
+        if self._conversation_only(cid):
+            self._run_team_chat(cid, first_msg_id, project_id, user_block, addressed_agents(prompt))
+            return
 
         # 1. Plan and work split by the lead (first bubble already belongs to Claude).
         self._set_turn_progress("Fatum planı ve iş bölümünü yazıyor…", current_msg_id=first_msg_id)
