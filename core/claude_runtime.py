@@ -125,6 +125,12 @@ class ClaudeRuntime(CodexRuntime):
             self._SHARED_PROBE_CACHE[str(self.executable)] = (stamp, dict(result))
         return result
 
+    def forget_probe(self):
+        """Drop cached readiness after an authentication failure."""
+        with self._lock:
+            self._probe_cache = (0.0, {})
+            self._SHARED_PROBE_CACHE.pop(str(self.executable or ""), None)
+
     # -- runs --------------------------------------------------------------
     @staticmethod
     def tools_for(sandbox: str) -> tuple[str, ...]:
@@ -338,6 +344,8 @@ class ClaudeRuntime(CodexRuntime):
                         # A failed turn can still say subtype "success": is_error decides.
                         if event.get("is_error") or subtype not in (None, "success"):
                             self._error(record, "result", "turn_failed", text_val or f"Claude turn failed ({subtype})")
+                            if "authenticate" in text_val.lower() or "oauth" in text_val.lower():
+                                self.forget_probe()  # the next readiness check asks the CLI again
                         elif text_val:
                             record["result"] = text_val
                 if refused:

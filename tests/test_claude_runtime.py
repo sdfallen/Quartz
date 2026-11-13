@@ -164,6 +164,14 @@ class StreamTests(unittest.TestCase):
         self.assertEqual(rec["result"], "")
         self.assertIn("OAuth", rec["errors"][0])
 
+    def test_auth_failure_forgets_cached_readiness(self):
+        rt = runtime()
+        rt._probe_cache = (10**9, {"ready": True})
+        record_for(rt, "none")
+        feed(rt, init(rt, "none"), {"type": "result", "subtype": "success", "is_error": True,
+                                    "result": "Failed to authenticate: OAuth session expired"})
+        self.assertEqual(rt._probe_cache, (0.0, {}))
+
     def test_read_only_write_is_flagged_as_unauthorized(self):
         rt = runtime()
         rec = record_for(rt, "read-only")
