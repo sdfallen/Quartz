@@ -173,7 +173,10 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       claudeModelPill.classList.toggle('active-claude', agent === 'claude');
     }
     if (btnContinueCollab) {
-      btnContinueCollab.style.display = isCollab ? 'inline-flex' : 'none';
+      // "1 tur daha" extends the classic pair debate; the team turn completes itself.
+      const claudeSeg = document.querySelector('.agent-seg-btn[data-agent="claude"]');
+      const teamMode = !!claudeSeg && !claudeSeg.disabled;
+      btnContinueCollab.style.display = isCollab && !teamMode ? 'inline-flex' : 'none';
     }
     renderAgentConnections(undefined, agent);
   }
