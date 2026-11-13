@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar icon: the SpeS sunrise mark in white (generated from scripts/build_brand_assets.py). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="256" android:viewportHeight="256">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M72.00,164.00 L72.21,159.12 L72.85,154.28 L73.91,149.51 L75.38,144.85 L77.25,140.33 L79.50,136.00 L82.13,131.88 L85.10,128.00 L88.40,124.40 L92.00,121.10 L95.88,118.13 L100.00,115.50 L104.33,113.25 L108.85,111.38 L113.51,109.91 L118.28,108.85 L123.12,108.21 L128.00,108.00 L132.88,108.21 L137.72,108.85 L142.49,109.91 L147.15,111.38 L151.67,113.25 L156.00,115.50 L160.12,118.13 L164.00,121.10 L167.60,124.40 L170.90,128.00 L173.87,131.88 L176.50,136.00 L178.75,140.33 L180.62,144.85 L182.09,149.51 L183.15,154.28 L183.79,159.12 L184.00,164.00 Z"/>
+    <path android:fillColor="#FFFFFFFF" android:pathData="M61.69,135.09 L34.41,128.44 L31.38,137.76 L57.36,148.41 Z"/>
+    <path android:fillColor="#FFFFFFFF" android:pathData="M91.34,101.64 L73.19,80.22 L65.26,85.98 L80.02,109.87 Z"/>
+    <path android:fillColor="#FFFFFFFF" android:pathData="M135.00,92.00 L132.90,64.00 L123.10,64.00 L121.00,92.00 Z"/>
+    <path android:fillColor="#FFFFFFFF" android:pathData="M175.98,109.87 L190.74,85.98 L182.81,80.22 L164.66,101.64 Z"/>
+    <path android:fillColor="#FFFFFFFF" android:pathData="M198.64,148.41 L224.62,137.76 L221.59,128.44 L194.31,135.09 Z"/>
+    <path android:fillColor="#FFFFFFFF" android:pathData="M20.00,178.00 L236.00,178.00 L236.00,194.00 L20.00,194.00 Z"/>
+</vector>

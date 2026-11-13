@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="spes_bg">#121416</color>
+    <style name="Theme.SpeS" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/spes_bg</item>
+        <item name="android:statusBarColor">@color/spes_bg</item>
+        <item name="android:navigationBarColor">@color/spes_bg</item>
+    </style>
+</resources>

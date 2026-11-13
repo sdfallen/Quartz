@@ -252,6 +252,7 @@ JAVASCRIPT = r"""  function addAgentRow(container, title, details, status='') {
       const content = document.createElement('div'); content.className = `mobile-value${token ? ' mobile-token' : ''}`; content.textContent = value;
       bubble.append(heading, content);
     };
+    if (data.pairing_code) addDetail('EŞLEŞTİRME KODU · SpeS Android uygulamasına yaz (' + Math.max(1, Math.round((data.pairing_expires_in || 300) / 60)) + ' dk, tek kullanım)', data.pairing_code, true);
     addDetail('YEREL ADRES', data.local_url);
     addDetail('CİHAZ ANAHTARI', data.token, true);
     addDetail('TAILSCALE YAYINI', data.tailscale_command);

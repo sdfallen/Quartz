@@ -774,7 +774,7 @@ def main(register_signals=True):
         lazy_assistant = LazyClientProxy(lambda: _ipc_server._assistant)
         try:
             from mobile_server import MobileGateway
-            _mobile_gateway = MobileGateway(lazy_assistant)
+            _mobile_gateway = MobileGateway(lazy_assistant, agent_chat=lambda: _ipc_server._get_agent_chat())
             _mobile_gateway_thread = threading.Thread(target=_mobile_gateway.start, name='quartz-mobile-gateway', daemon=False)
             _mobile_gateway_thread.start()
         except Exception as exc:

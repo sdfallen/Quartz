@@ -86,3 +86,13 @@ QUARTZ_KAPSAMLI_KAYNAK_KOD_INCELEME_RAPORU_*.txt
 # Small MIT-licensed coordination helper shipped with the Windows package.
 !assets/bin/squad.exe
 
+
+# Android app: build output, local SDK path and signing keys never enter the repository
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk
+*.aab
+*.jks
+*.keystore
