@@ -49,6 +49,11 @@ _TEAM_ONLY = re.compile(
     r"(güvenli|güvenlik|risk|tehlike|zarar|sızıntı|sızdır|hack|saldır|kişisel veri|kullanıcı veri|yasal|"
     r"söyle|çalıştır|başlat|düzelt|derle|test et|incele|araştır|kontrol et|gönder|yayınla|"
     r"commit|push|merge|birleştir|\b(?:yap|yaz|ekle|sil|kur)\b)")
+# Memory goes through the team (live 13 Nov: "bunu hatırla" said by voice was answered by Bolt
+# and never stored). Only the team path records memory, and only agents see it.
+_MEMORY = re.compile(
+    r"(hatırla|hatırlıyor|unut|aklında|aklına|hafıza|not al|kaydet|adım ne|ismim ne|benim adım|adımı|ismimi|"
+    r"beni tanı|kim olduğumu|hakkımda|neyi biliyorsun)")
 
 
 def _lower_tr(text: str) -> str:
@@ -74,7 +79,8 @@ SYSTEM = (
 
 
 def needs_team(question: str) -> bool:
-    return bool(_TEAM_ONLY.search(_lower_tr(question)))
+    text = _lower_tr(question)
+    return bool(_TEAM_ONLY.search(text) or _MEMORY.search(text))
 
 
 def _clean(text: str, limit: int) -> str:

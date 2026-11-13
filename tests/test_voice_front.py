@@ -48,6 +48,10 @@ class VoiceFrontTests(unittest.TestCase):
         self.assertFalse(needs_team("Selam, nasılsın?"))
         self.assertFalse(needs_team("NASILSIN, ne oldu?"))
         self.assertTrue(needs_team("Şu dosyayı SİL"))
+        # Memory requests and questions must reach the team, which stores and sees memory.
+        for q in ("Benim adım Ali, bunu hatırla", "Bunu unutma", "Adım neydi?", "Adım ne?",
+                  "Beni hatırlıyor musun?", "Hakkımda ne biliyorsun", "Bunu aklında tut"):
+            self.assertTrue(needs_team(q), q)
 
     def test_model_deferral_errors_and_bad_answers_go_to_the_team(self):
         cases = [dict(reply=ASK_TEAM), dict(reply=""), dict(reply="x" * 400), dict(reply="```py```"),
