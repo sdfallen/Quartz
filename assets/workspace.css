@@ -749,7 +749,16 @@ body.show-preview .preview-pane { display: flex; }
 .core-crystal { width: 34px; height: 34px; }
 .crew-core { gap: 3px; }
 @container (max-width: 980px) { .lane-col .model-selector-pill { display: none; } }
+/* Live 13 Nov: with the work panel open the stage is ~600 px; stacking the cards cost ~180 px of
+   conversation. Keep one row and drop the CLI name instead; stack only on very narrow stages. */
 @container (max-width: 640px) {
+  .lane-col { padding: 6px 3px 4px; }
+  .lane-claude { padding-left: 10px; }
+  .lane-antigravity { padding-right: 10px; }
+  .lane-card { padding: 6px 8px; gap: 7px; }
+  .lane-card .lane-agent { display: none; }
+}
+@container (max-width: 360px) {
   .stage { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr); grid-template-areas: "claude" "codex" "agy" "stream"; }
   .lane-col { padding: 3px 12px; }
 }
