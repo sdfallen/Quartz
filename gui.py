@@ -897,6 +897,14 @@ class Api:
             return {"status": "cancelled", "data": None}
         return ipc_send("project_add", {"path": folders[0]})
 
+    def agent_limits(self) -> dict:
+        """Usage-limit snapshot per agent (local, read-only sources; see core.agent_limits)."""
+        try:
+            from core.agent_limits import snapshot
+            return {"status": "ok", "data": snapshot()}
+        except Exception as exc:
+            return {"status": "error", "data": str(exc)}
+
     def preview_check_url(self, url: str) -> dict:
         """Normalise a preview address; loopback http(s) only."""
         try:
