@@ -1504,10 +1504,12 @@ class AgentChatService(TeamTurnMixin):
                                     project_id: str | None, write: bool, confirm_write: bool,
                                     *, use_session: bool = True, squad_task_id: str | None = None,
                                     base_meta: dict | None = None, full_access: bool = False,
-                                    tool_less: bool = False) -> str:
+                                    tool_less: bool = False, project_scope: bool = False) -> str:
         """Run a single Antigravity message bubble, stream its output, and return final text."""
         bubble_t0 = time.time()
-        conversation_only = tool_less or self._conversation_only(cid)
+        # project_scope: a fresh, read-only, project-scoped review (Quartz's verified
+        # project-read profile), used by team checks instead of a general run.
+        conversation_only = tool_less or project_scope or self._conversation_only(cid)
         if conversation_only:
             write = full_access = confirm_write = use_session = False
         full_prompt = self._communication_prompt(cid, full_prompt)
@@ -1534,7 +1536,7 @@ class AgentChatService(TeamTurnMixin):
         }
         if conversation_only:
             dispatch_kwargs["conversation_only"] = True
-            if self._project_read(cid) and not tool_less:
+            if project_scope or (self._project_read(cid) and not tool_less):
                 dispatch_kwargs["project_read"] = True
                 dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
         dispatch_res = self._dispatch_chat_run(self.agent_service.dispatch_antigravity, cid, msg_id,
@@ -1684,13 +1686,16 @@ class AgentChatService(TeamTurnMixin):
                               project_id: str | None, write: bool, confirm_write: bool,
                               *, use_session: bool = True, squad_task_id: str | None = None,
                               base_meta: dict | None = None, full_access: bool = False,
-                              agent: str = "codex", tool_less: bool = False) -> str:
+                              agent: str = "codex", tool_less: bool = False,
+                              project_scope: bool = False) -> str:
         """Run a single Codex (or Claude) message bubble, stream its output, and return final text."""
         label = _AGENT_LABELS[agent]
         runtime = getattr(self.agent_service, agent)
         dispatch = self.agent_service.dispatch_claude if agent == "claude" else self.agent_service.dispatch_codex
         bubble_t0 = time.time()
-        conversation_only = tool_less or self._conversation_only(cid)
+        # project_scope: a fresh, read-only, project-scoped review (Quartz's verified
+        # project-read profile), used by team checks instead of a general run.
+        conversation_only = tool_less or project_scope or self._conversation_only(cid)
         if conversation_only:
             write = full_access = confirm_write = use_session = False
         full_prompt = self._communication_prompt(cid, full_prompt)
@@ -1721,7 +1726,7 @@ class AgentChatService(TeamTurnMixin):
         }
         if conversation_only:
             dispatch_kwargs["conversation_only"] = True
-            if self._project_read(cid) and not tool_less:
+            if project_scope or (self._project_read(cid) and not tool_less):
                 dispatch_kwargs["project_read"] = True
                 dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
         dispatch_res = self._dispatch_chat_run(dispatch, cid, msg_id,

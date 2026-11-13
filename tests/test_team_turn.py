@@ -26,7 +26,7 @@ class TeamRun:
 
     def _record(self, agent, kwargs):
         with self.lock:
-            self.calls.append({"agent": agent, "tool_less": kwargs.get("tool_less", False),
+            self.calls.append({"agent": agent, "tool_less": kwargs.get("tool_less", False), "project_scope": kwargs.get("project_scope", False),
                                "write": kwargs.get("write", False), "step": (kwargs.get("base_meta") or {}).get("team_step")})
             self.active["now"] += 1
             self.active["max"] = max(self.active["max"], self.active["now"])
@@ -64,6 +64,10 @@ class PersonaTests(unittest.TestCase):
         self.assertEqual(clamp_sentences("Bir. İki! Üç? Dört.", 3), "Bir. İki! Üç?")
         self.assertEqual(clamp_sentences("Tek cümle", 3), "Tek cümle")
         self.assertEqual(clamp_sentences("  ", 3), "")
+        long = "Bu cümle " + "çok " * 120 + "uzun; ama tek cümle."
+        short = clamp_sentences(long, 2)
+        self.assertLessEqual(len(short), 2 * 160 + 1)
+        self.assertTrue(short.endswith("…"))
 
 
 class TeamTurnTests(unittest.TestCase):
@@ -100,7 +104,7 @@ class TeamTurnTests(unittest.TestCase):
                          ("antigravity", 4), ("codex", 5), ("antigravity", 5), ("claude", 6)]:
             self.assertIn(expected, steps)
         checks = [c for c in run.calls if c["step"] == 5]
-        self.assertTrue(all(not c["tool_less"] and not c["write"] for c in checks), "checks are read-only runs")
+        self.assertTrue(all(c["project_scope"] and not c["write"] for c in checks), "checks are project-read runs")
 
     def test_without_a_ready_claude_the_classic_pair_runs(self):
         with tempfile.TemporaryDirectory() as directory:

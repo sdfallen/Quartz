@@ -121,5 +121,34 @@ JAVASCRIPT = r"""
     }
     bubble.append(row);
   }
+  // Agent limits: a small read-only indicator (core.agent_limits); refreshed every minute.
+  const LIMIT_CHIPS = {codex: 'limitCodex', claude: 'limitClaude', antigravity: 'limitAgy'};
+  function renderAgentLimits(data) {
+    for (const [agent, id] of Object.entries(LIMIT_CHIPS)) {
+      const chip = document.getElementById(id);
+      if (!chip) continue;
+      const entry = (data || {})[agent] || {};
+      const values = [entry.five_hour, entry.week].filter(v => typeof v === 'number');
+      const worst = values.length ? Math.max(...values) : null;
+      chip.dataset.state = entry.state || 'unknown';
+      chip.querySelector('.limit-value').textContent = worst === null ? '—' : `%${Math.round(worst)}`;
+      chip.querySelector('.limit-meter b').style.width = worst === null ? '0' : `${Math.min(100, worst)}%`;
+      const name = chip.querySelector('.limit-name').textContent;
+      const reset = entry.resets_at ? new Date(entry.resets_at * 1000).toLocaleTimeString('tr-TR', {hour: '2-digit', minute: '2-digit'}) : '';
+      chip.title = worst === null
+        ? `${name}: ${entry.source === 'unavailable' ? 'bu CLI limit bilgisi vermiyor' : 'henüz ölçülmedi'}`
+        : `${name}: 5 saatlik %${Math.round(entry.five_hour ?? 0)} · haftalık %${Math.round(entry.week ?? 0)}${reset ? ` · sıfırlanma ${reset}` : ''}`;
+      chip.setAttribute('aria-label', chip.title);
+    }
+  }
+  async function refreshAgentLimits() {
+    try {
+      const result = await window.pywebview.api.agent_limits();
+      if (result && result.status === 'ok') renderAgentLimits(result.data);
+    } catch (_) {}
+  }
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('pywebviewready', () => { refreshAgentLimits(); setInterval(refreshAgentLimits, 60000); });
+  }
   window.QuartzPreview = Object.freeze({ open: openPreview, openWindow: openPreviewWindow, decorate: decoratePreviewLinks, links: localPreviewLinks });
 """

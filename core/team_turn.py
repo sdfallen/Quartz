@@ -27,14 +27,20 @@ LEAD = "claude"
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-ZÇĞİÖŞÜ0-9\"'(“])")
 
 
+CHARS_PER_SENTENCE = 160  # semicolon chains still read as a paragraph (live 13 Nov)
+
+
 def clamp_sentences(text: str, limit: int) -> str:
-    """Keep at most ``limit`` sentences of a team message (one paragraph)."""
+    """Keep at most ``limit`` sentences and about ``limit * 160`` characters (one paragraph)."""
     flat = " ".join(str(text or "").split())
     if not flat:
         return ""
-    parts = _SENTENCE_END.split(flat)
-    short = " ".join(parts[:limit]).strip()
-    return short if len(parts) <= limit else short
+    short = " ".join(_SENTENCE_END.split(flat)[:limit]).strip()
+    budget = limit * CHARS_PER_SENTENCE
+    if len(short) > budget:
+        cut = short[:budget].rsplit(" ", 1)[0].rstrip(",;:—-")
+        short = cut + "…"
+    return short
 
 
 def persona_name(agent: str) -> str:
@@ -53,18 +59,21 @@ class TeamTurnMixin:
 
     # -- one team message ---------------------------------------------------
     def _team_say(self, cid, msg_id, agent, prompt, project_id, *, step, limit=3,
-                  tool_less=True, write=False, confirm_write=False, full_access=False):
+                  tool_less=True, write=False, confirm_write=False, full_access=False,
+                  project_scope=False):
         """Run one agent into its bubble; planning messages are clamped to ``limit`` sentences."""
         base_meta = {"sender": agent, "agent": agent, "recipient": "all", "collaboration": True,
                      "team": True, "team_step": step, "persona": persona_name(agent)}
         if agent == "antigravity":
             text = self._execute_antigravity_bubble(
                 cid, msg_id, prompt, project_id, write, confirm_write, use_session=False,
-                base_meta=base_meta, full_access=full_access, tool_less=tool_less)
+                base_meta=base_meta, full_access=full_access, tool_less=tool_less,
+                project_scope=project_scope)
         else:
             text = self._execute_codex_bubble(
                 cid, msg_id, prompt, project_id, write, confirm_write, use_session=False,
-                base_meta=base_meta, full_access=full_access, agent=agent, tool_less=tool_less)
+                base_meta=base_meta, full_access=full_access, agent=agent, tool_less=tool_less,
+                project_scope=project_scope)
         short = clamp_sentences(text, limit) if (limit and text) else text
         with self._lock:
             # Same cancellation fence as the executors' own publishing.
@@ -214,9 +223,11 @@ class TeamTurnMixin:
 
         def check(agent):
             return lambda: self._team_say(cid, check_ids[agent], agent, self._team_header(agent) + self._team_rules(3) + (
-                "Görevin: Usta'nın yaptığı işi salt okuma olarak kontrol et; dosya yazma. Kabul kontrollerine "
+                "Görevin: Usta'nın yaptığı işi proje dosyalarını okuyarak kontrol et; dosya yazma, komut çalıştırma. "
+                "Kabul kontrollerine "
                 "ve risklere göre ne gördüğünü, kanıtıyla söyle.\n") + user_block
-                + f"\n--- EKİP SOHBETİ ---\n{transcript}\n", project_id, step=5, tool_less=False)
+                + f"\n--- EKİP SOHBETİ ---\n{transcript}\n", project_id, step=5, tool_less=False,
+                project_scope=True)
         checks = self._team_parallel({a: check(a) for a in check_ids})
         if self._is_turn_cancelled(first_msg_id):
             return

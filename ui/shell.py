@@ -117,6 +117,11 @@ SHELL_MARKUP = r"""
         <span class="project-tag" id="chatProjectTag" title="Çalışma alanı" style="display:none"></span>
       </div>
       <div class="titlebar-spacer"></div>
+      <div class="team-limits" id="teamLimits" role="group" aria-label="Ajan limitleri">
+        <span class="limit-chip" id="limitCodex" data-agent="codex" data-state="unknown" tabindex="0"><span class="limit-name">Atlas</span><span class="limit-meter" aria-hidden="true"><b></b></span><span class="limit-value">—</span></span>
+        <span class="limit-chip" id="limitClaude" data-agent="claude" data-state="unknown" tabindex="0"><span class="limit-name">Usta</span><span class="limit-meter" aria-hidden="true"><b></b></span><span class="limit-value">—</span></span>
+        <span class="limit-chip" id="limitAgy" data-agent="antigravity" data-state="unknown" tabindex="0"><span class="limit-name">Vision</span><span class="limit-meter" aria-hidden="true"><b></b></span><span class="limit-value">—</span></span>
+      </div>
       <div class="status-pill offline" id="statusPill"><span class="dot" aria-hidden="true"></span><span id="statusText">Bağlanıyor</span></div>
       <span class="squad-badge" id="squadBadge" title="Squad mesajlaşma altyapısı">Squad: Kontrol ediliyor</span>
       <span class="perm-hint" id="permissionSelectionHint" aria-live="polite">Tam Yetki</span>
@@ -146,7 +151,7 @@ SHELL_MARKUP = r"""
           <button type="button" class="lane-card" id="laneCodex" data-agent="codex" data-state="idle" aria-pressed="false" aria-describedby="laneCodexState">
             <span class="lane-gem" aria-hidden="true"></span>
             <span class="lane-copy">
-              <span class="lane-name">Codex</span>
+              <span class="lane-name">Atlas <span class="lane-agent">Codex</span></span>
               <span class="lane-state" id="laneCodexState">Hazır</span>
             </span>
           </button>
@@ -180,7 +185,7 @@ SHELL_MARKUP = r"""
           <button type="button" class="lane-card" id="laneClaude" data-agent="claude" data-state="idle" aria-pressed="false" aria-describedby="laneClaudeState">
             <span class="lane-gem" aria-hidden="true"></span>
             <span class="lane-copy">
-              <span class="lane-name">Claude</span>
+              <span class="lane-name">Usta <span class="lane-agent">Claude</span></span>
               <span class="lane-state" id="laneClaudeState">Hazır</span>
             </span>
           </button>
@@ -224,7 +229,7 @@ SHELL_MARKUP = r"""
       <section class="empty-state" id="emptyState" aria-label="Başlangıç">
         @@MARK@@
         <h1 id="emptyGreeting">Merhaba.</h1>
-        <p>Antigravity ve Codex burada. Bir görev yazın ya da buradan başlayın.</p>
+        <p>Usta, Atlas ve Vision burada. Birlikte modunda planı sohbette kurup işi birlikte yaparlar.</p>
         <div class="prompt-chips">
           <button type="button" class="prompt-chip" data-prompt="Bu projenin yapısını incele ve kısaca özetle.">Projeyi özetle</button>
           <button type="button" class="prompt-chip" data-prompt="Testleri çalıştır, başarısız olanların nedenini açıkla.">Testleri çalıştır</button>
@@ -312,7 +317,7 @@ SHELL_MARKUP = r"""
           <button type="button" class="lane-card" id="laneAgy" data-agent="antigravity" data-state="idle" aria-pressed="false" aria-describedby="laneAgyState">
             <span class="lane-gem" aria-hidden="true"></span>
             <span class="lane-copy">
-              <span class="lane-name">Antigravity</span>
+              <span class="lane-name">Vision <span class="lane-agent">Antigravity</span></span>
               <span class="lane-state" id="laneAgyState">Hazır</span>
             </span>
           </button>
