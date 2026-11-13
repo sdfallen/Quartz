@@ -28,7 +28,7 @@ class TeamRun:
         with self.lock:
             self.calls.append({"agent": agent, "tool_less": kwargs.get("tool_less", False), "project_scope": kwargs.get("project_scope", False),
                                "write": kwargs.get("write", False), "step": (kwargs.get("base_meta") or {}).get("team_step"),
-                               "prompt": kwargs.get("prompt", "")})
+                               "prompt": kwargs.get("prompt", ""), "web": kwargs.get("web", False)})
             self.active["now"] += 1
             self.active["max"] = max(self.active["max"], self.active["now"])
         time.sleep(0.05)
@@ -128,6 +128,22 @@ class TeamTurnTests(unittest.TestCase):
         self.assertNotIn("run 77", text)
         self.assertNotIn("şimdiki", text)
         self.assertLess(len(text.splitlines()[2]), 380)
+
+    def test_only_the_lead_may_search_the_web_and_never_while_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            chat = make_chat(directory)
+            run = TeamRun(chat)
+            run.run("Bugün İstanbul'da hava nasıl beyler?")
+            chat_calls = list(run.calls)
+            run.run("Bir giriş sayfası yap", write=True, confirm_write=True, full_access=True)
+            chat._diagnostics.close()
+        self.assertEqual([(c["agent"], c["web"]) for c in chat_calls],
+                         [("claude", True), ("codex", False), ("antigravity", False)])
+        self.assertIn("yalnız arama", chat_calls[0]["prompt"])
+        task_calls = run.calls[len(chat_calls):]
+        searching = [(c["agent"], c["step"]) for c in task_calls if c["web"]]
+        self.assertEqual(searching, [("claude", 1)])
+        self.assertFalse(any(c["web"] and c["write"] for c in run.calls))
 
     def test_who_answers_small_talk(self):
         from core.team_turn import addressed_agents
