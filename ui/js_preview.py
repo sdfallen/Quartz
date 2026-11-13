@@ -124,7 +124,7 @@ JAVASCRIPT = r"""
   // Work panel tabs: preview, host-observed file changes and host checks for this conversation.
   // Only host evidence (metadata.host_evidence) is listed; agent text never adds a row.
   const workEvidence = new Map();
-  const WORK_AGENT = {codex: 'Atlas', claude: 'Usta', antigravity: 'Vision', gemini: 'Vision'};
+  const WORK_AGENT = {codex: 'Pusula', claude: 'Usta', antigravity: 'Gözcü', gemini: 'Gözcü'};
   function setWorkTab(tab) {
     previewPane.dataset.workTab = tab;
     previewPane.querySelectorAll('.work-tab').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === tab ? 'true' : 'false'));

@@ -346,7 +346,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     // The label is upper-cased by CSS; in Turkish "Antigravity" would become "ANTİGRAVİTY".
     if (label) label.lang = coreText.includes('Antigravity') ? 'en' : 'tr';
     if (core) {
-      const teamText = crewSeg('claude')?.disabled ? 'Atlas ve Vision' : 'Usta, Atlas ve Vision';
+      const teamText = crewSeg('claude')?.disabled ? 'Pusula ve Gözcü' : 'Usta, Pusula ve Gözcü';
       const coreTitle = focus === 'collaboration' ? `Birlikte: ${teamText} planlayıp birlikte çalışıyor`
         : `Birlikte moduna geç: ${teamText} planlayıp birlikte çalışır`;
       if (core.getAttribute?.('title') !== coreTitle) core.setAttribute('title', coreTitle);

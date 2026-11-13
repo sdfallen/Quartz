@@ -6,11 +6,11 @@ the user, and every team message is at most two or three sentences.
 
 Flow (one user turn):
 1. Usta (Claude, lead developer) posts the plan and who does what.
-2. Atlas (Codex) and Vision (Antigravity) criticise it in parallel.
+2. Pusula (Codex) and Gözcü (Antigravity) criticise it in parallel.
 3. Usta posts the decision.
 4. Conversation turn: Usta answers. Task turn: Usta builds (single writer) while
-   Atlas prepares acceptance checks and Vision lists risks in parallel; then Atlas
-   and Vision check the result in parallel, read-only; Usta closes.
+   Pusula prepares acceptance checks and Gözcü lists risks in parallel; then Pusula
+   and Gözcü check the result in parallel, read-only; Usta closes.
 
 Planning messages are tool-less runs; only the lead's build step may write. The
 existing writer lock, Stop and evidence rules apply unchanged to every run.
@@ -151,15 +151,15 @@ class TeamTurnMixin:
         self._set_turn_progress("Usta planı ve iş bölümünü yazıyor…", current_msg_id=first_msg_id)
         plan = self._team_say(cid, first_msg_id, LEAD, self._team_header(LEAD) + self._team_rules(3) + (
             "Görevin: kullanıcının isteği için kısa bir plan ve iş bölümü öner (kim ne yapacak: "
-            "Usta, Atlas, Vision). Sohbet sorusuysa nasıl yanıtlayacağınızı söyle.\n") + user_block,
+            "Usta, Pusula, Gözcü). Sohbet sorusuysa nasıl yanıtlayacağınızı söyle.\n") + user_block,
             project_id, step=1)
         if self._is_turn_cancelled(first_msg_id) or not plan:
             with self._lock:
                 self._finish_turn(first_msg_id, "failed")
             return
 
-        # 2. Atlas and Vision criticise the plan at the same time.
-        self._set_turn_progress("Atlas ve Vision planı eleştiriyor…", current_msg_id=first_msg_id)
+        # 2. Pusula and Gözcü criticise the plan at the same time.
+        self._set_turn_progress("Pusula ve Gözcü planı eleştiriyor…", current_msg_id=first_msg_id)
         critique_ids = {a: self._team_bubble(cid, a, 2, first_msg_id) for a in ("codex", "antigravity")}
         transcript = self._team_transcript(cid, first_msg_id)
 
@@ -191,8 +191,8 @@ class TeamTurnMixin:
         if self._is_turn_cancelled(first_msg_id):
             return
 
-        # 4. Build (lead, the only writer) while Atlas and Vision prepare in parallel.
-        self._set_turn_progress("Usta inşa ediyor; Atlas kontrolleri, Vision riskleri hazırlıyor…",
+        # 4. Build (lead, the only writer) while Pusula and Gözcü prepare in parallel.
+        self._set_turn_progress("Usta inşa ediyor; Pusula kontrolleri, Gözcü riskleri hazırlıyor…",
                                 current_msg_id=first_msg_id)
         build_id = self._team_bubble(cid, LEAD, 4, first_msg_id)
         prep_ids = {a: self._team_bubble(cid, a, 4, first_msg_id) for a in ("codex", "antigravity")}
@@ -220,8 +220,8 @@ class TeamTurnMixin:
                 self._finish_turn(first_msg_id, "failed")
             return
 
-        # 5. Atlas and Vision check the result in parallel, read-only.
-        self._set_turn_progress("Atlas ve Vision sonucu kontrol ediyor…", current_msg_id=first_msg_id)
+        # 5. Pusula and Gözcü check the result in parallel, read-only.
+        self._set_turn_progress("Pusula ve Gözcü sonucu kontrol ediyor…", current_msg_id=first_msg_id)
         check_ids = {a: self._team_bubble(cid, a, 5, first_msg_id) for a in ("codex", "antigravity")}
         transcript = self._team_transcript(cid, first_msg_id)
 
