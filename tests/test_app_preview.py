@@ -164,5 +164,42 @@ class PreviewMarkupTests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout), ["http://localhost:18431/login", "http://127.0.0.1:8000/docs"])
 
 
+class WorkPanelTests(unittest.TestCase):
+    """Direction A: the preview pane is the work panel with host-evidence tabs."""
+
+    def test_tabs_and_lists_are_shipped(self):
+        for element_id in ("workTabPreview", "workTabChanges", "workTabChecks", "workChanges", "workChecks",
+                           "workChangesList", "workChecksList", "workChangesCount", "workChecksCount"):
+            self.assertEqual(SHELL_MARKUP.count(f'id="{element_id}"'), 1, element_id)
+        self.assertIn('data-work-tab="preview"', SHELL_MARKUP)
+        self.assertIn("setWorkEvidence(messages, replaceAll)", APPLICATION_JS)
+
+    def test_only_host_evidence_reaches_the_panel(self):
+        import json
+        import subprocess
+        part = PREVIEW_JS[PREVIEW_JS.index("  // Work panel tabs"):PREVIEW_JS.index("  // Agent limits")]
+        messages = [
+            {"id": "a", "sender": "claude", "sequence": 4,
+             "metadata": {"host_evidence": {"files_changed": ["README.md"], "source_validation": {"status": "VERIFIED"}}}},
+            {"id": "b", "sender": "codex", "sequence": 5, "metadata": {"files_changed": ["claimed.py"]}},
+            {"id": "c", "sender": "antigravity", "sequence": 6,
+             "metadata": {"host_evidence": {"files_changed": ["app.py"], "source_validation": {"status": "FAILED"}}}},
+        ]
+        script = ("const previewPane = null; const document = {getElementById: () => null};\n" + part +
+                  f"\nsetWorkEvidence({json.dumps(messages)}, true);"
+                  "\nconsole.log(JSON.stringify([...workEvidence.entries()]));"
+                  "\nsetWorkEvidence([], true); console.log(workEvidence.size);")
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.strip().splitlines()
+        entries = dict(json.loads(lines[0]))
+        self.assertEqual(sorted(entries), ["a", "c"])  # agent-reported paths never appear
+        self.assertEqual(entries["a"]["files"], ["README.md"])
+        self.assertEqual(entries["a"]["agent"], "Usta")
+        self.assertEqual(entries["a"]["check"], ["warn", "Sözdizimi doğrulandı; test kanıtı yok"])
+        self.assertEqual(entries["c"]["check"], ["fail", "Kontrol başarısız"])
+        self.assertEqual(lines[1], "0")  # switching conversation clears the panel
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -121,6 +121,65 @@ JAVASCRIPT = r"""
     }
     bubble.append(row);
   }
+  // Work panel tabs: preview, host-observed file changes and host checks for this conversation.
+  // Only host evidence (metadata.host_evidence) is listed; agent text never adds a row.
+  const workEvidence = new Map();
+  const WORK_AGENT = {codex: 'Atlas', claude: 'Usta', antigravity: 'Vision', gemini: 'Vision'};
+  function setWorkTab(tab) {
+    previewPane.dataset.workTab = tab;
+    previewPane.querySelectorAll('.work-tab').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === tab ? 'true' : 'false'));
+  }
+  function workCheckLabel(ev, meta) {
+    const status = ev?.source_validation?.status;
+    if (meta?.outcome?.goal_verdict === 'VERIFIED') return ['ok', 'Hedef doğrulandı'];
+    if (status === 'FAILED') return ['fail', 'Kontrol başarısız'];
+    if (status === 'VERIFIED') return ['warn', 'Sözdizimi doğrulandı; test kanıtı yok'];
+    return ['warn', 'Bağımsız kanıt yok'];
+  }
+  function renderWorkEvidence() {
+    const changes = new Map();
+    const checks = [];
+    for (const item of workEvidence.values()) {
+      for (const file of item.files) changes.set(file, item);
+      if (item.check) checks.push(item);
+    }
+    const fill = (id, rows, build) => {
+      const list = document.getElementById(id);
+      if (!list) return;
+      list.replaceChildren(...rows.map(build));
+      list.closest('.work-list')?.classList.toggle('has-items', rows.length > 0);
+    };
+    fill('workChangesList', [...changes.entries()], ([file, item]) => {
+      const li = document.createElement('li');
+      const code = document.createElement('code'); code.textContent = file;
+      const who = document.createElement('span'); who.className = 'work-who'; who.textContent = `${item.agent} · #${item.seq || '?'}`;
+      li.append(code, who); return li;
+    });
+    fill('workChecksList', checks, (item) => {
+      const li = document.createElement('li'); li.dataset.tone = item.check[0];
+      const label = document.createElement('span'); label.className = 'work-check'; label.textContent = item.check[1];
+      const who = document.createElement('span'); who.className = 'work-who'; who.textContent = `${item.agent} · #${item.seq || '?'} · ${item.files.length} dosya`;
+      li.append(label, who); return li;
+    });
+    const setCount = (id, n) => { const el = document.getElementById(id); if (el) el.textContent = n ? String(n) : ''; };
+    setCount('workChangesCount', changes.size);
+    setCount('workChecksCount', checks.length);
+  }
+  function setWorkEvidence(messages, replaceAll) {
+    if (replaceAll) workEvidence.clear();
+    for (const m of messages || []) {
+      const meta = (m && m.metadata) || {};
+      const ev = meta.host_evidence;
+      if (!m || !m.id || !ev || typeof ev !== 'object') continue;
+      const files = Array.isArray(ev.files_changed) ? ev.files_changed.map(String) : [];
+      const hasCheck = !!(ev.source_validation || meta.outcome?.goal_verdict);
+      workEvidence.set(m.id, {files, seq: m.sequence || meta.sequence, agent: WORK_AGENT[String(m.sender || '').toLowerCase()] || 'Quartz',
+                              check: hasCheck ? workCheckLabel(ev, meta) : null});
+    }
+    renderWorkEvidence();
+  }
+  previewPane?.querySelectorAll('.work-tab').forEach(b => b.addEventListener('click', () => setWorkTab(b.dataset.tab)));
+
   // Agent limits: a small read-only indicator (core.agent_limits); refreshed every minute.
   const LIMIT_CHIPS = {codex: 'limitCodex', claude: 'limitClaude', antigravity: 'limitAgy'};
   function renderAgentLimits(data) {
