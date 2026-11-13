@@ -79,7 +79,7 @@ SHELL_MARKUP = r"""
     <div class="rail-spacer"></div>
     <button type="button" class="rail-btn" id="btnSelfDiagnostics" title="Quartz öz teşhisini bu sohbette başlat" aria-label="Öz teşhis">@@i:pulse@@<span class="rail-tip" aria-hidden="true">Öz teşhis</span></button>
     <button type="button" class="rail-btn" id="btnPanels" title="Durum ve araç panelini aç/kapat (Ctrl+I)" aria-label="Durum ve araçlar" aria-keyshortcuts="Control+I">@@i:panel@@<span class="rail-tip" aria-hidden="true">Durum ve araçlar</span></button>
-    <button type="button" class="rail-btn" id="btnPreview" title="Uygulama önizlemesini aç/kapat (Ctrl+Shift+P)" aria-label="Uygulama önizlemesi" aria-controls="previewPane" aria-keyshortcuts="Control+Shift+P">@@i:globe@@<span class="rail-tip" aria-hidden="true">Önizleme</span></button>
+    <button type="button" class="rail-btn" id="btnPreview" title="İş panelini aç/kapat: önizleme, değişiklikler, kontroller (Ctrl+Shift+P)" aria-label="İş paneli" aria-controls="previewPane" aria-keyshortcuts="Control+Shift+P">@@i:globe@@<span class="rail-tip" aria-hidden="true">İş paneli</span></button>
     <div class="signature-mark" title="Ali Mehdi">AM</div>
   </nav>
 
@@ -470,7 +470,22 @@ SHELL_MARKUP = r"""
   </aside>
 
   <!-- App preview: shows a web app running on this computer (loopback only). -->
-  <aside class="preview-pane" id="previewPane" aria-label="Uygulama önizlemesi">
+  <aside class="preview-pane" id="previewPane" data-work-tab="preview" aria-label="İş paneli">
+    <div class="work-tabs" role="tablist" aria-label="İş paneli">
+      <button type="button" class="work-tab" role="tab" id="workTabPreview" data-tab="preview" aria-selected="true" aria-controls="previewBar">Önizleme</button>
+      <button type="button" class="work-tab" role="tab" id="workTabChanges" data-tab="changes" aria-selected="false" aria-controls="workChanges">Değişiklikler <span class="work-count" id="workChangesCount"></span></button>
+      <button type="button" class="work-tab" role="tab" id="workTabChecks" data-tab="checks" aria-selected="false" aria-controls="workChecks">Kontroller <span class="work-count" id="workChecksCount"></span></button>
+    </div>
+    <section class="work-list" id="workChanges" role="tabpanel" aria-labelledby="workTabChanges">
+      <p class="work-note">Quartz'ın dosya sisteminde kendisinin gördüğü değişiklikler. Ajanın "değiştirdim" demesi buraya girmez.</p>
+      <ol class="work-items" id="workChangesList"></ol>
+      <p class="work-empty">Bu sohbette henüz doğrulanmış dosya değişikliği yok.</p>
+    </section>
+    <section class="work-list" id="workChecks" role="tabpanel" aria-labelledby="workTabChecks">
+      <p class="work-note">Her yazıcı turunun Quartz tarafından görülen kontrol sonucu. Kullanıcı kabulü ayrıdır.</p>
+      <ol class="work-items" id="workChecksList"></ol>
+      <p class="work-empty">Bu sohbette henüz kontrol kanıtı yok.</p>
+    </section>
     <form class="preview-bar" id="previewBar" autocomplete="off">
       <button type="button" class="icon-btn" id="btnPreviewReload" title="Yenile" aria-label="Önizlemeyi yenile">@@i:loop:sm@@</button>
       <input class="preview-address" id="previewAddress" type="text" inputmode="url" spellcheck="false" placeholder="http://127.0.0.1:8000" aria-label="Önizleme adresi">

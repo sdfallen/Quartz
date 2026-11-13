@@ -666,6 +666,7 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     }
     revealSuppressed = replaceAll;  // history appears at once; later arrivals are written out
     if (typeof setCrewResults === 'function') setCrewResults(messages, replaceAll);
+    if (typeof setWorkEvidence === 'function') setWorkEvidence(messages, replaceAll);
     if (replaceAll) {
       chatEl.innerHTML = '';
       userPinnedToBottom = true;
