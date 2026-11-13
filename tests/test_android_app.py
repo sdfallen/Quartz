@@ -59,6 +59,13 @@ class AndroidAppTests(unittest.TestCase):
             self.assertNotIn(name, voice.lower())
         self.assertIn('"/api/voice"', (SOURCES / "SpesApi.kt").read_text(encoding="utf-8"))
 
+    def test_stop_silences_and_does_not_listen_again(self):
+        voice = (SOURCES / "VoiceActivity.kt").read_text(encoding="utf-8")
+        stop = voice[voice.index("private fun stopEverything"):voice.index("private fun ask")]
+        for needed in ("tts?.stop()", "recognizer?.cancel()", "generation++", "api.stop()", "listenAfter = false"):
+            self.assertIn(needed, stop)
+        self.assertNotIn("Başka bir şey var mı", voice)
+
     def test_personas_match_the_desktop(self):
         theme = (SOURCES / "Theme.kt").read_text(encoding="utf-8")
         import mobile_server

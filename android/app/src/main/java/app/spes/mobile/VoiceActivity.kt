@@ -68,6 +68,8 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var pendingSpeech: String? = null
     @Volatile private var open = true
     @Volatile private var waitingSeq = -1
+    // Bumped by Dur: any reply loop or answer from before Dur is dropped, nothing is read later.
+    @Volatile private var generation = 0
     // Conversation loop (live 13 Nov: it answered once and stopped listening).
     @Volatile private var listenWhenQuiet = false
     private var silentTries = 0
@@ -181,13 +183,7 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         val command = VoiceCommands.parse(text)
         val api = Prefs.api(this)
         when (command) {
-            VoiceCommands.Command.Stop -> {
-                phase.value = Phase.Waiting
-                thread {
-                    val ok = runCatching { api.stop() }.isSuccess
-                    runOnUiThread { waitingSeq = -1; say(if (ok) "Durdurdum. Başka bir şey var mı?" else "Durduramadım, bilgisayara ulaşamıyorum.") }
-                }
-            }
+            VoiceCommands.Command.Stop -> stopEverything(api)
             VoiceCommands.Command.Status -> {
                 phase.value = Phase.Waiting
                 thread {
@@ -200,35 +196,60 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
     }
 
+    /**
+     * Dur (button or spoken): silence at once, close the microphone, drop pending replies and
+     * stop the team's work. Then wait; the user taps Konuş to talk again (live 13 Nov: it asked
+     * whether there was anything else and started listening again).
+     */
+    private fun stopEverything(api: SpesApi) {
+        generation++
+        tts?.stop()
+        runCatching { recognizer?.cancel() }
+        listenWhenQuiet = false
+        waitingSeq = -1
+        silentTries = 2
+        phase.value = Phase.Waiting
+        val mine = generation
+        thread {
+            val ok = runCatching { api.stop() }.isSuccess
+            runOnUiThread {
+                if (mine == generation) say(if (ok) "Durdurdum." else "Durduramadım, bilgisayara ulaşamıyorum.", listenAfter = false)
+            }
+        }
+    }
+
     private fun ask(api: SpesApi, text: String) {
         phase.value = Phase.Waiting
+        val mine = ++generation
         thread {
             // Fast path first: the desktop answers from what it already shows (its fast model,
             // about 1 s) or hands the question to the team itself and says so.
             val quick = runCatching { api.voice(text) }
-            if (quick.isFailure) { runOnUiThread { say(quick.exceptionOrNull()?.message ?: "Mesaj gönderilemedi.") }; return@thread }
+            if (mine != generation) return@thread
+            if (quick.isFailure) { runOnUiThread { if (mine == generation) say(quick.exceptionOrNull()?.message ?: "Mesaj gönderilemedi.") }; return@thread }
             val (route, reply, before) = quick.getOrThrow()
-            if (route == "answered") { runOnUiThread { say(reply) }; return@thread }
-            runOnUiThread { say(reply.ifBlank { "Ekibe soruyorum." }, listenAfter = false) }
+            if (route == "answered") { runOnUiThread { if (mine == generation) say(reply) }; return@thread }
+            runOnUiThread { if (mine == generation) say(reply.ifBlank { "Ekibe soruyorum." }, listenAfter = false) }
             waitingSeq = before
             // Read replies aloud as they arrive; stop when the team is done (or after 3 minutes).
             val deadline = System.currentTimeMillis() + 180_000
             val spoken = HashSet<String>()
             var after = before
-            while (open && System.currentTimeMillis() < deadline) {
+            while (open && mine == generation && System.currentTimeMillis() < deadline) {
                 val s = runCatching { api.state(after, 20) }.getOrNull()
                 if (s == null) { Thread.sleep(3_000); continue }
                 val fresh = s.messages.filter { !it.fromUser && it.text.isNotBlank() && spoken.add(it.id) }
                 if (fresh.isNotEmpty()) {
                     val speech = fresh.joinToString(" ") { "${it.persona.ifBlank { "SpeS" }}: ${VoiceCommands.forSpeech(it.text)}" }
-                    runOnUiThread { say(speech, listenAfter = false, queue = true) }
+                    runOnUiThread { if (mine == generation) say(speech, listenAfter = false, queue = true) }
                 }
                 after = maxOf(after, s.lastSeq)
                 // The team is done as soon as it is idle and has answered; do not wait for another poll.
                 if (!s.busy && s.lastSeq > before) break
             }
+            if (mine != generation) return@thread
             waitingSeq = -1
-            runOnUiThread { if (open) listenWhenDone() }
+            runOnUiThread { if (open && mine == generation) listenWhenDone() }
         }
     }
 
