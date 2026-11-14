@@ -47,6 +47,37 @@ class LongJobChatMixin:
         job.start()
         return ledger.public()
 
+    def _long_job_command(self, conv, text, spec, confirmed_write) -> dict:
+        """'/uzun-iş' typed in the desktop chat with project writing allowed (never the phone)."""
+        if spec.get("list"):
+            jobs = self.job_list()
+            lines = [f"{j['goal'][:60]} — {j['status']}" for j in jobs[:5]]
+            return self._answer_without_agents(conv["id"], text, "Uzun işler: " + ("; ".join(lines) or "yok") + ".")
+        if not confirmed_write:
+            return self._answer_without_agents(conv["id"], text, (
+                "Uzun iş projeye saatlerce yazar; bu yüzden yalnız masaüstünde, yazma izni (Proje) açıkken "
+                "başlatılabilir. İzni açıp komutu yeniden gönder."))
+        try:
+            from core.long_job import validate_spec
+            validate_spec({**spec, "project_path": spec.get("project_path") or "."})  # fail before any message
+        except JobError as exc:
+            return self._answer_without_agents(conv["id"], text, f"Uzun iş başlatılamadı: {exc}")
+        with self._lock:
+            user = self.store.append_message(conv["id"], "user", text, sender="user", metadata={
+                "sender": "user", "recipient": "quartz", "long_job_command": True,
+                "sequence": self._next_sequence(self.store.get(conv["id"]))})
+        try:
+            job = self.job_start({**spec, "conversation_id": conv["id"]})
+        except (JobError, ValueError) as exc:
+            note = self.store.append_message(conv["id"], "assistant", f"Uzun iş başlatılamadı: {exc}", sender="quartz",
+                                             metadata={"sender": "quartz", "recipient": "user", "status": "completed",
+                                                       "sequence": self._next_sequence(self.store.get(conv["id"]))})
+            return {"conversation_id": conv["id"], "user_message": user, "assistant_message": note, "agent": "quartz"}
+        note = next((m for m in reversed(self.store.get(conv["id"]).get("messages", []))
+                     if (m.get("metadata") or {}).get("long_job") == job["id"]), None)
+        return {"conversation_id": conv["id"], "user_message": user, "assistant_message": note,
+                "agent": "quartz", "job": job}
+
     def job_control(self, job_id: str, action: str) -> dict:
         job = self._jobs().get(str(job_id or ""))
         if job is None:

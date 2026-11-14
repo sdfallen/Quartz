@@ -550,3 +550,56 @@ def milestone_prompt(ledger: JobLedger, milestone: dict, writer: str) -> str:
     if d.get("writer") and writer != "claude":
         parts.append(f"Bu taşta yazıcı sensin ({PERSONA.get(writer, writer)}); Fatum limitte.")
     return "\n\n".join(parts)
+
+
+COMMAND = re.compile(r"^\s*/uzun[-_ ]?i[şs]\b", re.I)
+FIELDS = {"hedef": "goal", "süre": "hours", "sure": "hours", "devam": "auto_resume", "kontrol": "verify",
+          "dal": "git_branch"}
+
+
+def parse_command(text: str):
+    """'/uzun-iş' typed by the user in a Workspace chat -> a job spec (None if not a command).
+
+    /uzun-iş
+    Hedef: ...
+    Süre: 2 saat
+    Devam: evet            (çökünce kendiliğinden devam)
+    Kontrol: python -m unittest      (argümanlar boşlukla; kabuk yok)
+    Dal: spes/deneme-1
+    1. Başlık | kabul ölçütü
+    """
+    if not COMMAND.match(str(text or "")):
+        return None
+    import shlex
+    spec = {"milestones": []}
+    rest = COMMAND.sub("", text, count=1).strip()
+    if rest.lower() in {"durum", "liste", "list", ""}:
+        return {"list": True}
+    for raw in rest.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        step = re.match(r"^\d+[.)]\s*(.+?)\s*\|\s*(.+)$", line)
+        if step:
+            spec["milestones"].append({"title": step.group(1), "acceptance": step.group(2)})
+            continue
+        key, sep, value = line.partition(":")
+        field = FIELDS.get(key.strip().lower())
+        if not sep or not field:
+            raise JobError(f"Anlaşılmayan satır: {line[:80]}")
+        value = value.strip()
+        if field == "hours":
+            number = re.search(r"\d+(?:[.,]\d+)?", value)
+            if not number:
+                raise JobError("Süre sayı olmalı (ör. 2 saat).")
+            amount = float(number.group(0).replace(",", "."))
+            spec["hours"] = amount / 60 if re.search(r"dak", value, re.I) else amount
+        elif field == "auto_resume":
+            spec["auto_resume"] = value.lower() in {"evet", "e", "açık", "acik", "yes", "true"}
+        elif field == "verify":
+            # Windows paths keep their backslashes; surrounding quotes are dropped.
+            spec["verify"] = [part[1:-1] if len(part) > 1 and part[0] == part[-1] and part[0] in "\"'" else part
+                              for part in shlex.split(value, posix=False)] if value else None
+        else:
+            spec[field] = value
+    return spec

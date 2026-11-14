@@ -968,6 +968,13 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
         if requested_permission_level not in {'read-only','project','full'}: raise ValueError('Invalid requested permission level')
         from core.space_policy import is_chat
         target = self.store.get(conversation_id) if conversation_id else self.store.get_active()
+        from core.long_job import JobError, parse_command
+        try:
+            job_spec = parse_command(text)
+        except JobError as exc:
+            return self._answer_without_agents(target["id"], text, f"Uzun iş anlaşılamadı: {exc}")
+        if job_spec is not None:
+            return self._long_job_command(target, text, job_spec, write and confirm_write is True)
         from core.skill_shelf import install_request, invocation
         skill = skill_install = None
         invoked = invocation(text)

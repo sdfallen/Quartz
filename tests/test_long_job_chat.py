@@ -66,6 +66,11 @@ class FakeChat(LongJobChatMixin):
     def cancel_active(self):
         self.cancelled += 1
 
+    def _answer_without_agents(self, cid, text, answer):
+        self.store.append_message(cid, "user", text, sender="user")
+        note = self.store.append_message(cid, "assistant", answer, sender="quartz")
+        return {"assistant_message": note}
+
     def send_message(self, text, agent=None, conversation_id=None, write=False, confirm_write=False):
         self.sent.append({"agent": agent, "write": write, "confirm": confirm_write, "text": text})
         state, reply, sender = self.replies.pop(0)
@@ -169,6 +174,28 @@ class LongJobChatTests(unittest.TestCase):
         chat.job_control(ledger.data["id"], "stop")
         self.assertEqual(chat.cancelled, 1)
         self.assertTrue(JobLedger.load(ledger.path).data["stopped"])
+
+
+    def test_the_typed_command_starts_a_job_only_with_desktop_write_permission(self):
+        from core.long_job import parse_command
+        text = "\n".join(["/uzun-iş", "Hedef: Yürüme animasyonu", "Süre: 30 dakika", "Devam: evet",
+                          'Kontrol: python -c "print(1)"', "Dal: spes/deneme-1",
+                          "1. Yürüme | 8 yön döngü", "2. Koşma | 8 yön"])
+        spec = parse_command(text)
+        self.assertEqual(spec["goal"], "Yürüme animasyonu")
+        self.assertAlmostEqual(spec["hours"], 0.5)
+        self.assertTrue(spec["auto_resume"])
+        self.assertEqual(spec["verify"], ["python", "-c", "print(1)"])
+        self.assertEqual(spec["git_branch"], "spes/deneme-1")
+        self.assertEqual([m["title"] for m in spec["milestones"]], ["Yürüme", "Koşma"])
+        self.assertIsNone(parse_command("uzun iş hakkında ne düşünüyorsun?"))
+        self.assertEqual(parse_command("/uzun-iş durum"), {"list": True})
+        with self.assertRaises(JobError):
+            parse_command("/uzun-iş\nNe: olur")
+        chat = FakeChat(self.project, replies=[])
+        answer = chat._long_job_command(chat.store.conv, text, spec, False)  # phone / no write permission
+        self.assertIn("yazma izni", answer["assistant_message"]["content"])
+        self.assertEqual(chat._jobs(), {})
 
 
 if __name__ == "__main__":
