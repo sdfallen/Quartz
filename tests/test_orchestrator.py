@@ -133,6 +133,32 @@ class OrchestratorTaskTests(unittest.TestCase):
         finally:
             task.stop()
 
+    def test_fatum_verdict_is_not_posted_twice(self):
+        # Live 14 Nov: the closing task_message and the run's final reply both reached the chat.
+        for spoke in (True, False):
+            with self.subTest(spoke=spoke):
+                self.events.clear()
+                task = self.start(Runtime())
+                try:
+                    if spoke:
+                        task.call(task.tokens["claude"], {"name": "task_message",
+                                                           "arguments": {"text": "Kapanış: metin doğrulandı."}})
+                    self.codex.states["run1"]["status"] = "completed"
+                    self.gemini.states["run1"]["status"] = "completed"
+                    self.claude.states["run1"]["status"] = "completed"
+                    deadline = time.time() + 3
+                    while task.status()["active"] and time.time() < deadline:
+                        time.sleep(.1)
+                    fatum = [e for e in self.events if e[1] == "claude"]
+                    self.assertEqual(len(fatum), 1)
+                    self.assertIn("Kapanış" if spoke else "Plan:", fatum[0][2])
+                finally:
+                    task.stop()
+
+    def test_fatum_waits_for_both_workers_before_its_verdict(self):
+        from core.natural_desktop import ORCHESTRATOR_INSTRUCTIONS
+        self.assertIn("BOTH the operator's and the collaborator's runs", ORCHESTRATOR_INSTRUCTIONS)
+
     def test_grace_expiry_ends_the_task(self):
         with patch.object(natural_desktop, "ORCHESTRATOR_GRACE_SECONDS", 0.3):
             task = self.start(Runtime())
