@@ -43,6 +43,18 @@ class SafeArchiveTests(unittest.TestCase):
                     extract_zip(z, target)
         self.assertFalse((self.root / "evil.txt").exists())
 
+    def test_links_are_skipped_never_created(self):
+        import stat as stat_module
+        path = self.root / "links.zip"
+        with zipfile.ZipFile(path, "w") as bundle:
+            bundle.writestr("data/real.csv", "a,b")
+            link = zipfile.ZipInfo("data/styles.csv")
+            link.external_attr = (stat_module.S_IFLNK | 0o777) << 16
+            bundle.writestr(link, "../../../etc/passwd")
+        out = extract_zip(path, self.root / "out-links")
+        self.assertEqual((out["files"], out["skipped_links"]), (["data/real.csv"], ["data/styles.csv"]))
+        self.assertFalse((self.root / "out-links" / "data" / "styles.csv").exists())
+
     def test_zip_bomb_and_non_zip_are_refused(self):
         bomb = make_zip(self.root / "bomb.zip", {"big.txt": "0" * (5 * 1024 * 1024)})
         with self.assertRaises(ArchiveError):

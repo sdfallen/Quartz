@@ -29,6 +29,9 @@ class SkillTurnMixin:
         try:
             fetched = shelf.fetch(request)
         except SkillError as exc:
+            # The opening bubble must not stay an empty "…" (live 14 Nov).
+            self.store.update_message_content(cid, first_msg_id, f"Depo incelenemedi: {exc}",
+                                              metadata={"status": "failed"})
             self._post_skill_note(cid, f"Skill kurulamadı: {exc}", installed=False)
             with self._lock:
                 self._finish_turn(first_msg_id, "failed")

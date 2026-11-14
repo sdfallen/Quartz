@@ -116,6 +116,14 @@ class SkillShelf:
         except Exception as exc:
             shutil.rmtree(staging, ignore_errors=True)
             raise SkillError(f"GitHub'dan indirilemedi: {type(exc).__name__}") from exc
+        # GitHub writes the commit SHA into the archive's comment; a "HEAD" archive's
+        # folder name does not carry it (live 14 Nov: ui-ux-pro-max-skill-HEAD).
+        try:
+            import zipfile
+            with zipfile.ZipFile(archive) as bundle:
+                comment = bundle.comment.decode("ascii", errors="ignore").strip()
+        except Exception:
+            comment = ""
         try:
             extract_zip(archive, staging / "repo")
         except ArchiveError as exc:
@@ -128,7 +136,8 @@ class SkillShelf:
             raise SkillError("Beklenmeyen arşiv yapısı")
         top = tops[0]
         sha_match = re.search(r"-([0-9a-f]{7,40})$", top.name)
-        sha = sha_match.group(1) if sha_match else ""
+        sha = (comment if re.fullmatch(r"[0-9a-f]{40}", comment) else
+               sha_match.group(1) if sha_match else "")
         base = top / request["subpath"] if request.get("subpath") else top
         if not base.resolve().is_dir() or top.resolve() not in [base.resolve(), *base.resolve().parents]:
             shutil.rmtree(staging, ignore_errors=True)
@@ -142,10 +151,15 @@ class SkillShelf:
     @staticmethod
     def find_skills(base: Path) -> list[dict]:
         found = []
-        for skill_md in sorted(Path(base).rglob("SKILL.md"))[:20]:
+        seen = set()
+        # Shallowest copy first: a repository may ship the same skill twice (live 14 Nov).
+        for skill_md in sorted(Path(base).rglob("SKILL.md"), key=lambda p: (len(p.parts), str(p)))[:40]:
             text = skill_md.read_text(encoding="utf-8", errors="replace")
             meta = _frontmatter(text)
             name = _slug(meta.get("name") or skill_md.parent.name)
+            if name in seen or len(found) >= 20:
+                continue
+            seen.add(name)
             files = sorted(p.relative_to(skill_md.parent).as_posix() for p in skill_md.parent.rglob("*") if p.is_file())
             found.append({"name": name, "description": meta.get("description", "")[:300],
                           "dir": str(skill_md.parent), "files": files[:50], "size": len(text)})

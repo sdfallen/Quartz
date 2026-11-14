@@ -80,6 +80,18 @@ class ShelfTests(unittest.TestCase):
         self.assertEqual(shelf.list(), [])
         self.assertEqual(entry["sha"], fetched["sha"])
 
+    def test_sha_comes_from_the_archive_comment_and_duplicates_collapse(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as bundle:
+            bundle.comment = b"89abcdef0123456789abcdef0123456789abcdef"
+            bundle.writestr("repo-HEAD/.claude/skills/pdf/SKILL.md", SKILL_MD)
+            bundle.writestr("repo-HEAD/cli/assets/skills/pdf/SKILL.md", SKILL_MD)
+        fetched = SkillShelf(self.root, opener=FakeOpener(buffer.getvalue())).fetch(
+            install_request("skill kur https://github.com/a/repo"))
+        self.assertEqual(fetched["sha"], "89abcdef0123456789abcdef0123456789abcdef")
+        self.assertEqual(len(fetched["skills"]), 1)
+        self.assertIn(".claude", fetched["skills"][0]["dir"])
+
     def test_repo_without_skill_or_escape_is_refused(self):
         with self.assertRaises(SkillError):
             SkillShelf(self.root, opener=FakeOpener(repo_zip({"README.md": "x"}))).fetch(
