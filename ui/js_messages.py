@@ -114,6 +114,8 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
   }
   function formatMessageLabel(m) {
     if (!m) return 'SPES';
+    // Eos the security watcher speaks through SpeS's own messages (14 Nov).
+    if (m.metadata && (m.metadata.security_alert || m.metadata.security_result)) return 'EOS · GÜVENLİK';
     if (m.metadata && m.metadata.team && TEAM_PERSONA[(m.sender || m.metadata.sender || '').toLowerCase()]) {
       const agent = (m.sender || m.metadata.sender).toLowerCase();
       return `${TEAM_PERSONA[agent]} · ${agent === 'antigravity' ? 'ANTIGRAVITY' : agent.toUpperCase()}`;

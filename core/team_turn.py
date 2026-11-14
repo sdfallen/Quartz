@@ -240,6 +240,11 @@ class TeamTurnMixin:
                                     current_msg_id=first_msg_id)
             ids = {a: self._team_bubble(cid, a, 0, first_msg_id) for a in others}
             heard = f"\n--- {persona_name(lead).upper()} ŞÖYLE DEDİ ---\n{first}\nOnu tekrar etme; kendi kısa cümleni söyle.\n"
+            if (self._active_turn or {}).get("attachments"):
+                # Live 14 Nov: Fides answered "görmediğim için doğrulayamıyorum" without opening
+                # the note it could read. Teammates read the files themselves before speaking.
+                heard += ("Kullanıcının eklediği dosyaları önce kendin oku (EKLER bölümündeki araçlarla); "
+                          "okuyamadığın bir dosya hakkında yalnız bunu söyle, okumadan görüş bildirme.\n")
             self._team_parallel({a: (lambda a=a: say(a, ids[a], heard)) for a in others})
         with self._lock:
             self._finish_turn(first_msg_id, "completed" if first else "partial")

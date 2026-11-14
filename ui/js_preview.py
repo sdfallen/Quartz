@@ -283,7 +283,13 @@ JAVASCRIPT = r"""
     const count = document.getElementById('workFilesCount');
     if (count) count.textContent = (panelFiles.project.length + panelFiles.attachments.length) || '';
   }
+  let panelConvId = null;
   async function refreshPanelFiles() {
+    if (panelConvId !== currentConvId) {
+      // Another conversation: its files only; the old viewer content goes (live 14 Nov).
+      panelConvId = currentConvId;
+      viewerMessage('Ekibin yazdığı bir dosyayı ya da gönderdiğin bir eki seç.');
+    }
     try {
       const result = await window.pywebview.api.panel_result(currentConvId || '');
       if (result.status === 'ok') { panelFiles = result.data; renderPanelFiles(); return result.data; }

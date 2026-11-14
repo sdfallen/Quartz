@@ -1056,7 +1056,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin):
                     "requested_permission_level":requested_permission_level,
                     **({"memory": memory_note} if memory_note else {}),
                     # The UI offers "Workspace'te aç" under a work request typed in Sohbet.
-                    **({"space_hint": "work"} if chat_space and looks_like_task and not research else {}),
+                    **({"space_hint": "work"} if chat_space and looks_like_task and not research and not attached else {}),
                     **({"research": True} if research else {}),
                     **({"skill": skill["name"]} if skill else {}),
                     **({"skill_install": skill_install["url"]} if skill_install else {}),
@@ -1869,7 +1869,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin):
                 dispatch_kwargs["read_root"] = attached["folder"]
                 dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
         from core.web_policy import web_allowed
-        if web and web_allowed("antigravity", conversation_only=conversation_only,
+        if web and not dispatch_kwargs.get("read_root") and web_allowed("antigravity", conversation_only=conversation_only,
                                project_read=bool(dispatch_kwargs.get("project_read")),
                                write=bool(write), full_access=bool(full_access)):
             dispatch_kwargs["web"] = True
@@ -2074,7 +2074,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin):
             # The builder (Fatum) reads the attachments while writing the project.
             dispatch_kwargs["read_root"] = self._turn_attachments(cid)["folder"]
         from core.web_policy import web_allowed
-        if web and web_allowed(agent, conversation_only=conversation_only,
+        if web and not dispatch_kwargs.get("read_root") and web_allowed(agent, conversation_only=conversation_only,
                                project_read=bool(dispatch_kwargs.get("project_read")),
                                write=bool(write), full_access=bool(full_access)):
             dispatch_kwargs["web"] = True

@@ -140,6 +140,23 @@ class ChatTests(unittest.TestCase):
         self.assertEqual(turn["attachments"]["items"][0]["kind"], "image")
         self.assertEqual(chat.attachments.staged(cid), {"items": []})
 
+    def test_live_findings_files_in_sohbet_are_read_there_by_everyone(self):
+        # Live 14 Nov: "şu logoya bakın" got a Workspace chip, and Fides answered without reading.
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.dict("os.environ", {"QUARTZ_ATTACHMENTS_HOME": str(Path(directory) / "att")}):
+            chat = make_chat(directory)
+            from core.attachments import AttachmentStore
+            chat.attachments = AttachmentStore()
+            cid = chat.new_conversation(agent="collaboration", space="chat")["id"]
+            chat.attachments.add(cid, "not.txt", "Bütçe 2000 TL".encode())
+            run = TeamRun(chat)
+            run.run("Beyler şu nota bakın")
+            user = next(m for m in chat.store.get(cid)["messages"] if m["role"] == "user")
+            chat._diagnostics.close()
+        self.assertNotIn("space_hint", user["metadata"])
+        teammates = [c for c in run.calls if c["agent"] != "claude"]
+        self.assertTrue(teammates and all("önce kendin oku" in c["prompt"] for c in teammates))
+
 
 if __name__ == "__main__":
     unittest.main()
