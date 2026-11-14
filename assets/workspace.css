@@ -867,3 +867,17 @@ body.show-preview .preview-pane { display: flex; }
 .attach-chip.sent:hover { background: var(--accent-soft); }
 .msg-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; justify-content: flex-end; }
 .composer.dropping { outline: 2px dashed var(--accent); outline-offset: 2px; }
+
+
+/* ── Result cards (14 Nov 2026) ─────────────────────────────────────────── */
+.result-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin-top: 10px; }
+.result-card { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface-1); box-shadow: var(--shadow-1); transition: transform .18s ease, border-color .18s ease; }
+.result-card:hover { transform: translateY(-1px); border-color: var(--line-strong); }
+.result-card h4 { margin: 0; font-size: 14px; line-height: 1.35; color: var(--text); overflow-wrap: anywhere; }
+.result-card p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-2); overflow-wrap: anywhere; }
+.result-card-meta { font-size: 12px; color: var(--text-3); }
+.result-card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: auto; padding-top: 4px; }
+.result-tag { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.result-open { margin-left: auto; border: 1px solid var(--line-strong); background: transparent; color: var(--text); border-radius: 999px; padding: 4px 12px; font-size: 12.5px; cursor: pointer; }
+.result-open:hover { background: var(--accent-soft); }
+@media (prefers-reduced-motion: reduce) { .result-card { transition: none; } }

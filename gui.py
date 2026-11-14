@@ -954,6 +954,18 @@ class Api:
         return ipc_send("chat_new", {"title": title, "agent": agent, "project_id": project_id or None,
                                      "space": space or None})
 
+    def open_external(self, url: str) -> dict:
+        """Open a result card's link in the system browser (http/https only, never in SpeS)."""
+        from urllib.parse import urlsplit
+        value = str(url or "").strip()
+        parts = urlsplit(value)
+        if parts.scheme not in ("http", "https") or not parts.netloc or len(value) > 500 or any(
+                c in value for c in " \n\r\t\"'<>"):
+            return {"status": "error", "data": "Yalnız http/https bağlantıları açılır"}
+        import webbrowser
+        webbrowser.open(value, new=2)
+        return {"status": "ok", "data": True}
+
     def chat_attach_pick(self, conversation_id: str = "") -> dict:
         """Native picker for files to add to the next message (photos, documents, zip)."""
         window = webview.windows[0] if webview.windows else None

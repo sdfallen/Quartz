@@ -324,10 +324,60 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     chatEl.querySelectorAll('.agent-live').forEach(el => { if (!keep.has(el)) el.remove(); });
   }
 
+  // Research results as cards (14 Nov). Card text is the agent's claim: rendered as text,
+  // links (http/https only, checked on the host) open in the system browser.
+  function renderResultCards(cards) {
+    const grid = document.createElement('div');
+    grid.className = 'result-cards';
+    for (const card of cards.slice(0, 12)) {
+      const item = document.createElement('article');
+      item.className = 'result-card';
+      const title = document.createElement('h4');
+      title.textContent = String(card.title || '');
+      item.append(title);
+      const meta = [card.source, card.price, card.deadline].filter(Boolean).map(String);
+      if (meta.length) {
+        const line = document.createElement('div');
+        line.className = 'result-card-meta';
+        line.textContent = meta.join(' · ');
+        item.append(line);
+      }
+      if (card.description) {
+        const text = document.createElement('p');
+        text.textContent = String(card.description);
+        item.append(text);
+      }
+      const foot = document.createElement('div');
+      foot.className = 'result-card-foot';
+      for (const tag of (Array.isArray(card.tags) ? card.tags : []).slice(0, 3)) {
+        const chip = document.createElement('span');
+        chip.className = 'result-tag';
+        chip.textContent = String(tag);
+        foot.append(chip);
+      }
+      if (/^https?:\/\//i.test(String(card.url || ''))) {
+        const open = document.createElement('button');
+        open.type = 'button';
+        open.className = 'result-open';
+        open.textContent = 'İlana git';
+        open.title = String(card.url);
+        open.onclick = async () => {
+          const result = await window.pywebview.api.open_external(String(card.url));
+          if (result && result.status !== 'ok') logLine('Bağlantı açılamadı: ' + String(result.data || ''));
+        };
+        foot.append(open);
+      }
+      if (foot.childNodes.length) item.append(foot);
+      grid.append(item);
+    }
+    return grid;
+  }
+
   function renderMessageBody(bubble, text, msg) {
     const level = document.getElementById('responseDetail')?.value || 'short';
     const view = agentMessageView(text, msg, level);
-    const key = JSON.stringify([text, view.details, view.state, level]);
+    const cards = Array.isArray(msg?.metadata?.cards) ? msg.metadata.cards : [];
+    const key = JSON.stringify([text, view.details, view.state, level, cards.length]);
     if (bubble.dataset.renderKey === key) return false;
     bubble.dataset.renderKey = key;
     bubble.classList?.toggle('pending', view.summary === '...');
@@ -358,6 +408,7 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       appendMessageText(body, view.summary);
     }
     bubble.append(body);
+    if (cards.length && !isUserMessage) bubble.append(renderResultCards(cards));
     if (!isUserMessage && view.summary !== '...' && typeof revealMessage === 'function') revealMessage(bubble, body, msg?.id);
     if (!isUserMessage && view.summary !== '...' && window.QuartzPreview) window.QuartzPreview.decorate(bubble, view.summary + '\n' + (view.details || ''));
     if (msg?.status === 'interrupted' && msg.id) {

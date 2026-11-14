@@ -37,6 +37,16 @@ def wants_cards(text: str) -> bool:
     return bool(_ASKS_FOR_LIST.search(str(text or "")))
 
 
+_ONLINE = re.compile(r"(internet|web|online|çevrimiçi|google|sitelerde|platform|ilan|freelance|araştır)", re.I)
+_LOCAL_WORK = re.compile(r"(dosya|kod|proje|klasör|repo|test|\.(?:py|js|ts|html|css|md|json)\b)", re.I)
+
+
+def is_research(text: str) -> bool:
+    """A request for an answer found online and shown as cards (web on, no build)."""
+    value = str(text or "")
+    return bool(wants_cards(value) and _ONLINE.search(value) and not _LOCAL_WORK.search(value))
+
+
 def _clean_url(value) -> str:
     url = str(value or "").strip()
     try:

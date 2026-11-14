@@ -109,6 +109,9 @@ class MobileGateway:
                 "step": meta.get("team_step"), "text": str(message.get("content") or "")[:4000],
                 "model": str(meta.get("model") or ""),
                 "report": bool(meta.get("report")),
+                # Research cards (14 Nov): already bounded and http(s)-only on the host.
+                "cards": [c for c in (meta.get("cards") or []) if isinstance(c, dict)][:12],
+                "attachments": [str(a.get("name") or "") for a in (meta.get("attachments") or []) if isinstance(a, dict)][:10],
                 "memory": ("saved" if (meta.get("memory") or {}).get("saved") else
                            "secret" if (meta.get("memory") or {}).get("reason") == "secret" else ""),
                 "failed": meta.get("status") == "failed" or bool(meta.get("error")) or outcome.get("goal_verdict") == "FAILED",

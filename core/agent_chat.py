@@ -688,8 +688,10 @@ class AgentChatService(TeamTurnMixin):
             memory += ("[SPES HAFIZA] Kullanıcının son mesajı gizli bilgi (şifre, kart, anahtar vb.) içerdiği için "
                        "SpeS onu kaydetmedi. Bunu kısaca söyle.\n")
         from core.space_policy import space_of, space_rule
+        from core.result_cards import CARDS_RULE, is_research
+        cards = CARDS_RULE if is_research(request) else ""
         return (communication_instruction(self.store.preferences()["response_detail"], request) + "\n"
-                + NORMAL_CHAT_DESKTOP_NOTICE + memory + space_rule(space_of(conv)) + mode + full_prompt)
+                + NORMAL_CHAT_DESKTOP_NOTICE + memory + space_rule(space_of(conv)) + mode + cards + full_prompt)
 
     # -- long-term memory (user-visible, user-deletable) --------------------
     def memory_list(self) -> list:
@@ -816,7 +818,11 @@ class AgentChatService(TeamTurnMixin):
         looks_like_task = message_intent(text) == "task"
         # Sohbet space never starts work, whatever the wording (user request 14 Nov).
         chat_space = is_chat(target)
-        conversation_only = chat_space or not looks_like_task
+        # "İnternette ... araştırın, liste yapın": an answer with web search and cards, not a
+        # build (user request 14 Nov). A request that also names files or code stays a task.
+        from core.result_cards import is_research
+        research = is_research(text)
+        conversation_only = chat_space or research or not looks_like_task
         if conversation_only:
             write = full_access = confirm_write = False
         write = bool(write or full_access)
@@ -891,7 +897,8 @@ class AgentChatService(TeamTurnMixin):
                     "requested_permission_level":requested_permission_level,
                     **({"memory": memory_note} if memory_note else {}),
                     # The UI offers "Workspace'te aç" under a work request typed in Sohbet.
-                    **({"space_hint": "work"} if chat_space and looks_like_task else {}),
+                    **({"space_hint": "work"} if chat_space and looks_like_task and not research else {}),
+                    **({"research": True} if research else {}),
                 },
             )
 
@@ -1278,6 +1285,12 @@ class AgentChatService(TeamTurnMixin):
                 return False
             if provider and session:
                 self.store.set_agent_session(cid, provider, session)
+            if content and "spes-kartlar" in str(content):
+                # Research results as cards (core.result_cards); half-streamed JSON stays hidden.
+                from core.result_cards import extract_cards
+                content, cards = extract_cards(content)
+                if cards and metadata is not None:
+                    metadata = {**metadata, "cards": cards}
             if metadata is not None:
                 metadata = {**metadata, "task_id":self._active_turn.get("turn_id"),
                             "conversation_id":cid,"project_id":self._active_turn.get("project_id")}

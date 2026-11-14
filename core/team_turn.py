@@ -140,6 +140,9 @@ class TeamTurnMixin:
                 cid, msg_id, prompt, project_id, write, confirm_write, use_session=False,
                 base_meta=base_meta, full_access=full_access, agent=agent, tool_less=tool_less,
                 project_scope=project_scope, web=web)
+        if text and "spes-kartlar" in text:
+            from core.result_cards import extract_cards
+            text, _cards = extract_cards(text)  # the cards were stored when the reply was published
         short = clamp_sentences(text, limit, per_sentence) if (limit and text) else text
         with self._lock:
             # Same cancellation fence as the executors' own publishing.
@@ -208,12 +211,22 @@ class TeamTurnMixin:
     # -- small talk ----------------------------------------------------------
     def _run_team_chat(self, cid, first_msg_id, project_id, user_block, agents, history_block=""):
         """Plain conversation: the first speaker answers, the others add one short line each."""
+        # The flag SpeS set on the user's own message (the prompt block carries host context).
+        user_mid = (self._active_turn or {}).get("user_message_id")
+        research = any(m.get("id") == user_mid and (m.get("metadata") or {}).get("research")
+                       for m in self.store.get(cid).get("messages", []))
+        if research:
+            agents = [LEAD]  # one researched answer with cards, not three opinions
         lead = LEAD if LEAD in agents else agents[0]
         # History first, then the chat rule: the rule closest to the message is the one followed.
         # Only the lead (Claude) may search the web; teammates stay tool-less.
         from core.space_policy import space_of, team_chat_rule
         space = space_of(self.store.get(cid))
         rule = team_chat_rule(space)
+        if research:
+            # The list goes into cards; the chat line stays short (core.result_cards).
+            rule = ("ARAŞTIRMA: Gerekirse web'de ara. Metinde en fazla 2 kısa cümleyle ne bulduğunu özetle; "
+                    "sonuçları yalnız spes-kartlar bloğunda ver. Bağlantıları metne yazma.\n")
         say = lambda agent, msg_id, extra="": self._team_say(
             cid, msg_id, agent, self._team_header(agent, space) + history_block + rule + extra + user_block, project_id,
             step=0, limit=2, per_sentence=CHAT_CHARS_PER_SENTENCE)
