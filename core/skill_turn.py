@@ -11,7 +11,8 @@ from __future__ import annotations
 from core.skill_shelf import SkillError, verdict
 
 REVIEW_RULE = (
-    "Görevin: kullanıcının kurmak istediği skill'i incele. Dosyalar EKLER klasöründe, yalnız okuyabilirsin. "
+    "Görevin: kullanıcının kurmak istediği skill'i incele. Skill'in BÜTÜN dosyaları EKLER klasöründe ve EKLER "
+    "listesinde; yalnız okuyabilirsin. Önce klasörü listele, SKILL.md'yi ve scripts/ altındaki betikleri oku. "
     "Bak: SKILL.md ne yapmayı söylüyor, betikler (varsa) ne yapıyor, gizli bilgi isteme/ağa veri gönderme/"
     "dosya silme/izin değiştirme gibi riskli bir şey var mı, açıklama ile içerik tutarlı mı. "
     "En fazla 4 kısa cümle yaz ve SON SATIRA tam olarak 'KARAR: UYGUN' ya da 'KARAR: UYGUN DEĞİL' yaz. "
@@ -41,10 +42,12 @@ class SkillTurnMixin:
         with self._lock:
             turn = self._active_turn or {}
             # The fetched repository is this turn's read-only folder, like attachments.
+            # Every file of every skill is listed (live 14 Nov: only SKILL.md was named, so
+            # Fides and Eos concluded the scripts were "not attached" and could not approve).
             turn["attachments"] = {"folder": fetched["folder"], "items": [
-                {"id": s["name"], "name": s["name"], "kind": "skill", "size": s["size"],
-                 "path": (Path(s["dir"]).relative_to(fetched["folder"]) / "SKILL.md").as_posix()}
-                for s in fetched["skills"]]}
+                {"id": f"{s['name']}:{name}", "name": name, "kind": "skill", "size": 0,
+                 "path": (Path(s["dir"]).relative_to(fetched["folder"]) / name).as_posix()}
+                for s in fetched["skills"] for name in s["files"]][:60]}
         header = (f"\n--- SKILL KURULUMU ---\nDepo: {request['url']} @ {fetched['sha'][:12] or 'bilinmiyor'}\n"
                   f"Bulunan skill(ler): {names}\n")
         self._set_turn_progress("Fides ve Eos skill'i inceliyor…", current_msg_id=first_msg_id)

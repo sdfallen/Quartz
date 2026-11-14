@@ -131,6 +131,20 @@ class InstallTurnTests(unittest.TestCase):
         note = [m for m in messages if m.get("sender") == "quartz" and (m.get("metadata") or {}).get("skill_install")]
         self.assertIn("/skill pdf-ozet", note[0]["content"])
 
+    def test_reviewers_are_shown_every_file_of_the_skill(self):
+        # Live 14 Nov: only SKILL.md was listed, so the scripts looked "not attached".
+        with tempfile.TemporaryDirectory() as directory:
+            chat = make_chat(directory)
+            chat.skills = SkillShelf(Path(directory) / "skills", opener=FakeOpener(repo_zip(
+                {"skills/pdf/SKILL.md": SKILL_MD, "skills/pdf/scripts/search.py": "print(1)"})))
+            run = TeamRun(chat)
+            chat.new_conversation(agent="claude", space="work")
+            run.run("Şu skill'i kur: https://github.com/a/b")
+            paths = [i["path"] for i in chat._active_turn["attachments"]["items"]]
+            chat._diagnostics.close()
+        self.assertIn("skills/pdf/scripts/search.py", paths)
+        self.assertTrue(all("scripts/ altındaki betikleri oku" in c["prompt"] for c in run.calls if c["agent"] != "claude"))
+
     def test_the_verdict_line_after_a_long_review_is_still_read(self):
         # Live 14 Nov: the bubble was clamped to five sentences and "KARAR:" was cut off.
         long_ok = " ".join(f"İnceleme cümlesi {n}." for n in range(9)) + "\nKARAR: UYGUN"
