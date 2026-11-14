@@ -954,6 +954,10 @@ class Api:
         return ipc_send("chat_new", {"title": title, "agent": agent, "project_id": project_id or None,
                                      "space": space or None})
 
+    def skills_list(self) -> dict:
+        """The skill shelf (name, description, source, version) for the /skill hint."""
+        return ipc_send("skills_list")
+
     def panel_result(self, conversation_id: str = "") -> dict:
         """What the work panel opens after a build (live page or best file)."""
         return ipc_send("panel_result", {"conversation_id": conversation_id})

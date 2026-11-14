@@ -308,6 +308,7 @@ SHELL_MARKUP = r"""
       </div>
             <div class="inputbar composer" id="composer">
               <div class="attach-chips" id="attachChips" aria-label="Eklenen dosyalar" hidden></div>
+              <div class="skill-hint" id="skillHint" role="listbox" aria-label="Raftaki skill'ler" hidden></div>
               <textarea id="msgInput" rows="1" aria-label="Ekibe yazın veya görev verin" aria-keyshortcuts="Control+L" title="Sohbete odaklan: Ctrl+L · Gönder: Enter · Yeni satır: Shift+Enter" placeholder="Ekibe yazın veya görev verin…" autofocus></textarea>
               <div class="composer-row">
                 <div class="agent-seg-group" id="agentSegGroup" role="group" aria-label="Ajan seçici">

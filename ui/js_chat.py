@@ -850,6 +850,42 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       attachResult(await window.pywebview.api.chat_attach_data(currentConvId || '', file.name || 'yapistirilan.png', data));
     }
   }
+  // "/skill" in the composer lists the shelf; a click fills in the name (14 Nov).
+  let skillShelfCache = null;
+  async function updateSkillHint() {
+    const box = document.getElementById('skillHint');
+    const input = document.getElementById('msgInput');
+    if (!box || !input) return;
+    const value = input.value;
+    const match = /^\/skill(?:\s+(\S*))?$/i.exec(value);
+    if (!match) { box.hidden = true; return; }
+    if (!skillShelfCache) {
+      try { const r = await window.pywebview.api.skills_list(); skillShelfCache = r.status === 'ok' ? r.data : []; }
+      catch (_) { skillShelfCache = []; }
+    }
+    const typed = (match[1] || '').toLowerCase();
+    const items = skillShelfCache.filter(s => s.name.startsWith(typed)).slice(0, 8);
+    box.replaceChildren();
+    if (!items.length) {
+      const empty = document.createElement('span'); empty.className = 'skill-empty';
+      empty.textContent = skillShelfCache.length ? 'Bu adla bir skill yok.' : "Rafta skill yok. Kurmak için: \"şu skill'i kur: https://github.com/…\"";
+      box.append(empty);
+    }
+    for (const skill of items) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'skill-option'; b.setAttribute('role', 'option');
+      const name = document.createElement('strong'); name.textContent = '/skill ' + skill.name;
+      const desc = document.createElement('span'); desc.textContent = skill.description || '';
+      b.append(name, desc);
+      b.onclick = () => { input.value = `/skill ${skill.name} `; box.hidden = true; input.focus(); };
+      box.append(b);
+    }
+    box.hidden = false;
+  }
+  document.getElementById('msgInput')?.addEventListener('input', () => {
+    if (!/^\/skill/i.test(document.getElementById('msgInput').value)) skillShelfCache = null;
+    updateSkillHint();
+  });
+
   document.getElementById('btnAttach')?.addEventListener('click', async () => {
     attachResult(await window.pywebview.api.chat_attach_pick(currentConvId || ''));
   });

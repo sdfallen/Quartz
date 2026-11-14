@@ -37,7 +37,10 @@ def _writer_failed(message, run, run_id):
     return RuntimeError(message)
 
 
-class AgentChatService(TeamTurnMixin):
+from core.skill_turn import SkillTurnMixin
+
+
+class AgentChatService(TeamTurnMixin, SkillTurnMixin):
     MAX_GROUP_ROUNDS = 2
 
     def __init__(self, agent_service: MultiAgentService, store_path: str | Path):
@@ -52,6 +55,9 @@ class AgentChatService(TeamTurnMixin):
         # The work panel's live previews of what the team built (127.0.0.1 only).
         from core.local_preview import PreviewServers
         self.previews = PreviewServers()
+        # SpeS's skill shelf: the agents install GitHub skills, /skill uses them (14 Nov).
+        from core.skill_shelf import SkillShelf
+        self.skills = SkillShelf()
         self.recovery = self.store.recover_interrupted()
         self._lock = threading.RLock()
         self._active_turn: dict | None = None
@@ -726,6 +732,19 @@ class AgentChatService(TeamTurnMixin):
             return read_for_panel(folder, rel)
         raise ValueError("Bilinmeyen kaynak")
 
+    def _answer_without_agents(self, cid, text, answer):
+        """SpeS answers itself (e.g. the skill shelf); no agent run, no turn."""
+        with self._lock:
+            user = self.store.append_message(cid, "user", text, sender="user", metadata={
+                "sender": "user", "recipient": "quartz", "sequence": self._next_sequence(self.store.get(cid))})
+            note = self.store.append_message(cid, "assistant", answer, sender="quartz", metadata={
+                "sender": "quartz", "recipient": "user", "status": "completed",
+                "sequence": self._next_sequence(self.store.get(cid))})
+        return {"conversation_id": cid, "user_message": user, "assistant_message": note, "agent": "quartz"}
+
+    def skills_list(self):
+        return self.skills.list()
+
     def _turn_attachments(self, cid):
         with self._lock:
             turn = getattr(self, "_active_turn", None) or {}
@@ -764,6 +783,11 @@ class AgentChatService(TeamTurnMixin):
         from core.space_policy import space_of, space_rule
         from core.result_cards import CARDS_RULE, is_research
         cards = CARDS_RULE if is_research(request) else ""
+        from core.skill_shelf import prompt_block as skill_block
+        with self._lock:
+            turn = getattr(self, "_active_turn", None) or {}
+            invoked_skill = turn.get("skill") if turn.get("conversation_id") == cid else None
+        cards += skill_block(invoked_skill) if invoked_skill else ""
         return (communication_instruction(self.store.preferences()["response_detail"], request) + "\n"
                 + NORMAL_CHAT_DESKTOP_NOTICE + memory + space_rule(space_of(conv)) + mode + cards + full_prompt)
 
@@ -889,6 +913,19 @@ class AgentChatService(TeamTurnMixin):
         if requested_permission_level not in {'read-only','project','full'}: raise ValueError('Invalid requested permission level')
         from core.space_policy import is_chat
         target = self.store.get(conversation_id) if conversation_id else self.store.get_active()
+        from core.skill_shelf import install_request, invocation
+        skill = skill_install = None
+        invoked = invocation(text)
+        if invoked is not None:
+            name, rest = invoked
+            skill = self.skills.load(name) if name not in ("", "liste", "list") else None
+            if skill is None:
+                # "/skill", "/skill liste" or an unknown name: SpeS answers with the shelf.
+                prefix = f"'{name}' adında bir skill rafta yok. " if name not in ("", "liste", "list") else ""
+                return self._answer_without_agents(target["id"], text, prefix + self._skill_list_text())
+            text = rest or f"{skill['name']} skill'ini uygula."
+        else:
+            skill_install = install_request(text)
         looks_like_task = message_intent(text) == "task"
         # Sohbet space never starts work, whatever the wording (user request 14 Nov).
         chat_space = is_chat(target)
@@ -896,7 +933,7 @@ class AgentChatService(TeamTurnMixin):
         # build (user request 14 Nov). A request that also names files or code stays a task.
         from core.result_cards import is_research
         research = is_research(text)
-        conversation_only = chat_space or research or not looks_like_task
+        conversation_only = chat_space or research or bool(skill_install) or not looks_like_task
         if conversation_only:
             write = full_access = confirm_write = False
         write = bool(write or full_access)
@@ -925,6 +962,8 @@ class AgentChatService(TeamTurnMixin):
 
             cid = conv["id"]
             selected_agent = (agent or conv.get("agent") or "antigravity").lower().strip()
+            if skill_install:
+                selected_agent = "collaboration"  # all three take part in an install review
             # Explicit opt-in per message; never route all tasks to a cloud agent.
             if re.match(r"^@notion\b", text, re.I):
                 selected_agent = "notion"
@@ -973,6 +1012,8 @@ class AgentChatService(TeamTurnMixin):
                     # The UI offers "Workspace'te aç" under a work request typed in Sohbet.
                     **({"space_hint": "work"} if chat_space and looks_like_task and not research else {}),
                     **({"research": True} if research else {}),
+                    **({"skill": skill["name"]} if skill else {}),
+                    **({"skill_install": skill_install["url"]} if skill_install else {}),
                 },
             )
 
@@ -1045,6 +1086,10 @@ class AgentChatService(TeamTurnMixin):
             turn_state["all_message_ids"] = [bot_msg["id"]]
             if attached:
                 turn_state["attachments"] = attached
+            if skill:
+                turn_state["skill"] = skill
+            if skill_install:
+                turn_state["skill_install"] = skill_install
             # "Bitince haber ver": SpeS writes a short report when this turn ends (core.finish_report).
             from core.finish_report import wants_finish_report
             if wants_finish_report(text):
@@ -1558,7 +1603,10 @@ class AgentChatService(TeamTurnMixin):
                       'Bu turdaki gerçek erişimini SpeS\'ın verdiği araçlar belirler: sohbet turunda araç yok, '
                       'proje okuma turunda yalnız seçili projeyi okuma, görev turunda seçilen yetki. '
                       'Gerçekte yapmadığın bir gözlemi veya işlemi yapmış gibi iddia etme.\n\n') + prompt
-            if agent == "antigravity":
+            install = (self._active_turn or {}).get("skill_install")
+            if install:
+                self._run_skill_install(cid, msg_id, install, project_id)
+            elif agent == "antigravity":
                 self._run_antigravity_turn(cid, msg_id, prompt, project_id, write, confirm_write, full_access)
             elif agent == "codex":
                 self._run_codex_turn(cid, msg_id, prompt, project_id, write, confirm_write, full_access)

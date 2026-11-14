@@ -485,6 +485,9 @@ class IPCServer:
             )
             return {"status": "ok", "data": res}
 
+        if action == "skills_list":
+            return {"status": "ok", "data": self._get_agent_chat().skills_list()}
+
         if action in ("panel_result", "panel_read"):
             from core.local_preview import PreviewError
             data = req.get("data", {}) or {}
