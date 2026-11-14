@@ -836,7 +836,6 @@ body.show-preview .preview-pane { display: flex; }
 :root[data-space="chat"] .stage .rail,
 :root[data-space="chat"] #desktopTaskBar,
 :root[data-space="chat"] #btnPreview,
-:root[data-space="chat"] #previewPane,
 :root[data-space="chat"] #permissionSelectionHint,
 :root[data-space="chat"] #squadBadge,
 :root[data-space="chat"] #chatProjectTag,
@@ -881,3 +880,24 @@ body.show-preview .preview-pane { display: flex; }
 .result-open { margin-left: auto; border: 1px solid var(--line-strong); background: transparent; color: var(--text); border-radius: 999px; padding: 4px 12px; font-size: 12.5px; cursor: pointer; }
 .result-open:hover { background: var(--accent-soft); }
 @media (prefers-reduced-motion: reduce) { .result-card { transition: none; } }
+
+
+/* ── Work panel as a general side view (14 Nov 2026) ───────────────────── */
+.work-files { display: none; flex: 1; min-height: 0; grid-template-rows: auto 1fr; }
+.preview-pane[data-work-tab="files"] #workFiles { display: grid; }
+.work-files-list { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line); max-height: 160px; overflow: auto; }
+.work-files-title { width: 100%; font-size: 11.5px; letter-spacing: .02em; color: var(--text-3); margin-top: 2px; }
+.work-file { border: 1px solid var(--line); background: var(--surface-1); color: var(--text); border-radius: 8px; padding: 4px 9px; font: 12px/1.3 var(--font-mono, monospace); cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-file:hover { border-color: var(--accent); }
+.work-viewer { min-height: 0; overflow: auto; padding: 12px; }
+.viewer-head { font-size: 12px; color: var(--text-3); margin-bottom: 8px; }
+.viewer-code { margin: 0; font: 12.5px/1.55 var(--font-mono, monospace); white-space: pre; color: var(--text); background: var(--surface-2); border-radius: 10px; padding: 12px; overflow: auto; }
+.viewer-image { max-width: 100%; border-radius: 10px; border: 1px solid var(--line); background: repeating-conic-gradient(var(--surface-2) 0 25%, var(--surface-1) 0 50%) 0 0/16px 16px; }
+.viewer-markdown { font-size: 14px; line-height: 1.6; color: var(--text); }
+.work-empty-view { color: var(--text-3); font-size: 13px; margin: 0; }
+.device-switch { display: inline-flex; gap: 2px; margin-left: 4px; }
+.device-btn { border: 1px solid var(--line); background: transparent; color: var(--text-3); border-radius: 7px; padding: 3px 8px; font-size: 11.5px; cursor: pointer; }
+.device-btn[aria-pressed="true"] { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
+.preview-pane[data-device="tablet"] .preview-frame { width: 768px; max-width: 100%; margin: 0 auto; }
+.preview-pane[data-device="phone"] .preview-frame { width: 390px; max-width: 100%; margin: 0 auto; border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+.result-panel-btn { margin-top: 8px; }

@@ -409,6 +409,14 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     }
     bubble.append(body);
     if (cards.length && !isUserMessage) bubble.append(renderResultCards(cards));
+    const changed = msg?.metadata?.host_evidence?.files_changed;
+    if (!isUserMessage && Array.isArray(changed) && changed.length && typeof window.spesShowResult === 'function') {
+      const open = document.createElement('button');
+      open.type = 'button'; open.className = 'control-btn result-panel-btn';
+      open.textContent = `Sonucu panelde aç · ${changed.length} dosya`;
+      open.onclick = () => window.spesShowResult();
+      bubble.append(open);
+    }
     if (!isUserMessage && view.summary !== '...' && typeof revealMessage === 'function') revealMessage(bubble, body, msg?.id);
     if (!isUserMessage && view.summary !== '...' && window.QuartzPreview) window.QuartzPreview.decorate(bubble, view.summary + '\n' + (view.details || ''));
     if (msg?.status === 'interrupted' && msg.id) {

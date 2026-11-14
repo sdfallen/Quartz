@@ -49,6 +49,9 @@ class AgentChatService(TeamTurnMixin):
         # Files added to the next message (14 Nov): photos, documents, zips.
         from core.attachments import AttachmentStore
         self.attachments = AttachmentStore()
+        # The work panel's live previews of what the team built (127.0.0.1 only).
+        from core.local_preview import PreviewServers
+        self.previews = PreviewServers()
         self.recovery = self.store.recover_interrupted()
         self._lock = threading.RLock()
         self._active_turn: dict | None = None
@@ -391,6 +394,7 @@ class AgentChatService(TeamTurnMixin):
         try:
             result = self.cancel_active()
         finally:
+            self.previews.stop_all()
             self._diagnostics.close()
             self._environment_health.close()
         return {"status": result["stop_receipt"]["status"],
@@ -651,6 +655,76 @@ class AgentChatService(TeamTurnMixin):
             return
         threading.Thread(target=self._post_finish_report, args=(cid, request.get("id"), status),
                          daemon=True, name="spes-finish-report").start()
+
+    # -- work panel: what the team built and what the user sent (14 Nov) ---------
+    def _project_root(self, conv):
+        try:
+            project = self.agent_service.projects.get(conv.get("project_id")) if conv.get("project_id") \
+                else self.agent_service.projects.selected()
+            root = Path(project["path"]).resolve(strict=True)
+            return root if root.is_dir() else None
+        except Exception:
+            return None
+
+    def panel_files(self, cid):
+        """Files SpeS itself saw the team change (host evidence) and the user's attachments."""
+        conv = self.store.get(cid)
+        root = self._project_root(conv)
+        project_files = []
+        for message in reversed(conv.get("messages", [])):
+            run_id = (message.get("metadata") or {}).get("run_id")
+            if not run_id or not hasattr(self.agent_service, "run_evidence"):
+                continue
+            evidence = self.agent_service.run_evidence(run_id) or {}
+            for name in evidence.get("files_changed") or []:
+                path = Path(str(name))
+                try:
+                    rel = (path if path.is_absolute() else root / path).resolve().relative_to(root).as_posix()
+                except (ValueError, OSError, TypeError):
+                    continue
+                if rel not in project_files:
+                    project_files.append(rel)
+        attachments = []
+        for message in conv.get("messages", []):
+            meta = message.get("metadata") or {}
+            for item in meta.get("attachments") or []:
+                if isinstance(item, dict) and meta.get("attachment_batch"):
+                    attachments.append({"batch": meta["attachment_batch"], "path": item.get("path"),
+                                        "name": item.get("name"), "kind": item.get("kind")})
+        return {"project": project_files[:200], "attachments": attachments[-50:],
+                "project_name": root.name if root else ""}
+
+    def panel_result(self, cid):
+        """The panel's first view after a build: a live page for HTML, else the best file."""
+        from core.local_preview import best_preview_file
+        files = self.panel_files(cid)
+        best = best_preview_file(files["project"])
+        open_view = None
+        if best:
+            root = self._project_root(self.store.get(cid))
+            if best.lower().endswith((".html", ".htm")) and root is not None:
+                from urllib.parse import quote
+                open_view = {"kind": "web", "file": best, "url": self.previews.url_for(root) + quote(best)}
+            else:
+                open_view = {"kind": "file", "scope": "project", "path": best}
+        return {**files, "open": open_view}
+
+    def panel_read(self, cid, scope, path, batch=None):
+        """One file for the panel, only from the lists panel_files returns."""
+        from core.local_preview import read_for_panel
+        files = self.panel_files(cid)
+        rel = str(path or "")
+        if scope == "project":
+            if rel not in files["project"]:
+                raise PermissionError("Bu dosya bu sohbetin sonuçlarında yok")
+            return read_for_panel(self._project_root(self.store.get(cid)), rel)
+        if scope == "attachment":
+            match = next((a for a in files["attachments"] if a["batch"] == batch and a["path"] == rel), None)
+            if match is None or rel.endswith("/"):
+                raise PermissionError("Bu ek bu sohbette yok ya da bir klasör")
+            folder = self.attachments.root / re.sub(r"[^A-Za-z0-9_-]", "", cid)[:40] / str(batch)
+            return read_for_panel(folder, rel)
+        raise ValueError("Bilinmeyen kaynak")
 
     def _turn_attachments(self, cid):
         with self._lock:

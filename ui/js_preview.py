@@ -131,8 +131,12 @@ JAVASCRIPT = r"""
   }
   function workCheckLabel(ev, meta) {
     const status = ev?.source_validation?.status;
+    const tests = ev?.agent_tests?.status;  // core.test_evidence.evidence_label is the Python twin
     if (meta?.outcome?.goal_verdict === 'VERIFIED') return ['ok', 'Hedef doğrulandı'];
     if (status === 'FAILED') return ['fail', 'Kontrol başarısız'];
+    if (tests === 'FAILED') return ['fail', 'Test başarısız'];
+    if (tests === 'PASSED') return ['ok', 'Testler geçti (ajan çalıştırdı)'];
+    if (tests === 'RAN') return ['warn', 'Test çalıştı; sonucu ayırt edilemedi'];
     if (status === 'VERIFIED') return ['warn', 'Sözdizimi doğrulandı; test kanıtı yok'];
     return ['warn', 'Bağımsız kanıt yok'];
   }
@@ -165,8 +169,10 @@ JAVASCRIPT = r"""
     setCount('workChangesCount', changes.size);
     setCount('workChecksCount', checks.length);
   }
+  let workEvidenceSeeded = false;
   function setWorkEvidence(messages, replaceAll) {
-    if (replaceAll) workEvidence.clear();
+    if (replaceAll) { workEvidence.clear(); workEvidenceSeeded = false; }
+    const before = new Set(workEvidence.keys());
     for (const m of messages || []) {
       const meta = (m && m.metadata) || {};
       const ev = meta.host_evidence;
@@ -177,6 +183,11 @@ JAVASCRIPT = r"""
                               check: hasCheck ? workCheckLabel(ev, meta) : null});
     }
     renderWorkEvidence();
+    // A build that finished while SpeS is open shows its result in the panel by itself.
+    const fresh = [...workEvidence.entries()].some(([id, item]) => !before.has(id) && item.files.length);
+    if (workEvidenceSeeded && fresh && typeof showWorkResult === 'function') showWorkResult();
+    else if (typeof refreshPanelFiles === 'function' && !workEvidenceSeeded) refreshPanelFiles();
+    workEvidenceSeeded = true;
   }
   previewPane?.querySelectorAll('.work-tab').forEach(b => b.addEventListener('click', () => setWorkTab(b.dataset.tab)));
 
@@ -209,5 +220,90 @@ JAVASCRIPT = r"""
   if (typeof window !== 'undefined' && window.addEventListener) {
     window.addEventListener('pywebviewready', () => { refreshAgentLimits(); setInterval(refreshAgentLimits, 60000); });
   }
+
+  // ── Work panel as a general side view (14 Nov): live page, files, attachments ──
+  const workFilesList = document.getElementById('workFilesList');
+  const workViewer = document.getElementById('workViewer');
+  let panelFiles = {project: [], attachments: []};
+  function viewerMessage(text) {
+    const p = document.createElement('p'); p.className = 'work-empty-view'; p.textContent = text;
+    workViewer.replaceChildren(p);
+  }
+  function showFileView(data, label) {
+    const head = document.createElement('div'); head.className = 'viewer-head';
+    head.textContent = label + (data.truncated ? ' (ilk 400 KB)' : '');
+    if (data.kind === 'image') {
+      const img = document.createElement('img'); img.className = 'viewer-image'; img.alt = data.name;
+      img.src = `data:${data.mime};base64,${data.data}`;
+      workViewer.replaceChildren(head, img);
+    } else if (data.kind === 'text' && data.language === 'md') {
+      const body = document.createElement('div'); body.className = 'viewer-markdown';
+      appendMessageText(body, data.text);
+      workViewer.replaceChildren(head, body);
+    } else if (data.kind === 'text') {
+      const pre = document.createElement('pre'); pre.className = 'viewer-code'; pre.dataset.language = data.language || '';
+      const lines = String(data.text).split('\n');
+      pre.textContent = lines.map((line, i) => String(i + 1).padStart(4, ' ') + '  ' + line).join('\n');
+      workViewer.replaceChildren(head, pre);
+    } else {
+      viewerMessage(`${data.name}: bu dosya türü panelde gösterilemiyor (${Math.round((data.size || 0) / 1024)} KB).`);
+    }
+  }
+  async function openPanelFile(scope, path, batch, label) {
+    showPreviewPane(true); setWorkTab('files');
+    if (scope === 'project' && /\.html?$/i.test(path)) {   // pages are shown live
+      const result = await window.pywebview.api.panel_result(currentConvId || '');
+      if (result.status === 'ok' && result.data.open && result.data.open.kind === 'web') {
+        const base = result.data.open.url.slice(0, result.data.open.url.length - encodeURI(result.data.open.file).length);
+        setWorkTab('preview'); openPreview(base + encodeURI(path)); return;
+      }
+    }
+    if (String(path).endsWith('/')) { viewerMessage(`${label}: zip içeriği ajanlara açıldı; tek tek dosya seçimi henüz yok.`); return; }
+    const result = await window.pywebview.api.panel_read(currentConvId || '', scope, path, batch || '');
+    if (result.status !== 'ok') { viewerMessage(String(result.data || 'Dosya açılamadı')); return; }
+    showFileView(result.data, label);
+  }
+  function renderPanelFiles() {
+    if (!workFilesList) return;
+    const rows = [];
+    const group = (title) => { const h = document.createElement('div'); h.className = 'work-files-title'; h.textContent = title; return h; };
+    if (panelFiles.project.length) rows.push(group(`Ekibin yazdıkları${panelFiles.project_name ? ' · ' + panelFiles.project_name : ''}`));
+    for (const path of panelFiles.project) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'work-file'; b.textContent = path;
+      b.onclick = () => openPanelFile('project', path, '', path); rows.push(b);
+    }
+    if (panelFiles.attachments.length) rows.push(group('Gönderdiğin ekler'));
+    for (const item of panelFiles.attachments) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'work-file'; b.dataset.kind = item.kind || 'file';
+      b.textContent = item.name || item.path;
+      b.onclick = () => openPanelFile('attachment', item.path, item.batch, item.name || item.path); rows.push(b);
+    }
+    if (!rows.length) { const p = document.createElement('p'); p.className = 'work-empty-view'; p.textContent = 'Bu sohbette henüz sonuç dosyası ya da ek yok.'; rows.push(p); }
+    workFilesList.replaceChildren(...rows);
+    const count = document.getElementById('workFilesCount');
+    if (count) count.textContent = (panelFiles.project.length + panelFiles.attachments.length) || '';
+  }
+  async function refreshPanelFiles() {
+    try {
+      const result = await window.pywebview.api.panel_result(currentConvId || '');
+      if (result.status === 'ok') { panelFiles = result.data; renderPanelFiles(); return result.data; }
+    } catch (_) {}
+    return null;
+  }
+  // After a build: open the result by itself (a page live, otherwise the best file).
+  async function showWorkResult() {
+    const data = await refreshPanelFiles();
+    if (!data || !data.open) return false;
+    showPreviewPane(true);
+    if (data.open.kind === 'web') { setWorkTab('preview'); openPreview(data.open.url); }
+    else openPanelFile(data.open.scope, data.open.path, '', data.open.path);
+    return true;
+  }
+  window.spesShowResult = showWorkResult;
+  window.spesOpenAttachment = (batch, item) => openPanelFile('attachment', item.path, batch, item.name || item.path);
+  previewPane?.querySelectorAll('.device-btn').forEach(button => button.addEventListener('click', () => {
+    previewPane.dataset.device = button.dataset.device;
+    previewPane.querySelectorAll('.device-btn').forEach(b => b.setAttribute('aria-pressed', String(b === button)));
+  }));
   window.QuartzPreview = Object.freeze({ open: openPreview, openWindow: openPreviewWindow, decorate: decoratePreviewLinks, links: localPreviewLinks });
 """

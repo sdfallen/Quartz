@@ -495,9 +495,16 @@ SHELL_MARKUP = r"""
   <aside class="preview-pane" id="previewPane" data-work-tab="preview" aria-label="İş paneli">
     <div class="work-tabs" role="tablist" aria-label="İş paneli">
       <button type="button" class="work-tab" role="tab" id="workTabPreview" data-tab="preview" aria-selected="true" aria-controls="previewBar">Önizleme</button>
+      <button type="button" class="work-tab" role="tab" id="workTabFiles" data-tab="files" aria-selected="false" aria-controls="workFiles">Dosyalar <span class="work-count" id="workFilesCount"></span></button>
       <button type="button" class="work-tab" role="tab" id="workTabChanges" data-tab="changes" aria-selected="false" aria-controls="workChanges">Değişiklikler <span class="work-count" id="workChangesCount"></span></button>
       <button type="button" class="work-tab" role="tab" id="workTabChecks" data-tab="checks" aria-selected="false" aria-controls="workChecks">Kontroller <span class="work-count" id="workChecksCount"></span></button>
     </div>
+    <section class="work-files" id="workFiles" role="tabpanel" aria-labelledby="workTabFiles">
+      <div class="work-files-list" id="workFilesList" aria-label="Sonuç dosyaları ve ekler"></div>
+      <div class="work-viewer" id="workViewer" aria-live="polite">
+        <p class="work-empty-view">Ekibin yazdığı bir dosyayı ya da gönderdiğin bir eki seç.</p>
+      </div>
+    </section>
     <section class="work-list" id="workChanges" role="tabpanel" aria-labelledby="workTabChanges">
       <p class="work-note">SpeS'in dosya sisteminde kendisinin gördüğü değişiklikler. Ajanın "değiştirdim" demesi buraya girmez.</p>
       <ol class="work-items" id="workChangesList"></ol>
@@ -512,6 +519,11 @@ SHELL_MARKUP = r"""
       <button type="button" class="icon-btn" id="btnPreviewReload" title="Yenile" aria-label="Önizlemeyi yenile">@@i:loop:sm@@</button>
       <input class="preview-address" id="previewAddress" type="text" inputmode="url" spellcheck="false" placeholder="http://127.0.0.1:8000" aria-label="Önizleme adresi">
       <button type="submit" class="control-btn" id="btnPreviewGo">Aç</button>
+      <span class="device-switch" role="group" aria-label="Önizleme genişliği">
+        <button type="button" class="device-btn" data-device="desktop" aria-pressed="true" title="Masaüstü genişliği">Masaüstü</button>
+        <button type="button" class="device-btn" data-device="tablet" aria-pressed="false" title="Tablet genişliği (768 px)">Tablet</button>
+        <button type="button" class="device-btn" data-device="phone" aria-pressed="false" title="Telefon genişliği (390 px)">Telefon</button>
+      </span>
       <button type="button" class="icon-btn" id="btnPreviewWindow" title="Ayrı pencerede aç" aria-label="Ayrı pencerede aç">@@i:windows:sm@@</button>
       <button type="button" class="icon-btn" id="btnPreviewClose" title="Önizlemeyi kapat" aria-label="Önizlemeyi kapat">@@i:close:sm@@</button>
     </form>

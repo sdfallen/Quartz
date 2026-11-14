@@ -954,6 +954,15 @@ class Api:
         return ipc_send("chat_new", {"title": title, "agent": agent, "project_id": project_id or None,
                                      "space": space or None})
 
+    def panel_result(self, conversation_id: str = "") -> dict:
+        """What the work panel opens after a build (live page or best file)."""
+        return ipc_send("panel_result", {"conversation_id": conversation_id})
+
+    def panel_read(self, conversation_id: str, scope: str, path: str, batch: str = "") -> dict:
+        """One result file or attachment for the panel viewer (host-listed files only)."""
+        return ipc_send("panel_read", {"conversation_id": conversation_id, "scope": scope, "path": path,
+                                       "batch": batch or None})
+
     def open_external(self, url: str) -> dict:
         """Open a result card's link in the system browser (http/https only, never in SpeS)."""
         from urllib.parse import urlsplit

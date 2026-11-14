@@ -485,6 +485,19 @@ class IPCServer:
             )
             return {"status": "ok", "data": res}
 
+        if action in ("panel_result", "panel_read"):
+            from core.local_preview import PreviewError
+            data = req.get("data", {}) or {}
+            chat = self._get_agent_chat()
+            cid = str(data.get("conversation_id") or chat.store.get_active()["id"])
+            try:
+                if action == "panel_result":
+                    return {"status": "ok", "data": chat.panel_result(cid)}
+                return {"status": "ok", "data": chat.panel_read(cid, str(data.get("scope") or ""),
+                                                                str(data.get("path") or ""), data.get("batch"))}
+            except (PreviewError, PermissionError, ValueError, OSError) as exc:
+                return {"status": "error", "data": str(exc)}
+
         if action in ("chat_attach_add", "chat_attach_paths", "chat_attach_remove", "chat_attach_list"):
             # Files for the next message (14 Nov). Paths come from the native picker only.
             import base64
