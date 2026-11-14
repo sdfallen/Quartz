@@ -155,6 +155,35 @@ class InstallTurnTests(unittest.TestCase):
         note = next(m for m in messages if m.get("sender") == "quartz" and (m.get("metadata") or {}).get("skill_install"))
         self.assertNotIn("belirsiz", note["content"])
 
+    def test_the_user_can_overrule_a_veto_once_with_the_offered_button(self):
+        replies = {"codex": "Test dosyası dışarıdaki betikleri çalıştırıyor.\nKARAR: UYGUN DEĞİL",
+                   "antigravity": "KARAR: UYGUN", "claude": "KARAR: UYGUN"}
+        with tempfile.TemporaryDirectory() as directory:
+            chat, _, messages = self.run_install(directory, replies)
+            cid = chat.store.get_active()["id"]
+            note = next(m for m in messages if m.get("sender") == "quartz" and (m.get("metadata") or {}).get("skill_override"))
+            offer = note["metadata"]["skill_override"]
+            self.assertEqual(chat.skills.list(), [])
+            self.assertFalse(chat.skill_override(cid, "yanlis-kimlik")["ok"])
+            result = chat.skill_override(cid, offer["id"])
+            self.assertTrue(result["ok"], result)
+            entry = chat.skills.list()[0]
+            self.assertEqual(entry["reviewers"]["Kullanıcı"], "ONAY (ekip itirazına rağmen)")
+            self.assertEqual(entry["reviewers"]["Fides"], "UYGUN DEĞİL")
+            self.assertFalse(chat.skill_override(cid, offer["id"])["ok"])  # single use
+            chat._diagnostics.close()
+
+    def test_an_expired_override_installs_nothing(self):
+        replies = {"codex": "KARAR: UYGUN DEĞİL", "antigravity": "KARAR: UYGUN", "claude": "KARAR: UYGUN"}
+        with tempfile.TemporaryDirectory() as directory:
+            chat, _, messages = self.run_install(directory, replies)
+            cid = chat.store.get_active()["id"]
+            offer = next(m for m in messages if (m.get("metadata") or {}).get("skill_override"))["metadata"]["skill_override"]
+            chat._skill_overrides[cid]["expires"] = 0
+            self.assertFalse(chat.skill_override(cid, offer["id"])["ok"])
+            self.assertEqual(chat.skills.list(), [])
+            chat._diagnostics.close()
+
     def test_one_objection_or_an_unclear_verdict_installs_nothing(self):
         for replies in ({"codex": "KARAR: UYGUN", "antigravity": "Ağa veri gönderiyor.\nKARAR: UYGUN DEĞİL", "claude": "KARAR: UYGUN"},
                         {"codex": "KARAR: UYGUN", "antigravity": "KARAR: UYGUN", "claude": "Bence olur."}):

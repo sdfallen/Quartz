@@ -431,6 +431,21 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       }
       bubble.append(row);
     }
+    const override = msg?.metadata?.skill_override;
+    if (override && override.id && !isUserMessage) {
+      // The user's own decision to overrule the team's veto; the host checks the id once.
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'control-btn skill-override-btn';
+      b.textContent = 'Yine de kur (benim onayımla)';
+      b.title = 'Ekibin itirazını okudun ve skill\'i yine de rafa eklemek istiyorsun. Betikler yine kendiliğinden çalıştırılmaz.';
+      b.onclick = async () => {
+        b.disabled = true;
+        const r = await window.pywebview.api.skill_override(currentConvId || '', String(override.id));
+        const data = r && r.data ? r.data : {};
+        if (!data.ok) { b.disabled = false; }
+        logLine('SpeS: ' + String(data.message || r?.data || ''));
+      };
+      bubble.append(b);
+    }
     const result = msg?.metadata?.security_result;
     if (result && result.undo && !isUserMessage) {
       const undo = document.createElement('button'); undo.type = 'button'; undo.className = 'control-btn'; undo.textContent = 'Geri al';

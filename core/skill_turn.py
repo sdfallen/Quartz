@@ -78,20 +78,60 @@ class SkillTurnMixin:
                     + ", ".join(f"{k} {v}" for k, v in who.items()) + ".")
         else:
             text = ("Skill kurulmadı: ekipten onay çıkmadı ("
-                    + ", ".join(f"{k} {v}" for k, v in who.items()) + "). Raf değişmedi.")
-        shelf.discard(fetched["staging"])
-        self._post_skill_note(cid, text, installed=approved)
+                    + ", ".join(f"{k} {v}" for k, v in who.items()) + "). Raf değişmedi. "
+                    "Gerekçeleri okuyup yine de kurmak istersen aşağıdaki düğmeyle 30 dakika içinde onaylayabilirsin.")
+        override = None
+        if approved:
+            shelf.discard(fetched["staging"])
+        else:
+            # The user, not an agent, may overrule the team (user decision 14 Nov). The fetched
+            # copy waits 30 minutes for that one explicit click; then it is discarded.
+            import secrets
+            import time as _time
+            override = {"id": secrets.token_urlsafe(12), "skills": [s["name"] for s in fetched["skills"]]}
+            with self._lock:
+                old = self.__dict__.setdefault("_skill_overrides", {}).pop(cid, None)
+                self._skill_overrides[cid] = {**override, "fetched": fetched, "request": request, "who": who,
+                                              "expires": _time.time() + 1800}
+            if old:
+                shelf.discard(old["fetched"]["staging"])
+        self._post_skill_note(cid, text, installed=approved, override=override)
         with self._lock:
             self._finish_turn(first_msg_id, "completed" if decision else "partial")
+
+    def skill_override(self, cid, override_id):
+        """The user's explicit "Yine de kur" after a veto. Only the desktop click calls this."""
+        import time as _time
+        with self._lock:
+            pending = self.__dict__.setdefault("_skill_overrides", {}).get(cid)
+            if not pending or pending["id"] != str(override_id or ""):
+                return {"ok": False, "message": "Bu onay geçersiz ya da kullanıldı."}
+            self._skill_overrides.pop(cid, None)
+        if _time.time() > pending["expires"]:
+            self.skills.discard(pending["fetched"]["staging"])
+            return {"ok": False, "message": "Onay süresi doldu; kurulumu yeniden iste."}
+        reviewers = {**pending["who"], "Kullanıcı": "ONAY (ekip itirazına rağmen)"}
+        fetched = pending["fetched"]
+        try:
+            installed = [self.skills.register(s, source=pending["request"]["url"], sha=fetched["sha"],
+                                              reviewers=reviewers) for s in fetched["skills"]]
+        finally:
+            self.skills.discard(fetched["staging"])
+        text = ("Skill senin onayınla rafa eklendi: " + ", ".join(f"/skill {e['name']}" for e in installed)
+                + ". Kayıtta ekibin kararları da duruyor: "
+                + ", ".join(f"{k} {v}" for k, v in pending["who"].items()) + ".")
+        self._post_skill_note(cid, text, installed=True)
+        return {"ok": True, "message": text}
 
     def _full_reply(self, cid, msg_id):
         message = next((m for m in self.store.get(cid).get("messages", []) if m.get("id") == msg_id), {})
         meta = message.get("metadata") or {}
         return str(meta.get("team_full_text") or message.get("content") or "")
 
-    def _post_skill_note(self, cid, text, *, installed):
+    def _post_skill_note(self, cid, text, *, installed, override=None):
         self.store.append_message(cid, "assistant", text, sender="quartz", metadata={
             "sender": "quartz", "recipient": "user", "status": "completed", "skill_install": bool(installed),
+            **({"skill_override": override} if override else {}),
             "sequence": self._next_sequence(self.store.get(cid))})
 
     def _skill_list_text(self):
