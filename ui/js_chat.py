@@ -563,6 +563,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       conversationLoaded = true;
       currentConvId = conv.id;
       applySpace(conv.space);
+      if (typeof refreshAttachChips === 'function') refreshAttachChips();
       renderConversationNavigation(data.conversations || []);
       chatConvTitle.textContent = conv.title || 'Yeni Sohbet';
       if (conv.agent) syncAgentUI(conv.agent);
@@ -787,6 +788,86 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     } catch (e) { logLine('Workspace açılamadı: ' + String(e)); }
   };
 
+
+  // ── Attachments (14 Nov): files, photos and zips for the next message ─────
+  let stagedAttachments = [];
+  const ATTACH_KIND = {image: 'Görsel', zip: 'Zip', text: 'Metin', pdf: 'PDF', file: 'Dosya'};
+  function renderAttachChips(staged) {
+    stagedAttachments = (staged && Array.isArray(staged.items)) ? staged.items : [];
+    const box = document.getElementById('attachChips');
+    if (!box) return;
+    box.replaceChildren();
+    for (const item of stagedAttachments) {
+      const chip = document.createElement('span');
+      chip.className = 'attach-chip';
+      chip.dataset.kind = item.kind || 'file';
+      const label = document.createElement('span');
+      label.className = 'attach-name';
+      label.textContent = item.name;
+      label.title = `${ATTACH_KIND[item.kind] || 'Dosya'} · ${Math.max(1, Math.round((item.size || 0) / 1024))} KB`
+        + (item.files != null ? ` · ${item.files} dosya` : '');
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'attach-remove';
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', `${item.name} ekini kaldır`);
+      remove.onclick = async () => {
+        const result = await window.pywebview.api.chat_attach_remove(currentConvId || '', item.id);
+        if (result.status === 'ok') renderAttachChips(result.data);
+      };
+      chip.append(label, remove);
+      box.append(chip);
+    }
+    box.hidden = stagedAttachments.length === 0;
+  }
+  async function refreshAttachChips() {
+    try {
+      const result = await window.pywebview.api.chat_attach_list(currentConvId || '');
+      if (result.status === 'ok') renderAttachChips(result.data);
+    } catch (_) {}
+  }
+  function attachResult(result) {
+    if (!result) return;
+    if (result.status === 'ok') renderAttachChips(result.data);
+    else if (result.status !== 'cancelled') {
+      if (result.staged) renderAttachChips(result.staged);
+      appendMsg('err', 'SPES', 'Dosya eklenemedi: ' + String(result.data || 'bilinmeyen hata'));
+    }
+  }
+  const MAX_INLINE_ATTACH = 10 * 1024 * 1024;
+  async function attachBrowserFiles(files) {
+    for (const file of Array.from(files || []).slice(0, 10)) {
+      if (file.size > MAX_INLINE_ATTACH) {
+        appendMsg('err', 'SPES', `${file.name} çok büyük; ataç düğmesiyle ekleyin (en çok 25 MB).`);
+        continue;
+      }
+      const data = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      attachResult(await window.pywebview.api.chat_attach_data(currentConvId || '', file.name || 'yapistirilan.png', data));
+    }
+  }
+  document.getElementById('btnAttach')?.addEventListener('click', async () => {
+    attachResult(await window.pywebview.api.chat_attach_pick(currentConvId || ''));
+  });
+  const composerEl = document.getElementById('composer');
+  if (composerEl) {
+    composerEl.addEventListener('dragover', event => { event.preventDefault(); composerEl.classList.add('dropping'); });
+    composerEl.addEventListener('dragleave', () => composerEl.classList.remove('dropping'));
+    composerEl.addEventListener('drop', event => {
+      event.preventDefault();
+      composerEl.classList.remove('dropping');
+      if (event.dataTransfer?.files?.length) attachBrowserFiles(event.dataTransfer.files);
+    });
+  }
+  document.getElementById('msgInput')?.addEventListener('paste', event => {
+    const files = Array.from(event.clipboardData?.files || []);
+    if (files.length) { event.preventDefault(); attachBrowserFiles(files); }
+  });
+
   btnNewChat.addEventListener('click', async () => {
     if (thinking || chatCleanupUnconfirmed()) return;
     try {
@@ -867,7 +948,12 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
   let coordinationRouting = false;
   window.__writeConfirmed = true;
   async function sendAgentMessage() {
-    const text = inputEl.value.trim();
+    let text = inputEl.value.trim();
+    // Files alone are a message too: the team is asked to look at them.
+    if (!text && typeof stagedAttachments !== 'undefined' && stagedAttachments.length) {
+      text = 'Eklediğim dosyaları inceleyin.';
+      inputEl.value = text;
+    }
     if (!text || coordinationRouting || chatSubmissionBusy) return;
     const submitEpoch = chatControlEpoch;
     // Freeze the selected mode for THIS submitted message, not a later poll
@@ -960,6 +1046,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       }
       const data = resp.data || {};
       if (inputEl.value.trim() === text) inputEl.value = '';
+      if (typeof renderAttachChips === 'function') renderAttachChips({items: []});  // sent with this message
       inpHistory.push(text);
       histCursor = -1;
       msgCount++;

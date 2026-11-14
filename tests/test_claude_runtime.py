@@ -108,7 +108,8 @@ class CommandTests(unittest.TestCase):
     def test_unwired_profiles_are_refused_before_any_record(self):
         rt = runtime()
         with tempfile.TemporaryDirectory() as folder:
-            for kwargs in ({"desktop_connection": object()}, {"tool_guard": True}, {"project_read": folder}):
+            for kwargs in ({"desktop_connection": object()}, {"tool_guard": True},
+                           {"project_read": folder, "sandbox": "workspace-write"}):
                 with self.subTest(kwargs=list(kwargs)):
                     with self.assertRaises(PermissionError):
                         rt.start("x", folder, **kwargs)

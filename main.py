@@ -485,6 +485,32 @@ class IPCServer:
             )
             return {"status": "ok", "data": res}
 
+        if action in ("chat_attach_add", "chat_attach_paths", "chat_attach_remove", "chat_attach_list"):
+            # Files for the next message (14 Nov). Paths come from the native picker only.
+            import base64
+            from core.attachments import AttachmentError
+            data = req.get("data", {}) or {}
+            chat = self._get_agent_chat()
+            cid = str(data.get("conversation_id") or chat.store.get_active()["id"])
+            chat.store.get(cid)
+            try:
+                if action == "chat_attach_add":
+                    raw = str(data.get("data") or "")
+                    if len(raw) > 14 * 1024 * 1024:
+                        raise AttachmentError("Yapıştırılan dosya çok büyük; ataç düğmesini kullanın")
+                    result = chat.attachments.add(cid, str(data.get("name") or "dosya"), base64.b64decode(raw, validate=True))
+                elif action == "chat_attach_paths":
+                    result = chat.attachments.staged(cid)
+                    for path in (data.get("paths") or [])[:10]:
+                        result = chat.attachments.add_path(cid, str(path))
+                elif action == "chat_attach_remove":
+                    result = chat.attachments.remove(cid, str(data.get("id") or ""))
+                else:
+                    result = chat.attachments.staged(cid)
+            except (AttachmentError, ValueError) as exc:
+                return {"status": "error", "data": str(exc), "staged": chat.attachments.staged(cid)}
+            return {"status": "ok", "data": result}
+
         if action == "chat_open_space":
             data = req.get("data", {}) or {}
             return {"status": "ok", "data": self._get_agent_chat().open_space(str(data.get("space") or ""))}

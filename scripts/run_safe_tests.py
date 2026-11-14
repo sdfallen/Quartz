@@ -48,6 +48,7 @@ def main():
     import tempfile
     with tempfile.TemporaryDirectory(prefix="spes-squad-home-") as squad_home:
         values["QUARTZ_SQUAD_HOME"] = squad_home
+        values["QUARTZ_ATTACHMENTS_HOME"] = str(Path(squad_home) / "attachments")
         with patch.dict(os.environ, values), patch("dotenv.load_dotenv", return_value=False):
             return _run_suite()
 

@@ -631,6 +631,23 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       wrap.append(inner);
       const effectiveMsg = msgObj || (kind === 'user' || cleanSender === 'user' ? {role: 'user', sender: 'user'} : null);
       renderMessageBody(bubble, text, effectiveMsg);
+      const sentFiles = msgObj && msgObj.metadata && Array.isArray(msgObj.metadata.attachments) ? msgObj.metadata.attachments : [];
+      if (sentFiles.length) {
+        const row = document.createElement('div');
+        row.className = 'msg-attachments';
+        for (const item of sentFiles.slice(0, 10)) {
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = 'attach-chip sent';
+          chip.dataset.kind = item.kind || 'file';
+          chip.textContent = item.name;
+          chip.title = 'Panelde aç';
+          chip.onclick = () => { if (typeof window.spesOpenAttachment === 'function')
+            window.spesOpenAttachment(msgObj.metadata.attachment_batch, item); };
+          row.append(chip);
+        }
+        inner.append(row);
+      }
       // A work request typed in Sohbet: one click opens it as a Workspace task (not sent yet).
       if (msgObj && msgObj.metadata && msgObj.metadata.space_hint === 'work' && typeof window.spesOpenInWorkspace === 'function') {
         const hint = document.createElement('div');

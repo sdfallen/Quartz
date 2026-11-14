@@ -171,7 +171,7 @@ class ClaudeRuntime(CodexRuntime):
         return {"mcpServers": {PROJECT_SERVER: {"type": "stdio", **expected_server(root)}}}
 
     def build_args(self, sandbox, *, model=None, effort=None, session_id=None, resume_id=None, desktop=False,
-                   project_root=None):
+                   project_root=None, read_dirs=()):
         tools = ",".join(self.tools_for(sandbox))
         servers = (self.collaborator_mcp_config() if desktop else
                    self.project_mcp_config(project_root) if project_root else {"mcpServers": {}})
@@ -186,6 +186,10 @@ class ClaudeRuntime(CodexRuntime):
             args += ["--model", model]
         if effort:
             args += ["--effort", effort]
+        for folder in read_dirs or ():
+            # Extra folders the file tools may read (a turn's attachments, 14 Nov). Write
+            # rules stay "Edit(./**)": edits outside the project are still refused.
+            args += ["--add-dir", str(folder)]
         if resume_id:
             args += ["--resume", resume_id]
         elif session_id:
@@ -203,7 +207,8 @@ class ClaudeRuntime(CodexRuntime):
     def start(self, prompt, project_path, *, sandbox="read-only", approval="never",
               squad_task_id=None, squad_agent_id=None, resume_thread_id=None,
               timeout=None, model: str | None = None, effort: str | None = None,
-              desktop_connection=None, tool_guard=False, project_read=False, should_abort=None) -> dict:
+              desktop_connection=None, tool_guard=False, project_read=False, should_abort=None,
+              read_dirs=()) -> dict:
         if not self.executable:
             raise RuntimeError(self._init_error or "Claude CLI was not found")
         text = str(prompt or "").strip()
@@ -217,13 +222,15 @@ class ClaudeRuntime(CodexRuntime):
             raise PermissionError("Claude does not run the observer profile yet")
         read_root = None
         if project_read:
-            # Read-only project access through SpeS's project-read server only.
-            if sandbox != "none" or desktop_connection is not None:
-                raise PermissionError("Claude reads a project only without built-in or desktop tools")
+            # Read-only project access through SpeS's project-read server. Built-in file
+            # tools may stay on only in read-only mode, where they reach the working folder
+            # (a turn's attachments, 14 Nov) and nothing outside it.
+            if sandbox not in ("none", "read-only") or desktop_connection is not None:
+                raise PermissionError("Claude reads a project only without write, shell or desktop tools")
             read_root = Path(project_read).resolve(strict=True)
             if not read_root.is_dir():
                 raise NotADirectoryError(str(read_root))
-            expected_tools = PROJECT_MCP_TOOLS
+            expected_tools = tuple(expected_tools) + PROJECT_MCP_TOOLS
         desktop_env = None
         if desktop_connection is not None:
             # Orchestrator of a desktop task: coordination tools only, no built-in tools.
@@ -232,6 +239,14 @@ class ClaudeRuntime(CodexRuntime):
             from core.desktop_agents import connection_environment
             desktop_env = connection_environment(desktop_connection, self.child_environment())
             expected_tools = COLLABORATOR_MCP_TOOLS
+        extra_dirs = []
+        for folder in read_dirs or ():
+            path = Path(folder).resolve(strict=True)
+            if not path.is_dir():
+                raise NotADirectoryError(str(path))
+            extra_dirs.append(str(path))
+        if extra_dirs and (desktop_env is not None or sandbox == "none"):
+            raise PermissionError("Extra read folders need Claude's file tools and no desktop tools")
         project = Path(project_path).resolve(strict=True)
         if not project.is_dir():
             raise NotADirectoryError(str(project))
@@ -284,7 +299,8 @@ class ClaudeRuntime(CodexRuntime):
             raise RuntimeError("Claude run cancelled before start")
         command = self._command(self.build_args(sandbox, model=clean_model, effort=clean_effort,
                                                 session_id=session_id, resume_id=resume_thread_id,
-                                                desktop=desktop_env is not None, project_root=read_root))
+                                                desktop=desktop_env is not None, project_root=read_root,
+                                                read_dirs=extra_dirs))
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | CREATE_SUSPENDED
         job_errors: list[str] = []
         try:

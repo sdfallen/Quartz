@@ -235,7 +235,7 @@ class CollaboratorServerTests(unittest.TestCase):
             self.assertEqual(server["args"][-2:], ["--project-read-server", str(Path(folder).resolve())])
             self.assertEqual(args[args.index("--tools") + 1], "")
             self.assertEqual(args[args.index("--allowedTools") + 1].split(","), list(PROJECT_MCP_TOOLS))
-            for kwargs in ({"sandbox": "read-only"}, {"sandbox": "web"},
+            for kwargs in ({"sandbox": "workspace-write"}, {"sandbox": "web"},
                            {"sandbox": "none", "desktop_connection": {"url": "http://127.0.0.1:1/tool", "token": "t"}}):
                 with self.subTest(kwargs=kwargs), self.assertRaises(PermissionError):
                     rt.start("x", folder, project_read=folder, **kwargs)

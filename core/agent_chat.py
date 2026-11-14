@@ -46,6 +46,9 @@ class AgentChatService(TeamTurnMixin):
         from core.user_memory import FILE_NAME, UserMemory
         # Facts the user explicitly asked to remember, shared by every conversation.
         self.user_memory = UserMemory(Path(store_path).parent / FILE_NAME)
+        # Files added to the next message (14 Nov): photos, documents, zips.
+        from core.attachments import AttachmentStore
+        self.attachments = AttachmentStore()
         self.recovery = self.store.recover_interrupted()
         self._lock = threading.RLock()
         self._active_turn: dict | None = None
@@ -649,6 +652,16 @@ class AgentChatService(TeamTurnMixin):
         threading.Thread(target=self._post_finish_report, args=(cid, request.get("id"), status),
                          daemon=True, name="spes-finish-report").start()
 
+    def _turn_attachments(self, cid):
+        with self._lock:
+            turn = getattr(self, "_active_turn", None) or {}
+            return turn.get("attachments") if turn.get("conversation_id") == cid else None
+
+    def _attachment_prompt(self, cid, agent):
+        from core.attachments import prompt_block
+        attached = self._turn_attachments(cid)
+        return prompt_block(attached, agent) if attached else ""
+
     def _communication_prompt(self, cid, full_prompt):
         conv = self.store.get(cid)
         request = next((m.get("content", "") for m in reversed(conv.get("messages", []))
@@ -865,9 +878,11 @@ class AgentChatService(TeamTurnMixin):
                 fact = "" if (not previous or bare_remember(previous)) else (remember_request(previous) or previous)
             if fact:
                 memory_note = self.user_memory.add(fact)
+            attached = self.attachments.take(cid)
             user_msg = self.store.append_message(
                 cid, "user", text, sender="user",
                 metadata={
+                    **({"attachments": attached["items"], "attachment_batch": attached["batch"]} if attached else {}),
                     "sender": "user", "task_id":task_id,
                     "recipient": recipient_for_user,
                     "conversation_id": cid,
@@ -947,6 +962,8 @@ class AgentChatService(TeamTurnMixin):
                 "started_at": time.time(),
             }
             turn_state["all_message_ids"] = [bot_msg["id"]]
+            if attached:
+                turn_state["attachments"] = attached
             # "Bitince haber ver": SpeS writes a short report when this turn ends (core.finish_report).
             from core.finish_report import wants_finish_report
             if wants_finish_report(text):
@@ -1638,6 +1655,7 @@ class AgentChatService(TeamTurnMixin):
         if conversation_only:
             write = full_access = confirm_write = use_session = False
         full_prompt = self._communication_prompt(cid, full_prompt)
+        full_prompt += self._attachment_prompt(cid, "antigravity")
         conv = self.store.get(cid)
         prev_session = conv.get("sessions", {}).get("antigravity") if use_session else None
         model_cfg = self.store.get_agent_model(cid, "antigravity")
@@ -1663,6 +1681,11 @@ class AgentChatService(TeamTurnMixin):
             dispatch_kwargs["conversation_only"] = True
             if project_scope or (self._project_read(cid) and not tool_less):
                 dispatch_kwargs["project_read"] = True
+                dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
+            attached = self._turn_attachments(cid)
+            if attached:
+                # The user's files for this turn, read-only (core.attachments).
+                dispatch_kwargs["read_root"] = attached["folder"]
                 dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
         from core.web_policy import web_allowed
         if web and web_allowed("antigravity", conversation_only=conversation_only,
@@ -1830,6 +1853,7 @@ class AgentChatService(TeamTurnMixin):
         if conversation_only:
             write = full_access = confirm_write = use_session = False
         full_prompt = self._communication_prompt(cid, full_prompt)
+        full_prompt += self._attachment_prompt(cid, agent)
         conv = self.store.get(cid)
         prev_session = conv.get("sessions", {}).get(agent) if use_session else None
         model_cfg = self.store.get_agent_model(cid, agent)
@@ -1860,6 +1884,14 @@ class AgentChatService(TeamTurnMixin):
             if project_scope or (self._project_read(cid) and not tool_less):
                 dispatch_kwargs["project_read"] = True
                 dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
+            attached = self._turn_attachments(cid)
+            if attached:
+                # The user's files for this turn, read-only (core.attachments).
+                dispatch_kwargs["read_root"] = attached["folder"]
+                dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
+        elif agent == "claude" and self._turn_attachments(cid):
+            # The builder (Fatum) reads the attachments while writing the project.
+            dispatch_kwargs["read_root"] = self._turn_attachments(cid)["folder"]
         from core.web_policy import web_allowed
         if web and web_allowed(agent, conversation_only=conversation_only,
                                project_read=bool(dispatch_kwargs.get("project_read")),

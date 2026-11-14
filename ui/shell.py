@@ -33,6 +33,7 @@ _SPRITE = """<svg width="0" height="0" style="position:absolute" aria-hidden="tr
 <symbol id="i-compact" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2.5"/><rect x="11" y="11" width="6" height="6" rx="1"/></symbol>
 <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
 <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+<symbol id="i-clip" viewBox="0 0 24 24"><path d="M20 11.5 12.4 19a5 5 0 0 1-7.1-7.1l8-8a3.4 3.4 0 0 1 4.8 4.8l-8 8a1.7 1.7 0 0 1-2.4-2.4l7.3-7.3"/></symbol>
 <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
 <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></symbol>
 <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></symbol>
@@ -305,7 +306,8 @@ SHELL_MARKUP = r"""
         <span id="thinkingText">işleniyor...</span>
         <button type="button" class="control-btn" id="btnCancel" title="Etkin görevi ve ajan süreçlerini durdur" style="display:none">Görevi durdur</button>
       </div>
-            <div class="inputbar composer">
+            <div class="inputbar composer" id="composer">
+              <div class="attach-chips" id="attachChips" aria-label="Eklenen dosyalar" hidden></div>
               <textarea id="msgInput" rows="1" aria-label="Ekibe yazın veya görev verin" aria-keyshortcuts="Control+L" title="Sohbete odaklan: Ctrl+L · Gönder: Enter · Yeni satır: Shift+Enter" placeholder="Ekibe yazın veya görev verin…" autofocus></textarea>
               <div class="composer-row">
                 <div class="agent-seg-group" id="agentSegGroup" role="group" aria-label="Ajan seçici">
@@ -318,6 +320,7 @@ SHELL_MARKUP = r"""
                 <div class="composer-spacer"></div>
                 <button type="button" class="chat-tool-btn" id="btnRepairPlan" aria-expanded="false" aria-controls="repairPlan" title="Testler başarısız olursa ajanın yeniden denemesi için plan kur">Onarım planı</button>
                 <button type="button" class="chat-tool-btn" id="btnContinueCollab" style="display:none" title="Birlikte modunda ajanlar arası tartışmayı 1 tur daha sürdür">@@i:loop:sm@@ 1 tur daha</button>
+          <button type="button" class="icon-btn attach" id="btnAttach" title="Dosya, fotoğraf veya zip ekle (sürükleyip bırakabilir ya da yapıştırabilirsiniz)" aria-label="Dosya ekle">@@i:clip@@</button>
           <button type="button" class="icon-btn mic" id="btnMic" title="Konuş (bas-konuş)" aria-label="Sesle yaz">@@i:mic@@</button>
           <button type="button" class="send-btn send" id="btnSend" title="Gönder (Enter)" aria-label="Gönder">@@i:send@@</button>
               </div>
@@ -650,5 +653,6 @@ for _name, _size in (("stop", "sm"), ("plus", "md"), ("search", "md"), ("sidebar
                      ("panel", "md"), ("minus", "sm"), ("maximize", "sm"), ("compact", "sm"), ("close", "sm"), ("loop", "sm"),
                      ("mic", "md"), ("send", "md"), ("camera", "md"), ("chip", "md"), ("windows", "md"),
                      ("spark", "md"), ("eye", "md"), ("agents", "md"), ("phone", "md"), ("wave", "md"),
-                     ("volume", "md"), ("shield", "md"), ("trash", "md"), ("globe", "md"), ("windows", "sm")):
+                     ("volume", "md"), ("shield", "md"), ("trash", "md"), ("globe", "md"), ("windows", "sm"),
+                     ("clip", "md")):
     SHELL_MARKUP = SHELL_MARKUP.replace(f"@@i:{_name}:{_size}@@", _icon(_name, _size)).replace(f"@@i:{_name}@@", _icon(_name))

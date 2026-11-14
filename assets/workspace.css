@@ -852,3 +852,18 @@ body.show-preview .preview-pane { display: flex; }
 .space-hint-btn:hover { background: var(--accent-soft); }
 .space-hint-btn:active { transform: scale(.97); }
 @media (prefers-reduced-motion: reduce) { .space-thumb, .space-tab, .space-hint-btn { transition: none; } }
+
+
+/* ── Attachments (14 Nov 2026) ──────────────────────────────────────────── */
+.attach-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 0; }
+.attach-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; padding: 4px 6px 4px 10px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--text); font-size: 12.5px; }
+.attach-chip[data-kind="image"]::before { content: "▣"; color: var(--agent-agy); }
+.attach-chip[data-kind="zip"]::before { content: "▤"; color: var(--agent-claude); }
+.attach-chip[data-kind="text"]::before, .attach-chip[data-kind="pdf"]::before, .attach-chip[data-kind="file"]::before { content: "▢"; color: var(--text-3); }
+.attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-remove { border: 0; background: transparent; color: var(--text-3); cursor: pointer; font-size: 15px; line-height: 1; padding: 0 4px; border-radius: 999px; }
+.attach-remove:hover { color: var(--danger); background: var(--danger-soft); }
+.attach-chip.sent { cursor: pointer; padding-right: 10px; }
+.attach-chip.sent:hover { background: var(--accent-soft); }
+.msg-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; justify-content: flex-end; }
+.composer.dropping { outline: 2px dashed var(--accent); outline-offset: 2px; }
