@@ -162,7 +162,7 @@ class SkillShelf:
             seen.add(name)
             files = sorted(p.relative_to(skill_md.parent).as_posix() for p in skill_md.parent.rglob("*") if p.is_file())
             found.append({"name": name, "description": meta.get("description", "")[:300],
-                          "dir": str(skill_md.parent), "files": files[:50], "size": len(text)})
+                          "dir": str(skill_md.parent), "files": files[:300], "size": len(text)})
         return found
 
     # -- shelf -----------------------------------------------------------------------

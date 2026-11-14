@@ -43,11 +43,12 @@ class SkillTurnMixin:
             turn = self._active_turn or {}
             # The fetched repository is this turn's read-only folder, like attachments.
             # Every file of every skill is listed (live 14 Nov: only SKILL.md was named, so
-            # Fides and Eos concluded the scripts were "not attached" and could not approve).
+            # Fides and Eos concluded the scripts were "not attached" and could not approve;
+            # then a 50-file cap hid scripts/validate_data.py and Fides vetoed again).
             turn["attachments"] = {"folder": fetched["folder"], "items": [
                 {"id": f"{s['name']}:{name}", "name": name, "kind": "skill", "size": 0,
                  "path": (Path(s["dir"]).relative_to(fetched["folder"]) / name).as_posix()}
-                for s in fetched["skills"] for name in s["files"]][:60]}
+                for s in fetched["skills"] for name in s["files"]][:300]}
         header = (f"\n--- SKILL KURULUMU ---\nDepo: {request['url']} @ {fetched['sha'][:12] or 'bilinmiyor'}\n"
                   f"Bulunan skill(ler): {names}\n")
         self._set_turn_progress("Fides ve Eos skill'i inceliyor…", current_msg_id=first_msg_id)

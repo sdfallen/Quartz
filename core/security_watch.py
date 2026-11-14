@@ -209,7 +209,7 @@ class SecurityWatch:
                             f"{row['name']} (PID {row['pid']}) {abuse.lower()} kalıbıyla başladı. Komut satırı gizlilik "
                             "için gösterilmiyor.", target, ["stop", "ignore"])
             elif row["exe"] and (_inside(row["exe"], dirs["temp"]) or _inside(row["exe"], dirs["downloads"])) \
-                    and not self.is_own(row["pid"]):
+                    and not self.is_own(row["pid"], row["exe"]):
                 where = "İndirilenler" if _inside(row["exe"], dirs["downloads"]) else "Geçici (Temp)"
                 actions = ["stop", "quarantine", "ignore"] if _inside(row["exe"], dirs["downloads"]) else ["stop", "ignore"]
                 self._alert("medium", "process", f"{where} klasöründen yeni program çalıştı",
@@ -253,16 +253,42 @@ class SecurityWatch:
                         f"{row['threat'] or 'Bilinmeyen tehdit'} — {row['path'] or 'yol yok'}"
                         + (f" (eylem: {row['action']})" if row.get("action") else ""), dict(row), ["ignore"])
 
-    @staticmethod
-    def is_own(pid) -> bool:
-        """A helper SpeS itself started (live 14 Nov: its read-guard.exe ran from a Temp
-        workspace and Eos reported it). Decided by the process tree, not by the path or name."""
+    _own_hashes = None
+
+    @classmethod
+    def own_helper_hashes(cls) -> set:
+        """SHA-256 of SpeS's packaged helper, of which read-guard.exe and the observer guards
+        are exact copies. Empty when running from source (the helper is a .py there)."""
+        if cls._own_hashes is None:
+            hashes = set()
+            try:
+                from core.helper_command import mcp_command
+                helper = Path(mcp_command()[0])
+                if helper.suffix.lower() == ".exe" and helper.is_file():
+                    hashes.add(_sha256(helper))
+            except Exception:
+                pass
+            cls._own_hashes = hashes
+        return cls._own_hashes
+
+    def is_own(self, pid, exe=None) -> bool:
+        """A helper SpeS itself started or shipped. Live 14 Nov: its read-guard.exe (a copy
+        of the packaged helper, started by the Antigravity CLI, so not in SpeS's process
+        tree) ran from a Temp workspace and Eos reported it twice. Decided by the process
+        tree or by the file's exact content (SHA-256), never by the path or the name."""
         try:
             import psutil
             me = os.getpid()
-            return any(parent.pid == me for parent in psutil.Process(int(pid)).parents())
+            if any(parent.pid == me for parent in psutil.Process(int(pid)).parents()):
+                return True
         except Exception:
-            return False
+            pass
+        if exe:
+            try:
+                return _sha256(exe) in self.own_helper_hashes()
+            except OSError:
+                return False
+        return False
 
     # -- alerts ----------------------------------------------------------------------
     def _alert(self, severity, kind, title, detail, target, actions):
