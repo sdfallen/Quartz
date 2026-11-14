@@ -23,7 +23,9 @@ class ProjectIPCTests(unittest.TestCase):
                 self.assertEqual(added["status"], "ok")
                 project_id = added["data"]["project"]["id"]
                 self.assertEqual(added["data"]["conversation"]["project_id"], project_id)
-                self.assertTrue((project / ".squad" / "messages.db").is_file(),
+                from core.squad_adapter import squad_home
+                self.assertFalse((project / ".squad").exists())  # SpeS files stay out of the project
+                self.assertTrue((squad_home(project) / ".squad" / "messages.db").is_file(),
                                 added["data"]["project"].get("squad_error"))
                 self.assertEqual(server._get_agent_center().projects.selected()["id"], project_id)
                 selected = server._dispatch_action({"action": "project_select",

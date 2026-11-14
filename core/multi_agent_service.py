@@ -315,7 +315,8 @@ class MultiAgentService:
     @staticmethod
     def _squad_signature(project):
         """SQLite WAL writes need not change messages.db's mtime. No DB reads."""
-        root = Path(project['path']) / '.squad'
+        from core.squad_adapter import squad_home
+        root = squad_home(project['path']) / '.squad'
         try:
             if not (root / 'messages.db').is_file(): return None
             values = []
@@ -421,7 +422,8 @@ class MultiAgentService:
                 cached = self._squad_conn_cache.get(pid)
                 if not force and cached is not None and (now - cached[0]) < 30.0:
                     if cached[1].get("connected") is True:
-                        db_path = Path(project["path"]) / ".squad" / "messages.db"
+                        from core.squad_adapter import squad_home
+                        db_path = squad_home(project["path"]) / ".squad" / "messages.db"
                         try:
                             db_exists = db_path.is_file()
                         except OSError:
@@ -519,10 +521,10 @@ class MultiAgentService:
         # Project read: a fresh, read-only, project-scoped inspection. Never for a
         # protected project; never resumes a session that held other permissions.
         runtime = self._runtime_for(provider)
-        # The Google path's read guard exists only for the agy backend; Claude's
-        # project-scoped read profile is not wired yet, so it answers tool-less.
-        guard_capable = provider == "codex" or (provider == "antigravity"
-                                                 and getattr(runtime, "backend", "agy") == "agy")
+        # The Google path's read guard exists only for the agy backend. Claude reads
+        # through SpeS's project-read server (14 Nov), like Codex.
+        guard_capable = provider in ("codex", "claude") or (provider == "antigravity"
+                                                             and getattr(runtime, "backend", "agy") == "agy")
         project_read = (bool(project_read) and guard_capable and not project.get("protected")
                         and project.get("workflow") != "warband")
         root = Path(project["path"]).resolve(strict=True) if project_read else None
@@ -547,8 +549,10 @@ class MultiAgentService:
             elif provider == "claude":
                 # Tool-less chat: --tools "" proven from the CLI's init event.
                 # web=True: WebSearch only, still proven from the init event; never with project read.
+                # project_read: only SpeS's read-only project tools, also proven from the init event.
                 options = {"model": model, "effort": effort, "approval": "never", "should_abort": should_abort,
-                           "sandbox": "web" if web and not project_read else "none"}
+                           "sandbox": "web" if web and not project_read else "none",
+                           **({"project_read": str(root)} if project_read else {})}
             elif project_read:
                 # Codex runs in the scratch folder with every built-in tool off;
                 # the project is reachable only through SpeS's read-only MCP
@@ -563,7 +567,7 @@ class MultiAgentService:
                 instruction = (
                     f"Bu turda seçili projeyi ({root}) YALNIZ OKUYABİLİRSİN: dosya listeleme, okuma"
                     + (" ve arama (quartz_project araçları: project_list, project_read, project_search; "
-                       "yollar proje köküne göreli). " if provider == "codex" else
+                       "yollar proje köküne göreli). " if provider in ("codex", "claude") else
                        " (dosya ve klasör yolunu tam yazarak). ") +
                     "Dosya yazamaz, değiştiremez, silemez; ağa ve masaüstüne erişemezsin. "
                     "Yanıtını okuduğun dosya yollarıyla (ve gerekirse satır numaralarıyla) dayandır; "

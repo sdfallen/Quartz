@@ -55,6 +55,12 @@ TOOLS_BY_SANDBOX = {
 MCP_SERVER = "quartz_desktop"
 COLLABORATOR_TOOLS = ("task_context", "task_wait", "task_message")
 COLLABORATOR_MCP_TOOLS = tuple(f"mcp__{MCP_SERVER}__{name}" for name in COLLABORATOR_TOOLS)
+# Read-only project access (plan/decision steps, user request 14 Nov): the same SpeS
+# project-read server Codex uses, which enforces the root, hides secret files and
+# bounds result sizes. Claude's own file tools stay off.
+PROJECT_SERVER = "quartz_project"
+PROJECT_TOOLS = ("project_list", "project_read", "project_search")
+PROJECT_MCP_TOOLS = tuple(f"mcp__{PROJECT_SERVER}__{name}" for name in PROJECT_TOOLS)
 # Pre-approved permission rules under --permission-mode dontAsk. Claude Code
 # lets the file tools read inside the working directory without a rule and
 # asks (= refuses, in dontAsk) for anything outside it; Edit(./**) approves
@@ -159,13 +165,21 @@ class ClaudeRuntime(CodexRuntime):
         return {"mcpServers": {MCP_SERVER: {"type": "stdio", "command": command[0],
                                              "args": [*command[1:], "--collaborator-server"]}}}
 
-    def build_args(self, sandbox, *, model=None, effort=None, session_id=None, resume_id=None, desktop=False):
+    @staticmethod
+    def project_mcp_config(root):
+        from core.project_read_mcp import expected_server
+        return {"mcpServers": {PROJECT_SERVER: {"type": "stdio", **expected_server(root)}}}
+
+    def build_args(self, sandbox, *, model=None, effort=None, session_id=None, resume_id=None, desktop=False,
+                   project_root=None):
         tools = ",".join(self.tools_for(sandbox))
-        servers = self.collaborator_mcp_config() if desktop else {"mcpServers": {}}
+        servers = (self.collaborator_mcp_config() if desktop else
+                   self.project_mcp_config(project_root) if project_root else {"mcpServers": {}})
         args = ["-p", "--output-format", "stream-json", "--verbose",
                 "--strict-mcp-config", "--mcp-config", json.dumps(servers),
                 "--setting-sources", "", "--permission-mode", "dontAsk", "--tools", tools]
-        allowed = ",".join(ALLOWED_BY_SANDBOX[sandbox] + (COLLABORATOR_MCP_TOOLS if desktop else ()))
+        allowed = ",".join(ALLOWED_BY_SANDBOX[sandbox] + (COLLABORATOR_MCP_TOOLS if desktop else ())
+                           + (PROJECT_MCP_TOOLS if project_root else ()))
         if allowed:
             args += ["--allowedTools", allowed]
         if model:
@@ -198,9 +212,18 @@ class ClaudeRuntime(CodexRuntime):
         if len(text) > 100_000:
             raise ValueError("Claude prompt is too long")
         expected_tools = self.tools_for(sandbox)
-        if tool_guard or project_read:
-            # Observer/project-read profiles need guards not yet wired for Claude.
-            raise PermissionError("Claude does not run observer or project-read profiles yet")
+        if tool_guard:
+            # The observer profile needs a guard not yet wired for Claude.
+            raise PermissionError("Claude does not run the observer profile yet")
+        read_root = None
+        if project_read:
+            # Read-only project access through SpeS's project-read server only.
+            if sandbox != "none" or desktop_connection is not None:
+                raise PermissionError("Claude reads a project only without built-in or desktop tools")
+            read_root = Path(project_read).resolve(strict=True)
+            if not read_root.is_dir():
+                raise NotADirectoryError(str(read_root))
+            expected_tools = PROJECT_MCP_TOOLS
         desktop_env = None
         if desktop_connection is not None:
             # Orchestrator of a desktop task: coordination tools only, no built-in tools.
@@ -240,7 +263,9 @@ class ClaudeRuntime(CodexRuntime):
                 "cancel_requested": False, "tools_verified": False,
                 "_oracle_seq": 0, "_tool_guard": False, "_project_read": None,
                 "_expected_tools": sorted(expected_tools), "_pending_tools": {},
-                "_expected_servers": [MCP_SERVER] if desktop_env is not None else [],
+                "_expected_servers": ([MCP_SERVER] if desktop_env is not None else
+                                      [PROJECT_SERVER] if read_root is not None else []),
+                "_project_read": str(read_root) if read_root is not None else None,
             }
             self._runs[run_id] = record
             if is_writer:
@@ -259,7 +284,7 @@ class ClaudeRuntime(CodexRuntime):
             raise RuntimeError("Claude run cancelled before start")
         command = self._command(self.build_args(sandbox, model=clean_model, effort=clean_effort,
                                                 session_id=session_id, resume_id=resume_thread_id,
-                                                desktop=desktop_env is not None))
+                                                desktop=desktop_env is not None, project_root=read_root))
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | CREATE_SUSPENDED
         job_errors: list[str] = []
         try:

@@ -226,6 +226,21 @@ class CollaboratorServerTests(unittest.TestCase):
         plain = rt.build_args("none")
         self.assertEqual(json.loads(plain[plain.index("--mcp-config") + 1]), {"mcpServers": {}})
 
+    def test_claude_reads_a_project_only_through_the_spes_read_server(self):
+        from core.claude_runtime import PROJECT_MCP_TOOLS
+        rt = runtime()
+        with tempfile.TemporaryDirectory() as folder:
+            args = rt.build_args("none", project_root=folder)
+            server = json.loads(args[args.index("--mcp-config") + 1])["mcpServers"]["quartz_project"]
+            self.assertEqual(server["args"][-2:], ["--project-read-server", str(Path(folder).resolve())])
+            self.assertEqual(args[args.index("--tools") + 1], "")
+            self.assertEqual(args[args.index("--allowedTools") + 1].split(","), list(PROJECT_MCP_TOOLS))
+            for kwargs in ({"sandbox": "read-only"}, {"sandbox": "web"},
+                           {"sandbox": "none", "desktop_connection": {"url": "http://127.0.0.1:1/tool", "token": "t"}}):
+                with self.subTest(kwargs=kwargs), self.assertRaises(PermissionError):
+                    rt.start("x", folder, project_read=folder, **kwargs)
+        self.assertEqual(rt._runs, {})
+
     def test_desktop_profile_needs_the_tool_less_sandbox(self):
         rt = runtime()
         with tempfile.TemporaryDirectory() as folder:

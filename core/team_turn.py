@@ -249,12 +249,17 @@ class TeamTurnMixin:
             return
         user_block = history_block + user_block
 
+        # Live 14 Nov (freelance trial): the plan and decision were written without reading
+        # BRIEF.md ("bu turda dosya okuma imkânım yok"). In a work turn they read the selected
+        # project read-only; writing still happens only in the build step.
+        read_project = {} if chat_only else {"tool_less": False, "project_scope": True}
         # 1. Plan and work split by the lead (first bubble already belongs to Claude).
         self._set_turn_progress("Fatum planı ve iş bölümünü yazıyor…", current_msg_id=first_msg_id)
         plan = self._team_say(cid, first_msg_id, LEAD, self._team_header(LEAD) + self._team_rules(3) + (
             "Görevin: kullanıcının isteği için kısa bir plan ve iş bölümü öner (kim ne yapacak: "
-            "Fatum, Fides, Eos). Sohbet sorusuysa nasıl yanıtlayacağınızı söyle.\n") + user_block,
-            project_id, step=1)
+            "Fatum, Fides, Eos). Sohbet sorusuysa nasıl yanıtlayacağınızı söyle. İstek proje dosyalarına "
+            "dayanıyorsa (ör. bir ilan, README, mevcut kod) önce onları oku; okumadığını okumuş gibi yazma.\n")
+            + user_block, project_id, step=1, **read_project)
         if self._is_turn_cancelled(first_msg_id) or not plan:
             with self._lock:
                 self._finish_turn(first_msg_id, "failed")
@@ -289,7 +294,7 @@ class TeamTurnMixin:
         decision = self._team_say(cid, decision_id, LEAD, self._team_header(LEAD) + self._team_rules(3) + (
             "Görevin: eleştirileri tart ve son kararı yaz: ne yapılacak, kim yapacak. Haklı itirazı benimse, "
             "katılmadığını gerekçesiyle reddet.\n") + user_block + f"\n--- EKİP SOHBETİ ---\n{transcript}\n",
-            project_id, step=3)
+            project_id, step=3, **read_project)
         if self._is_turn_cancelled(first_msg_id):
             return
 

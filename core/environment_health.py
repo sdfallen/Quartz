@@ -481,7 +481,8 @@ def _probe_squad_fallback(
             return {"installed": False, "initialized": False, "connected": False, "error": "Squad CLI bulunamadı."}
     except Exception as exc:
         return {"installed": False, "initialized": False, "connected": False, "error": str(exc)}
-    squad_root = project_dir / ".squad"
+    from core.squad_adapter import squad_home
+    squad_root = squad_home(project_dir) / ".squad"
     db_path = squad_root / "messages.db"
     corrupt = SquadAdapter._is_db_corrupt(db_path)
     initialized = (not corrupt) and (

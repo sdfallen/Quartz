@@ -45,6 +45,27 @@ class SquadCommandError(RuntimeError):
         self.stderr = stderr
 
 
+def squad_home(project_path) -> Path:
+    """The folder whose .squad/ holds a project's Squad workspace.
+
+    Live 14 Nov (freelance trial): SpeS left .squad/ (message database, roles) inside a
+    client's project. New workspaces live under %LOCALAPPDATA%\Quartz\squad-workspaces,
+    one folder per project path. A project that already has .squad/ keeps it in place so
+    its history is not lost. QUARTZ_SQUAD_HOME overrides the base folder (tests).
+    """
+    import hashlib
+    project = Path(project_path).resolve()
+    if (project / ".squad").is_dir():
+        return project
+    base = Path(os.getenv("QUARTZ_SQUAD_HOME") or
+                Path(os.getenv("LOCALAPPDATA") or Path.home()) / "Quartz" / "squad-workspaces")
+    key = hashlib.sha256(os.path.normcase(str(project)).encode("utf-8")).hexdigest()[:16]
+    name = re.sub(r"[^A-Za-z0-9._-]+", "-", project.name)[:40].strip("-.") or "project"
+    home = base / f"{name}-{key}"
+    home.mkdir(parents=True, exist_ok=True)
+    return home
+
+
 class SquadAdapter:
     CLIENTS = {"claude", "gemini", "codex", "opencode"}
     _DB_LOCK = threading.RLock()
@@ -53,6 +74,9 @@ class SquadAdapter:
         self.project_path = Path(project_path).resolve(strict=True)
         if not self.project_path.is_dir():
             raise NotADirectoryError(str(self.project_path))
+        # Where `squad` runs and keeps .squad/ (user request 14 Nov: SpeS's own files must
+        # not end up in a client's project). See squad_home().
+        self.workspace_path = squad_home(self.project_path)
         self.executable = self._find_executable(executable)
         self.timeout = max(1, int(timeout))
         self.last_quarantined_db: str | None = None
@@ -108,7 +132,7 @@ class SquadAdapter:
     def _snapshot_root_files(self) -> dict[str, tuple[bytes, int, int] | None]:
         snapshot: dict[str, tuple[bytes, int, int] | None] = {}
         for name in _ROOT_POLLUTION_FILES:
-            target = self.project_path / name
+            target = self.workspace_path / name
             try:
                 if target.is_file():
                     st = target.stat()
@@ -123,7 +147,7 @@ class SquadAdapter:
         """Remove only the exact boilerplate added by `squad init` without clobbering concurrent user edits."""
         boilerplate_only = {".squad/", ".squad", _SQUAD_DOC_SNIPPET.strip(), "## Squad Collaboration"}
         for name, state in snapshot.items():
-            target = self.project_path / name
+            target = self.workspace_path / name
             try:
                 if not target.is_file():
                     continue
@@ -150,7 +174,8 @@ class SquadAdapter:
                 pass
         git_exclude = self.project_path / ".git" / "info" / "exclude"
         try:
-            if git_exclude.parent.is_dir():
+            # Only a legacy in-project workspace needs hiding from the project's git.
+            if self.workspace_path == self.project_path and git_exclude.parent.is_dir():
                 existing = git_exclude.read_text(encoding="utf-8", errors="replace") if git_exclude.is_file() else ""
                 lines = {line.strip() for line in existing.splitlines()}
                 if ".squad/" not in lines and ".squad" not in lines:
@@ -163,7 +188,7 @@ class SquadAdapter:
         """Mark .squad as hidden on Windows (matching .git) so recursive shell globs skip it."""
         if os.name != "nt":
             return
-        squad_root = self.project_path / ".squad"
+        squad_root = self.workspace_path / ".squad"
         if not squad_root.is_dir():
             return
         try:
@@ -176,7 +201,7 @@ class SquadAdapter:
 
     def _quarantine_corrupt_db_files(self) -> Path | None:
         """Move positively-corrupt messages.db (and -wal/-shm) atomically to quarantine; roll back if any sidecar fails."""
-        squad_root = self.project_path / ".squad"
+        squad_root = self.workspace_path / ".squad"
         db_path = squad_root / "messages.db"
         if not db_path.is_file() or not self._is_db_corrupt(db_path):
             return None
@@ -228,7 +253,7 @@ class SquadAdapter:
 
     @property
     def initialized(self) -> bool:
-        squad_root = self.project_path / ".squad"
+        squad_root = self.workspace_path / ".squad"
         db_path = squad_root / "messages.db"
         if self._is_db_corrupt(db_path):
             return False
@@ -239,7 +264,7 @@ class SquadAdapter:
     def _repair_workspace(self) -> bool:
         """Quarantine a positively-corrupt messages.db and rebuild .squad on an explicit write path."""
         with self._DB_LOCK:
-            db_path = self.project_path / ".squad" / "messages.db"
+            db_path = self.workspace_path / ".squad" / "messages.db"
             if db_path.is_file():
                 if not self._is_db_corrupt(db_path):
                     return self.initialized
@@ -260,7 +285,7 @@ class SquadAdapter:
 
     def initialize(self) -> dict:
         with self._DB_LOCK:
-            squad_root = self.project_path / ".squad"
+            squad_root = self.workspace_path / ".squad"
             db_path = squad_root / "messages.db"
             if db_path.is_file() and self._is_db_corrupt(db_path):
                 if self._quarantine_corrupt_db_files() is None:
@@ -288,7 +313,7 @@ class SquadAdapter:
 
     def status(self) -> dict:
         """Purely read-only diagnostic check; never repairs, quarantines, or modifies files."""
-        db_path = self.project_path / ".squad" / "messages.db"
+        db_path = self.workspace_path / ".squad" / "messages.db"
         corrupt = self._is_db_corrupt(db_path)
         result = self._run(["--version"], require_workspace=False, _allow_repair=False)
         err = result["error"]
@@ -298,7 +323,7 @@ class SquadAdapter:
             "installed": result["ok"],
             "version": result["stdout"].strip(),
             "executable": self.executable,
-            "workspace": str(self.project_path),
+            "workspace": str(self.workspace_path),
             "initialized": False if corrupt else self.initialized,
             "database": str(db_path),
             "error": err,
@@ -407,7 +432,7 @@ class SquadAdapter:
     def _run(self, args, *, require_workspace=True, timeout=None, _allow_repair=True) -> dict:
         can_repair = bool(_allow_repair and self._is_write_operation(args))
         if require_workspace and not self.initialized:
-            if can_repair and (self.project_path / ".squad").is_dir():
+            if can_repair and (self.workspace_path / ".squad").is_dir():
                 self._repair_workspace()
             if not self.initialized:
                 raise SquadCommandError(f"Squad is not initialized in {self.project_path}")
@@ -420,7 +445,7 @@ class SquadAdapter:
             with self._DB_LOCK:
                 try:
                     completed = subprocess.run(
-                        command, cwd=str(self.project_path), env=env,
+                        command, cwd=str(self.workspace_path), env=env,
                         stdin=subprocess.DEVNULL, capture_output=True, text=True,
                         encoding="utf-8", errors="replace", timeout=timeout or self.timeout,
                         creationflags=flags, check=False,
