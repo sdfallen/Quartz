@@ -15,6 +15,15 @@ LIMIT_WORDS = ("kota hatası", "rate limit", "usage limit", "quota", "429", "kul
 POLL_SECONDS = 3.0
 
 
+def _duration(hours: float) -> str:
+    """'40 dakika', '2 saat', '1 saat 30 dakika' (live 15 Nov: '0.666667 saat')."""
+    minutes = round(hours * 60)
+    whole, rest = divmod(minutes, 60)
+    if not whole:
+        return f"{rest} dakika"
+    return f"{whole} saat" + (f" {rest} dakika" if rest else "")
+
+
 class LongJobChatMixin:
     def _jobs(self) -> dict:
         return self.__dict__.setdefault("_long_jobs", {})
@@ -42,7 +51,7 @@ class LongJobChatMixin:
         job = self._make_job(ledger)
         self._jobs()[ledger.data["id"]] = job
         self._job_note(ledger, "Uzun iş başladı: " + ledger.data["goal"][:200] + " · "
-                       + f"{len(ledger.data['milestones'])} kilometre taşı, en çok {ledger.data['hours']:g} saat"
+                       + f"{len(ledger.data['milestones'])} kilometre taşı, en çok {_duration(ledger.data['hours'])}"
                        + (" · çökünce kendiliğinden devam eder" if ledger.data["auto_resume"] else "") + ".")
         job.start()
         return ledger.public()

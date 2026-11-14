@@ -1053,7 +1053,9 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     }
 
     const writeSelect = document.getElementById('mainPermissionLevel');
-    const conversationOnly = coordinated.data?.intent === 'conversation';
+    // '/uzun-iş' is always work: live 15 Nov a goal containing "Durdurma" read as a conversation.
+    const longJobCommand = /^\s*\/uzun[-_ ]?i[şs]/i.test(text);
+    const conversationOnly = coordinated.data?.intent === 'conversation' && !longJobCommand;
     const permissionLevel = conversationOnly ? 'read-only' : selectedPermissionLevel;
     const isWrite = permissionLevel === 'full' || permissionLevel === 'project';
     const confirmWrite = isWrite;

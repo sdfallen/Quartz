@@ -470,6 +470,9 @@ class LongJob:
                 ledger.save()
             return
         if self.stop_event.is_set():
+            with ledger._lock:  # live 15 Nov: a stopped job showed its milestone as still running
+                milestone["status"] = "pending"
+                ledger.save()
             return
         if result.get("limit"):
             until = self.mark_limited(result["limit"])

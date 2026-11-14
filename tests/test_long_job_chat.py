@@ -200,3 +200,11 @@ class LongJobChatTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DurationTextTests(unittest.TestCase):
+    def test_durations_read_like_a_person_wrote_them(self):
+        from core.long_job_chat import _duration
+        self.assertEqual(_duration(40 / 60), "40 dakika")  # live 15 Nov: "0.666667 saat"
+        self.assertEqual(_duration(2), "2 saat")
+        self.assertEqual(_duration(1.5), "1 saat 30 dakika")

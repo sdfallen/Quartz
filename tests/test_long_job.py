@@ -126,6 +126,7 @@ class LongJobTests(unittest.TestCase):
         job.run()
         self.assertEqual(ledger.data["status"], "stopped")
         self.assertTrue(ledger.data["stopped"])
+        self.assertEqual(ledger.data["milestones"][0]["status"], "pending")  # not left "running"
         self.assertEqual(resumable(JobLedger.load(ledger.path), self.clock.now), "")
         with self.assertRaises(JobError):
             job.resume()
