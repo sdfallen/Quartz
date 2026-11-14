@@ -114,6 +114,8 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
   }
   function formatMessageLabel(m) {
     if (!m) return 'SPES';
+    // Eos the security watcher speaks through SpeS's own messages (14 Nov).
+    if (m.metadata && (m.metadata.security_alert || m.metadata.security_result)) return 'EOS · GÜVENLİK';
     if (m.metadata && m.metadata.team && TEAM_PERSONA[(m.sender || m.metadata.sender || '').toLowerCase()]) {
       const agent = (m.sender || m.metadata.sender).toLowerCase();
       return `${TEAM_PERSONA[agent]} · ${agent === 'antigravity' ? 'ANTIGRAVITY' : agent.toUpperCase()}`;
@@ -189,10 +191,19 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
         [tone, label] = ['warn', 'Kısmi'];
       } else if (['project','full'].includes(meta.permission_level)) {
         const check = meta.host_evidence?.source_validation;
+        // Test commands the agent ran, with exit status observed from the CLI events (14 Nov:
+        // 18/18 Node tests passed and the badge still said "Kanıt yok"). core.test_evidence.
+        const tests = meta.host_evidence?.agent_tests;
         state = check?.status === 'FAILED' ? 'Ajan bitti; kaynak sözdizimi kontrolü başarısız.'
+          : tests?.status === 'FAILED' ? 'Ajanın çalıştırdığı test komutu başarısız bitti.'
+          : tests?.status === 'PASSED' ? 'Ajanın çalıştırdığı testler geçti (komut çıktısı gözlendi); SpeS testleri kendisi çalıştırmadı.'
+          : tests?.status === 'RAN' ? 'Ajan test çalıştırdı ama komut çıkış kodunu gizledi; sonuç ayırt edilemedi.'
           : check?.status === 'VERIFIED' ? 'Python sözdizimi doğrulandı; çalışma/test başarısı doğrulanmış değil.'
           : 'Ajan yanıtı tamamlandı; bağımsız çalışma/test kanıtı yok.';
         [tone, label] = check?.status === 'FAILED' ? ['fail', 'Kontrol başarısız']
+          : tests?.status === 'FAILED' ? ['fail', 'Test başarısız']
+          : tests?.status === 'PASSED' ? ['ok', 'Testler geçti']
+          : tests?.status === 'RAN' ? ['warn', 'Test belirsiz']
           : check?.status === 'VERIFIED' ? ['warn', 'Kısmen doğrulandı'] : ['warn', 'Kanıt yok'];
         if (meta.host_evidence?.historical) state = 'Önceki oturumun kaynak kanıtı: ' + state;
       } else if (meta.natural_task && meta.host_check?.status === 'OBSERVED UI CRITERION VERIFIED'
@@ -315,10 +326,60 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     chatEl.querySelectorAll('.agent-live').forEach(el => { if (!keep.has(el)) el.remove(); });
   }
 
+  // Research results as cards (14 Nov). Card text is the agent's claim: rendered as text,
+  // links (http/https only, checked on the host) open in the system browser.
+  function renderResultCards(cards) {
+    const grid = document.createElement('div');
+    grid.className = 'result-cards';
+    for (const card of cards.slice(0, 12)) {
+      const item = document.createElement('article');
+      item.className = 'result-card';
+      const title = document.createElement('h4');
+      title.textContent = String(card.title || '');
+      item.append(title);
+      const meta = [card.source, card.price, card.deadline].filter(Boolean).map(String);
+      if (meta.length) {
+        const line = document.createElement('div');
+        line.className = 'result-card-meta';
+        line.textContent = meta.join(' · ');
+        item.append(line);
+      }
+      if (card.description) {
+        const text = document.createElement('p');
+        text.textContent = String(card.description);
+        item.append(text);
+      }
+      const foot = document.createElement('div');
+      foot.className = 'result-card-foot';
+      for (const tag of (Array.isArray(card.tags) ? card.tags : []).slice(0, 3)) {
+        const chip = document.createElement('span');
+        chip.className = 'result-tag';
+        chip.textContent = String(tag);
+        foot.append(chip);
+      }
+      if (/^https?:\/\//i.test(String(card.url || ''))) {
+        const open = document.createElement('button');
+        open.type = 'button';
+        open.className = 'result-open';
+        open.textContent = 'İlana git';
+        open.title = String(card.url);
+        open.onclick = async () => {
+          const result = await window.pywebview.api.open_external(String(card.url));
+          if (result && result.status !== 'ok') logLine('Bağlantı açılamadı: ' + String(result.data || ''));
+        };
+        foot.append(open);
+      }
+      if (foot.childNodes.length) item.append(foot);
+      grid.append(item);
+    }
+    return grid;
+  }
+
   function renderMessageBody(bubble, text, msg) {
     const level = document.getElementById('responseDetail')?.value || 'short';
     const view = agentMessageView(text, msg, level);
-    const key = JSON.stringify([text, view.details, view.state, level]);
+    const cards = Array.isArray(msg?.metadata?.cards) ? msg.metadata.cards : [];
+    const key = JSON.stringify([text, view.details, view.state, level, cards.length]);
     if (bubble.dataset.renderKey === key) return false;
     bubble.dataset.renderKey = key;
     bubble.classList?.toggle('pending', view.summary === '...');
@@ -349,6 +410,42 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       appendMessageText(body, view.summary);
     }
     bubble.append(body);
+    if (cards.length && !isUserMessage) bubble.append(renderResultCards(cards));
+    const alert = msg?.metadata?.security_alert;
+    if (alert && Array.isArray(alert.actions) && !isUserMessage) {
+      // Eos's security alert: the alert's own one-tap actions; the host checks the target again.
+      const LABEL = {stop: 'Süreci durdur', quarantine: 'Karantinaya al', remove_autorun: 'Açılıştan kaldır', ignore: 'Yoksay', undo: 'Geri al'};
+      bubble.closest?.('.msg')?.setAttribute('data-severity', String(alert.severity || ''));
+      const row = document.createElement('div'); row.className = 'security-actions';
+      for (const action of alert.actions) {
+        if (!LABEL[action] || action === 'undo') continue;
+        const b = document.createElement('button'); b.type = 'button'; b.dataset.action = action; b.textContent = LABEL[action];
+        b.onclick = async () => {
+          row.querySelectorAll('button').forEach(x => { x.disabled = true; });
+          const result = await window.pywebview.api.security_act(String(alert.id), action);
+          const data = result && result.data ? result.data : {};
+          if (!data.ok) { row.querySelectorAll('button').forEach(x => { x.disabled = false; }); }
+          logLine('Eos: ' + String(data.message || result?.data || ''));
+        };
+        row.append(b);
+      }
+      bubble.append(row);
+    }
+    const result = msg?.metadata?.security_result;
+    if (result && result.undo && !isUserMessage) {
+      const undo = document.createElement('button'); undo.type = 'button'; undo.className = 'control-btn'; undo.textContent = 'Geri al';
+      undo.onclick = async () => { undo.disabled = true; const r = await window.pywebview.api.security_act(String(result.alert), 'undo');
+        logLine('Eos: ' + String(r?.data?.message || '')); };
+      bubble.append(undo);
+    }
+    const changed = msg?.metadata?.host_evidence?.files_changed;
+    if (!isUserMessage && Array.isArray(changed) && changed.length && typeof window.spesShowResult === 'function') {
+      const open = document.createElement('button');
+      open.type = 'button'; open.className = 'control-btn result-panel-btn';
+      open.textContent = `Sonucu panelde aç · ${changed.length} dosya`;
+      open.onclick = () => window.spesShowResult();
+      bubble.append(open);
+    }
     if (!isUserMessage && view.summary !== '...' && typeof revealMessage === 'function') revealMessage(bubble, body, msg?.id);
     if (!isUserMessage && view.summary !== '...' && window.QuartzPreview) window.QuartzPreview.decorate(bubble, view.summary + '\n' + (view.details || ''));
     if (msg?.status === 'interrupted' && msg.id) {
@@ -622,6 +719,23 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       wrap.append(inner);
       const effectiveMsg = msgObj || (kind === 'user' || cleanSender === 'user' ? {role: 'user', sender: 'user'} : null);
       renderMessageBody(bubble, text, effectiveMsg);
+      const sentFiles = msgObj && msgObj.metadata && Array.isArray(msgObj.metadata.attachments) ? msgObj.metadata.attachments : [];
+      if (sentFiles.length) {
+        const row = document.createElement('div');
+        row.className = 'msg-attachments';
+        for (const item of sentFiles.slice(0, 10)) {
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = 'attach-chip sent';
+          chip.dataset.kind = item.kind || 'file';
+          chip.textContent = item.name;
+          chip.title = 'Panelde aç';
+          chip.onclick = () => { if (typeof window.spesOpenAttachment === 'function')
+            window.spesOpenAttachment(msgObj.metadata.attachment_batch, item); };
+          row.append(chip);
+        }
+        inner.append(row);
+      }
       // A work request typed in Sohbet: one click opens it as a Workspace task (not sent yet).
       if (msgObj && msgObj.metadata && msgObj.metadata.space_hint === 'work' && typeof window.spesOpenInWorkspace === 'function') {
         const hint = document.createElement('div');

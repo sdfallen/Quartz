@@ -37,7 +37,10 @@ def _writer_failed(message, run, run_id):
     return RuntimeError(message)
 
 
-class AgentChatService(TeamTurnMixin):
+from core.skill_turn import SkillTurnMixin
+
+
+class AgentChatService(TeamTurnMixin, SkillTurnMixin):
     MAX_GROUP_ROUNDS = 2
 
     def __init__(self, agent_service: MultiAgentService, store_path: str | Path):
@@ -46,6 +49,15 @@ class AgentChatService(TeamTurnMixin):
         from core.user_memory import FILE_NAME, UserMemory
         # Facts the user explicitly asked to remember, shared by every conversation.
         self.user_memory = UserMemory(Path(store_path).parent / FILE_NAME)
+        # Files added to the next message (14 Nov): photos, documents, zips.
+        from core.attachments import AttachmentStore
+        self.attachments = AttachmentStore()
+        # The work panel's live previews of what the team built (127.0.0.1 only).
+        from core.local_preview import PreviewServers
+        self.previews = PreviewServers()
+        # SpeS's skill shelf: the agents install GitHub skills, /skill uses them (14 Nov).
+        from core.skill_shelf import SkillShelf
+        self.skills = SkillShelf()
         self.recovery = self.store.recover_interrupted()
         self._lock = threading.RLock()
         self._active_turn: dict | None = None
@@ -388,6 +400,9 @@ class AgentChatService(TeamTurnMixin):
         try:
             result = self.cancel_active()
         finally:
+            self.previews.stop_all()
+            if getattr(self, "security", None) is not None:
+                self.security.stop()
             self._diagnostics.close()
             self._environment_health.close()
         return {"status": result["stop_receipt"]["status"],
@@ -649,6 +664,143 @@ class AgentChatService(TeamTurnMixin):
         threading.Thread(target=self._post_finish_report, args=(cid, request.get("id"), status),
                          daemon=True, name="spes-finish-report").start()
 
+    # -- work panel: what the team built and what the user sent (14 Nov) ---------
+    def _project_root(self, conv):
+        try:
+            project = self.agent_service.projects.get(conv.get("project_id")) if conv.get("project_id") \
+                else self.agent_service.projects.selected()
+            root = Path(project["path"]).resolve(strict=True)
+            return root if root.is_dir() else None
+        except Exception:
+            return None
+
+    def panel_files(self, cid):
+        """Files SpeS itself saw the team change (host evidence) and the user's attachments."""
+        conv = self.store.get(cid)
+        root = self._project_root(conv)
+        project_files = []
+        for message in reversed(conv.get("messages", [])):
+            run_id = (message.get("metadata") or {}).get("run_id")
+            if not run_id or not hasattr(self.agent_service, "run_evidence"):
+                continue
+            evidence = self.agent_service.run_evidence(run_id) or {}
+            for name in evidence.get("files_changed") or []:
+                path = Path(str(name))
+                try:
+                    rel = (path if path.is_absolute() else root / path).resolve().relative_to(root).as_posix()
+                except (ValueError, OSError, TypeError):
+                    continue
+                if rel not in project_files:
+                    project_files.append(rel)
+        attachments = []
+        for message in conv.get("messages", []):
+            meta = message.get("metadata") or {}
+            for item in meta.get("attachments") or []:
+                if isinstance(item, dict) and meta.get("attachment_batch"):
+                    attachments.append({"batch": meta["attachment_batch"], "path": item.get("path"),
+                                        "name": item.get("name"), "kind": item.get("kind")})
+        return {"project": project_files[:200], "attachments": attachments[-50:],
+                "project_name": root.name if root else ""}
+
+    def panel_result(self, cid):
+        """The panel's first view after a build: a live page for HTML, else the best file."""
+        from core.local_preview import best_preview_file
+        files = self.panel_files(cid)
+        best = best_preview_file(files["project"])
+        open_view = None
+        if best:
+            root = self._project_root(self.store.get(cid))
+            if best.lower().endswith((".html", ".htm")) and root is not None:
+                from urllib.parse import quote
+                open_view = {"kind": "web", "file": best, "url": self.previews.url_for(root) + quote(best)}
+            else:
+                open_view = {"kind": "file", "scope": "project", "path": best}
+        return {**files, "open": open_view}
+
+    def panel_read(self, cid, scope, path, batch=None):
+        """One file for the panel, only from the lists panel_files returns."""
+        from core.local_preview import read_for_panel
+        files = self.panel_files(cid)
+        rel = str(path or "")
+        if scope == "project":
+            if rel not in files["project"]:
+                raise PermissionError("Bu dosya bu sohbetin sonuçlarında yok")
+            return read_for_panel(self._project_root(self.store.get(cid)), rel)
+        if scope == "attachment":
+            match = next((a for a in files["attachments"] if a["batch"] == batch and a["path"] == rel), None)
+            if match is None or rel.endswith("/"):
+                raise PermissionError("Bu ek bu sohbette yok ya da bir klasör")
+            folder = self.attachments.root / re.sub(r"[^A-Za-z0-9_-]", "", cid)[:40] / str(batch)
+            return read_for_panel(folder, rel)
+        raise ValueError("Bilinmeyen kaynak")
+
+    # -- Eos, the security watcher (14 Nov) ------------------------------------------
+    def start_security_watch(self, watch=None):
+        """Started once by the app (never by tests); runs while SpeS is open."""
+        from core.security_watch import SecurityWatch
+        if getattr(self, "security", None) is None:
+            self.security = watch or SecurityWatch(self._post_security_alert)
+            self.security.start()
+        return self.security
+
+    def _post_security_alert(self, alert):
+        # Low findings (a new download) stay in the watcher's list; the rest is said in chat.
+        if alert.get("severity") == "low":
+            return
+        try:
+            cid = self.store.get_active()["id"]
+        except Exception:
+            return
+        icon = "Yüksek" if alert["severity"] == "high" else "Orta"
+        self.store.append_message(cid, "assistant", f"Güvenlik uyarısı ({icon}): {alert['title']}. {alert['detail']}",
+                                  sender="quartz", metadata={
+            "sender": "quartz", "persona": "Eos", "recipient": "user", "status": "completed",
+            "security_alert": alert, **({"notify": "call"} if alert["severity"] == "high" else {}),
+            "sequence": self._next_sequence(self.store.get(cid))})
+
+    def security_alerts(self):
+        watch = getattr(self, "security", None)
+        return watch.alerts() if watch else []
+
+    def security_act(self, alert_id, action):
+        watch = getattr(self, "security", None)
+        if watch is None:
+            return {"ok": False, "message": "Güvenlik izleyicisi çalışmıyor."}
+        result = watch.act(str(alert_id or ""), str(action or ""))
+        if result.get("ok") and action != "ignore":
+            try:
+                cid = self.store.get_active()["id"]
+                self.store.append_message(cid, "assistant", "Eos: " + result["message"], sender="quartz", metadata={
+                    "sender": "quartz", "persona": "Eos", "recipient": "user", "status": "completed",
+                    "security_result": {"alert": str(alert_id), "action": action, "undo": bool(result.get("undo"))},
+                    "sequence": self._next_sequence(self.store.get(cid))})
+            except Exception:
+                pass
+        return result
+
+    def _answer_without_agents(self, cid, text, answer):
+        """SpeS answers itself (e.g. the skill shelf); no agent run, no turn."""
+        with self._lock:
+            user = self.store.append_message(cid, "user", text, sender="user", metadata={
+                "sender": "user", "recipient": "quartz", "sequence": self._next_sequence(self.store.get(cid))})
+            note = self.store.append_message(cid, "assistant", answer, sender="quartz", metadata={
+                "sender": "quartz", "recipient": "user", "status": "completed",
+                "sequence": self._next_sequence(self.store.get(cid))})
+        return {"conversation_id": cid, "user_message": user, "assistant_message": note, "agent": "quartz"}
+
+    def skills_list(self):
+        return self.skills.list()
+
+    def _turn_attachments(self, cid):
+        with self._lock:
+            turn = getattr(self, "_active_turn", None) or {}
+            return turn.get("attachments") if turn.get("conversation_id") == cid else None
+
+    def _attachment_prompt(self, cid, agent):
+        from core.attachments import prompt_block
+        attached = self._turn_attachments(cid)
+        return prompt_block(attached, agent) if attached else ""
+
     def _communication_prompt(self, cid, full_prompt):
         conv = self.store.get(cid)
         request = next((m.get("content", "") for m in reversed(conv.get("messages", []))
@@ -675,8 +827,15 @@ class AgentChatService(TeamTurnMixin):
             memory += ("[SPES HAFIZA] Kullanıcının son mesajı gizli bilgi (şifre, kart, anahtar vb.) içerdiği için "
                        "SpeS onu kaydetmedi. Bunu kısaca söyle.\n")
         from core.space_policy import space_of, space_rule
+        from core.result_cards import CARDS_RULE, is_research
+        cards = CARDS_RULE if is_research(request) else ""
+        from core.skill_shelf import prompt_block as skill_block
+        with self._lock:
+            turn = getattr(self, "_active_turn", None) or {}
+            invoked_skill = turn.get("skill") if turn.get("conversation_id") == cid else None
+        cards += skill_block(invoked_skill) if invoked_skill else ""
         return (communication_instruction(self.store.preferences()["response_detail"], request) + "\n"
-                + NORMAL_CHAT_DESKTOP_NOTICE + memory + space_rule(space_of(conv)) + mode + full_prompt)
+                + NORMAL_CHAT_DESKTOP_NOTICE + memory + space_rule(space_of(conv)) + mode + cards + full_prompt)
 
     # -- long-term memory (user-visible, user-deletable) --------------------
     def memory_list(self) -> list:
@@ -800,10 +959,27 @@ class AgentChatService(TeamTurnMixin):
         if requested_permission_level not in {'read-only','project','full'}: raise ValueError('Invalid requested permission level')
         from core.space_policy import is_chat
         target = self.store.get(conversation_id) if conversation_id else self.store.get_active()
+        from core.skill_shelf import install_request, invocation
+        skill = skill_install = None
+        invoked = invocation(text)
+        if invoked is not None:
+            name, rest = invoked
+            skill = self.skills.load(name) if name not in ("", "liste", "list") else None
+            if skill is None:
+                # "/skill", "/skill liste" or an unknown name: SpeS answers with the shelf.
+                prefix = f"'{name}' adında bir skill rafta yok. " if name not in ("", "liste", "list") else ""
+                return self._answer_without_agents(target["id"], text, prefix + self._skill_list_text())
+            text = rest or f"{skill['name']} skill'ini uygula."
+        else:
+            skill_install = install_request(text)
         looks_like_task = message_intent(text) == "task"
         # Sohbet space never starts work, whatever the wording (user request 14 Nov).
         chat_space = is_chat(target)
-        conversation_only = chat_space or not looks_like_task
+        # "İnternette ... araştırın, liste yapın": an answer with web search and cards, not a
+        # build (user request 14 Nov). A request that also names files or code stays a task.
+        from core.result_cards import is_research
+        research = is_research(text)
+        conversation_only = chat_space or research or bool(skill_install) or not looks_like_task
         if conversation_only:
             write = full_access = confirm_write = False
         write = bool(write or full_access)
@@ -832,6 +1008,8 @@ class AgentChatService(TeamTurnMixin):
 
             cid = conv["id"]
             selected_agent = (agent or conv.get("agent") or "antigravity").lower().strip()
+            if skill_install:
+                selected_agent = "collaboration"  # all three take part in an install review
             # Explicit opt-in per message; never route all tasks to a cloud agent.
             if re.match(r"^@notion\b", text, re.I):
                 selected_agent = "notion"
@@ -865,9 +1043,11 @@ class AgentChatService(TeamTurnMixin):
                 fact = "" if (not previous or bare_remember(previous)) else (remember_request(previous) or previous)
             if fact:
                 memory_note = self.user_memory.add(fact)
+            attached = self.attachments.take(cid)
             user_msg = self.store.append_message(
                 cid, "user", text, sender="user",
                 metadata={
+                    **({"attachments": attached["items"], "attachment_batch": attached["batch"]} if attached else {}),
                     "sender": "user", "task_id":task_id,
                     "recipient": recipient_for_user,
                     "conversation_id": cid,
@@ -876,7 +1056,10 @@ class AgentChatService(TeamTurnMixin):
                     "requested_permission_level":requested_permission_level,
                     **({"memory": memory_note} if memory_note else {}),
                     # The UI offers "Workspace'te aç" under a work request typed in Sohbet.
-                    **({"space_hint": "work"} if chat_space and looks_like_task else {}),
+                    **({"space_hint": "work"} if chat_space and looks_like_task and not research and not attached else {}),
+                    **({"research": True} if research else {}),
+                    **({"skill": skill["name"]} if skill else {}),
+                    **({"skill_install": skill_install["url"]} if skill_install else {}),
                 },
             )
 
@@ -947,6 +1130,12 @@ class AgentChatService(TeamTurnMixin):
                 "started_at": time.time(),
             }
             turn_state["all_message_ids"] = [bot_msg["id"]]
+            if attached:
+                turn_state["attachments"] = attached
+            if skill:
+                turn_state["skill"] = skill
+            if skill_install:
+                turn_state["skill_install"] = skill_install
             # "Bitince haber ver": SpeS writes a short report when this turn ends (core.finish_report).
             from core.finish_report import wants_finish_report
             if wants_finish_report(text):
@@ -1261,6 +1450,12 @@ class AgentChatService(TeamTurnMixin):
                 return False
             if provider and session:
                 self.store.set_agent_session(cid, provider, session)
+            if content and "spes-kartlar" in str(content):
+                # Research results as cards (core.result_cards); half-streamed JSON stays hidden.
+                from core.result_cards import extract_cards
+                content, cards = extract_cards(content)
+                if cards and metadata is not None:
+                    metadata = {**metadata, "cards": cards}
             if metadata is not None:
                 metadata = {**metadata, "task_id":self._active_turn.get("turn_id"),
                             "conversation_id":cid,"project_id":self._active_turn.get("project_id")}
@@ -1454,7 +1649,10 @@ class AgentChatService(TeamTurnMixin):
                       'Bu turdaki gerçek erişimini SpeS\'ın verdiği araçlar belirler: sohbet turunda araç yok, '
                       'proje okuma turunda yalnız seçili projeyi okuma, görev turunda seçilen yetki. '
                       'Gerçekte yapmadığın bir gözlemi veya işlemi yapmış gibi iddia etme.\n\n') + prompt
-            if agent == "antigravity":
+            install = (self._active_turn or {}).get("skill_install")
+            if install:
+                self._run_skill_install(cid, msg_id, install, project_id)
+            elif agent == "antigravity":
                 self._run_antigravity_turn(cid, msg_id, prompt, project_id, write, confirm_write, full_access)
             elif agent == "codex":
                 self._run_codex_turn(cid, msg_id, prompt, project_id, write, confirm_write, full_access)
@@ -1638,6 +1836,7 @@ class AgentChatService(TeamTurnMixin):
         if conversation_only:
             write = full_access = confirm_write = use_session = False
         full_prompt = self._communication_prompt(cid, full_prompt)
+        full_prompt += self._attachment_prompt(cid, "antigravity")
         conv = self.store.get(cid)
         prev_session = conv.get("sessions", {}).get("antigravity") if use_session else None
         model_cfg = self.store.get_agent_model(cid, "antigravity")
@@ -1664,8 +1863,13 @@ class AgentChatService(TeamTurnMixin):
             if project_scope or (self._project_read(cid) and not tool_less):
                 dispatch_kwargs["project_read"] = True
                 dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
+            attached = self._turn_attachments(cid)
+            if attached:
+                # The user's files for this turn, read-only (core.attachments).
+                dispatch_kwargs["read_root"] = attached["folder"]
+                dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
         from core.web_policy import web_allowed
-        if web and web_allowed("antigravity", conversation_only=conversation_only,
+        if web and not dispatch_kwargs.get("read_root") and web_allowed("antigravity", conversation_only=conversation_only,
                                project_read=bool(dispatch_kwargs.get("project_read")),
                                write=bool(write), full_access=bool(full_access)):
             dispatch_kwargs["web"] = True
@@ -1830,6 +2034,7 @@ class AgentChatService(TeamTurnMixin):
         if conversation_only:
             write = full_access = confirm_write = use_session = False
         full_prompt = self._communication_prompt(cid, full_prompt)
+        full_prompt += self._attachment_prompt(cid, agent)
         conv = self.store.get(cid)
         prev_session = conv.get("sessions", {}).get(agent) if use_session else None
         model_cfg = self.store.get_agent_model(cid, agent)
@@ -1860,8 +2065,16 @@ class AgentChatService(TeamTurnMixin):
             if project_scope or (self._project_read(cid) and not tool_less):
                 dispatch_kwargs["project_read"] = True
                 dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
+            attached = self._turn_attachments(cid)
+            if attached:
+                # The user's files for this turn, read-only (core.attachments).
+                dispatch_kwargs["read_root"] = attached["folder"]
+                dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
+        elif agent == "claude" and self._turn_attachments(cid):
+            # The builder (Fatum) reads the attachments while writing the project.
+            dispatch_kwargs["read_root"] = self._turn_attachments(cid)["folder"]
         from core.web_policy import web_allowed
-        if web and web_allowed(agent, conversation_only=conversation_only,
+        if web and not dispatch_kwargs.get("read_root") and web_allowed(agent, conversation_only=conversation_only,
                                project_read=bool(dispatch_kwargs.get("project_read")),
                                write=bool(write), full_access=bool(full_access)):
             dispatch_kwargs["web"] = True

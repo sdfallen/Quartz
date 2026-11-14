@@ -109,6 +109,12 @@ class MobileGateway:
                 "step": meta.get("team_step"), "text": str(message.get("content") or "")[:4000],
                 "model": str(meta.get("model") or ""),
                 "report": bool(meta.get("report")),
+                # Research cards (14 Nov): already bounded and http(s)-only on the host.
+                "cards": [c for c in (meta.get("cards") or []) if isinstance(c, dict)][:12],
+                # Eos's security alert: the phone rings for high ones and shows its actions.
+                "alert": ({k: meta["security_alert"].get(k) for k in ("id", "severity", "title", "actions")}
+                          if isinstance(meta.get("security_alert"), dict) else None),
+                "attachments": [str(a.get("name") or "") for a in (meta.get("attachments") or []) if isinstance(a, dict)][:10],
                 "memory": ("saved" if (meta.get("memory") or {}).get("saved") else
                            "secret" if (meta.get("memory") or {}).get("reason") == "secret" else ""),
                 "failed": meta.get("status") == "failed" or bool(meta.get("error")) or outcome.get("goal_verdict") == "FAILED",
@@ -204,11 +210,9 @@ class MobileGateway:
                 changes[name] = {"file": name, "persona": who, "seq": seq}
             status = (ev.get("source_validation") or {}).get("status")
             verdict = (meta.get("outcome") or {}).get("goal_verdict")
-            if status or verdict:
-                if verdict == "VERIFIED": tone, label = "ok", "Hedef doğrulandı"
-                elif status == "FAILED": tone, label = "fail", "Kontrol başarısız"
-                elif status == "VERIFIED": tone, label = "warn", "Sözdizimi doğrulandı; test kanıtı yok"
-                else: tone, label = "warn", "Bağımsız kanıt yok"
+            if status or verdict or ev.get("agent_tests"):
+                from core.test_evidence import evidence_label
+                tone, label = evidence_label(ev, meta.get("outcome"))
                 checks.append({"label": label, "tone": tone, "persona": who, "seq": seq, "files": len(files)})
         return {"changes": list(changes.values())[-50:], "checks": checks[-30:]}
 
@@ -265,6 +269,9 @@ class MobileGateway:
         chat = self._chat()
         if action == "forget":
             return chat.memory_forget(str(body.get("id") or ""))
+        if action == "security":
+            # One of an alert's own actions, by alert id; the host re-checks the exact target.
+            return chat.security_act(str(body.get("id") or ""), str(body.get("action") or ""))
         if action == "new":
             # Sohbet or Workspace; a phone without the field opens a Workspace conversation as before.
             conv = chat.new_conversation(agent=str(body.get("agent") or "collaboration"), space=body.get("space"))

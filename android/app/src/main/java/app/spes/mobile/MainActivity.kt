@@ -366,8 +366,44 @@ class MainActivity : ComponentActivity() {
                 Spacer(Modifier.height(4.dp))
             }
             Surface(shape = RoundedCornerShape(if (mine) 18.dp else 14.dp), color = if (mine) SpesColors.surface3 else SpesColors.surface1,
-                border = if (m.failed) BorderStroke(1.dp, SpesColors.danger) else null, modifier = Modifier.widthIn(max = 560.dp)) {
+                border = if (m.failed || m.alert?.severity == "high") BorderStroke(1.dp, SpesColors.danger) else null, modifier = Modifier.widthIn(max = 560.dp)) {
                 Text(m.text, color = SpesColors.text, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(horizontal = 13.dp, vertical = 10.dp))
+            }
+            if (m.attachments.isNotEmpty()) {
+                Text("Ekler: " + m.attachments.joinToString(", "), color = SpesColors.text3, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+            }
+            // Research results as cards (14 Nov).
+            m.cards.forEach { card ->
+                Spacer(Modifier.height(6.dp))
+                Surface(shape = RoundedCornerShape(14.dp), color = SpesColors.surface2, modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text(card.title, color = SpesColors.text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        val meta = listOf(card.source, card.price, card.deadline).filter { it.isNotBlank() }
+                        if (meta.isNotEmpty()) Text(meta.joinToString(" · "), color = SpesColors.text3, fontSize = 12.sp)
+                        if (card.description.isNotBlank()) Text(card.description, color = SpesColors.text2, fontSize = 13.sp, lineHeight = 19.sp)
+                        if (card.url.startsWith("https://") || card.url.startsWith("http://")) {
+                            TextButton(onClick = { runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(card.url))) } }) { Text("İlana git") }
+                        }
+                    }
+                }
+            }
+            // Eos's security alert: its own actions, re-checked on the computer (14 Nov).
+            m.alert?.let { alert ->
+                val scope = rememberCoroutineScope()
+                var note by remember(alert.id) { mutableStateOf("") }
+                val labels = mapOf("stop" to "Süreci durdur", "quarantine" to "Karantinaya al",
+                    "remove_autorun" to "Açılıştan kaldır", "ignore" to "Yoksay")
+                Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 4.dp)) {
+                    alert.actions.filter { it in labels }.forEach { action ->
+                        TextButton(onClick = {
+                            scope.launch {
+                                note = io { api().act("security", JSONObject().put("id", alert.id).put("action", action)) }
+                                    .fold({ "İletildi: ${labels[action]}" }, { "İletilemedi: ${it.message}" })
+                            }
+                        }) { Text(labels[action] ?: action) }
+                    }
+                }
+                if (note.isNotEmpty()) Text(note, color = SpesColors.text3, fontSize = 12.sp)
             }
         }
     }

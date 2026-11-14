@@ -836,7 +836,6 @@ body.show-preview .preview-pane { display: flex; }
 :root[data-space="chat"] .stage .rail,
 :root[data-space="chat"] #desktopTaskBar,
 :root[data-space="chat"] #btnPreview,
-:root[data-space="chat"] #previewPane,
 :root[data-space="chat"] #permissionSelectionHint,
 :root[data-space="chat"] #squadBadge,
 :root[data-space="chat"] #chatProjectTag,
@@ -852,3 +851,72 @@ body.show-preview .preview-pane { display: flex; }
 .space-hint-btn:hover { background: var(--accent-soft); }
 .space-hint-btn:active { transform: scale(.97); }
 @media (prefers-reduced-motion: reduce) { .space-thumb, .space-tab, .space-hint-btn { transition: none; } }
+
+
+/* ── Attachments (14 Nov 2026) ──────────────────────────────────────────── */
+.attach-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 0; }
+.attach-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; padding: 4px 6px 4px 10px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--text); font-size: 12.5px; }
+.attach-chip[data-kind="image"]::before { content: "▣"; color: var(--agent-agy); }
+.attach-chip[data-kind="zip"]::before { content: "▤"; color: var(--agent-claude); }
+.attach-chip[data-kind="text"]::before, .attach-chip[data-kind="pdf"]::before, .attach-chip[data-kind="file"]::before { content: "▢"; color: var(--text-3); }
+.attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-remove { border: 0; background: transparent; color: var(--text-3); cursor: pointer; font-size: 15px; line-height: 1; padding: 0 4px; border-radius: 999px; }
+.attach-remove:hover { color: var(--danger); background: var(--danger-soft); }
+.attach-chip.sent { cursor: pointer; padding-right: 10px; }
+.attach-chip.sent:hover { background: var(--accent-soft); }
+.msg-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; justify-content: flex-end; }
+.composer.dropping { outline: 2px dashed var(--accent); outline-offset: 2px; }
+
+
+/* ── Result cards (14 Nov 2026) ─────────────────────────────────────────── */
+.result-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin-top: 10px; }
+.result-card { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface-1); box-shadow: var(--shadow-1); transition: transform .18s ease, border-color .18s ease; }
+.result-card:hover { transform: translateY(-1px); border-color: var(--line-strong); }
+.result-card h4 { margin: 0; font-size: 14px; line-height: 1.35; color: var(--text); overflow-wrap: anywhere; }
+.result-card p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-2); overflow-wrap: anywhere; }
+.result-card-meta { font-size: 12px; color: var(--text-3); }
+.result-card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: auto; padding-top: 4px; }
+.result-tag { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.result-open { margin-left: auto; border: 1px solid var(--line-strong); background: transparent; color: var(--text); border-radius: 999px; padding: 4px 12px; font-size: 12.5px; cursor: pointer; }
+.result-open:hover { background: var(--accent-soft); }
+@media (prefers-reduced-motion: reduce) { .result-card { transition: none; } }
+
+
+/* ── Work panel as a general side view (14 Nov 2026) ───────────────────── */
+.work-files { display: none; flex: 1; min-height: 0; grid-template-rows: auto 1fr; }
+.preview-pane[data-work-tab="files"] #workFiles { display: grid; }
+.work-files-list { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line); max-height: 160px; overflow: auto; }
+.work-files-title { width: 100%; font-size: 11.5px; letter-spacing: .02em; color: var(--text-3); margin-top: 2px; }
+.work-file { border: 1px solid var(--line); background: var(--surface-1); color: var(--text); border-radius: 8px; padding: 4px 9px; font: 12px/1.3 var(--font-mono, monospace); cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-file:hover { border-color: var(--accent); }
+.work-viewer { min-height: 0; overflow: auto; padding: 12px; }
+.viewer-head { font-size: 12px; color: var(--text-3); margin-bottom: 8px; }
+.viewer-code { margin: 0; font: 12.5px/1.55 var(--font-mono, monospace); white-space: pre; color: var(--text); background: var(--surface-2); border-radius: 10px; padding: 12px; overflow: auto; }
+.viewer-image { max-width: 100%; border-radius: 10px; border: 1px solid var(--line); background: repeating-conic-gradient(var(--surface-2) 0 25%, var(--surface-1) 0 50%) 0 0/16px 16px; }
+.viewer-markdown { font-size: 14px; line-height: 1.6; color: var(--text); }
+.work-empty-view { color: var(--text-3); font-size: 13px; margin: 0; }
+.device-switch { display: inline-flex; gap: 2px; margin-left: 4px; }
+.device-btn { border: 1px solid var(--line); background: transparent; color: var(--text-3); border-radius: 7px; padding: 3px 8px; font-size: 11.5px; cursor: pointer; }
+.device-btn[aria-pressed="true"] { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
+.preview-pane[data-device="tablet"] .preview-frame { width: 768px; max-width: 100%; margin: 0 auto; }
+.preview-pane[data-device="phone"] .preview-frame { width: 390px; max-width: 100%; margin: 0 auto; border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+.result-panel-btn { margin-top: 8px; }
+
+
+/* ── /skill hint (14 Nov 2026) ──────────────────────────────────────────── */
+.skill-hint { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px 0; }
+.skill-option { display: flex; gap: 10px; align-items: baseline; text-align: left; border: 0; background: transparent; color: var(--text); padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+.skill-option:hover, .skill-option:focus-visible { background: var(--accent-soft); }
+.skill-option strong { font: 600 12.5px/1.3 var(--font-mono, monospace); white-space: nowrap; }
+.skill-option span, .skill-empty { font-size: 12.5px; color: var(--text-3); }
+.skill-empty { padding: 4px 8px; }
+
+
+/* ── Security alerts (14 Nov 2026) ──────────────────────────────────────── */
+.security-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.security-actions button { border: 1px solid var(--line-strong); background: var(--surface-1); color: var(--text); border-radius: 999px; padding: 4px 12px; font-size: 12.5px; cursor: pointer; }
+.security-actions button[data-action="stop"], .security-actions button[data-action="quarantine"], .security-actions button[data-action="remove_autorun"] { border-color: var(--danger); color: var(--danger); }
+.security-actions button:hover { background: var(--danger-soft); }
+.security-actions button:disabled { opacity: .45; cursor: default; }
+.msg[data-severity="high"] .bubble { border-left: 3px solid var(--danger); }
+.msg[data-severity="medium"] .bubble { border-left: 3px solid var(--warn); }

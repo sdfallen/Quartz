@@ -954,6 +954,55 @@ class Api:
         return ipc_send("chat_new", {"title": title, "agent": agent, "project_id": project_id or None,
                                      "space": space or None})
 
+    def security_act(self, alert_id: str, action: str) -> dict:
+        """One of a security alert's own actions (stop, quarantine, remove autorun, undo, ignore)."""
+        return ipc_send("security_act", {"id": alert_id, "action": action})
+
+    def skills_list(self) -> dict:
+        """The skill shelf (name, description, source, version) for the /skill hint."""
+        return ipc_send("skills_list")
+
+    def panel_result(self, conversation_id: str = "") -> dict:
+        """What the work panel opens after a build (live page or best file)."""
+        return ipc_send("panel_result", {"conversation_id": conversation_id})
+
+    def panel_read(self, conversation_id: str, scope: str, path: str, batch: str = "") -> dict:
+        """One result file or attachment for the panel viewer (host-listed files only)."""
+        return ipc_send("panel_read", {"conversation_id": conversation_id, "scope": scope, "path": path,
+                                       "batch": batch or None})
+
+    def open_external(self, url: str) -> dict:
+        """Open a result card's link in the system browser (http/https only, never in SpeS)."""
+        from urllib.parse import urlsplit
+        value = str(url or "").strip()
+        parts = urlsplit(value)
+        if parts.scheme not in ("http", "https") or not parts.netloc or len(value) > 500 or any(
+                c in value for c in " \n\r\t\"'<>"):
+            return {"status": "error", "data": "Yalnız http/https bağlantıları açılır"}
+        import webbrowser
+        webbrowser.open(value, new=2)
+        return {"status": "ok", "data": True}
+
+    def chat_attach_pick(self, conversation_id: str = "") -> dict:
+        """Native picker for files to add to the next message (photos, documents, zip)."""
+        window = webview.windows[0] if webview.windows else None
+        if window is None:
+            return {"status": "error", "data": "SpeS penceresi hazır değil"}
+        paths = window.create_file_dialog(webview.FileDialog.OPEN, allow_multiple=True)
+        if not paths:
+            return {"status": "cancelled", "data": None}
+        return ipc_send("chat_attach_paths", {"conversation_id": conversation_id, "paths": list(paths)[:10]})
+
+    def chat_attach_data(self, conversation_id: str, name: str, data_b64: str) -> dict:
+        """A pasted or dropped file (base64, bounded on the host)."""
+        return ipc_send("chat_attach_add", {"conversation_id": conversation_id, "name": name, "data": data_b64})
+
+    def chat_attach_remove(self, conversation_id: str, item_id: str) -> dict:
+        return ipc_send("chat_attach_remove", {"conversation_id": conversation_id, "id": item_id})
+
+    def chat_attach_list(self, conversation_id: str = "") -> dict:
+        return ipc_send("chat_attach_list", {"conversation_id": conversation_id})
+
     def chat_open_space(self, space: str) -> dict:
         """Sohbet / Workspace switch: open the latest conversation of that space."""
         return ipc_send("chat_open_space", {"space": space})

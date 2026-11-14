@@ -65,26 +65,27 @@ class SquadAdapterTests(unittest.TestCase):
         self.assertIn("body", args)
 
     def test_initialize_does_not_pollute_project_root_and_hides_squad_dir(self):
+        # Live 14 Nov: .squad/ was left in a client's project. A new workspace lives outside it.
         project = Path(self.tmp.name) / "clean_proj"
         project.mkdir()
         (project / ".git" / "info").mkdir(parents=True)
         (project / "CLAUDE.md").write_bytes(b"# Original Claude instructions\n")
-        adapter = SquadAdapter(project, executable=self.exe)
+        with patch.dict(os.environ, {"QUARTZ_SQUAD_HOME": str(Path(self.tmp.name) / "homes")}):
+            adapter = SquadAdapter(project, executable=self.exe)
+        home = adapter.workspace_path
+        self.assertNotEqual(home, project.resolve())
+        self.assertTrue(str(home).startswith(str(Path(self.tmp.name) / "homes")))
 
         def fake_run(args, **_kwargs):
             if args == ["init"]:
-                (project / ".squad" / "roles").mkdir(parents=True, exist_ok=True)
-                (project / ".squad" / "teams").mkdir(parents=True, exist_ok=True)
-                (project / ".gitignore").write_text(".squad/\n", encoding="utf-8")
-                (project / "AGENTS.md").write_text("## Squad Collaboration\n", encoding="utf-8")
-                (project / "CLAUDE.md").write_text(
-                    "# Original Claude instructions\n\n## Squad Collaboration\n\nThis project uses squad for multi-agent collaboration. Run `squad help` for all commands and usage guide.\n",
-                    encoding="utf-8",
-                )
-                (project / "GEMINI.md").write_text("## Squad Collaboration\n", encoding="utf-8")
+                (home / ".squad" / "roles").mkdir(parents=True, exist_ok=True)
+                (home / ".squad" / "teams").mkdir(parents=True, exist_ok=True)
+                (home / ".gitignore").write_text(".squad/\n", encoding="utf-8")
+                (home / "AGENTS.md").write_text("## Squad Collaboration\n", encoding="utf-8")
+                (home / "GEMINI.md").write_text("## Squad Collaboration\n", encoding="utf-8")
                 return {"ok": True, "returncode": 0, "stdout": "Initialized", "stderr": "", "error": ""}
             if args == ["agents", "--json"]:
-                (project / ".squad" / "messages.db").touch()
+                (home / ".squad" / "messages.db").touch()
                 return {"ok": True, "returncode": 0, "stdout": "", "stderr": "", "error": ""}
             return {"ok": True, "returncode": 0, "stdout": "", "stderr": "", "error": ""}
 
@@ -92,16 +93,28 @@ class SquadAdapterTests(unittest.TestCase):
             res = adapter.initialize()
         self.assertTrue(res["initialized"])
         self.assertFalse(res["existing"])
-        self.assertTrue((project / ".squad" / "messages.db").is_file())
-        self.assertFalse((project / ".gitignore").exists())
-        self.assertFalse((project / "AGENTS.md").exists())
-        self.assertFalse((project / "GEMINI.md").exists())
+        self.assertTrue((home / ".squad" / "messages.db").is_file())
+        self.assertFalse((home / ".gitignore").exists())
+        self.assertFalse((home / "AGENTS.md").exists())
+        self.assertEqual(sorted(p.name for p in project.iterdir()), [".git", "CLAUDE.md"])  # project untouched
         self.assertEqual((project / "CLAUDE.md").read_bytes(), b"# Original Claude instructions\n")
-        self.assertIn(".squad/", (project / ".git" / "info" / "exclude").read_text(encoding="utf-8"))
+        self.assertFalse((project / ".git" / "info" / "exclude").exists())
         if os.name == "nt":
             import ctypes
-            attrs = ctypes.windll.kernel32.GetFileAttributesW(str(project / ".squad"))
+            attrs = ctypes.windll.kernel32.GetFileAttributesW(str(home / ".squad"))
             self.assertTrue(bool(attrs & 0x02))
+
+    def test_a_project_that_already_has_squad_keeps_it_in_place(self):
+        from core.squad_adapter import squad_home
+        project = Path(self.tmp.name) / "legacy_proj"
+        (project / ".squad").mkdir(parents=True)
+        self.assertEqual(squad_home(project), project.resolve())
+        with patch.dict(os.environ, {"QUARTZ_SQUAD_HOME": str(Path(self.tmp.name) / "homes")}):
+            first, second = Path(self.tmp.name) / "a", Path(self.tmp.name) / "b"
+            first.mkdir(); second.mkdir()
+            self.assertEqual(squad_home(first), squad_home(first))  # stable per project
+            self.assertNotEqual(squad_home(first), squad_home(second))
+            self.assertFalse((first / ".squad").exists())
 
     def test_locked_healthy_db_is_never_marked_corrupt_and_status_preserves_500_messages(self):
         project = Path(self.tmp.name) / "locked_proj"

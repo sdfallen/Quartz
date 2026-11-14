@@ -194,9 +194,12 @@ class MultiAgentService:
             after = snapshot_workspace_files(project_path)
             changed, warning = changed_workspace_files(project_path, before, after)
             validation = verify_changed_python(project_path, changed, warning=warning)
+            # Test commands the agent ran, with exit status from the CLI events (14 Nov).
+            from core.test_evidence import agent_test_result
+            tests = agent_test_result(observed_runtime.get("command_results"))
             with self._lock:
                 receipt = {"files_changed": changed, "evidence_warning": warning,
-                    "source_validation": validation, **observed_runtime}
+                    "source_validation": validation, **({"agent_tests": tests} if tests else {}), **observed_runtime}
                 self._file_changes[run_id] = receipt
             try:
                 self._evidence_store.put(run_id, receipt)
@@ -315,7 +318,8 @@ class MultiAgentService:
     @staticmethod
     def _squad_signature(project):
         """SQLite WAL writes need not change messages.db's mtime. No DB reads."""
-        root = Path(project['path']) / '.squad'
+        from core.squad_adapter import squad_home
+        root = squad_home(project['path']) / '.squad'
         try:
             if not (root / 'messages.db').is_file(): return None
             values = []
@@ -421,7 +425,8 @@ class MultiAgentService:
                 cached = self._squad_conn_cache.get(pid)
                 if not force and cached is not None and (now - cached[0]) < 30.0:
                     if cached[1].get("connected") is True:
-                        db_path = Path(project["path"]) / ".squad" / "messages.db"
+                        from core.squad_adapter import squad_home
+                        db_path = squad_home(project["path"]) / ".squad" / "messages.db"
                         try:
                             db_exists = db_path.is_file()
                         except OSError:
@@ -513,21 +518,32 @@ class MultiAgentService:
         return hist[-5:] if hist else []
 
     def _text_conversation(self, provider, prompt, project, *, chat_mode, write, model, effort, project_read=False,
-                           should_abort=None, web=False):
+                           should_abort=None, web=False, read_root=None):
         if chat_mode is not True or write:
             raise PermissionError("Araçsız sohbet işlem/yazma yetkisi alamaz.")
         # Project read: a fresh, read-only, project-scoped inspection. Never for a
         # protected project; never resumes a session that held other permissions.
         runtime = self._runtime_for(provider)
-        # The Google path's read guard exists only for the agy backend; Claude's
-        # project-scoped read profile is not wired yet, so it answers tool-less.
-        guard_capable = provider == "codex" or (provider == "antigravity"
-                                                 and getattr(runtime, "backend", "agy") == "agy")
+        # The Google path's read guard exists only for the agy backend. Claude reads
+        # through SpeS's project-read server (14 Nov), like Codex.
+        guard_capable = provider in ("codex", "claude") or (provider == "antigravity"
+                                                             and getattr(runtime, "backend", "agy") == "agy")
         project_read = (bool(project_read) and guard_capable and not project.get("protected")
                         and project.get("workflow") != "warband")
         root = Path(project["path"]).resolve(strict=True) if project_read else None
         if root is not None and not root.is_dir():
             raise NotADirectoryError(str(root))
+        # Attachments (14 Nov): the files the user sent with this message, read-only. They
+        # live in SpeS's own folder, so the protected/warband project rules do not apply.
+        # Claude reads them with its file tools in that folder (images too); Codex and
+        # Antigravity read them through the project-read server instead of the project.
+        attach_root = Path(read_root).resolve(strict=True) if read_root else None
+        if attach_root is not None and not attach_root.is_dir():
+            raise NotADirectoryError(str(attach_root))
+        if attach_root is not None:
+            web = False
+            if provider != "claude" and guard_capable:
+                project_read, root = True, attach_root
         probe = runtime.probe()
         if not probe.get("ready"):
             raise RuntimeError(probe.get("error") or "CLI hazır değil")
@@ -547,8 +563,13 @@ class MultiAgentService:
             elif provider == "claude":
                 # Tool-less chat: --tools "" proven from the CLI's init event.
                 # web=True: WebSearch only, still proven from the init event; never with project read.
+                # project_read: only SpeS's read-only project tools, also proven from the init event.
                 options = {"model": model, "effort": effort, "approval": "never", "should_abort": should_abort,
-                           "sandbox": "web" if web and not project_read else "none"}
+                           "sandbox": ("read-only" if attach_root is not None else
+                                       "web" if web and not project_read else "none"),
+                           **({"project_read": str(root)} if project_read else {})}
+                if attach_root is not None:
+                    run_dir = str(attach_root)
             elif project_read:
                 # Codex runs in the scratch folder with every built-in tool off;
                 # the project is reachable only through SpeS's read-only MCP
@@ -563,7 +584,7 @@ class MultiAgentService:
                 instruction = (
                     f"Bu turda seçili projeyi ({root}) YALNIZ OKUYABİLİRSİN: dosya listeleme, okuma"
                     + (" ve arama (quartz_project araçları: project_list, project_read, project_search; "
-                       "yollar proje köküne göreli). " if provider == "codex" else
+                       "yollar proje köküne göreli). " if provider in ("codex", "claude") else
                        " (dosya ve klasör yolunu tam yazarak). ") +
                     "Dosya yazamaz, değiştiremez, silemez; ağa ve masaüstüne erişemezsin. "
                     "Yanıtını okuduğun dosya yollarıyla (ve gerekirse satır numaralarıyla) dayandır; "
@@ -613,12 +634,12 @@ class MultiAgentService:
                        write=False, confirm_write=False, full_access=False,
                        resume_thread_id=None, chat_mode=False, squad_task_id=None,
                        model: str | None = None, effort: str | None = None, conversation_only=False,
-                       project_read=False, should_abort=None, web=False) -> dict:
+                       project_read=False, should_abort=None, web=False, read_root=None) -> dict:
         project = self.projects.get(project_id) if project_id else self.projects.selected()
         if conversation_only:
             return self._text_conversation("codex", prompt, project, chat_mode=chat_mode,
                 write=write or full_access, model=model, effort=effort, project_read=project_read,
-                should_abort=should_abort, web=web and not project_read)
+                should_abort=should_abort, web=web and not project_read, read_root=read_root)
         if web:
             raise PermissionError("Web araması yalnız araçsız sohbette açılabilir.")
         if project.get("protected"):
@@ -709,13 +730,13 @@ class MultiAgentService:
                         write=False, confirm_write=False, full_access=False,
                         resume_thread_id=None, chat_mode=False, squad_task_id=None,
                         model: str | None = None, effort: str | None = None, conversation_only=False,
-                        project_read=False, should_abort=None, web=False) -> dict:
+                        project_read=False, should_abort=None, web=False, read_root=None) -> dict:
         """Claude Code as a developer agent. Chat tasks only in this release."""
         project = self.projects.get(project_id) if project_id else self.projects.selected()
         if conversation_only:
             return self._text_conversation("claude", prompt, project, chat_mode=chat_mode,
                 write=write or full_access, model=model, effort=effort, project_read=project_read,
-                should_abort=should_abort, web=web)
+                should_abort=should_abort, web=web, read_root=read_root)
         if web:
             raise PermissionError("Web araması yalnız araçsız sohbette açılabilir.")
         if not chat_mode:
@@ -733,6 +754,9 @@ class MultiAgentService:
         start_kwargs = {"sandbox": sandbox, "approval": "never", "squad_task_id": squad_task_id,
                         "squad_agent_id": self.CLAUDE_ID, "resume_thread_id": resume_thread_id,
                         "model": model, "effort": effort, "should_abort": should_abort}
+        if read_root:
+            # The builder sees the user's attachments for this turn, read-only (14 Nov).
+            start_kwargs["read_dirs"] = [str(read_root)]
         run = (self._start_writer("claude", project, self.claude.start, str(prompt), project["path"], **start_kwargs)
                if effective_write else self.claude.start(str(prompt), project["path"], **start_kwargs))
         with self._lock:
@@ -750,7 +774,7 @@ class MultiAgentService:
                              write=False, confirm_write=False, full_access=False,
                              conversation_id=None, chat_mode=False, squad_task_id=None,
                              model: str | None = None, effort: str | None = None, conversation_only=False,
-                       project_read=False, should_abort=None, web=False) -> dict:
+                       project_read=False, should_abort=None, web=False, read_root=None) -> dict:
         if self.antigravity is None:
             raise RuntimeError(self._antigravity_error or "Antigravity CLI is unavailable")
         project = self.projects.get(project_id) if project_id else self.projects.selected()
@@ -760,7 +784,7 @@ class MultiAgentService:
             return self._text_conversation("antigravity", prompt, project, chat_mode=chat_mode,
                 write=write or full_access, model=model, effort=effort, project_read=project_read,
                 web=web and not project_read,
-                should_abort=should_abort)
+                should_abort=should_abort, read_root=read_root)
         if project.get("protected"):
             raise PermissionError("This project is protected")
         effective_write = bool(write or full_access)

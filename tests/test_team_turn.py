@@ -190,6 +190,19 @@ class TeamTurnTests(unittest.TestCase):
             self.assertIn(expected, steps)
         checks = [c for c in run.calls if c["step"] == 5]
         self.assertTrue(all(c["project_scope"] and not c["write"] for c in checks), "checks are project-read runs")
+        # Live 14 Nov: the plan and the decision read the project (e.g. a client's brief), never write.
+        lead_reads = [c for c in run.calls if c["agent"] == "claude" and c["step"] in (1, 3)]
+        self.assertEqual(len(lead_reads), 2)
+        self.assertTrue(all(c["project_scope"] and not c["tool_less"] and not c["write"] for c in lead_reads))
+
+    def test_a_question_turn_plans_without_project_access(self):
+        with tempfile.TemporaryDirectory() as directory:
+            chat = make_chat(directory)
+            run = TeamRun(chat)
+            run.run("Bir giriş sayfası yap")  # no write permission: a discussion, not a build
+            chat._diagnostics.close()
+        plan = [c for c in run.calls if c["agent"] == "claude" and c["step"] == 1]
+        self.assertTrue(plan and not plan[0]["project_scope"])
 
     def test_team_readiness_is_checked_fresh(self):
         with tempfile.TemporaryDirectory() as directory:

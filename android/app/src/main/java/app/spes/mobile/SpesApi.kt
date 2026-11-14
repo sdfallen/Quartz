@@ -16,6 +16,7 @@ class SpesApi(baseUrl: String, private val token: String) {
         val id: String, val seq: Int, val role: String, val sender: String,
         val persona: String, val step: Int?, val text: String, val failed: Boolean, val model: String = "",
         val memory: String = "", val report: Boolean = false,
+        val cards: List<Card> = emptyList(), val alert: Alert? = null, val attachments: List<String> = emptyList(),
     ) {
         val fromUser get() = role == "user" || sender == "user"
     }
@@ -38,6 +39,12 @@ class SpesApi(baseUrl: String, private val token: String) {
         val limits: Map<String, Limit>, val healthStatus: String, val warnings: List<Warning>,
         val changes: List<Change>, val checks: List<Check>,
     )
+    /** Research result card (14 Nov): host-bounded, http(s)-only link. */
+    data class Card(val title: String, val description: String, val url: String, val source: String,
+                    val price: String, val deadline: String)
+    /** Eos's security alert and its own one-tap actions (14 Nov). */
+    data class Alert(val id: String, val severity: String, val title: String, val actions: List<String>)
+
     data class Conversation(val id: String, val title: String, val agent: String, val space: String = "work")
     data class Conversations(val active: String, val items: List<Conversation>)
 
@@ -54,6 +61,11 @@ class SpesApi(baseUrl: String, private val token: String) {
                 step = if (m.isNull("step")) null else m.optInt("step"),
                 text = m.optString("text"), failed = m.optBoolean("failed"), model = m.optString("model"),
                 memory = m.optString("memory"), report = m.optBoolean("report"),
+                cards = objects("cards", m).map { Card(it.optString("title"), it.optString("description"), it.optString("url"),
+                    it.optString("source"), it.optString("price"), it.optString("deadline")) },
+                alert = m.optJSONObject("alert")?.let { Alert(it.optString("id"), it.optString("severity"),
+                    it.optString("title"), strings(it.optJSONArray("actions"))) },
+                attachments = strings(m.optJSONArray("attachments")),
             )
         }
         return State(
@@ -119,6 +131,11 @@ class SpesApi(baseUrl: String, private val token: String) {
     /** new | select | mode | model | project | forget; never a write permission. */
     fun act(action: String, body: JSONObject = JSONObject()) {
         request("POST", "/api/act/$action", body, 20_000)
+    }
+
+    private fun objects(key: String, json: JSONObject): List<JSONObject> {
+        val array = json.optJSONArray(key) ?: return emptyList()
+        return (0 until array.length()).mapNotNull { array.optJSONObject(it) }
     }
 
     private fun strings(array: org.json.JSONArray?): List<String> =

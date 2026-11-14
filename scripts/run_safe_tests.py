@@ -44,8 +44,14 @@ def main():
     values = {"NVIDIA_API_KEY": "quartz-offline-test-key",
               "GROQ_API_KEY": "quartz-offline-test-key",
               "GITHUB_TOKEN": "quartz-offline-test-key", "LLM_PROVIDER": "nvidia"}
-    with patch.dict(os.environ, values), patch("dotenv.load_dotenv", return_value=False):
-        return _run_suite()
+    # Squad workspaces of test projects go to a throwaway folder, never the user's profile.
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="spes-squad-home-") as squad_home:
+        values["QUARTZ_SQUAD_HOME"] = squad_home
+        values["QUARTZ_ATTACHMENTS_HOME"] = str(Path(squad_home) / "attachments")
+        values["QUARTZ_SKILLS_HOME"] = str(Path(squad_home) / "skills")
+        with patch.dict(os.environ, values), patch("dotenv.load_dotenv", return_value=False):
+            return _run_suite()
 
 
 if __name__ == "__main__":

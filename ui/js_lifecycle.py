@@ -129,6 +129,9 @@ JAVASCRIPT = r"""  let lastUserActivityAt = Date.now();
             if (conv) {
               const switched = currentConvId !== conv.id;
               currentConvId = conv.id;
+              // Live 14 Nov: the phone switched the active conversation to a Sohbet one and the
+              // top bar kept saying Workspace. The space follows the conversation everywhere.
+              if (typeof applySpace === 'function') applySpace(conv.space);
               renderConversationNavigation(st.data.conversations || []);
               chatConvTitle.textContent = conv.title || 'Yeni Sohbet';
               if (conv.agent) syncAgentUI(conv.agent);
