@@ -50,6 +50,7 @@ def main():
         values["QUARTZ_SQUAD_HOME"] = squad_home
         values["QUARTZ_ATTACHMENTS_HOME"] = str(Path(squad_home) / "attachments")
         values["QUARTZ_SKILLS_HOME"] = str(Path(squad_home) / "skills")
+        values["QUARTZ_JOBS_HOME"] = str(Path(squad_home) / "jobs")
         with patch.dict(os.environ, values), patch("dotenv.load_dotenv", return_value=False):
             return _run_suite()
 

@@ -492,6 +492,20 @@ class IPCServer:
                 return {"status": "ok", "data": chat.security_alerts()}
             return {"status": "ok", "data": chat.security_act(data.get("id"), data.get("action"))}
 
+        if action in {"job_start", "job_control", "job_list"}:
+            # Long jobs (15 Nov): desktop only; the phone gets pause/stop later.
+            data = req.get("data", {}) or {}
+            chat = self._get_agent_chat()
+            from core.long_job import JobError
+            try:
+                if action == "job_start":
+                    return {"status": "ok", "data": chat.job_start(data)}
+                if action == "job_control":
+                    return {"status": "ok", "data": chat.job_control(data.get("id"), data.get("action"))}
+                return {"status": "ok", "data": chat.job_list()}
+            except JobError as exc:
+                return {"status": "error", "message": str(exc)}
+
         if action == "skill_override":
             # Desktop click only: the user overrules the team's veto (14 Nov). Not on the phone.
             data = req.get("data", {}) or {}
@@ -867,6 +881,9 @@ def main(register_signals=True):
                     try:
                         chat.start_security_watch()
                         log.info("Security watcher started")
+                        resumed = chat.resume_jobs_at_startup()
+                        if resumed:
+                            log.info("Long jobs resumed: %s", ", ".join(resumed))
                     except Exception as exc:
                         log.warning("Security watcher unavailable: %s", exc)
                     return

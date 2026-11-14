@@ -446,6 +446,25 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       };
       bubble.append(b);
     }
+    const longJob = msg?.metadata?.long_job;
+    if (longJob && !isUserMessage) {
+      // Long job controls (15 Nov): Stop is final; Pause/Resume keep the job.
+      const row = document.createElement('div'); row.className = 'long-job-actions';
+      [['pause', 'Duraklat'], ['resume', 'Devam'], ['stop', 'Durdur']].forEach(([action, label]) => {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'control-btn long-job-btn';
+        b.textContent = label;
+        if (action === 'stop') b.title = 'Uzun işi kalıcı olarak durdurur; kendiliğinden devam etmez.';
+        b.onclick = async () => {
+          b.disabled = true;
+          const r = await window.pywebview.api.job_control(String(longJob), action);
+          b.disabled = false;
+          const status = r && r.data && r.data.status ? r.data.status : (r && r.message) || '';
+          logLine('Uzun iş: ' + String(status));
+        };
+        row.append(b);
+      });
+      bubble.append(row);
+    }
     const result = msg?.metadata?.security_result;
     if (result && result.undo && !isUserMessage) {
       const undo = document.createElement('button'); undo.type = 'button'; undo.className = 'control-btn'; undo.textContent = 'Geri al';

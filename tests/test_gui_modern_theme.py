@@ -12,7 +12,9 @@ def _js(source: str, start: str, end: str) -> str:
 
 
 def _node(code: str):
-    return subprocess.run(["node", "-e", code], capture_output=True, text=True, encoding="utf-8", timeout=15)
+    # Standard input, not `node -e`: the message renderer outgrew Windows' 32 KB command
+    # line (15 Nov). Like -e, stdin code runs as a script in sloppy mode.
+    return subprocess.run(["node", "-"], input=code, capture_output=True, text=True, encoding="utf-8", timeout=15)
 
 
 def _rules(css: str):

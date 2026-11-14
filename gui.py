@@ -958,6 +958,16 @@ class Api:
         """One of a security alert's own actions (stop, quarantine, remove autorun, undo, ignore)."""
         return ipc_send("security_act", {"id": alert_id, "action": action})
 
+    def job_start(self, spec: dict) -> dict:
+        """Start a long job in the current Workspace conversation."""
+        return ipc_send("job_start", dict(spec or {}))
+
+    def job_control(self, job_id: str, action: str) -> dict:
+        return ipc_send("job_control", {"id": job_id, "action": action})
+
+    def job_list(self) -> dict:
+        return ipc_send("job_list", {})
+
     def skill_override(self, conversation_id: str, override_id: str) -> dict:
         """The user's explicit "Yine de kur" for a skill the team vetoed."""
         return ipc_send("skill_override", {"conversation_id": conversation_id, "id": override_id})
