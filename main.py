@@ -492,6 +492,13 @@ class IPCServer:
                 return {"status": "ok", "data": chat.security_alerts()}
             return {"status": "ok", "data": chat.security_act(data.get("id"), data.get("action"))}
 
+        if action == "skill_override":
+            # Desktop click only: the user overrules the team's veto (14 Nov). Not on the phone.
+            data = req.get("data", {}) or {}
+            chat = self._get_agent_chat()
+            cid = str(data.get("conversation_id") or chat.store.get_active()["id"])
+            return {"status": "ok", "data": chat.skill_override(cid, data.get("id"))}
+
         if action == "skills_list":
             return {"status": "ok", "data": self._get_agent_chat().skills_list()}
 

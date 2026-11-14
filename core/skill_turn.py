@@ -11,7 +11,8 @@ from __future__ import annotations
 from core.skill_shelf import SkillError, verdict
 
 REVIEW_RULE = (
-    "Görevin: kullanıcının kurmak istediği skill'i incele. Dosyalar EKLER klasöründe, yalnız okuyabilirsin. "
+    "Görevin: kullanıcının kurmak istediği skill'i incele. Skill'in BÜTÜN dosyaları EKLER klasöründe ve EKLER "
+    "listesinde; yalnız okuyabilirsin. Önce klasörü listele, SKILL.md'yi ve scripts/ altındaki betikleri oku. "
     "Bak: SKILL.md ne yapmayı söylüyor, betikler (varsa) ne yapıyor, gizli bilgi isteme/ağa veri gönderme/"
     "dosya silme/izin değiştirme gibi riskli bir şey var mı, açıklama ile içerik tutarlı mı. "
     "En fazla 4 kısa cümle yaz ve SON SATIRA tam olarak 'KARAR: UYGUN' ya da 'KARAR: UYGUN DEĞİL' yaz. "
@@ -29,6 +30,9 @@ class SkillTurnMixin:
         try:
             fetched = shelf.fetch(request)
         except SkillError as exc:
+            # The opening bubble must not stay an empty "…" (live 14 Nov).
+            self.store.update_message_content(cid, first_msg_id, f"Depo incelenemedi: {exc}",
+                                              metadata={"status": "failed"})
             self._post_skill_note(cid, f"Skill kurulamadı: {exc}", installed=False)
             with self._lock:
                 self._finish_turn(first_msg_id, "failed")
@@ -38,10 +42,13 @@ class SkillTurnMixin:
         with self._lock:
             turn = self._active_turn or {}
             # The fetched repository is this turn's read-only folder, like attachments.
+            # Every file of every skill is listed (live 14 Nov: only SKILL.md was named, so
+            # Fides and Eos concluded the scripts were "not attached" and could not approve;
+            # then a 50-file cap hid scripts/validate_data.py and Fides vetoed again).
             turn["attachments"] = {"folder": fetched["folder"], "items": [
-                {"id": s["name"], "name": s["name"], "kind": "skill", "size": s["size"],
-                 "path": (Path(s["dir"]).relative_to(fetched["folder"]) / "SKILL.md").as_posix()}
-                for s in fetched["skills"]]}
+                {"id": f"{s['name']}:{name}", "name": name, "kind": "skill", "size": 0,
+                 "path": (Path(s["dir"]).relative_to(fetched["folder"]) / name).as_posix()}
+                for s in fetched["skills"] for name in s["files"]][:300]}
         header = (f"\n--- SKILL KURULUMU ---\nDepo: {request['url']} @ {fetched['sha'][:12] or 'bilinmiyor'}\n"
                   f"Bulunan skill(ler): {names}\n")
         self._set_turn_progress("Fides ve Eos skill'i inceliyor…", current_msg_id=first_msg_id)
@@ -49,7 +56,10 @@ class SkillTurnMixin:
         reviews = self._team_parallel({a: (lambda a=a: self._team_say(
             cid, review_ids[a], a, self._team_header(a) + REVIEW_RULE + header, project_id,
             step=2, limit=5, web=False)) for a in review_ids})
-        verdicts = {a: verdict(reviews.get(a)) for a in review_ids}
+        # Live 14 Nov: the chat bubble is clamped to a few sentences and the closing
+        # "KARAR:" line was cut off ("Fatum belirsiz" although it wrote UYGUN DEĞİL).
+        # Verdicts are read from the full reply SpeS stored, never from the clamped one.
+        verdicts = {a: verdict(self._full_reply(cid, review_ids[a]) or reviews.get(a)) for a in review_ids}
         if self._is_turn_cancelled(first_msg_id):
             shelf.discard(fetched["staging"])
             return
@@ -57,7 +67,7 @@ class SkillTurnMixin:
         transcript = self._team_transcript(cid, first_msg_id)
         decision = self._team_say(cid, first_msg_id, LEAD, self._team_header(LEAD) + DECIDE_RULE + header
                                   + f"\n--- İNCELEMELER ---\n{transcript}\n", project_id, step=3, limit=5, web=False)
-        verdicts[LEAD] = verdict(decision)
+        verdicts[LEAD] = verdict(self._full_reply(cid, first_msg_id) or decision)
         approved = all(v == "UYGUN" for v in verdicts.values())
         who = {persona_name(a): (v or "belirsiz") for a, v in verdicts.items()}
         if approved:
@@ -68,15 +78,60 @@ class SkillTurnMixin:
                     + ", ".join(f"{k} {v}" for k, v in who.items()) + ".")
         else:
             text = ("Skill kurulmadı: ekipten onay çıkmadı ("
-                    + ", ".join(f"{k} {v}" for k, v in who.items()) + "). Raf değişmedi.")
-        shelf.discard(fetched["staging"])
-        self._post_skill_note(cid, text, installed=approved)
+                    + ", ".join(f"{k} {v}" for k, v in who.items()) + "). Raf değişmedi. "
+                    "Gerekçeleri okuyup yine de kurmak istersen aşağıdaki düğmeyle 30 dakika içinde onaylayabilirsin.")
+        override = None
+        if approved:
+            shelf.discard(fetched["staging"])
+        else:
+            # The user, not an agent, may overrule the team (user decision 14 Nov). The fetched
+            # copy waits 30 minutes for that one explicit click; then it is discarded.
+            import secrets
+            import time as _time
+            override = {"id": secrets.token_urlsafe(12), "skills": [s["name"] for s in fetched["skills"]]}
+            with self._lock:
+                old = self.__dict__.setdefault("_skill_overrides", {}).pop(cid, None)
+                self._skill_overrides[cid] = {**override, "fetched": fetched, "request": request, "who": who,
+                                              "expires": _time.time() + 1800}
+            if old:
+                shelf.discard(old["fetched"]["staging"])
+        self._post_skill_note(cid, text, installed=approved, override=override)
         with self._lock:
             self._finish_turn(first_msg_id, "completed" if decision else "partial")
 
-    def _post_skill_note(self, cid, text, *, installed):
+    def skill_override(self, cid, override_id):
+        """The user's explicit "Yine de kur" after a veto. Only the desktop click calls this."""
+        import time as _time
+        with self._lock:
+            pending = self.__dict__.setdefault("_skill_overrides", {}).get(cid)
+            if not pending or pending["id"] != str(override_id or ""):
+                return {"ok": False, "message": "Bu onay geçersiz ya da kullanıldı."}
+            self._skill_overrides.pop(cid, None)
+        if _time.time() > pending["expires"]:
+            self.skills.discard(pending["fetched"]["staging"])
+            return {"ok": False, "message": "Onay süresi doldu; kurulumu yeniden iste."}
+        reviewers = {**pending["who"], "Kullanıcı": "ONAY (ekip itirazına rağmen)"}
+        fetched = pending["fetched"]
+        try:
+            installed = [self.skills.register(s, source=pending["request"]["url"], sha=fetched["sha"],
+                                              reviewers=reviewers) for s in fetched["skills"]]
+        finally:
+            self.skills.discard(fetched["staging"])
+        text = ("Skill senin onayınla rafa eklendi: " + ", ".join(f"/skill {e['name']}" for e in installed)
+                + ". Kayıtta ekibin kararları da duruyor: "
+                + ", ".join(f"{k} {v}" for k, v in pending["who"].items()) + ".")
+        self._post_skill_note(cid, text, installed=True)
+        return {"ok": True, "message": text}
+
+    def _full_reply(self, cid, msg_id):
+        message = next((m for m in self.store.get(cid).get("messages", []) if m.get("id") == msg_id), {})
+        meta = message.get("metadata") or {}
+        return str(meta.get("team_full_text") or message.get("content") or "")
+
+    def _post_skill_note(self, cid, text, *, installed, override=None):
         self.store.append_message(cid, "assistant", text, sender="quartz", metadata={
             "sender": "quartz", "recipient": "user", "status": "completed", "skill_install": bool(installed),
+            **({"skill_override": override} if override else {}),
             "sequence": self._next_sequence(self.store.get(cid))})
 
     def _skill_list_text(self):

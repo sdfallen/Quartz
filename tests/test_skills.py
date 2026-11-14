@@ -80,6 +80,18 @@ class ShelfTests(unittest.TestCase):
         self.assertEqual(shelf.list(), [])
         self.assertEqual(entry["sha"], fetched["sha"])
 
+    def test_sha_comes_from_the_archive_comment_and_duplicates_collapse(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as bundle:
+            bundle.comment = b"89abcdef0123456789abcdef0123456789abcdef"
+            bundle.writestr("repo-HEAD/.claude/skills/pdf/SKILL.md", SKILL_MD)
+            bundle.writestr("repo-HEAD/cli/assets/skills/pdf/SKILL.md", SKILL_MD)
+        fetched = SkillShelf(self.root, opener=FakeOpener(buffer.getvalue())).fetch(
+            install_request("skill kur https://github.com/a/repo"))
+        self.assertEqual(fetched["sha"], "89abcdef0123456789abcdef0123456789abcdef")
+        self.assertEqual(len(fetched["skills"]), 1)
+        self.assertIn(".claude", fetched["skills"][0]["dir"])
+
     def test_repo_without_skill_or_escape_is_refused(self):
         with self.assertRaises(SkillError):
             SkillShelf(self.root, opener=FakeOpener(repo_zip({"README.md": "x"}))).fetch(
@@ -118,6 +130,59 @@ class InstallTurnTests(unittest.TestCase):
         self.assertTrue(all(not c["write"] and not c["web"] for c in run.calls))
         note = [m for m in messages if m.get("sender") == "quartz" and (m.get("metadata") or {}).get("skill_install")]
         self.assertIn("/skill pdf-ozet", note[0]["content"])
+
+    def test_reviewers_are_shown_every_file_of_the_skill(self):
+        # Live 14 Nov: only SKILL.md was listed, so the scripts looked "not attached".
+        with tempfile.TemporaryDirectory() as directory:
+            chat = make_chat(directory)
+            chat.skills = SkillShelf(Path(directory) / "skills", opener=FakeOpener(repo_zip(
+                {"skills/pdf/SKILL.md": SKILL_MD, "skills/pdf/scripts/search.py": "print(1)"})))
+            run = TeamRun(chat)
+            chat.new_conversation(agent="claude", space="work")
+            run.run("Şu skill'i kur: https://github.com/a/b")
+            paths = [i["path"] for i in chat._active_turn["attachments"]["items"]]
+            chat._diagnostics.close()
+        self.assertIn("skills/pdf/scripts/search.py", paths)
+        self.assertTrue(all("scripts/ altındaki betikleri oku" in c["prompt"] for c in run.calls if c["agent"] != "claude"))
+
+    def test_the_verdict_line_after_a_long_review_is_still_read(self):
+        # Live 14 Nov: the bubble was clamped to five sentences and "KARAR:" was cut off.
+        long_ok = " ".join(f"İnceleme cümlesi {n}." for n in range(9)) + "\nKARAR: UYGUN"
+        with tempfile.TemporaryDirectory() as directory:
+            chat, _, messages = self.run_install(directory, {"codex": long_ok, "antigravity": long_ok, "claude": long_ok})
+            installed = [s["name"] for s in chat.skills.list()]
+        self.assertEqual(installed, ["pdf-ozet"])
+        note = next(m for m in messages if m.get("sender") == "quartz" and (m.get("metadata") or {}).get("skill_install"))
+        self.assertNotIn("belirsiz", note["content"])
+
+    def test_the_user_can_overrule_a_veto_once_with_the_offered_button(self):
+        replies = {"codex": "Test dosyası dışarıdaki betikleri çalıştırıyor.\nKARAR: UYGUN DEĞİL",
+                   "antigravity": "KARAR: UYGUN", "claude": "KARAR: UYGUN"}
+        with tempfile.TemporaryDirectory() as directory:
+            chat, _, messages = self.run_install(directory, replies)
+            cid = chat.store.get_active()["id"]
+            note = next(m for m in messages if m.get("sender") == "quartz" and (m.get("metadata") or {}).get("skill_override"))
+            offer = note["metadata"]["skill_override"]
+            self.assertEqual(chat.skills.list(), [])
+            self.assertFalse(chat.skill_override(cid, "yanlis-kimlik")["ok"])
+            result = chat.skill_override(cid, offer["id"])
+            self.assertTrue(result["ok"], result)
+            entry = chat.skills.list()[0]
+            self.assertEqual(entry["reviewers"]["Kullanıcı"], "ONAY (ekip itirazına rağmen)")
+            self.assertEqual(entry["reviewers"]["Fides"], "UYGUN DEĞİL")
+            self.assertFalse(chat.skill_override(cid, offer["id"])["ok"])  # single use
+            chat._diagnostics.close()
+
+    def test_an_expired_override_installs_nothing(self):
+        replies = {"codex": "KARAR: UYGUN DEĞİL", "antigravity": "KARAR: UYGUN", "claude": "KARAR: UYGUN"}
+        with tempfile.TemporaryDirectory() as directory:
+            chat, _, messages = self.run_install(directory, replies)
+            cid = chat.store.get_active()["id"]
+            offer = next(m for m in messages if (m.get("metadata") or {}).get("skill_override"))["metadata"]["skill_override"]
+            chat._skill_overrides[cid]["expires"] = 0
+            self.assertFalse(chat.skill_override(cid, offer["id"])["ok"])
+            self.assertEqual(chat.skills.list(), [])
+            chat._diagnostics.close()
 
     def test_one_objection_or_an_unclear_verdict_installs_nothing(self):
         for replies in ({"codex": "KARAR: UYGUN", "antigravity": "Ağa veri gönderiyor.\nKARAR: UYGUN DEĞİL", "claude": "KARAR: UYGUN"},

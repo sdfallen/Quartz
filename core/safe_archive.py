@@ -49,7 +49,7 @@ def extract_zip(archive: Path, target: Path) -> dict:
         bundle = zipfile.ZipFile(archive)
     except zipfile.BadZipFile as exc:
         raise ArchiveError("Geçerli bir zip dosyası değil") from exc
-    files, skipped, total = [], [], 0
+    files, skipped, links, total = [], [], [], 0
     with bundle:
         members = bundle.infolist()
         if len(members) > MAX_FILES:
@@ -58,7 +58,10 @@ def extract_zip(archive: Path, target: Path) -> dict:
             parts = _safe_parts(info.filename)
             mode = (info.external_attr >> 16) & 0xFFFF
             if stat.S_ISLNK(mode):
-                raise ArchiveError(f"Arşivde bağlantı (symlink) var: {info.filename}")
+                # Live 14 Nov (ui-ux-pro-max-skill): a link is never created, so it can
+                # never point outside the folder; the rest of the archive still opens.
+                links.append(info.filename)
+                continue
             if info.is_dir():
                 continue
             if info.flag_bits & 0x1:
@@ -85,4 +88,4 @@ def extract_zip(archive: Path, target: Path) -> dict:
                         raise ArchiveError("Arşivdeki dosya beyan edilenden büyük")
                     sink.write(chunk)
             files.append("/".join(parts))
-    return {"files": files, "skipped_secret": skipped, "bytes": total}
+    return {"files": files, "skipped_secret": skipped, "skipped_links": links, "bytes": total}

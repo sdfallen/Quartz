@@ -158,7 +158,8 @@ def prompt_block(batch: dict, agent: str) -> str:
     lines = []
     for item in batch["items"]:
         extra = f", {item['files']} dosya" if item.get("files") is not None else ""
-        lines.append(f"- {item['path']} ({item['kind']}, {item['size']} bayt{extra})")
+        lines.append(f"- {item['path']}" if item.get("kind") == "skill" else
+                     f"- {item['path']} ({item['kind']}, {item['size']} bayt{extra})")
     if agent == "claude":
         how = (f"Ekler bu klasörde: {batch['folder']}. Read aracıyla (görseller dahil) yalnız okuyabilirsin; "
                "Glob/Grep ile arayabilirsin.")

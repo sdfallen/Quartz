@@ -958,6 +958,10 @@ class Api:
         """One of a security alert's own actions (stop, quarantine, remove autorun, undo, ignore)."""
         return ipc_send("security_act", {"id": alert_id, "action": action})
 
+    def skill_override(self, conversation_id: str, override_id: str) -> dict:
+        """The user's explicit "Yine de kur" for a skill the team vetoed."""
+        return ipc_send("skill_override", {"conversation_id": conversation_id, "id": override_id})
+
     def skills_list(self) -> dict:
         """The skill shelf (name, description, source, version) for the /skill hint."""
         return ipc_send("skills_list")
