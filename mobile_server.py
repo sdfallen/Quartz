@@ -117,7 +117,8 @@ class MobileGateway:
             rows = rows[-MAX_MESSAGES:]
         progress = turn.get("agent_progress") or {}
         working = sorted(a for a, v in progress.items() if isinstance(v, dict) and v.get("status") in {"running", "working", "started"})
-        return {"conversation": {"id": conv.get("id"), "title": conv.get("title") or "Sohbet"},
+        return {"conversation": {"id": conv.get("id"), "title": conv.get("title") or "Sohbet",
+                                 "space": conv.get("space") or "work"},
                 "mode": conv.get("agent") or "collaboration", "working": [PERSONA.get(a, a) for a in working],
                 "busy": bool(turn.get("active")), "status": turn.get("status") or "idle",
                 "progress": str((turn.get("metadata") or {}).get("progress_step") or ""),
@@ -245,7 +246,8 @@ class MobileGateway:
             project = next((p for p in projects if p["id"] == pid), {})
         except Exception:
             pass
-        return {"mode": conv.get("agent") or "collaboration", "conversation": {"id": conv.get("id"), "title": conv.get("title") or "Sohbet"},
+        return {"mode": conv.get("agent") or "collaboration",
+                "conversation": {"id": conv.get("id"), "title": conv.get("title") or "Sohbet", "space": conv.get("space") or "work"},
                 "project": project, "projects": projects, "agents": agents, "limits": limits,
                 "health": {"status": health.get("status") or "unknown", "warnings": warnings},
                 "evidence": self._evidence(conv.get("messages") or [])}
@@ -255,7 +257,8 @@ class MobileGateway:
         active = (chat.store.get_active() or {}).get("id")
         items = sorted(chat.store.list(), key=lambda c: c.get("updated_at") or 0, reverse=True)[:60]
         return {"active": active, "items": [{"id": c.get("id"), "title": c.get("title") or "Sohbet", "agent": c.get("agent"),
-                                             "updated_at": c.get("updated_at"), "project_id": c.get("project_id")} for c in items]}
+                                             "updated_at": c.get("updated_at"), "project_id": c.get("project_id"),
+                                             "space": c.get("space") or "work"} for c in items]}
 
     def act(self, action, body):
         """Settings the phone may change; none of them grants write access to a project."""
@@ -263,7 +266,8 @@ class MobileGateway:
         if action == "forget":
             return chat.memory_forget(str(body.get("id") or ""))
         if action == "new":
-            conv = chat.new_conversation(agent=str(body.get("agent") or "collaboration"))
+            # Sohbet or Workspace; a phone without the field opens a Workspace conversation as before.
+            conv = chat.new_conversation(agent=str(body.get("agent") or "collaboration"), space=body.get("space"))
             return {"conversation_id": conv.get("id")}
         if action == "select":
             conv = chat.select_conversation(str(body.get("conversation_id") or ""))

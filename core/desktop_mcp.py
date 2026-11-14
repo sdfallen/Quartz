@@ -66,16 +66,23 @@ for tool in TOOLS:
                            "openWorldHint": False}
 
 
-def handle(request, transport=None):
+# Fatum (Claude) as a desktop task's orchestrator: coordination only. The owner
+# process also refuses screen/input calls for a non-operator token; this list is
+# the first wall so those tools are never even offered.
+COLLABORATOR_TOOL_NAMES = ("task_context", "task_wait", "task_message")
+
+
+def handle(request, transport=None, *, collaborator=False):
     method = request.get("method")
+    tools = [t for t in TOOLS if t["name"] in COLLABORATOR_TOOL_NAMES] if collaborator else TOOLS
     if method == "initialize":
         return {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}},
                 "serverInfo": {"name": "quartz-desktop", "version": "0.1.0"}}
     if method == "ping": return {}
-    if method == "tools/list": return {"tools": TOOLS}
+    if method == "tools/list": return {"tools": tools}
     if method != "tools/call": raise ValueError("Unsupported MCP method")
     params = request.get("params") or {}
-    if params.get("name") not in {tool["name"] for tool in TOOLS}:
+    if params.get("name") not in {tool["name"] for tool in tools}:
         raise ValueError("Unknown tool")
     result = (transport or call_parent)(params)
     if result.get("error"):
@@ -114,7 +121,7 @@ def call_parent(params):
         return json.loads(exc.read())
 
 
-def main():
+def main(collaborator=False):
     # Windows pipe defaults can be cp1254. MCP is UTF-8 even when an error or
     # user-entered text contains Turkish/non-Latin characters.
     for stream in (sys.stdin, sys.stdout):
@@ -126,7 +133,7 @@ def main():
         try:
             request = json.loads(line)
             if "id" not in request: continue
-            result = handle(request)
+            result = handle(request, collaborator=collaborator)
             response = {"jsonrpc": "2.0", "id": request["id"], "result": result}
         except Exception as exc:
             response = {"jsonrpc": "2.0", "id": request.get("id") if isinstance(request, dict) else None,
@@ -289,6 +296,8 @@ if __name__ == "__main__":
             allowed = False
         print(json.dumps({"decision": "allow" if allowed else "deny",
                           "reason": "SpeS chat: only web search is allowed; no page fetch, files or commands."}))
+    elif "--collaborator-server" in sys.argv:
+        main(collaborator=True)
     elif "--deny-tools" in sys.argv:
         print(json.dumps({"decision": "deny", "reason": "SpeS log observer: all model tools disabled; analyze supplied evidence only."}))
     else:

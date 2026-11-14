@@ -329,6 +329,9 @@ class Api:
                     raise RuntimeError("Önce devam eden sohbet görevini bitirin veya durdurun")
                 if (data.get("active_conversation") or {}).get("id") != conversation_id:
                     raise PermissionError("Sohbet değişti; güncel sohbetten gönderin")
+                # Sohbet space never starts work (user request 14 Nov); the UI does not route it here.
+                if (data.get("active_conversation") or {}).get("space") == "chat":
+                    raise PermissionError("Sohbet alanında görev başlatılmaz; Workspace'e geçin")
                 project = next((p for p in data["projects"] if p["id"] == project_id), None)
                 if project is None: raise ValueError("Görev için mevcut bir proje seçilmeli")
                 if self._natural and self._natural.status()["active"]: raise RuntimeError("Başka bir görev sürüyor")
@@ -946,8 +949,14 @@ class Api:
     def project_select(self, project_id: str) -> dict:
         return ipc_send("project_select", {"project_id": project_id})
 
-    def chat_new(self, title: str = "Yeni Sohbet", agent: str = "antigravity", project_id: str = "") -> dict:
-        return ipc_send("chat_new", {"title": title, "agent": agent, "project_id": project_id or None})
+    def chat_new(self, title: str = "Yeni Sohbet", agent: str = "antigravity", project_id: str = "",
+                 space: str = "") -> dict:
+        return ipc_send("chat_new", {"title": title, "agent": agent, "project_id": project_id or None,
+                                     "space": space or None})
+
+    def chat_open_space(self, space: str) -> dict:
+        """Sohbet / Workspace switch: open the latest conversation of that space."""
+        return ipc_send("chat_open_space", {"space": space})
 
     def chat_select(self, conversation_id: str) -> dict:
         return ipc_send("chat_select", {"conversation_id": conversation_id})

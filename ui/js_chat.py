@@ -2,6 +2,7 @@
 
 JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ────────────
   let conversationLoaded = false;
+  let currentSpace = 'work';  // Sohbet ('chat') or Workspace ('work'); set from the active conversation
   const btnPanels = document.getElementById('btnPanels');
   const agyModelPill = document.getElementById('agyModelPill');
   const codexModelPill = document.getElementById('codexModelPill');
@@ -291,6 +292,8 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     let state = 'idle', prefix = '', text = unavailable ? 'Bağlı değil' : 'Hazır';
     if (desk && desk.operator === agent) { state = control ? 'keyboard' : 'working'; prefix = control ? 'Klavyede' : 'Görevde'; text = prefix; }
     else if (desk && desk.observer === agent) { state = 'review'; prefix = 'İnceliyor'; text = prefix; }
+    // Fatum orchestrates desktop tasks: it divides the work and gives the verdict (14 Nov).
+    else if (desk && desk.orchestrator === agent) { state = 'working'; prefix = 'Yönetiyor'; text = prefix; }
     if (live && live.status === 'running') {
       if (state === 'idle') state = 'working';
       const activity = live.activity || 'Çalışıyor';
@@ -369,7 +372,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     const job = state && state.active ? state.job : null;
     const operator = job?.roles?.operator;
     if (!job || job.conversation_id !== currentConvId || !CREW_LANES[operator]) crewDesktop = null;
-    else crewDesktop = {operator, observer: operator === 'codex' ? 'antigravity' : 'codex', job};
+    else crewDesktop = {operator, observer: operator === 'codex' ? 'antigravity' : 'codex', orchestrator: job.orchestrator || null, job};
     renderCrew();
   }
   for (const id of ['laneCodex', 'laneAgy', 'laneClaude', 'crewCore']) {
@@ -559,6 +562,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       if (!conv) return false;
       conversationLoaded = true;
       currentConvId = conv.id;
+      applySpace(conv.space);
       renderConversationNavigation(data.conversations || []);
       chatConvTitle.textContent = conv.title || 'Yeni Sohbet';
       if (conv.agent) syncAgentUI(conv.agent);
@@ -738,6 +742,51 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     }
   });
 
+  function applySpace(space) {
+    currentSpace = space === 'chat' ? 'chat' : 'work';
+    document.documentElement.dataset.space = currentSpace;
+    for (const tab of document.querySelectorAll('.space-tab')) {
+      tab.setAttribute('aria-selected', String(tab.dataset.space === currentSpace));
+    }
+    const title = document.getElementById('conversationListTitle');
+    if (title) title.textContent = currentSpace === 'chat' ? 'Sohbetler' : 'Görevler';
+    const input = document.getElementById('msgInput');
+    if (input) input.placeholder = currentSpace === 'chat' ? 'Ekiple sohbet et…' : 'Bir görev ver veya ekibe sor…';
+  }
+  async function switchSpace(space) {
+    if (space === currentSpace || thinking || chatCleanupUnconfirmed()) return;
+    try {
+      if (chatPollInterval) { clearInterval(chatPollInterval); chatPollInterval = null; }
+      activeBotBubble = null;
+      const resp = await window.pywebview.api.chat_open_space(space);
+      if (resp.status !== 'ok') { logLine('Alan değiştirilemedi: ' + resp.data); return; }
+      await loadActiveConversation();
+    } catch (e) { logLine('Alan değiştirilemedi: ' + String(e)); }
+  }
+  for (const tab of document.querySelectorAll('.space-tab')) {
+    tab.addEventListener('click', () => switchSpace(tab.dataset.space));
+    tab.addEventListener('keydown', event => {
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        event.preventDefault();
+        const next = tab.dataset.space === 'chat' ? 'work' : 'chat';
+        switchSpace(next).then(() => document.querySelector(`.space-tab[data-space="${next}"]`)?.focus());
+      }
+    });
+  }
+  // From a Sohbet bubble: a new Workspace task with the text ready to review and send.
+  window.spesOpenInWorkspace = async (text) => {
+    if (thinking || chatCleanupUnconfirmed()) return;
+    try {
+      if (chatPollInterval) { clearInterval(chatPollInterval); chatPollInterval = null; }
+      activeBotBubble = null;
+      const resp = await window.pywebview.api.chat_new('Yeni Görev', 'collaboration', mainProjectSelect.value, 'work');
+      if (resp.status !== 'ok') { logLine('Workspace açılamadı: ' + resp.data); return; }
+      await loadActiveConversation();
+      const input = document.getElementById('msgInput');
+      if (input) { input.value = String(text || ''); input.dispatchEvent(new Event('input')); input.focus(); }
+    } catch (e) { logLine('Workspace açılamadı: ' + String(e)); }
+  };
+
   btnNewChat.addEventListener('click', async () => {
     if (thinking || chatCleanupUnconfirmed()) return;
     try {
@@ -747,8 +796,9 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       }
       setThinking(false);
       activeBotBubble = null;
-      const agent = mainAgentSelect.value || 'antigravity';
-      const resp = await window.pywebview.api.chat_new('Yeni Sohbet', agent, mainProjectSelect.value);
+      const agent = currentSpace === 'chat' ? 'collaboration' : (mainAgentSelect.value || 'antigravity');
+      const resp = await window.pywebview.api.chat_new(currentSpace === 'chat' ? 'Yeni Sohbet' : 'Yeni Görev', agent,
+        mainProjectSelect.value, currentSpace);
       if (resp.status === 'ok') {
         await loadActiveConversation();
         logLine('Yeni sohbet başlatıldı.');
@@ -831,8 +881,15 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     }
     const submittedAgent = mainAgentSelect?.value || 'antigravity';
     let coordinated;
-    try { coordinated = await window.pywebview.api.coordination_route(text, currentConvId, mainProjectSelect.value,
-      {codex:{model:codexModelSelect.value,effort:codexEffortSelect.value},antigravity:{model:agyModelSelect.value,effort:agyEffortSelect.value}},selectedPermissionLevel, submittedAgent); }
+    // Fatum orchestrates desktop tasks; its model choice travels with the others.
+    const routeModels = {codex:{model:codexModelSelect.value,effort:codexEffortSelect.value},antigravity:{model:agyModelSelect.value,effort:agyEffortSelect.value}};
+    if (typeof claudeModelSelect !== 'undefined' && claudeModelSelect && claudeModelSelect.value)
+      routeModels.claude = {model:claudeModelSelect.value,effort:(claudeEffortSelect && claudeEffortSelect.value) || ''};
+    // Sohbet never starts desktop, diagnostics or file work: the message goes straight to the chat.
+    const chatSpace = typeof currentSpace !== 'undefined' && currentSpace === 'chat';
+    try { coordinated = chatSpace ? {status:'ok',data:{handled:false,intent:'conversation'}}
+      : await window.pywebview.api.coordination_route(text, currentConvId, mainProjectSelect.value,
+      routeModels,selectedPermissionLevel, submittedAgent); }
     catch(e) { appendMsg('err','SPES',String(e)); return; }
     finally {
       coordinationRouting = false;
@@ -1003,8 +1060,10 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
 
   function renderConversationNavigation(items) {
     const list=document.getElementById('conversationList'); if(!list)return;
-    navigationConversations = items || [];
-    const key=JSON.stringify([currentConvId,(items||[]).map(c=>[c.id,c.title,c.project_id])]);
+    // Each space lists only its own conversations.
+    items = (items || []).filter(c => (c.space || 'work') === currentSpace);
+    navigationConversations = items;
+    const key=JSON.stringify([currentSpace,currentConvId,(items||[]).map(c=>[c.id,c.title,c.project_id])]);
     if(list.dataset.key===key)return;list.dataset.key=key;
     const top=list.scrollTop;list.replaceChildren();
     for(const conv of items||[]){

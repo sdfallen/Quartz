@@ -12,7 +12,11 @@ Lock-down (verified on Claude Code 2.1.318):
   never used. The only web tool ever enabled is WebSearch, in the "web" mode
   (team chat lead, user request 13 Nov); WebFetch stays off so a page can never
   make the model send the conversation to an arbitrary URL.
-- ``--strict-mcp-config --mcp-config``: only SpeS's MCP servers (none yet).
+- ``--strict-mcp-config --mcp-config``: only SpeS's MCP servers. The one server ever
+  loaded is SpeS's own desktop-task server in collaborator mode (Fatum as the
+  orchestrator of a desktop task, user request 14 Nov): it lists only the task
+  coordination tools, never screen or input tools, and the token travels in the
+  environment, not on argv.
 - ``--setting-sources ""``: user/project/local settings and their hooks are
   not loaded. ``--bare`` is NOT used: it disables OAuth (subscription) login.
 - ``--permission-mode dontAsk``: anything not pre-approved is refused.
@@ -47,6 +51,10 @@ TOOLS_BY_SANDBOX = {
     # The user's explicit "Tam yetki" choice: shells too.
     "danger-full-access": READ_TOOLS + EDIT_TOOLS + SHELL_TOOLS,
 }
+# Fatum's desktop-task tools: coordinate, never observe or touch the screen.
+MCP_SERVER = "quartz_desktop"
+COLLABORATOR_TOOLS = ("task_context", "task_wait", "task_message")
+COLLABORATOR_MCP_TOOLS = tuple(f"mcp__{MCP_SERVER}__{name}" for name in COLLABORATOR_TOOLS)
 # Pre-approved permission rules under --permission-mode dontAsk. Claude Code
 # lets the file tools read inside the working directory without a rule and
 # asks (= refuses, in dontAsk) for anything outside it; Edit(./**) approves
@@ -144,12 +152,20 @@ class ClaudeRuntime(CodexRuntime):
         except KeyError:
             raise ValueError("Unsupported Claude sandbox") from None
 
-    def build_args(self, sandbox, *, model=None, effort=None, session_id=None, resume_id=None):
+    @staticmethod
+    def collaborator_mcp_config():
+        from core.helper_command import mcp_command
+        command = mcp_command()
+        return {"mcpServers": {MCP_SERVER: {"type": "stdio", "command": command[0],
+                                             "args": [*command[1:], "--collaborator-server"]}}}
+
+    def build_args(self, sandbox, *, model=None, effort=None, session_id=None, resume_id=None, desktop=False):
         tools = ",".join(self.tools_for(sandbox))
+        servers = self.collaborator_mcp_config() if desktop else {"mcpServers": {}}
         args = ["-p", "--output-format", "stream-json", "--verbose",
-                "--strict-mcp-config", "--mcp-config", json.dumps({"mcpServers": {}}),
+                "--strict-mcp-config", "--mcp-config", json.dumps(servers),
                 "--setting-sources", "", "--permission-mode", "dontAsk", "--tools", tools]
-        allowed = ",".join(ALLOWED_BY_SANDBOX[sandbox])
+        allowed = ",".join(ALLOWED_BY_SANDBOX[sandbox] + (COLLABORATOR_MCP_TOOLS if desktop else ()))
         if allowed:
             args += ["--allowedTools", allowed]
         if model:
@@ -182,10 +198,17 @@ class ClaudeRuntime(CodexRuntime):
         if len(text) > 100_000:
             raise ValueError("Claude prompt is too long")
         expected_tools = self.tools_for(sandbox)
-        if desktop_connection is not None or tool_guard or project_read:
-            # Desktop/observer/project-read profiles need SpeS's MCP servers
-            # and guards; until they are wired for Claude they are refused.
-            raise PermissionError("Claude does not run desktop, observer or project-read profiles yet")
+        if tool_guard or project_read:
+            # Observer/project-read profiles need guards not yet wired for Claude.
+            raise PermissionError("Claude does not run observer or project-read profiles yet")
+        desktop_env = None
+        if desktop_connection is not None:
+            # Orchestrator of a desktop task: coordination tools only, no built-in tools.
+            if sandbox != "none":
+                raise PermissionError("Claude joins a desktop task only without built-in tools")
+            from core.desktop_agents import connection_environment
+            desktop_env = connection_environment(desktop_connection, self.child_environment())
+            expected_tools = COLLABORATOR_MCP_TOOLS
         project = Path(project_path).resolve(strict=True)
         if not project.is_dir():
             raise NotADirectoryError(str(project))
@@ -217,6 +240,7 @@ class ClaudeRuntime(CodexRuntime):
                 "cancel_requested": False, "tools_verified": False,
                 "_oracle_seq": 0, "_tool_guard": False, "_project_read": None,
                 "_expected_tools": sorted(expected_tools), "_pending_tools": {},
+                "_expected_servers": [MCP_SERVER] if desktop_env is not None else [],
             }
             self._runs[run_id] = record
             if is_writer:
@@ -234,7 +258,8 @@ class ClaudeRuntime(CodexRuntime):
             release("cancelled")
             raise RuntimeError("Claude run cancelled before start")
         command = self._command(self.build_args(sandbox, model=clean_model, effort=clean_effort,
-                                                session_id=session_id, resume_id=resume_thread_id))
+                                                session_id=session_id, resume_id=resume_thread_id,
+                                                desktop=desktop_env is not None))
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | CREATE_SUSPENDED
         job_errors: list[str] = []
         try:
@@ -242,7 +267,7 @@ class ClaudeRuntime(CodexRuntime):
                 command, cwd=str(project), stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 encoding="utf-8", errors="replace", creationflags=flags,
-                env=self.child_environment(),
+                env=desktop_env if desktop_env is not None else self.child_environment(),
             )
             job_bound = bind_kill_on_close_job(process, resume=True, error_sink=job_errors.append)
         except Exception:
@@ -298,8 +323,12 @@ class ClaudeRuntime(CodexRuntime):
         servers = [s.get("name") if isinstance(s, dict) else str(s) for s in (event.get("mcp_servers") or [])]
         if tools != record["_expected_tools"]:
             return f"Claude araç listesi beklenenden farklı: {tools}"
-        if servers:
+        if sorted(servers) != sorted(record.get("_expected_servers") or []):
             return f"Claude beklenmeyen MCP sunucusu yükledi: {servers}"
+        failed = [s.get("name") for s in (event.get("mcp_servers") or [])
+                  if isinstance(s, dict) and s.get("status") not in (None, "connected")]
+        if failed:
+            return f"Claude MCP sunucusu bağlanamadı: {failed}"
         if event.get("permissionMode") not in (None, "dontAsk"):
             return f"Claude izin modu beklenenden farklı: {event.get('permissionMode')}"
         return ""

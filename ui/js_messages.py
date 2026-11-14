@@ -622,6 +622,19 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
       wrap.append(inner);
       const effectiveMsg = msgObj || (kind === 'user' || cleanSender === 'user' ? {role: 'user', sender: 'user'} : null);
       renderMessageBody(bubble, text, effectiveMsg);
+      // A work request typed in Sohbet: one click opens it as a Workspace task (not sent yet).
+      if (msgObj && msgObj.metadata && msgObj.metadata.space_hint === 'work' && typeof window.spesOpenInWorkspace === 'function') {
+        const hint = document.createElement('div');
+        hint.className = 'space-hint';
+        const move = document.createElement('button');
+        move.type = 'button';
+        move.className = 'space-hint-btn';
+        move.textContent = "Workspace'te görev olarak aç";
+        move.title = 'Yeni bir Workspace görevi açar ve bu mesajı yazma kutusuna koyar; göndermeden önce bakabilirsin.';
+        move.onclick = () => window.spesOpenInWorkspace(text);
+        hint.append(move);
+        inner.append(hint);
+      }
     }
     chatEl.appendChild(wrap);
     if (!skipScroll) {

@@ -9,6 +9,8 @@ from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 
+from core.space_policy import normalize as normalize_space, space_of
+
 from core.atomic_json import atomic_write_json, load_json
 
 
@@ -178,6 +180,7 @@ class ConversationStore:
                     "project_id": cdata.get("project_id"),
                     "permission_level": "full",
                     "models": self._normalize_models(cdata.get("models")),
+                    "space": space_of(cdata),
                     "message_count": len(cdata.get("messages", [])),
                     "is_active": cid == self._active_id,
                 })
@@ -185,7 +188,7 @@ class ConversationStore:
             return result
 
     def create(self, title: str = "Yeni Sohbet", agent: str = "antigravity",
-               project_id: str | None = None, models: dict | None = None) -> dict:
+               project_id: str | None = None, models: dict | None = None, space: str | None = None) -> dict:
         with self._lock:
             cid = uuid.uuid4().hex
             now = time.time()
@@ -193,6 +196,7 @@ class ConversationStore:
                 "id": cid,
                 "title": title,
                 "agent": agent,
+                "space": normalize_space(space),
                 "project_id": project_id,
                 "permission_level": "full",
                 "created_at": now,
@@ -219,6 +223,7 @@ class ConversationStore:
             rec = self._conversations[self._active_id]
             rec["models"] = self._normalize_models(rec.get("models"))
             rec["permission_level"] = "full"
+            rec["space"] = space_of(rec)
             return deepcopy(rec)
 
     def get(self, conversation_id: str) -> dict:
@@ -228,6 +233,7 @@ class ConversationStore:
             rec = self._conversations[conversation_id]
             rec["models"] = self._normalize_models(rec.get("models"))
             rec["permission_level"] = "full"
+            rec["space"] = space_of(rec)
             return deepcopy(rec)
 
     def select(self, conversation_id: str) -> dict:
@@ -238,6 +244,7 @@ class ConversationStore:
             rec = self._conversations[conversation_id]
             rec["models"] = self._normalize_models(rec.get("models"))
             rec["permission_level"] = "full"
+            rec["space"] = space_of(rec)
             self._save()
             return deepcopy(rec)
 
@@ -280,6 +287,15 @@ class ConversationStore:
             self._conversations, self._active_id = remaining, active
             return {"deleted_count": len(ids), "active_conversation": deepcopy(remaining[active]),
                     "backup": str(backup)}
+
+    def latest_in_space(self, space: str) -> dict | None:
+        """Most recently updated conversation of a space (for the space switch)."""
+        wanted = normalize_space(space)
+        with self._lock:
+            found = [c for c in self._conversations.values() if space_of(c) == wanted]
+            if not found:
+                return None
+            return deepcopy(max(found, key=lambda c: c.get("updated_at", 0)))
 
     def update_agent(self, conversation_id: str, agent: str) -> None:
         with self._lock:

@@ -23,7 +23,7 @@ class SpesApi(baseUrl: String, private val token: String) {
     data class State(
         val conversationId: String, val title: String, val busy: Boolean,
         val progress: String, val lastSeq: Int, val messages: List<Msg>,
-        val mode: String = "collaboration", val working: List<String> = emptyList(),
+        val mode: String = "collaboration", val working: List<String> = emptyList(), val space: String = "work",
     )
 
     data class Agent(val key: String, val persona: String, val model: String, val effort: String,
@@ -38,7 +38,7 @@ class SpesApi(baseUrl: String, private val token: String) {
         val limits: Map<String, Limit>, val healthStatus: String, val warnings: List<Warning>,
         val changes: List<Change>, val checks: List<Check>,
     )
-    data class Conversation(val id: String, val title: String, val agent: String)
+    data class Conversation(val id: String, val title: String, val agent: String, val space: String = "work")
     data class Conversations(val active: String, val items: List<Conversation>)
 
     fun state(after: Int = 0, waitSeconds: Int = 0): State {
@@ -61,6 +61,7 @@ class SpesApi(baseUrl: String, private val token: String) {
             busy = json.optBoolean("busy"), progress = json.optString("progress"),
             lastSeq = json.optInt("last_seq"), messages = list,
             mode = json.optString("mode", "collaboration"), working = strings(json.optJSONArray("working")),
+            space = conv.optString("space", "work"),
         )
     }
 
@@ -103,7 +104,7 @@ class SpesApi(baseUrl: String, private val token: String) {
         val list = ArrayList<Conversation>()
         if (items != null) for (i in 0 until items.length()) {
             val c = items.getJSONObject(i)
-            list += Conversation(c.optString("id"), c.optString("title", "Sohbet"), c.optString("agent"))
+            list += Conversation(c.optString("id"), c.optString("title", "Sohbet"), c.optString("agent"), c.optString("space", "work"))
         }
         return Conversations(json.optString("active"), list)
     }

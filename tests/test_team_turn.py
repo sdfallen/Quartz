@@ -93,7 +93,8 @@ class TeamTurnTests(unittest.TestCase):
         self.assertEqual([m["metadata"]["persona"] for m in team], ["Fatum", "Fides", "Eos"])
         for message in team:
             self.assertLessEqual(len(message["content"]), 2 * 110 + 1, "chat replies stay text-message short")
-        self.assertTrue(all("SOHBET MODU" in c["prompt"] for c in run.calls))
+        # Older conversations count as Workspace: short and formal (space split, 14 Nov).
+        self.assertTrue(all("KISA YANIT" in c["prompt"] for c in run.calls))
         self.assertIn(turn["status"], {"completed", "running"})
 
     def test_the_team_remembers_earlier_turns(self):

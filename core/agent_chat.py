@@ -341,7 +341,7 @@ class AgentChatService(TeamTurnMixin):
             }
 
     def new_conversation(self, title: str = "Yeni Sohbet", agent: str = "antigravity",
-                         project_id: str | None = None) -> dict:
+                         project_id: str | None = None, space: str | None = None) -> dict:
         with self._lock:
             if project_id is None:
                 selected_id = self.agent_service.projects.selected()["id"]
@@ -353,7 +353,18 @@ class AgentChatService(TeamTurnMixin):
                 active_models = self.store.get_active().get("models")
             except Exception:
                 active_models = None
-            return self.store.create(title=title, agent=agent, project_id=project_id, models=active_models)
+            return self.store.create(title=title, agent=agent, project_id=project_id, models=active_models,
+                                     space=space)
+
+    def open_space(self, space: str) -> dict:
+        """Space switch: the latest conversation of that space, or a fresh one."""
+        from core.space_policy import normalize
+        space = normalize(space)
+        with self._lock:
+            found = self.store.latest_in_space(space)
+            if found:
+                return self.store.select(found["id"])
+        return self.new_conversation(agent="collaboration", space=space)
 
     def switch_project(self, project_id: str) -> dict:
         with self._lock:
@@ -624,7 +635,11 @@ class AgentChatService(TeamTurnMixin):
                 return
             reported.add(task)
         from core.finish_report import wants_finish_report
-        messages = self.store.get(cid).get("messages", [])
+        from core.space_policy import is_chat
+        conversation = self.store.get(cid)
+        if is_chat(conversation):
+            return
+        messages = conversation.get("messages", [])
         first = next((i for i, m in enumerate(messages) if (m.get("metadata") or {}).get("natural_task") == task), None)
         if first is None:
             return
@@ -659,8 +674,9 @@ class AgentChatService(TeamTurnMixin):
         elif isinstance(note, dict) and note.get("reason") == "secret":
             memory += ("[SPES HAFIZA] Kullanıcının son mesajı gizli bilgi (şifre, kart, anahtar vb.) içerdiği için "
                        "SpeS onu kaydetmedi. Bunu kısaca söyle.\n")
+        from core.space_policy import space_of, space_rule
         return (communication_instruction(self.store.preferences()["response_detail"], request) + "\n"
-                + NORMAL_CHAT_DESKTOP_NOTICE + memory + mode + full_prompt)
+                + NORMAL_CHAT_DESKTOP_NOTICE + memory + space_rule(space_of(conv)) + mode + full_prompt)
 
     # -- long-term memory (user-visible, user-deletable) --------------------
     def memory_list(self) -> list:
@@ -782,7 +798,12 @@ class AgentChatService(TeamTurnMixin):
         from core.message_intent import message_intent
         requested_permission_level = requested_permission_level or ('full' if full_access else 'project' if write else 'read-only')
         if requested_permission_level not in {'read-only','project','full'}: raise ValueError('Invalid requested permission level')
-        conversation_only = message_intent(text) != "task"
+        from core.space_policy import is_chat
+        target = self.store.get(conversation_id) if conversation_id else self.store.get_active()
+        looks_like_task = message_intent(text) == "task"
+        # Sohbet space never starts work, whatever the wording (user request 14 Nov).
+        chat_space = is_chat(target)
+        conversation_only = chat_space or not looks_like_task
         if conversation_only:
             write = full_access = confirm_write = False
         write = bool(write or full_access)
@@ -854,6 +875,8 @@ class AgentChatService(TeamTurnMixin):
                     "sequence": user_seq,
                     "requested_permission_level":requested_permission_level,
                     **({"memory": memory_note} if memory_note else {}),
+                    # The UI offers "Workspace'te aç" under a work request typed in Sohbet.
+                    **({"space_hint": "work"} if chat_space and looks_like_task else {}),
                 },
             )
 
