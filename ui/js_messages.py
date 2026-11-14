@@ -195,11 +195,13 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
         state = check?.status === 'FAILED' ? 'Ajan bitti; kaynak sözdizimi kontrolü başarısız.'
           : tests?.status === 'FAILED' ? 'Ajanın çalıştırdığı test komutu başarısız bitti.'
           : tests?.status === 'PASSED' ? 'Ajanın çalıştırdığı testler geçti (komut çıktısı gözlendi); SpeS testleri kendisi çalıştırmadı.'
+          : tests?.status === 'RAN' ? 'Ajan test çalıştırdı ama komut çıkış kodunu gizledi; sonuç ayırt edilemedi.'
           : check?.status === 'VERIFIED' ? 'Python sözdizimi doğrulandı; çalışma/test başarısı doğrulanmış değil.'
           : 'Ajan yanıtı tamamlandı; bağımsız çalışma/test kanıtı yok.';
         [tone, label] = check?.status === 'FAILED' ? ['fail', 'Kontrol başarısız']
           : tests?.status === 'FAILED' ? ['fail', 'Test başarısız']
           : tests?.status === 'PASSED' ? ['ok', 'Testler geçti']
+          : tests?.status === 'RAN' ? ['warn', 'Test belirsiz']
           : check?.status === 'VERIFIED' ? ['warn', 'Kısmen doğrulandı'] : ['warn', 'Kanıt yok'];
         if (meta.host_evidence?.historical) state = 'Önceki oturumun kaynak kanıtı: ' + state;
       } else if (meta.natural_task && meta.host_check?.status === 'OBSERVED UI CRITERION VERIFIED'

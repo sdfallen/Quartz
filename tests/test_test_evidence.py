@@ -30,6 +30,19 @@ class TestCommandTests(unittest.TestCase):
         self.assertEqual(broke["status"], "FAILED")
         self.assertEqual(agent_test_result([run("pytest -q", ok=True, exit_code=2)])["status"], "FAILED")
 
+    def test_a_hidden_exit_status_is_read_or_reported_as_unknown(self):
+        # Live 14 Nov: `node tests/validate.test.js; echo "exit=$?"` always exits 0.
+        echo = 'node tests/validate.test.js; echo "exit=$?"'
+        self.assertEqual(agent_test_result([{**run(echo), "output": "41 geçti\nexit=0"}])["status"], "PASSED")
+        self.assertEqual(agent_test_result([{**run(echo), "output": "3 başarısız\nexit=1"}])["status"], "FAILED")
+        self.assertEqual(agent_test_result([{**run("pytest -q; echo $?"), "output": "1 failed\n1"}])["status"], "FAILED")
+        for hidden in ("npm test | tail -5", "pytest -q || true", "node --test; ls", echo):
+            with self.subTest(hidden=hidden):
+                self.assertEqual(agent_test_result([{**run(hidden), "output": "ok"}])["status"], "RAN")
+        self.assertEqual(agent_test_result([run("cd app && npm test")])["status"], "PASSED")
+        self.assertEqual(agent_test_result([run("npm test && echo done")])["status"], "PASSED")
+        self.assertEqual(evidence_label({"agent_tests": {"status": "RAN"}}), ("warn", "Test çalıştı; sonucu ayırt edilemedi"))
+
     def test_label_precedence(self):
         self.assertEqual(evidence_label({"agent_tests": {"status": "PASSED"}}), ("ok", "Testler geçti (ajan çalıştırdı)"))
         self.assertEqual(evidence_label({"agent_tests": {"status": "FAILED"}, "source_validation": {"status": "VERIFIED"}}),

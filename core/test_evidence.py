@@ -26,17 +26,51 @@ def is_test_command(command: str) -> bool:
     return bool(_TEST_COMMAND.search(str(command or "")))
 
 
+_SEPARATORS = re.compile(r"(\|\||&&|;|\|)")
+_ECHO_STATUS = re.compile(r"^\s*echo\b.*\$\?")
+_PRINTED_STATUS = re.compile(r"(?:exit(?:[\s_-]*code)?\s*[=:]?\s*)(-?\d+)\s*$", re.IGNORECASE)
+
+
+def _test_exit_code(record):
+    """The test's own exit code, or None when the command hides it.
+
+    Live 14 Nov: Fatum ran `node tests/validate.test.js; echo "exit=$?"`. The command's
+    status is echo's, so a failing test would still look like a success. A test followed by
+    `;`, `|` or `||` hides its status; `; echo ... $?` prints it, and that printed value is
+    read from the output. `&&` after the test keeps it honest (a failure stops the chain).
+    """
+    command = str(record.get("command") or "")
+    parts = _SEPARATORS.split(command)
+    index = next((i for i in range(0, len(parts), 2) if is_test_command(parts[i])), None)
+    status = record.get("exit_code")
+    if not record.get("ok") or record.get("state") == "ERROR":
+        status = status if status not in (None, 0) else 1
+    tail = parts[index + 1:] if index is not None else []
+    if not tail or all(sep == "&&" for sep in tail[0::2]):
+        return status
+    if tail[0] == ";" and len(tail) > 1 and _ECHO_STATUS.match(tail[1]):
+        lines = [line for line in str(record.get("output") or "").strip().splitlines() if line.strip()]
+        found = _PRINTED_STATUS.search(lines[-1]) if lines else None
+        if found:
+            return int(found.group(1))
+        if lines and lines[-1].strip().lstrip("-").isdigit():
+            return int(lines[-1].strip())
+    return None
+
+
 def agent_test_result(command_results) -> dict | None:
     """The outcome of the test commands an agent ran, or None when it ran none.
 
-    The last test run decides: "fix, run again, pass" counts as passed.
+    The last test run decides: "fix, run again, pass" counts as passed. A run whose own
+    exit status is hidden by the command line is "RAN": it ran, the result is unknown.
     """
     runs = [r for r in (command_results or []) if isinstance(r, dict) and is_test_command(r.get("command"))]
     if not runs:
         return None
     last = runs[-1]
-    passed = bool(last.get("ok")) and last.get("exit_code") in (0, None) and last.get("state") != "ERROR"
-    return {"level": "AGENT RUN", "status": "PASSED" if passed else "FAILED",
+    code = _test_exit_code(last)
+    status = "RAN" if code is None else "PASSED" if code == 0 else "FAILED"
+    return {"level": "AGENT RUN", "status": status, "exit_code": code,
             "command": str(last.get("command") or "")[:200], "runs": len(runs)}
 
 
@@ -54,6 +88,8 @@ def evidence_label(host_evidence, outcome=None):
         return "fail", "Test başarısız"
     if tests == "PASSED":
         return "ok", "Testler geçti (ajan çalıştırdı)"
+    if tests == "RAN":
+        return "warn", "Test çalıştı; sonucu ayırt edilemedi"
     if source == "VERIFIED":
         return "warn", "Sözdizimi doğrulandı; test kanıtı yok"
     return "warn", "Bağımsız kanıt yok"
