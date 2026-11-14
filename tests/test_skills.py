@@ -119,6 +119,16 @@ class InstallTurnTests(unittest.TestCase):
         note = [m for m in messages if m.get("sender") == "quartz" and (m.get("metadata") or {}).get("skill_install")]
         self.assertIn("/skill pdf-ozet", note[0]["content"])
 
+    def test_the_verdict_line_after_a_long_review_is_still_read(self):
+        # Live 14 Nov: the bubble was clamped to five sentences and "KARAR:" was cut off.
+        long_ok = " ".join(f"İnceleme cümlesi {n}." for n in range(9)) + "\nKARAR: UYGUN"
+        with tempfile.TemporaryDirectory() as directory:
+            chat, _, messages = self.run_install(directory, {"codex": long_ok, "antigravity": long_ok, "claude": long_ok})
+            installed = [s["name"] for s in chat.skills.list()]
+        self.assertEqual(installed, ["pdf-ozet"])
+        note = next(m for m in messages if m.get("sender") == "quartz" and (m.get("metadata") or {}).get("skill_install"))
+        self.assertNotIn("belirsiz", note["content"])
+
     def test_one_objection_or_an_unclear_verdict_installs_nothing(self):
         for replies in ({"codex": "KARAR: UYGUN", "antigravity": "Ağa veri gönderiyor.\nKARAR: UYGUN DEĞİL", "claude": "KARAR: UYGUN"},
                         {"codex": "KARAR: UYGUN", "antigravity": "KARAR: UYGUN", "claude": "Bence olur."}):

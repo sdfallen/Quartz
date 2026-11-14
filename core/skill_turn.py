@@ -49,7 +49,10 @@ class SkillTurnMixin:
         reviews = self._team_parallel({a: (lambda a=a: self._team_say(
             cid, review_ids[a], a, self._team_header(a) + REVIEW_RULE + header, project_id,
             step=2, limit=5, web=False)) for a in review_ids})
-        verdicts = {a: verdict(reviews.get(a)) for a in review_ids}
+        # Live 14 Nov: the chat bubble is clamped to a few sentences and the closing
+        # "KARAR:" line was cut off ("Fatum belirsiz" although it wrote UYGUN DEĞİL).
+        # Verdicts are read from the full reply SpeS stored, never from the clamped one.
+        verdicts = {a: verdict(self._full_reply(cid, review_ids[a]) or reviews.get(a)) for a in review_ids}
         if self._is_turn_cancelled(first_msg_id):
             shelf.discard(fetched["staging"])
             return
@@ -57,7 +60,7 @@ class SkillTurnMixin:
         transcript = self._team_transcript(cid, first_msg_id)
         decision = self._team_say(cid, first_msg_id, LEAD, self._team_header(LEAD) + DECIDE_RULE + header
                                   + f"\n--- İNCELEMELER ---\n{transcript}\n", project_id, step=3, limit=5, web=False)
-        verdicts[LEAD] = verdict(decision)
+        verdicts[LEAD] = verdict(self._full_reply(cid, first_msg_id) or decision)
         approved = all(v == "UYGUN" for v in verdicts.values())
         who = {persona_name(a): (v or "belirsiz") for a, v in verdicts.items()}
         if approved:
@@ -73,6 +76,11 @@ class SkillTurnMixin:
         self._post_skill_note(cid, text, installed=approved)
         with self._lock:
             self._finish_turn(first_msg_id, "completed" if decision else "partial")
+
+    def _full_reply(self, cid, msg_id):
+        message = next((m for m in self.store.get(cid).get("messages", []) if m.get("id") == msg_id), {})
+        meta = message.get("metadata") or {}
+        return str(meta.get("team_full_text") or message.get("content") or "")
 
     def _post_skill_note(self, cid, text, *, installed):
         self.store.append_message(cid, "assistant", text, sender="quartz", metadata={

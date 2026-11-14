@@ -208,7 +208,8 @@ class SecurityWatch:
                 self._alert("high", "process", f"Şüpheli komut: {abuse}",
                             f"{row['name']} (PID {row['pid']}) {abuse.lower()} kalıbıyla başladı. Komut satırı gizlilik "
                             "için gösterilmiyor.", target, ["stop", "ignore"])
-            elif row["exe"] and (_inside(row["exe"], dirs["temp"]) or _inside(row["exe"], dirs["downloads"])):
+            elif row["exe"] and (_inside(row["exe"], dirs["temp"]) or _inside(row["exe"], dirs["downloads"])) \
+                    and not self.is_own(row["pid"]):
                 where = "İndirilenler" if _inside(row["exe"], dirs["downloads"]) else "Geçici (Temp)"
                 actions = ["stop", "quarantine", "ignore"] if _inside(row["exe"], dirs["downloads"]) else ["stop", "ignore"]
                 self._alert("medium", "process", f"{where} klasöründen yeni program çalıştı",
@@ -251,6 +252,17 @@ class SecurityWatch:
             self._alert("high", "defender", f"Windows Defender {what}",
                         f"{row['threat'] or 'Bilinmeyen tehdit'} — {row['path'] or 'yol yok'}"
                         + (f" (eylem: {row['action']})" if row.get("action") else ""), dict(row), ["ignore"])
+
+    @staticmethod
+    def is_own(pid) -> bool:
+        """A helper SpeS itself started (live 14 Nov: its read-guard.exe ran from a Temp
+        workspace and Eos reported it). Decided by the process tree, not by the path or name."""
+        try:
+            import psutil
+            me = os.getpid()
+            return any(parent.pid == me for parent in psutil.Process(int(pid)).parents())
+        except Exception:
+            return False
 
     # -- alerts ----------------------------------------------------------------------
     def _alert(self, severity, kind, title, detail, target, actions):

@@ -75,8 +75,23 @@ class WatchTests(unittest.TestCase):
         self.assertTrue(any(a["kind"] == "download" and a["severity"] == "low" for a in self.emitted))
         self.assertNotIn("_target", downloaded)
 
+    def test_spes_own_helpers_are_not_reported(self):
+        # Live 14 Nov: SpeS's read-guard.exe ran from a Temp workspace and Eos reported it.
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            self.assertTrue(SecurityWatch.is_own(child.pid))  # our own child
+            self.watch.tick(force=True)
+            self.procs.append({"pid": child.pid, "name": "read-guard.exe",
+                               "exe": str(self.temp / "quartz-text-chat-x" / "read-guard.exe"), "create": 5.0, "cmdline": ""})
+            self.tick()
+            self.assertEqual([a for a in self.emitted if a["kind"] == "process"], [])
+        finally:
+            child.kill()
+        self.assertFalse(SecurityWatch.is_own(4))  # the System process is not ours
+
     def test_stop_acts_only_on_the_exact_process_once(self):
         import psutil
+        self.watch.is_own = lambda pid: False  # the test's own child stands in for a stranger
         self.watch.tick(force=True)
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
         try:
