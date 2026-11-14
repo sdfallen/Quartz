@@ -817,3 +817,38 @@ body.show-preview .preview-pane { display: flex; }
 .memory-del { width: 26px; height: 26px; color: var(--text-3); }
 .memory-del:hover { color: var(--danger); }
 #memoryCard .work-empty[hidden] { display: none; }
+
+
+/* ── Sohbet / Workspace (14 Nov 2026) ─────────────────────────────────────────
+   One switch, two rooms. Sohbet is a quiet chat: no lanes, no work panel, no
+   permission or task chrome, a warmer accent. Workspace keeps the full stage. */
+.space-switch { position: relative; display: inline-grid; grid-template-columns: 1fr 1fr; align-items: center; padding: 3px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); flex: none; -webkit-app-region: no-drag; }
+.space-thumb { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc(50% - 3px); border-radius: 999px; background: var(--surface-1); box-shadow: var(--shadow-1); transition: transform .26s cubic-bezier(.2,.8,.2,1); }
+:root[data-space="work"] .space-thumb { transform: translateX(100%); }
+.space-tab { position: relative; z-index: 1; min-width: 92px; height: 28px; padding: 0 12px; border: 0; background: transparent; color: var(--text-3); font: 500 var(--text-sm, 13px)/1 var(--font-ui, inherit); border-radius: 999px; cursor: pointer; transition: color .2s ease; }
+.space-tab[aria-selected="true"] { color: var(--text); }
+.space-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.space-chat-only { display: none; }
+:root[data-space="chat"] .space-chat-only { display: flex; }
+:root[data-space="chat"] p.space-chat-only { display: block; }
+:root[data-space="chat"] .space-work-only { display: none; }
+:root[data-space="chat"] .lane-col,
+:root[data-space="chat"] .stage .rail,
+:root[data-space="chat"] #desktopTaskBar,
+:root[data-space="chat"] #btnPreview,
+:root[data-space="chat"] #previewPane,
+:root[data-space="chat"] #permissionSelectionHint,
+:root[data-space="chat"] #squadBadge,
+:root[data-space="chat"] #chatProjectTag,
+:root[data-space="chat"] #writerBadge,
+:root[data-space="chat"] #btnRepairPlan,
+:root[data-space="chat"] #btnSelfDiagnostics,
+:root[data-space="chat"] #btnContinueCollab { display: none !important; }
+:root[data-space="chat"] .stage.crew { grid-template-columns: minmax(0, 1fr) !important; }
+:root[data-space="chat"] .chat { max-width: 760px; margin-inline: auto; width: 100%; }
+:root[data-space="chat"] .msg.user .bubble { background: color-mix(in srgb, var(--agent-claude) 14%, var(--surface-2)); }
+.space-hint { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+.space-hint-btn { border: 1px solid var(--line-strong); background: var(--surface-1); color: var(--text); border-radius: 999px; padding: 5px 12px; font-size: 12.5px; cursor: pointer; transition: background .15s ease, transform .15s ease; }
+.space-hint-btn:hover { background: var(--accent-soft); }
+.space-hint-btn:active { transform: scale(.97); }
+@media (prefers-reduced-motion: reduce) { .space-thumb, .space-tab, .space-hint-btn { transition: none; } }

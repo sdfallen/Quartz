@@ -240,7 +240,8 @@ class MainActivity : ComponentActivity() {
                         })
                         Tab.Work -> WorkTab(overview)
                         Tab.List -> ListTab(state, overview,
-                            onNew = { act("new", JSONObject().put("agent", "collaboration"), "Yeni sohbet açıldı"); tab = Tab.Chat },
+                            onNew = { space -> act("new", JSONObject().put("agent", "collaboration").put("space", space),
+                                if (space == "chat") "Yeni sohbet açıldı" else "Yeni görev açıldı"); tab = Tab.Chat },
                             onSelect = { act("select", JSONObject().put("conversation_id", it)); tab = Tab.Chat },
                             onProject = { act("project", JSONObject().put("project_id", it), "Proje değişti") })
                     }
@@ -494,12 +495,23 @@ class MainActivity : ComponentActivity() {
 
     // -- conversations -----------------------------------------------------
     @Composable
-    private fun ListTab(state: SpesApi.State?, overview: SpesApi.Overview?, onNew: () -> Unit, onSelect: (String) -> Unit, onProject: (String) -> Unit) {
+    private fun ListTab(state: SpesApi.State?, overview: SpesApi.Overview?, onNew: (String) -> Unit, onSelect: (String) -> Unit, onProject: (String) -> Unit) {
         var list by remember { mutableStateOf<SpesApi.Conversations?>(null) }
+        // Sohbet / Workspace, like the desktop: each space lists its own conversations.
+        var space by remember(state?.space) { mutableStateOf(state?.space ?: "work") }
         LaunchedEffect(state?.conversationId) { io { api().conversations() }.onSuccess { list = it } }
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item {
-                Button(onClick = onNew, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(14.dp)) { Text("Yeni sohbet") }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("chat" to "Sohbet", "work" to "Workspace").forEach { (key, label) ->
+                        FilterChip(selected = space == key, onClick = { space = key }, label = { Text(label) })
+                    }
+                }
+            }
+            item {
+                Button(onClick = { onNew(space) }, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(14.dp)) {
+                    Text(if (space == "chat") "Yeni sohbet" else "Yeni görev")
+                }
             }
             overview?.takeIf { it.projects.size > 1 }?.let { o ->
                 item { Section("Proje", o.project?.name ?: "Seçili değil") }
@@ -511,9 +523,9 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-            item { Section("Sohbetler", "Bilgisayardaki sohbetlerle aynı") }
+            item { Section(if (space == "chat") "Sohbetler" else "Görevler", "Bilgisayardaki listeyle aynı") }
             if (list == null) item { Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) { TypingDots(SpesColors.text3) } }
-            items(list?.items ?: emptyList(), key = { it.id }) { c ->
+            items((list?.items ?: emptyList()).filter { it.space == space }, key = { it.id }) { c ->
                 val active = c.id == list?.active
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(if (active) SpesColors.surface3 else SpesColors.surface1)
                     .clickable { if (!active) onSelect(c.id) }.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {

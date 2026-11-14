@@ -177,12 +177,13 @@ class TeamTurnMixin:
 
     # -- prompts -------------------------------------------------------------
     @staticmethod
-    def _team_header(agent):
+    def _team_header(agent, space="work"):
+        from core.space_policy import voice
         others = ", ".join(f"{persona_name(a)} ({a.capitalize() if a != 'antigravity' else 'Antigravity'})"
                            for a in TEAM if a != agent)
         # Every agent may search the web in conversation steps (core.web_policy).
         return (f"SpeS ekibindesin; ekip: sen, {others} ve kullanıcı. Herkes sohbeti görüyor.\n"
-                + character_instruction(agent) + "\n" + WEB_RULE)
+                + character_instruction(agent) + voice(agent, space) + "\n" + WEB_RULE)
 
     @staticmethod
     def _team_rules(limit):
@@ -210,8 +211,11 @@ class TeamTurnMixin:
         lead = LEAD if LEAD in agents else agents[0]
         # History first, then the chat rule: the rule closest to the message is the one followed.
         # Only the lead (Claude) may search the web; teammates stay tool-less.
+        from core.space_policy import space_of, team_chat_rule
+        space = space_of(self.store.get(cid))
+        rule = team_chat_rule(space)
         say = lambda agent, msg_id, extra="": self._team_say(
-            cid, msg_id, agent, self._team_header(agent) + history_block + CHAT_RULE + extra + user_block, project_id,
+            cid, msg_id, agent, self._team_header(agent, space) + history_block + rule + extra + user_block, project_id,
             step=0, limit=2, per_sentence=CHAT_CHARS_PER_SENTENCE)
         self._set_turn_progress(f"{persona_name(lead)} yazıyor…", current_msg_id=first_msg_id)
         # The opening bubble is reused even when the user addressed only Fides or Eos:

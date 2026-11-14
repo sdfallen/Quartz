@@ -13,10 +13,17 @@ MOCK="""<script>
 const previewPlan={id:'preview-only',scope:'A ve B test pencerelerinde sonucu kontrol et.',roles:{operator:'codex',observer:'antigravity'}};
 const previewWindows=[{handle:1,pid:101,exe:'Fixture-A.exe',title:'Disposable preview A (not connected)'},{handle:2,pid:102,exe:'Fixture-B.exe',title:'Disposable preview B (not connected)'}];
 let previewDesktop={code:'normal',label:'Normal sohbet',detail:'PREVIEW ONLY — gerçek masaüstü izni yok.',control_active:false,stop_ref:null,pending_id:null};
-const sampleConversation={id:'preview',title:'Quartz çalışma alanı',agent:'collaboration',project_id:'preview-project',models:{codex:{model:'gpt-6-luna',effort:'low'},antigravity:{model:'gemini-3.8-flash-low',effort:'low'}},messages:[
+const sampleConversation={id:'preview',space:'work',title:'SpeS çalışma alanı',agent:'collaboration',project_id:'preview-project',models:{codex:{model:'gpt-6-luna',effort:'low'},antigravity:{model:'gemini-3.8-flash-low',effort:'low'}},messages:[
 {id:'one',role:'user',sender:'user',content:'Codex test penceresini kontrol etsin; Gemini gerçek logları incelesin.',metadata:{}},
 {id:'two',role:'assistant',sender:'quartz',content:'Önce pencere, kapsam ve süre için onay isteyeceğim. Aynı anda yalnız bir ajan klavye ve fareyi kullanabilir.',metadata:{status:'completed'}},
 {id:'three',role:'assistant',sender:'codex',content:'Test sonucunu gerçek pencere ve log kanıtıyla değerlendireceğim.\\n\\n---TEKNIK_AYRINTILAR---\\nBu sayfa yalnız görsel test verisidir; gerçek görevi başlatmaz.',metadata:{status:'completed'}}]};
+// Sohbet space sample (14 Nov): warm small talk and a work request with the Workspace chip.
+let previewSpace=location.hash.includes('chat')?'chat':'work';
+const chatConversation={id:'chat-preview',space:'chat',title:'Akşam sohbeti',agent:'collaboration',project_id:'preview-project',models:sampleConversation.models,messages:[
+{id:'c1',role:'user',sender:'user',content:'Selam beyler, nasılsınız?',metadata:{}},
+{id:'c2',role:'assistant',sender:'claude',content:'Selam Ali! İyiyiz, seni görmek güzel; günün nasıl geçti?',metadata:{status:'completed',team:true,team_step:0,persona:'Fatum'}},
+{id:'c3',role:'user',sender:'user',content:'Not defterine bir hesap makinesi kodu yaz.',metadata:{space_hint:'work'}},
+{id:'c4',role:'assistant',sender:'claude',content:'Bunu seve seve yaparız ama burası sohbet köşemiz; Workspace’te görev olarak verirsen hemen başlarız.',metadata:{status:'completed',team:true,team_step:0,persona:'Fatum'}}]};
 // Synthetic live turn (preview only): activity lines change, then the answer streams in.
 let liveTurn=null;
 const LIVE_STEPS=['Düşünüyor…','Dosya okuyor: agent_chat.py','Kodda arıyor: describe_activity','Komut çalıştırıyor: python -m unittest tests.test_ag…','Sonucu doğruluyor','Yanıt yazıyor…'];
@@ -38,7 +45,8 @@ if(name==='chat_poll'){const s=liveState();if(!s)return {status:'ok',data:{activ
  const msgs=sampleConversation.messages.filter(m=>m.id!=='live-a').concat([s.msg]);if(s.done){sampleConversation.messages=msgs;liveTurn=null;}
  return {status:'ok',data:{active:!s.done,messages:msgs,metadata:s.msg.metadata,agent_progress:s.progress,single_writer:{}}};}
 if(name==='coordination_route'&&!/erişim|yetki|pencere|masaüstü/i.test(String(args[0]||'')))return {status:'ok',data:{handled:false,intent:'conversation'}};
-if(name==='chat_status')return {status:'ok',data:{preferences:{response_detail:'short'},active_conversation:sampleConversation,conversations:[sampleConversation,{id:'older',title:'Önceki test notları'}],projects:[{id:'preview-project',name:'Geçici test projesi',path:'Preview only'}],agents:{},models:{},single_writer:{}}};
+if(name==='chat_open_space'){previewSpace=args[0]==='chat'?'chat':'work';return {status:'ok',data:{}};}
+if(name==='chat_status')return {status:'ok',data:{preferences:{response_detail:'short'},active_conversation:previewSpace==='chat'?chatConversation:sampleConversation,conversations:[sampleConversation,chatConversation,{id:'older',title:'Önceki test notları'}],projects:[{id:'preview-project',name:'Geçici test projesi',path:'Preview only'}],agents:{},models:{},single_writer:{}}};
 if(name==='ping')return {status:'ok',data:'Preview only'};
 if(name==='onboarding_status')return {status:'ok',data:{needs_setup:false,providers:{codex:{ready:true,installed:true},gemini:{ready:true,installed:true}}}};
 if(name==='get_stats')return {cpu:0,mem:0,disk:0,low_spec:location.hash.includes('lowspec')};
@@ -74,5 +82,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__=='__main__':
-    print('Preview only http://127.0.0.1:8898',flush=True)
-    HTTPServer(('127.0.0.1',8898),Handler).serve_forever()
+    port=int(sys.argv[1]) if len(sys.argv)>1 else 8898
+    print(f'Preview only http://127.0.0.1:{port}',flush=True)
+    HTTPServer(('127.0.0.1',port),Handler).serve_forever()

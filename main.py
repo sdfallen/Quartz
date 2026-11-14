@@ -480,9 +480,14 @@ class IPCServer:
             res = self._get_agent_chat().new_conversation(
                 title=str(data.get("title", "Yeni Sohbet")),
                 agent=str(data.get("agent", "antigravity")),
-                project_id=data.get("project_id")
+                project_id=data.get("project_id"),
+                space=data.get("space"),
             )
             return {"status": "ok", "data": res}
+
+        if action == "chat_open_space":
+            data = req.get("data", {}) or {}
+            return {"status": "ok", "data": self._get_agent_chat().open_space(str(data.get("space") or ""))}
 
         if action == "chat_select":
             data = req.get("data", {}) or {}

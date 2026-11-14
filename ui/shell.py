@@ -98,7 +98,7 @@ SHELL_MARKUP = r"""
       <button type="button" class="project-chats-delete" id="btnRemoveProject" title="Proje klasörü ve dosyaları silinmez">Projeyi listeden kaldır</button>
     </div>
     <div class="side-section grow">
-      <div class="workspace-nav-title">Sohbetler</div>
+      <div class="workspace-nav-title" id="conversationListTitle">Görevler</div>
       <div id="conversationList" class="conversation-list"></div>
       <button type="button" class="project-chats-delete" id="btnDeleteProjectChats">Bu projenin sohbetlerini temizle</button>
     </div>
@@ -111,6 +111,12 @@ SHELL_MARKUP = r"""
 
   <main class="main chat-col">
     <header class="topbar titlebar pywebview-drag-region">
+      <!-- Two spaces (14 Nov 2026): Sohbet for talking, Workspace for work. -->
+      <div class="space-switch" id="spaceSwitch" role="tablist" aria-label="Alan">
+        <span class="space-thumb" aria-hidden="true"></span>
+        <button type="button" class="space-tab" role="tab" data-space="chat" id="spaceTabChat" aria-selected="false" title="Sohbet: ekiple sohbet, iş yapılmaz">Sohbet</button>
+        <button type="button" class="space-tab" role="tab" data-space="work" id="spaceTabWork" aria-selected="true" title="Workspace: görevler, dosyalar ve bilgisayar kontrolü">Workspace</button>
+      </div>
       <div class="chat-title-group">
         <span class="chat-conv-title" id="chatConvTitle">Yeni Sohbet</span>
         <span class="project-tag" id="writerBadge" style="display:none"></span>
@@ -229,8 +235,14 @@ SHELL_MARKUP = r"""
       <section class="empty-state" id="emptyState" aria-label="Başlangıç">
         @@MARK@@
         <h1 id="emptyGreeting">Merhaba.</h1>
-        <p>Fatum, Fides ve Eos burada. Birlikte modunda planı sohbette kurup işi birlikte yaparlar.</p>
-        <div class="prompt-chips">
+        <p class="space-work-only">Workspace: Fatum işi böler ve yönetir, Fides ve Eos uygular ve doğrular. Bir görev ver.</p>
+        <p class="space-chat-only">Sohbet: Fatum, Fides ve Eos burada, sadece laflamak için. İş için Workspace'e geç.</p>
+        <div class="prompt-chips space-chat-only">
+          <button type="button" class="prompt-chip" data-prompt="Selam beyler, bugün nasılsınız?">Selam ver</button>
+          <button type="button" class="prompt-chip" data-prompt="Bana bugün için küçük bir fikir verin.">Fikir iste</button>
+          <button type="button" class="prompt-chip" data-prompt="Bugün dünyada ilginç ne oldu?">Gündem</button>
+        </div>
+        <div class="prompt-chips space-work-only">
           <button type="button" class="prompt-chip" data-prompt="Bu projenin yapısını incele ve kısaca özetle.">Projeyi özetle</button>
           <button type="button" class="prompt-chip" data-prompt="Testleri çalıştır, başarısız olanların nedenini açıkla.">Testleri çalıştır</button>
           <button type="button" class="prompt-chip" data-prompt="Son değişiklikleri gözden geçir ve riskleri listele.">Değişiklikleri incele</button>
