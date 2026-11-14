@@ -38,9 +38,10 @@ def _writer_failed(message, run, run_id):
 
 
 from core.skill_turn import SkillTurnMixin
+from core.long_job_chat import LongJobChatMixin
 
 
-class AgentChatService(TeamTurnMixin, SkillTurnMixin):
+class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
     MAX_GROUP_ROUNDS = 2
 
     def __init__(self, agent_service: MultiAgentService, store_path: str | Path):
@@ -397,6 +398,8 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin):
     def close(self):
         with self._lock:
             self._closed = True
+        for job in list(self.__dict__.get("_long_jobs", {}).values()):
+            job.halt()  # resumable after restart; Stop is the user's only final word
         try:
             result = self.cancel_active()
         finally:
