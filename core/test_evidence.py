@@ -27,7 +27,10 @@ def is_test_command(command: str) -> bool:
 
 
 _SEPARATORS = re.compile(r"(\|\||&&|;|\|)")
-_ECHO_STATUS = re.compile(r"^\s*echo\b.*\$\?")
+# bash `echo "exit=$?"`, PowerShell `"exit=$LASTEXITCODE"` / `Write-Output $LASTEXITCODE`
+# (live 14 Nov, second fix run). PowerShell's own `$?` is True/False, not a code: not read.
+_ECHO_STATUS = re.compile(r"^\s*(?:(?:echo|write-output|write-host)\b.*\$\?|"
+                          r"(?:(?:echo|write-output|write-host)\s+)?[\"']?[^;|]*\$LASTEXITCODE)", re.IGNORECASE)
 _PRINTED_STATUS = re.compile(r"(?:exit(?:[\s_-]*code)?\s*[=:]?\s*)(-?\d+)\s*$", re.IGNORECASE)
 
 

@@ -36,6 +36,11 @@ class TestCommandTests(unittest.TestCase):
         self.assertEqual(agent_test_result([{**run(echo), "output": "41 geçti\nexit=0"}])["status"], "PASSED")
         self.assertEqual(agent_test_result([{**run(echo), "output": "3 başarısız\nexit=1"}])["status"], "FAILED")
         self.assertEqual(agent_test_result([{**run("pytest -q; echo $?"), "output": "1 failed\n1"}])["status"], "FAILED")
+        ps = 'node tests/validate.test.js; "exit=$LASTEXITCODE"'  # live 14 Nov, PowerShell
+        self.assertEqual(agent_test_result([{**run(ps), "output": "56 geçti\nexit=0"}])["status"], "PASSED")
+        self.assertEqual(agent_test_result([{**run(ps), "output": "2 başarısız\nexit=1"}])["status"], "FAILED")
+        self.assertEqual(agent_test_result([{**run("pytest; Write-Output $LASTEXITCODE"), "output": "x\n0"}])["status"],
+                         "PASSED")
         for hidden in ("npm test | tail -5", "pytest -q || true", "node --test; ls", echo):
             with self.subTest(hidden=hidden):
                 self.assertEqual(agent_test_result([{**run(hidden), "output": "ok"}])["status"], "RAN")
