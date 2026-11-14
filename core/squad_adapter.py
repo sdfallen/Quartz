@@ -49,7 +49,7 @@ def squad_home(project_path) -> Path:
     """The folder whose .squad/ holds a project's Squad workspace.
 
     Live 14 Nov (freelance trial): SpeS left .squad/ (message database, roles) inside a
-    client's project. New workspaces live under %LOCALAPPDATA%\Quartz\squad-workspaces,
+    client's project. New workspaces live under %LOCALAPPDATA%/Quartz/squad-workspaces,
     one folder per project path. A project that already has .squad/ keeps it in place so
     its history is not lost. QUARTZ_SQUAD_HOME overrides the base folder (tests).
     """
