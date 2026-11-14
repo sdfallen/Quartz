@@ -189,10 +189,17 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
         [tone, label] = ['warn', 'Kısmi'];
       } else if (['project','full'].includes(meta.permission_level)) {
         const check = meta.host_evidence?.source_validation;
+        // Test commands the agent ran, with exit status observed from the CLI events (14 Nov:
+        // 18/18 Node tests passed and the badge still said "Kanıt yok"). core.test_evidence.
+        const tests = meta.host_evidence?.agent_tests;
         state = check?.status === 'FAILED' ? 'Ajan bitti; kaynak sözdizimi kontrolü başarısız.'
+          : tests?.status === 'FAILED' ? 'Ajanın çalıştırdığı test komutu başarısız bitti.'
+          : tests?.status === 'PASSED' ? 'Ajanın çalıştırdığı testler geçti (komut çıktısı gözlendi); SpeS testleri kendisi çalıştırmadı.'
           : check?.status === 'VERIFIED' ? 'Python sözdizimi doğrulandı; çalışma/test başarısı doğrulanmış değil.'
           : 'Ajan yanıtı tamamlandı; bağımsız çalışma/test kanıtı yok.';
         [tone, label] = check?.status === 'FAILED' ? ['fail', 'Kontrol başarısız']
+          : tests?.status === 'FAILED' ? ['fail', 'Test başarısız']
+          : tests?.status === 'PASSED' ? ['ok', 'Testler geçti']
           : check?.status === 'VERIFIED' ? ['warn', 'Kısmen doğrulandı'] : ['warn', 'Kanıt yok'];
         if (meta.host_evidence?.historical) state = 'Önceki oturumun kaynak kanıtı: ' + state;
       } else if (meta.natural_task && meta.host_check?.status === 'OBSERVED UI CRITERION VERIFIED'

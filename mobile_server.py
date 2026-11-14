@@ -204,11 +204,9 @@ class MobileGateway:
                 changes[name] = {"file": name, "persona": who, "seq": seq}
             status = (ev.get("source_validation") or {}).get("status")
             verdict = (meta.get("outcome") or {}).get("goal_verdict")
-            if status or verdict:
-                if verdict == "VERIFIED": tone, label = "ok", "Hedef doğrulandı"
-                elif status == "FAILED": tone, label = "fail", "Kontrol başarısız"
-                elif status == "VERIFIED": tone, label = "warn", "Sözdizimi doğrulandı; test kanıtı yok"
-                else: tone, label = "warn", "Bağımsız kanıt yok"
+            if status or verdict or ev.get("agent_tests"):
+                from core.test_evidence import evidence_label
+                tone, label = evidence_label(ev, meta.get("outcome"))
                 checks.append({"label": label, "tone": tone, "persona": who, "seq": seq, "files": len(files)})
         return {"changes": list(changes.values())[-50:], "checks": checks[-30:]}
 

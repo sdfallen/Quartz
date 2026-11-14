@@ -59,7 +59,11 @@ def collect_facts(messages: list, user_message_id: str, status: str) -> dict:
         verdict = (meta.get("outcome") or {}).get("goal_verdict")
         source = (ev.get("source_validation") or {}).get("status")
         observed = (meta.get("host_check") or {}).get("status") if isinstance(meta.get("host_check"), dict) else None
-        if observed:
+        tests = (ev.get("agent_tests") or {}).get("status")
+        if tests:
+            # Test commands the agent ran, observed from the CLI events.
+            checks.append(("testler geçti, ajan çalıştırdı" if tests == "PASSED" else "testler başarısız") + f" ({who})")
+        elif observed:
             # Desktop task: SpeS itself saw the requested text on screen.
             checks.append("istenen metin ekranda SpeS gözlemiyle görüldü" if "VERIFIED" in str(observed)
                           else "ekran gözlemi doğrulanmadı")

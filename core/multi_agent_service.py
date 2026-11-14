@@ -194,9 +194,12 @@ class MultiAgentService:
             after = snapshot_workspace_files(project_path)
             changed, warning = changed_workspace_files(project_path, before, after)
             validation = verify_changed_python(project_path, changed, warning=warning)
+            # Test commands the agent ran, with exit status from the CLI events (14 Nov).
+            from core.test_evidence import agent_test_result
+            tests = agent_test_result(observed_runtime.get("command_results"))
             with self._lock:
                 receipt = {"files_changed": changed, "evidence_warning": warning,
-                    "source_validation": validation, **observed_runtime}
+                    "source_validation": validation, **({"agent_tests": tests} if tests else {}), **observed_runtime}
                 self._file_changes[run_id] = receipt
             try:
                 self._evidence_store.put(run_id, receipt)

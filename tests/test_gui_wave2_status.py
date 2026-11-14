@@ -69,6 +69,10 @@ assert.deepEqual(badge('completed',{outcome:host}),['ok','Doğrulandı']);
 assert.deepEqual(badge('completed',{permission_level:'full'}),['warn','Kanıt yok']);
 assert.deepEqual(badge('completed',{permission_level:'project',host_evidence:{source_validation:{status:'FAILED'}}}),['fail','Kontrol başarısız']);
 assert.deepEqual(badge('completed',{natural_task:'j'}),['warn','Doğrulanmadı']);
+// 14 Nov: test commands the agent ran (exit status observed from the CLI events).
+assert.deepEqual(badge('completed',{permission_level:'full',host_evidence:{agent_tests:{status:'PASSED'}}}),['ok','Testler geçti']);
+assert.deepEqual(badge('completed',{permission_level:'full',host_evidence:{agent_tests:{status:'FAILED'},source_validation:{status:'VERIFIED'}}}),['fail','Test başarısız']);
+assert.deepEqual(badge('completed',{permission_level:'full',host_evidence:{agent_tests:{status:'PASSED'},source_validation:{status:'FAILED'}}}),['fail','Kontrol başarısız']);
 assert.deepEqual(badge('failed',{}),['fail','Başarısız']);
 assert.deepEqual(badge('cancelled',{}),['stop','Durduruldu']);
 assert.deepEqual(badge('awaiting_approval',{}),['wait','Onay bekliyor']);
