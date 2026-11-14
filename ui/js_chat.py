@@ -292,6 +292,8 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     let state = 'idle', prefix = '', text = unavailable ? 'Bağlı değil' : 'Hazır';
     if (desk && desk.operator === agent) { state = control ? 'keyboard' : 'working'; prefix = control ? 'Klavyede' : 'Görevde'; text = prefix; }
     else if (desk && desk.observer === agent) { state = 'review'; prefix = 'İnceliyor'; text = prefix; }
+    // Fatum orchestrates desktop tasks: it divides the work and gives the verdict (14 Nov).
+    else if (desk && desk.orchestrator === agent) { state = 'working'; prefix = 'Yönetiyor'; text = prefix; }
     if (live && live.status === 'running') {
       if (state === 'idle') state = 'working';
       const activity = live.activity || 'Çalışıyor';
@@ -370,7 +372,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     const job = state && state.active ? state.job : null;
     const operator = job?.roles?.operator;
     if (!job || job.conversation_id !== currentConvId || !CREW_LANES[operator]) crewDesktop = null;
-    else crewDesktop = {operator, observer: operator === 'codex' ? 'antigravity' : 'codex', job};
+    else crewDesktop = {operator, observer: operator === 'codex' ? 'antigravity' : 'codex', orchestrator: job.orchestrator || null, job};
     renderCrew();
   }
   for (const id of ['laneCodex', 'laneAgy', 'laneClaude', 'crewCore']) {

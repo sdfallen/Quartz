@@ -216,6 +216,16 @@ setCrewDesktop({active:true,job:{conversation_id:'c1',roles:{operator:'notion'}}
 assert.equal(els.laneCodex.dataset.state,'idle');
 ''')
 
+    def test_fatum_lane_shows_it_orchestrates_the_desktop_task(self):
+        self.run_js(r'''
+['laneClaude','laneClaudeState','laneColClaude'].forEach(id=>el(id));els.laneClaude.dataset.agent='claude';
+{const t=el('laneClaudeTrail');t.children=[];t.replaceChildren=(...c)=>{t.children=c};t.closest=()=>({classList:{toggle(){}}});}
+setCrewDesktop({active:true,job:{conversation_id:'c1',roles:{operator:'codex'},orchestrator:'claude'}});
+assert.equal(els.laneClaude.dataset.state,'working');assert.equal(els.laneClaudeState.textContent,'Yönetiyor');
+setCrewDesktop({active:true,job:{conversation_id:'c1',roles:{operator:'codex'},orchestrator:null}});
+assert.equal(els.laneClaude.dataset.state,'idle');
+''')
+
 
 if __name__ == "__main__":
     unittest.main()
