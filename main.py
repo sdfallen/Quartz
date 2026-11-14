@@ -485,6 +485,13 @@ class IPCServer:
             )
             return {"status": "ok", "data": res}
 
+        if action in ("security_alerts", "security_act"):
+            data = req.get("data", {}) or {}
+            chat = self._get_agent_chat()
+            if action == "security_alerts":
+                return {"status": "ok", "data": chat.security_alerts()}
+            return {"status": "ok", "data": chat.security_act(data.get("id"), data.get("action"))}
+
         if action == "skills_list":
             return {"status": "ok", "data": self._get_agent_chat().skills_list()}
 
@@ -842,6 +849,22 @@ def main(register_signals=True):
             _mobile_gateway_thread.start()
         except Exception as exc:
             log.warning("Mobile gateway unavailable: %s", exc)
+
+        # Eos the security watcher runs while SpeS is open (user request 14 Nov).
+        def start_security_watch():
+            if os.getenv("QUARTZ_SECURITY_WATCH", "1") == "0":
+                return
+            for _ in range(120):
+                chat = _ipc_server._get_agent_chat()
+                if chat is not None:
+                    try:
+                        chat.start_security_watch()
+                        log.info("Security watcher started")
+                    except Exception as exc:
+                        log.warning("Security watcher unavailable: %s", exc)
+                    return
+                time.sleep(1)
+        threading.Thread(target=start_security_watch, name="spes-security-start", daemon=True).start()
 
     try:
         _ipc_server.start()

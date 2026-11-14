@@ -409,6 +409,33 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     }
     bubble.append(body);
     if (cards.length && !isUserMessage) bubble.append(renderResultCards(cards));
+    const alert = msg?.metadata?.security_alert;
+    if (alert && Array.isArray(alert.actions) && !isUserMessage) {
+      // Eos's security alert: the alert's own one-tap actions; the host checks the target again.
+      const LABEL = {stop: 'Süreci durdur', quarantine: 'Karantinaya al', remove_autorun: 'Açılıştan kaldır', ignore: 'Yoksay', undo: 'Geri al'};
+      bubble.closest?.('.msg')?.setAttribute('data-severity', String(alert.severity || ''));
+      const row = document.createElement('div'); row.className = 'security-actions';
+      for (const action of alert.actions) {
+        if (!LABEL[action] || action === 'undo') continue;
+        const b = document.createElement('button'); b.type = 'button'; b.dataset.action = action; b.textContent = LABEL[action];
+        b.onclick = async () => {
+          row.querySelectorAll('button').forEach(x => { x.disabled = true; });
+          const result = await window.pywebview.api.security_act(String(alert.id), action);
+          const data = result && result.data ? result.data : {};
+          if (!data.ok) { row.querySelectorAll('button').forEach(x => { x.disabled = false; }); }
+          logLine('Eos: ' + String(data.message || result?.data || ''));
+        };
+        row.append(b);
+      }
+      bubble.append(row);
+    }
+    const result = msg?.metadata?.security_result;
+    if (result && result.undo && !isUserMessage) {
+      const undo = document.createElement('button'); undo.type = 'button'; undo.className = 'control-btn'; undo.textContent = 'Geri al';
+      undo.onclick = async () => { undo.disabled = true; const r = await window.pywebview.api.security_act(String(result.alert), 'undo');
+        logLine('Eos: ' + String(r?.data?.message || '')); };
+      bubble.append(undo);
+    }
     const changed = msg?.metadata?.host_evidence?.files_changed;
     if (!isUserMessage && Array.isArray(changed) && changed.length && typeof window.spesShowResult === 'function') {
       const open = document.createElement('button');

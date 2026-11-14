@@ -74,7 +74,14 @@ class WatchService : Service() {
                 val failed = fresh.lastOrNull { it.failed }
                 // "Bitince haber ver": SpeS's finish report rings like a call and is read aloud on Konuş.
                 val report = fresh.lastOrNull { it.report }
+                // Eos's security alerts (14 Nov): high rings like a call, medium is a notification.
+                val danger = fresh.lastOrNull { it.alert?.severity == "high" }
+                val warning = fresh.lastOrNull { it.alert?.severity == "medium" }
                 when {
+                    danger != null && Prefs.alarms(this) ->
+                        Notifier.alarm(this, "Güvenlik uyarısı", danger.alert?.title ?: danger.text.take(200))
+                    danger != null -> Notifier.update(this, "Güvenlik uyarısı", danger.text.take(400))
+                    warning != null -> Notifier.update(this, "Güvenlik: " + (warning.alert?.title ?: ""), warning.text.take(400))
                     report != null && Prefs.alarms(this) ->
                         Notifier.alarm(this, if ("başarısız" in report.text) "Görev bitti: başarısız" else "Görev bitti",
                             report.text.removePrefix("Görev raporu: ").take(600))

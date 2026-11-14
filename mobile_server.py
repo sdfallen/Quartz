@@ -111,6 +111,9 @@ class MobileGateway:
                 "report": bool(meta.get("report")),
                 # Research cards (14 Nov): already bounded and http(s)-only on the host.
                 "cards": [c for c in (meta.get("cards") or []) if isinstance(c, dict)][:12],
+                # Eos's security alert: the phone rings for high ones and shows its actions.
+                "alert": ({k: meta["security_alert"].get(k) for k in ("id", "severity", "title", "actions")}
+                          if isinstance(meta.get("security_alert"), dict) else None),
                 "attachments": [str(a.get("name") or "") for a in (meta.get("attachments") or []) if isinstance(a, dict)][:10],
                 "memory": ("saved" if (meta.get("memory") or {}).get("saved") else
                            "secret" if (meta.get("memory") or {}).get("reason") == "secret" else ""),
@@ -266,6 +269,9 @@ class MobileGateway:
         chat = self._chat()
         if action == "forget":
             return chat.memory_forget(str(body.get("id") or ""))
+        if action == "security":
+            # One of an alert's own actions, by alert id; the host re-checks the exact target.
+            return chat.security_act(str(body.get("id") or ""), str(body.get("action") or ""))
         if action == "new":
             # Sohbet or Workspace; a phone without the field opens a Workspace conversation as before.
             conv = chat.new_conversation(agent=str(body.get("agent") or "collaboration"), space=body.get("space"))

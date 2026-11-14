@@ -910,3 +910,13 @@ body.show-preview .preview-pane { display: flex; }
 .skill-option strong { font: 600 12.5px/1.3 var(--font-mono, monospace); white-space: nowrap; }
 .skill-option span, .skill-empty { font-size: 12.5px; color: var(--text-3); }
 .skill-empty { padding: 4px 8px; }
+
+
+/* ── Security alerts (14 Nov 2026) ──────────────────────────────────────── */
+.security-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.security-actions button { border: 1px solid var(--line-strong); background: var(--surface-1); color: var(--text); border-radius: 999px; padding: 4px 12px; font-size: 12.5px; cursor: pointer; }
+.security-actions button[data-action="stop"], .security-actions button[data-action="quarantine"], .security-actions button[data-action="remove_autorun"] { border-color: var(--danger); color: var(--danger); }
+.security-actions button:hover { background: var(--danger-soft); }
+.security-actions button:disabled { opacity: .45; cursor: default; }
+.msg[data-severity="high"] .bubble { border-left: 3px solid var(--danger); }
+.msg[data-severity="medium"] .bubble { border-left: 3px solid var(--warn); }

@@ -954,6 +954,10 @@ class Api:
         return ipc_send("chat_new", {"title": title, "agent": agent, "project_id": project_id or None,
                                      "space": space or None})
 
+    def security_act(self, alert_id: str, action: str) -> dict:
+        """One of a security alert's own actions (stop, quarantine, remove autorun, undo, ignore)."""
+        return ipc_send("security_act", {"id": alert_id, "action": action})
+
     def skills_list(self) -> dict:
         """The skill shelf (name, description, source, version) for the /skill hint."""
         return ipc_send("skills_list")

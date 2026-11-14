@@ -401,6 +401,8 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin):
             result = self.cancel_active()
         finally:
             self.previews.stop_all()
+            if getattr(self, "security", None) is not None:
+                self.security.stop()
             self._diagnostics.close()
             self._environment_health.close()
         return {"status": result["stop_receipt"]["status"],
@@ -731,6 +733,50 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin):
             folder = self.attachments.root / re.sub(r"[^A-Za-z0-9_-]", "", cid)[:40] / str(batch)
             return read_for_panel(folder, rel)
         raise ValueError("Bilinmeyen kaynak")
+
+    # -- Eos, the security watcher (14 Nov) ------------------------------------------
+    def start_security_watch(self, watch=None):
+        """Started once by the app (never by tests); runs while SpeS is open."""
+        from core.security_watch import SecurityWatch
+        if getattr(self, "security", None) is None:
+            self.security = watch or SecurityWatch(self._post_security_alert)
+            self.security.start()
+        return self.security
+
+    def _post_security_alert(self, alert):
+        # Low findings (a new download) stay in the watcher's list; the rest is said in chat.
+        if alert.get("severity") == "low":
+            return
+        try:
+            cid = self.store.get_active()["id"]
+        except Exception:
+            return
+        icon = "Yüksek" if alert["severity"] == "high" else "Orta"
+        self.store.append_message(cid, "assistant", f"Güvenlik uyarısı ({icon}): {alert['title']}. {alert['detail']}",
+                                  sender="quartz", metadata={
+            "sender": "quartz", "persona": "Eos", "recipient": "user", "status": "completed",
+            "security_alert": alert, **({"notify": "call"} if alert["severity"] == "high" else {}),
+            "sequence": self._next_sequence(self.store.get(cid))})
+
+    def security_alerts(self):
+        watch = getattr(self, "security", None)
+        return watch.alerts() if watch else []
+
+    def security_act(self, alert_id, action):
+        watch = getattr(self, "security", None)
+        if watch is None:
+            return {"ok": False, "message": "Güvenlik izleyicisi çalışmıyor."}
+        result = watch.act(str(alert_id or ""), str(action or ""))
+        if result.get("ok") and action != "ignore":
+            try:
+                cid = self.store.get_active()["id"]
+                self.store.append_message(cid, "assistant", "Eos: " + result["message"], sender="quartz", metadata={
+                    "sender": "quartz", "persona": "Eos", "recipient": "user", "status": "completed",
+                    "security_result": {"alert": str(alert_id), "action": action, "undo": bool(result.get("undo"))},
+                    "sequence": self._next_sequence(self.store.get(cid))})
+            except Exception:
+                pass
+        return result
 
     def _answer_without_agents(self, cid, text, answer):
         """SpeS answers itself (e.g. the skill shelf); no agent run, no turn."""
