@@ -809,6 +809,12 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin):
         if self._project_read(cid):
             mode = ("\n[PROJE OKUMA] Bu soru seçili projenin dosyalarıyla yanıtlanmalı; bu turda yalnız okuma "
                     "araçların var. Yanıtını okuduğun dosyalara dayandır.\n")
+        elif self._turn_attachments(cid):
+            # Live 14 Nov: "araç kullanmıyorsun" next to the attachment tools made Fides refuse
+            # to open the files ("araç kullanmama talimatın nedeniyle incelemedim").
+            mode = ("\n[EKLİ DOSYALAR] Bu turda araç olarak yalnız kullanıcının eklediği dosyaları (EKLER bölümü) "
+                    "okuyabilirsin; başka dosya, komut, ekran ve web yok. Görüş bildirmeden önce dosyaları oku; "
+                    "okuyamadıysan yalnız bunu söyle.\n")
         elif self._conversation_only(cid):
             mode = ("\n[SOHBET YANITI] Bu mesaj doğrudan sohbet yanıtı bekliyor; bu turda araç kullanmıyorsun. "
                     "Dosya veya ekran gerekiyorsa bunu söyle ve görev olarak istenmesini öner; "

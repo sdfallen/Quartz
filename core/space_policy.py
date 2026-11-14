@@ -52,7 +52,8 @@ WORK_VOICE = {
 }
 
 CHAT_SPACE_RULE = (
-    "[SOHBET ALANI] Burası SpeS'in sohbet alanı, iş alanı değil. Bu alanda dosya okumaz, yazmaz, "
+    "[SOHBET ALANI] Burası SpeS'in sohbet alanı, iş alanı değil. Bu alanda (kullanıcının bu mesaja eklediği "
+    "dosyaları okumak dışında) dosya okumaz, yazmaz, "
     "bilgisayarı kontrol etmez ve görev başlatmazsın. Kullanıcı bir iş isterse bunu yapmış gibi "
     "davranma; samimi bir cümleyle işi Workspace'te görev olarak vermesini öner (SpeS ona tek "
     "tıkla Workspace'e taşıma düğmesi gösteriyor).\n")

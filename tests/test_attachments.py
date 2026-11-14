@@ -154,6 +154,12 @@ class ChatTests(unittest.TestCase):
             user = next(m for m in chat.store.get(cid)["messages"] if m["role"] == "user")
             chat._diagnostics.close()
         self.assertNotIn("space_hint", user["metadata"])
+        # Live 14 Nov: no "araç kullanmıyorsun" beside the attachment tools.
+        with self.subTest("prompt"):
+            chat._active_turn = {"conversation_id": cid, "attachments": {"folder": directory, "items": []}}
+            prompt = chat._communication_prompt(cid, "X")
+            self.assertIn("[EKLİ DOSYALAR]", prompt)
+            self.assertNotIn("araç kullanmıyorsun", prompt)
         teammates = [c for c in run.calls if c["agent"] != "claude"]
         self.assertTrue(teammates and all("önce kendin oku" in c["prompt"] for c in teammates))
 
