@@ -147,6 +147,27 @@ class OrchestratorTaskTests(unittest.TestCase):
             finally:
                 task.stop()
 
+    def test_a_chat_filed_under_the_shelved_aster_project_still_has_fatum(self):
+        # Live 14 Nov: the first live run had no Fatum because ASTER was the selected project.
+        self.codex, self.gemini, self.claude = Runtime(), Runtime(), Runtime()
+        self.squad = Mock()
+        self.squad.initialized = True
+        self.squad.create_task.return_value = {"id": "task"}
+        self.squad.receive.return_value = []
+        task = NaturalDesktopTask(self.desktop, lambda *a: self.events.append(a),
+                                  factories={"codex": lambda: self.codex, "antigravity": lambda: self.gemini,
+                                             "claude": lambda: self.claude},
+                                  squad_factory=lambda p: self.squad, evidence_root=self.root / "ev")
+        with patch("core.warband_workspace.PROJECT", self.root), \
+             patch("core.natural_desktop.subprocess.run", return_value=SimpleNamespace(returncode=0)), \
+             patch("core.natural_desktop.ensure_antigravity_tool_grants"), patch("core.natural_desktop.write_operator_hooks"):
+            task.start("Codex not defterine yaz.", {"path": str(self.root), "workflow": "warband"}, "chat", self.models)
+        try:
+            self.assertEqual(task.job["orchestrator"], "claude")
+            self.assertEqual(len(self.claude.started), 1)
+        finally:
+            task.stop()
+
     def test_without_claude_the_pair_still_works(self):
         task = self.start(Runtime(ready=False))
         try:

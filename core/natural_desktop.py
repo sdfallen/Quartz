@@ -431,9 +431,11 @@ class NaturalDesktopTask:
                     self.squad.initialize()
             if not self.squad.initialized:
                 raise RuntimeError("Seçili projenin mevcut Squad bağlantısı hazır değil")
-            # The orchestrator joins only plain project tasks; the shelved Warband flow keeps its pair.
+            # Fatum joins every task except a live Warband/Universal Modder profile (shelved). A chat
+            # still filed under the shelved ASTER project is an ordinary task (live 14 Nov: the
+            # first live run had no Fatum because the selected project was ASTER).
             orchestrator = (ORCHESTRATOR if ORCHESTRATOR in self.factories and ORCHESTRATOR not in selected
-                            and not warband_project else None)
+                            and not warband_profile else None)
             members = [*selected, *([orchestrator] if orchestrator else [])]
             self.agent_ids = {p: "quartz-" + p + "-" + task_id[:10] for p in members}
             for p, identity in self.agent_ids.items():
