@@ -33,6 +33,7 @@ LIMIT_PERCENT = 95
 MAX_ATTEMPTS = 3
 MAX_CRASHES = 3
 LIMIT_FALLBACK_SECONDS = 60 * 60
+UNAVAILABLE_SECONDS = 10 * 60
 ACTIVE = {"running", "waiting_limit"}
 FINAL = {"done", "stopped", "expired", "failed"}
 
@@ -425,7 +426,11 @@ class LongJob:
                     default=None)
         if entry.get("state") == "full" or (worst is not None and worst >= LIMIT_PERCENT):
             reset = _reset_time(entry.get("resets_at"))
-            return reset if reset and reset > now else now + LIMIT_FALLBACK_SECONDS
+            if reset and reset <= now:
+                # Live 15 Nov: Claude's record still said "full" after its 14:50 reset (it only
+                # refreshes when Claude runs), so Fatum was never given the writer role back.
+                return 0
+            return reset if reset else now + LIMIT_FALLBACK_SECONDS
         return 0
 
     def pick_writer(self):
@@ -442,6 +447,14 @@ class LongJob:
                 return agent, None
             waits.append(until)
         return None, min(waits)
+
+    def mark_unavailable(self, agent, seconds=UNAVAILABLE_SECONDS):
+        """The agent could not be reached (connection, CLI start); rest it, keep the attempt."""
+        until = self.clock() + seconds
+        with self.ledger._lock:
+            self.ledger.data["limited"][agent] = max(float(self.ledger.data["limited"].get(agent) or 0), until)
+            self.ledger.save()
+        return until
 
     def mark_limited(self, agent):
         now = self.clock()
@@ -550,6 +563,17 @@ class LongJob:
             with ledger._lock:  # live 15 Nov: a stopped job showed its milestone as still running
                 milestone["status"] = "pending"
                 ledger.save()
+            return
+        if result.get("unavailable"):
+            # Live 15 Nov: Codex lost its connection and the Antigravity CLI timed out; those
+            # failures used up four milestones' attempts in nine minutes.
+            agent = result["unavailable"]
+            until = self.mark_unavailable(agent)
+            with ledger._lock:
+                milestone.update(status="pending", attempts=max(0, milestone["attempts"] - 1))
+                ledger.save()
+            ledger.event(f"{PERSONA.get(agent, agent)}'e ulaşılamadı (bağlantı/program); deneme sayılmadı, "
+                         f"{time.strftime('%H:%M', time.localtime(until))}'e kadar dinlendiriliyor.")
             return
         if result.get("limit"):
             until = self.mark_limited(result["limit"])

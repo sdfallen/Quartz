@@ -274,3 +274,18 @@ class ReviewerNoteTests(LongJobChatTests):
         self.assertIn("Denetmen notu: Kollar daha çok sallansın",
                       milestone_prompt(ledger, ledger.data["milestones"][0], "claude"))
         self.assertIn("yazma izni", refused["assistant_message"]["content"])
+
+
+class UnreachableWriterTests(LongJobChatTests):
+    def test_a_lost_connection_is_not_a_failed_attempt(self):
+        chat = FakeChat(self.project, replies=[
+            ("failed", "Reconnecting... 5/5 (workspace routing discovery failed)", "codex")])
+        outcome = None
+        chat.send_message("x", agent="codex", conversation_id="c1", write=True, confirm_write=True)
+        user_id = chat.store.conv["messages"][-2]["id"]
+        outcome = chat._job_turn_outcome("c1", user_id, "codex", None)
+        self.assertEqual(outcome.get("unavailable"), "codex")
+        real = FakeChat(self.project, replies=[("failed", "Test kırık: walk_0 bulunamadı", "codex")])
+        real.send_message("x", agent="codex", conversation_id="c1", write=True, confirm_write=True)
+        user_id = real.store.conv["messages"][-2]["id"]
+        self.assertNotIn("unavailable", real._job_turn_outcome("c1", user_id, "codex", None))

@@ -12,6 +12,9 @@ import time
 from core.long_job import (JobError, JobLedger, LongJob, PERSONA, milestone_prompt, resumable)
 
 LIMIT_WORDS = ("kota hatası", "rate limit", "usage limit", "quota", "429", "kullanım sınırı")
+# Not the work failing but the agent not being reachable (live 15 Nov).
+UNREACHABLE_WORDS = ("reconnecting", "routing discovery failed", "timed out after", "bağlantısı hazır değil",
+                     "connection refused", "connection reset", "econnreset", "network error")
 POLL_SECONDS = 3.0
 
 
@@ -192,6 +195,8 @@ class LongJobChatMixin:
         except Exception as exc:
             text = str(exc)
             limited = writer if any(w in text.lower() for w in LIMIT_WORDS) else None
+            if not limited and any(w in text.lower() for w in UNREACHABLE_WORDS):
+                return {"status": "failed", "summary": text, "unavailable": writer}
             return {"status": "failed", "summary": text, **({"limit": limited} if limited else {})}
         user_id = sent["user_message"]["id"]
         turn_id = (sent["user_message"].get("metadata") or {}).get("task_id")
@@ -232,5 +237,10 @@ class LongJobChatMixin:
             # A reviewer at its limit does not move the writer role; the job's check decides.
             if limited == writer:
                 return {"status": status, "limit": writer}
+        if status == "failed":
+            own = " ".join(str(m.get("content") or "") + " " + str((m.get("metadata") or {}).get("error") or "")
+                           for m in replies if m.get("sender") == writer).lower()
+            if any(w in own for w in UNREACHABLE_WORDS):
+                return {"status": status, "unavailable": writer}
         summary = str(replies[-1].get("content") or "")[-1500:] if replies else ""
         return {"status": status, "summary": summary}

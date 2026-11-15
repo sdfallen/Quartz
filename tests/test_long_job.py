@@ -124,6 +124,30 @@ class LongJobTests(unittest.TestCase):
         job.run()
         self.assertEqual(calls, ["codex", "claude"])
 
+    def test_a_stale_full_record_after_its_reset_does_not_block_fatum(self):
+        # Live 15 Nov: Claude's record said "full" after its 14:50 reset.
+        calls = []
+        stale = {"claude": {"state": "full", "five_hour": 100.0, "resets_at": self.clock.now - 600}}
+        job, ledger, _ = self.job(lambda l, m, w, s: calls.append(w) or {"status": "completed"},
+                                  limits=lambda: stale)
+        job.run()
+        self.assertEqual(calls, ["claude", "claude"])
+
+    def test_an_unreachable_writer_rests_and_the_attempt_is_not_counted(self):
+        # Live 15 Nov: connection and CLI start failures used up four milestones in nine minutes.
+        calls = []
+
+        def run(l, m, w, s):
+            calls.append(w)
+            return {"status": "failed", "unavailable": w} if w == "claude" else {"status": "completed"}
+
+        job, ledger, _ = self.job(run)
+        job.run()
+        self.assertEqual(calls, ["claude", "codex", "codex"])
+        self.assertEqual([m["attempts"] for m in ledger.data["milestones"]], [1, 1])
+        self.assertEqual(ledger.data["status"], "done")
+        self.assertGreater(ledger.data["limited"]["claude"], self.clock.now)
+
     def test_all_three_limited_waits_until_the_earliest_reset(self):
         resets = {"claude": 500, "codex": 200, "antigravity": 900}
         snapshot = {a: {"state": "full", "resets_at": self.clock.now + s} for a, s in resets.items()}
