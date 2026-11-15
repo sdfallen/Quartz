@@ -1009,7 +1009,10 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       routeModels.claude = {model:claudeModelSelect.value,effort:(claudeEffortSelect && claudeEffortSelect.value) || ''};
     // Sohbet never starts desktop, diagnostics or file work: the message goes straight to the chat.
     const chatSpace = typeof currentSpace !== 'undefined' && currentSpace === 'chat';
+    // '/uzun-iş' never reaches the desktop router (live 15 Nov: it started a desktop task).
+    const longJobText = /^\s*\/uzun[-_ ]?i[şs]/i.test(text);
     try { coordinated = chatSpace ? {status:'ok',data:{handled:false,intent:'conversation'}}
+      : longJobText ? {status:'ok',data:{handled:false,intent:'task'}}
       : await window.pywebview.api.coordination_route(text, currentConvId, mainProjectSelect.value,
       routeModels,selectedPermissionLevel, submittedAgent); }
     catch(e) { appendMsg('err','SPES',String(e)); return; }

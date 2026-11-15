@@ -208,3 +208,14 @@ class DurationTextTests(unittest.TestCase):
         self.assertEqual(_duration(40 / 60), "40 dakika")  # live 15 Nov: "0.666667 saat"
         self.assertEqual(_duration(2), "2 saat")
         self.assertEqual(_duration(1.5), "1 saat 30 dakika")
+
+
+class LongJobRoutingTests(unittest.TestCase):
+    def test_the_command_never_reaches_the_desktop_router(self):
+        # Live 15 Nov: milestone words like "kapı" and "el uzatıp" started a desktop task.
+        import gui
+        api = gui.Api()
+        text = "/uzun-iş\nHedef: Kapıyı el uzatıp açma animasyonu\n1. Kapı | ekrana tıkla ve klavyede yaz"
+        with patch.object(api, "_coordination_service", side_effect=AssertionError("desktop router reached")):
+            result = api.coordination_route(text, "c1", "p1", {}, "project", "claude")
+        self.assertEqual(result, {"status": "ok", "data": {"handled": False, "intent": "task"}})
