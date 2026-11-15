@@ -361,7 +361,7 @@ class LongJob:
         self.commit = commit or (lambda files, message: git_commit(ledger, files, message))
         self.dirty = dirty or (lambda: dirty_paths(ledger))
         self.limits = limits or (lambda: {})
-        self.notify = notify or (lambda text, urgent=False: None)
+        self.notify = notify or (lambda text, urgent=False, report=False: None)
         self.clock, self.awake = clock, awake
         self.stop_event, self.pause_event, self.wake = threading.Event(), threading.Event(), threading.Event()
         self.thread = None
@@ -514,16 +514,16 @@ class LongJob:
             if self.clock() >= ledger.data["deadline"]:
                 self._set(status="expired")
                 ledger.event("İş süresi doldu.")
-                self.notify("Uzun işin süresi doldu; yapılanlar defterde.", urgent=False)
+                self.notify(finish_report(ledger), urgent=True, report=True)
                 return
             milestone = ledger.current()
             if milestone is None:
                 waiting = [m for m in ledger.data["milestones"] if m["status"] == "needs_user"]
                 self._set(status="needs_user" if waiting else "done")
-                text = (f"Uzun iş bitti; {len(waiting)} kilometre taşı senin kararını bekliyor."
-                        if waiting else "Uzun iş bitti: bütün kilometre taşları tamam.")
-                ledger.event(text)
-                self.notify(text, urgent=True)
+                text = finish_report(ledger)
+                ledger.event(text.splitlines()[0])
+                # User request 15 Nov: "bitince arasınlar" — the phone rings for a report.
+                self.notify(text, urgent=True, report=True)
                 return
             writer, wake_at = self.pick_writer()
             if writer is None:
@@ -638,6 +638,28 @@ class LongJob:
             ledger.save()
         ledger.event(f"SpeS yeniden başladı; {milestone['id']} kaldığı dosyalardan yeniden deneniyor.")
         return "resume"
+
+
+def finish_report(ledger: JobLedger) -> str:
+    """The short report the phone rings with when a job ends (done, waiting or out of time)."""
+    d = ledger.data
+    done = [m for m in d["milestones"] if m["status"] == "done"]
+    waiting = [m for m in d["milestones"] if m["status"] == "needs_user"]
+    left = [m for m in d["milestones"] if m["status"] in {"pending", "running"}]
+    if d["status"] == "expired":
+        head = f"Uzun işin süresi doldu: {len(done)}/{len(d['milestones'])} kilometre taşı tamam."
+    elif waiting:
+        head = f"Uzun iş bitti: {len(done)}/{len(d['milestones'])} tamam, {len(waiting)} taş senin kararını bekliyor."
+    else:
+        head = f"Uzun iş bitti: {len(done)} kilometre taşının hepsi tamam."
+    lines = [head]
+    lines += [f"✔ {m['title']}" + (f" (commit {m['commit'][:8]})" if m.get("commit") else "") for m in done]
+    lines += [f"? {m['title']}: {(m.get('last_failure') or '').strip().splitlines()[-1][:160] if (m.get('last_failure') or '').strip() else 'geçmedi'}"
+              for m in waiting]
+    lines += [f"· {m['title']}: yapılmadı" for m in left]
+    if d.get("git_branch"):
+        lines.append(f"Dal: {d['git_branch']}")
+    return chr(10).join(lines)
 
 
 def milestone_prompt(ledger: JobLedger, milestone: dict, writer: str) -> str:

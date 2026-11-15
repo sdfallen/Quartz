@@ -48,7 +48,7 @@ class LongJobTests(unittest.TestCase):
                       checkpoint=lambda: {"status": "snapshot", "ref": "cp"},
                       baseline=self.baseline,
                       snapshot=lambda: {"files": {}}, changed=lambda a, b: [], commit=lambda f, m: None,
-                      limits=limits or (lambda: {}), notify=lambda t, urgent=False: notes.append(t),
+                      limits=limits or (lambda: {}), notify=lambda t, urgent=False, report=False: notes.append(t),
                       clock=self.clock, awake=nullctx)
         return job, ledger, notes
 
@@ -70,7 +70,8 @@ class LongJobTests(unittest.TestCase):
         again = JobLedger.load(ledger.path)
         self.assertEqual(again.data["status"], "done")
         self.assertEqual([m["status"] for m in again.data["milestones"]], ["done", "done"])
-        self.assertIn("bütün kilometre taşları tamam", notes[-1])
+        self.assertIn("2 kilometre taşının hepsi tamam", notes[-1])
+        self.assertIn("✔ Yürüme", notes[-1])
 
     def test_the_users_files_are_saved_once_before_any_writer(self):
         job, ledger, _ = self.job(lambda l, m, w, s: {"status": "completed"})

@@ -165,15 +165,19 @@ class LongJobChatMixin:
     def _make_job(self, ledger):
         from core.agent_limits import snapshot
         return LongJob(ledger, run_milestone=self._job_run_milestone, limits=snapshot,
-                       notify=lambda text, urgent=False: self._job_note(ledger, text, urgent=urgent))
+                       notify=lambda text, urgent=False, report=False: self._job_note(ledger, text, urgent=urgent,
+                                                                                      report=report))
 
-    def _job_note(self, ledger, text, urgent=False):
+    def _job_note(self, ledger, text, urgent=False, report=False):
         cid = ledger.data.get("conversation_id")
         try:
             conv = self.store.get(cid)
             self.store.append_message(cid, "assistant", text, sender="quartz", metadata={
                 "sender": "quartz", "recipient": "user", "status": "completed", "long_job": ledger.data["id"],
-                **({"notify": "call"} if urgent else {}), "sequence": self._next_sequence(conv)})
+                **({"notify": "call"} if urgent else {}),
+                # The phone rings like a call for a report (mobile WatchService, "bitince haber ver").
+                **({"report": True} if report else {}),
+                "sequence": self._next_sequence(conv)})
         except Exception:
             pass
 

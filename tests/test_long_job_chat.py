@@ -289,3 +289,16 @@ class UnreachableWriterTests(LongJobChatTests):
         real.send_message("x", agent="codex", conversation_id="c1", write=True, confirm_write=True)
         user_id = real.store.conv["messages"][-2]["id"]
         self.assertNotIn("unavailable", real._job_turn_outcome("c1", user_id, "codex", None))
+
+
+class FinishCallTests(LongJobChatTests):
+    def test_the_end_of_a_job_rings_the_phone_with_a_report(self):
+        # User request 15 Nov: "işler bitince arasınlar"; the phone rings for metadata.report.
+        chat = FakeChat(self.project, replies=[("completed", "Tamam.", "claude")])
+        with patch("core.long_job.keep_awake"):
+            job = chat.job_start(self.spec(git_branch=None))
+            self.assertEqual(self.wait_done(chat, job["id"]), "done")
+        last = [m for m in chat.store.conv["messages"] if m["sender"] == "quartz"][-1]
+        self.assertTrue(last["metadata"].get("report"))
+        self.assertIn("Uzun iş bitti", last["content"])
+        self.assertIn("✔ Yürüme", last["content"])
