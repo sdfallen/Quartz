@@ -16,6 +16,10 @@ LIMIT_WORDS = ("kota hatası", "rate limit", "usage limit", "quota", "429", "kul
 UNREACHABLE_WORDS = ("reconnecting", "routing discovery failed", "timed out after", "bağlantısı hazır değil",
                      "connection refused", "connection reset", "econnreset", "network error")
 POLL_SECONDS = 3.0
+# The chat refuses a new turn while the previous one's processes are being confirmed stopped.
+SETTLING_WORDS = ("süreçlerinin durduğu henüz doğrulanmadı", "çalışanı kapanıyor", "host test sürecinin kapanışı")
+SETTLE_SECONDS = 10.0
+SETTLE_TRIES = 30
 
 
 def _duration(hours: float) -> str:
@@ -193,11 +197,24 @@ class LongJobChatMixin:
                 return {"status": "cancelled"}
         agent = "collaboration" if writer == "claude" and self._team_ready() else writer
         prompt = milestone_prompt(ledger, milestone, writer)
-        try:
-            sent = self.send_message(prompt, agent=agent, conversation_id=cid, write=True, confirm_write=True,
-                                     full_access=ledger.data.get("permission_level") == "full")
-        except Exception as exc:
-            text = str(exc)
+        sent, text = None, "SpeS yeni turu başlatamadı."
+        for _ in range(SETTLE_TRIES):
+            try:
+                sent = self.send_message(prompt, agent=agent, conversation_id=cid, write=True, confirm_write=True,
+                                         full_access=ledger.data.get("permission_level") == "full")
+                break
+            except Exception as exc:
+                text = str(exc)
+                # Live 15 Nov: the previous turn's processes were still being confirmed stopped
+                # and the attempt was counted as failed. SpeS is settling, not the work failing.
+                if any(w in text for w in SETTLING_WORDS):
+                    if stop.wait(SETTLE_SECONDS):
+                        return {"status": "cancelled"}
+                    continue
+                break
+        if sent is None:
+            if any(w in text for w in SETTLING_WORDS):
+                return {"status": "failed", "summary": text, "unavailable": writer}
             limited = writer if any(w in text.lower() for w in LIMIT_WORDS) else None
             if not limited and any(w in text.lower() for w in UNREACHABLE_WORDS):
                 return {"status": "failed", "summary": text, "unavailable": writer}

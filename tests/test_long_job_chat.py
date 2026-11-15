@@ -302,3 +302,24 @@ class FinishCallTests(LongJobChatTests):
         self.assertTrue(last["metadata"].get("report"))
         self.assertIn("Uzun iş bitti", last["content"])
         self.assertIn("✔ Yürüme", last["content"])
+
+
+class SettlingTurnTests(LongJobChatTests):
+    def test_a_settling_chat_is_waited_for_not_counted(self):
+        # Live 15 Nov: "Önceki ajan süreçlerinin durduğu henüz doğrulanmadı" used up an attempt.
+        chat = FakeChat(self.project, replies=[("completed", "Tamam.", "claude")])
+        original, calls = chat.send_message, []
+
+        def flaky(*args, **kwargs):
+            calls.append(1)
+            if len(calls) < 3:
+                raise RuntimeError("Önceki ajan süreçlerinin durduğu henüz doğrulanmadı.")
+            return original(*args, **kwargs)
+
+        chat.send_message = flaky
+        ledger = JobLedger.create({**self.spec(), "project_path": str(self.project), "conversation_id": "c1"})
+        stop = threading.Event()
+        with patch("core.long_job_chat.SETTLE_SECONDS", 0.01):
+            result = chat._job_run_milestone(ledger, ledger.data["milestones"][0], "claude", stop)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(len(calls), 3)
