@@ -218,7 +218,12 @@ class GitTests(unittest.TestCase):
         (self.project / "walk.gd").write_text("walk\n")
         (self.project / ".godot").mkdir()
         (self.project / ".godot" / "cache.bin").write_text("x")
-        sha = git_commit(ledger, [str(self.project / "walk.gd"), str(self.project / ".godot" / "cache.bin")], "m1")
+        (self.project / "__pycache__").mkdir()
+        (self.project / "__pycache__" / "walk.cpython-313.pyc").write_bytes(b"x")
+        (self.project / "walk.blend1").write_bytes(b"x")
+        sha = git_commit(ledger, [str(self.project / "walk.gd"), str(self.project / ".godot" / "cache.bin"),
+                                  str(self.project / "__pycache__" / "walk.cpython-313.pyc"),
+                                  str(self.project / "walk.blend1")], "m1")
         self.assertTrue(sha)
         files = self.git("show", "--name-only", "--format=", "HEAD").stdout.split()
         self.assertEqual(files, ["walk.gd"])

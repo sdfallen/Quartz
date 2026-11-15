@@ -258,7 +258,7 @@ def git_commit(ledger: JobLedger, files: list[str], message: str) -> str | None:
         ignored = _git(root, "check-ignore", "--", *relative)
         # Forward slashes only: git quotes backslash paths in its output.
         skip = {line.strip() for line in ignored.stdout.splitlines() if line.strip()}
-        relative = [r for r in relative if r not in skip]
+        relative = [r for r in relative if r not in skip and not _build_junk(r)]
     if not relative:
         return None
     added = _git(root, "add", "-A", "--", *relative)
@@ -291,6 +291,14 @@ def milestone_checkpoint(ledger: JobLedger) -> dict:
             return {"status": "git-head", "ref": head.stdout.strip()}
     from core.workspace_checkpoint import create_checkpoint
     return create_checkpoint(ledger.data["project_path"])
+
+
+JUNK_SUFFIXES = (".pyc", ".pyo", ".blend1", ".blend2", ".tmp")
+
+
+def _build_junk(relative: str) -> bool:
+    """Caches and tool backups never go into a milestone commit (live 15 Nov: .pyc, .blend1)."""
+    return "__pycache__/" in relative or relative.lower().endswith(JUNK_SUFFIXES)
 
 
 def dirty_paths(ledger: JobLedger) -> dict:
