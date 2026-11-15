@@ -90,7 +90,14 @@ class LongJobChatMixin:
     def job_control(self, job_id: str, action: str) -> dict:
         job = self._jobs().get(str(job_id or ""))
         if job is None:
-            raise JobError("Bu iş bulunamadı.")
+            # Live 15 Nov: a job paused before a restart is on disk only; "Devam" must find it.
+            ledger = next((l for l in JobLedger.all() if l.data["id"] == str(job_id or "")), None)
+            if ledger is None or ledger.data.get("stopped") or ledger.data["status"] in {"done", "expired", "failed"}:
+                raise JobError("Bu iş bulunamadı ya da bitmiş.")
+            job = self._make_job(ledger)
+            if action == "resume":
+                job.recover_after_crash()
+            self._jobs()[ledger.data["id"]] = job
         if action == "pause":
             job.pause()
         elif action == "resume":

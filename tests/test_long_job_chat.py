@@ -226,3 +226,17 @@ class LongJobRoutingTests(unittest.TestCase):
         with patch.object(api, "_coordination_service", side_effect=AssertionError("desktop router reached")):
             result = api.coordination_route(text, "c1", "p1", {}, "project", "claude")
         self.assertEqual(result, {"status": "ok", "data": {"handled": False, "intent": "task"}})
+
+
+class PausedJobAfterRestartTests(LongJobChatTests):
+    def test_resume_finds_a_job_paused_before_the_restart(self):
+        # Live 15 Nov: after a restart the paused job was on disk only and "Devam" said not found.
+        ledger = JobLedger.create({**self.spec(), "project_path": str(self.project), "conversation_id": "c1"})
+        ledger.data["status"] = "paused"
+        ledger.save()
+        chat = FakeChat(self.project, replies=[("completed", "Tamam.", "claude")])
+        with patch("core.long_job.keep_awake"):
+            chat.job_control(ledger.data["id"], "resume")
+            self.assertEqual(self.wait_done(chat, ledger.data["id"]), "done")
+        with self.assertRaises(JobError):
+            chat.job_control("yok-boyle-bir-is", "resume")
