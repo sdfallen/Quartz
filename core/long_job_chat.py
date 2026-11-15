@@ -64,6 +64,15 @@ class LongJobChatMixin:
             jobs = self.job_list()
             lines = [f"{j['goal'][:60]} — {j['status']}" for j in jobs[:5]]
             return self._answer_without_agents(conv["id"], text, "Uzun işler: " + ("; ".join(lines) or "yok") + ".")
+        if spec.get("note") and confirmed_write:
+            # The reviewer's note reaches every later milestone through the ledger (15 Nov).
+            job = next((j for j in self._jobs().values() if j.ledger.data.get("conversation_id") == conv["id"]
+                        and j.ledger.data["status"] in {"running", "waiting_limit", "paused"}), None)
+            if job is None:
+                return self._answer_without_agents(conv["id"], text, "Bu sohbette sürmekte olan bir uzun iş yok.")
+            job.add_note(spec["note"])
+            return self._answer_without_agents(conv["id"], text, (
+                "Not iş defterine eklendi; ekip bunu sıradaki her kilometre taşında okuyacak."))
         if not confirmed_write:
             return self._answer_without_agents(conv["id"], text, (
                 "Uzun iş projeye saatlerce yazar; bu yüzden yalnız masaüstünde, yazma izni (Proje) açıkken "

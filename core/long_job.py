@@ -293,6 +293,30 @@ def milestone_checkpoint(ledger: JobLedger) -> dict:
     return create_checkpoint(ledger.data["project_path"])
 
 
+def dirty_paths(ledger: JobLedger) -> dict:
+    """{posix path: [size, mtime_ns] or None if deleted} for every non-ignored uncommitted path."""
+    root = Path(ledger.data["project_path"])
+    status = _git(root, "status", "--porcelain", "-z", "--untracked-files=all")
+    if status.returncode != 0:
+        return {}
+    found, entries, index = {}, status.stdout.split("\0"), 0
+    while index < len(entries):
+        entry = entries[index]
+        index += 1
+        if len(entry) < 4:
+            continue
+        code, name = entry[:2], entry[3:]
+        if code[0] in "RC":
+            index += 1  # the rename source follows
+        path = root / name
+        try:
+            stat = path.stat()
+            found[name] = [stat.st_size, stat.st_mtime_ns]
+        except OSError:
+            found[name] = None
+    return found
+
+
 def prepare_branch(ledger: JobLedger):
     """Switch to the job's branch once, keeping the user's uncommitted files as they are."""
     branch = ledger.data.get("git_branch")
@@ -313,7 +337,8 @@ def prepare_branch(ledger: JobLedger):
 class LongJob:
     """Runs one ledger's milestones. Callbacks keep it independent of the chat service."""
 
-    def __init__(self, ledger: JobLedger, *, run_milestone, verify=None, checkpoint=None, baseline=None, snapshot=None,
+    def __init__(self, ledger: JobLedger, *, run_milestone, verify=None, checkpoint=None, baseline=None, dirty=None,
+                 snapshot=None,
                  changed=None, commit=None, limits=None, notify=None, clock=time.time, awake=keep_awake):
         self.ledger = ledger
         self.run_milestone = run_milestone
@@ -325,6 +350,7 @@ class LongJob:
         self.changed = changed or (lambda before, after: changed_workspace_files(
             ledger.data["project_path"], before, after)[0])
         self.commit = commit or (lambda files, message: git_commit(ledger, files, message))
+        self.dirty = dirty or (lambda: dirty_paths(ledger))
         self.limits = limits or (lambda: {})
         self.notify = notify or (lambda text, urgent=False: None)
         self.clock, self.awake = clock, awake
@@ -355,6 +381,12 @@ class LongJob:
             self.ledger.save()
         self.stop_event.set()
         self.wake.set()
+
+    def add_note(self, text):
+        with self.ledger._lock:
+            self.ledger.data["decisions"].append({"at": self.clock(), "text": "Denetmen notu: " + str(text)[:2000]})
+            self.ledger.save()
+        self.ledger.event("Denetmen notu eklendi.")
 
     def halt(self):
         """SpeS is closing: leave the job resumable (not Stop). Its turn is cancelled by close()."""
@@ -439,6 +471,12 @@ class LongJob:
                 ledger.save()
             ledger.event("Başlangıç yedeği alındı" + (f" ({saved.get('bytes', 0) // 1_000_000} MB)." if saved.get("bytes") else "."))
         prepare_branch(ledger)
+        if "initial_dirty" not in ledger.data:
+            # The user's own uncommitted files as they were before the first writer: never
+            # committed by the job unless an agent changes them.
+            with ledger._lock:
+                ledger.data["initial_dirty"] = self.dirty()
+                ledger.save()
         while True:
             if self._halt:
                 return  # status stays as it was: the next start may resume it
@@ -521,7 +559,12 @@ class LongJob:
         entry = {"at": self.clock(), "writer": writer, "turn": result.get("status"),
                  "check": bool(check.get("ok")), "note": str(check.get("summary") or "")[-300:]}
         if built and check.get("ok"):
-            files = self.changed(before, self.snapshot())
+            files = list(self.changed(before, self.snapshot()))
+            # Live 15 Nov: scripts written in an earlier failed attempt of the same milestone
+            # were left out of its commit. Anything the agents changed since the job began counts.
+            initial = ledger.data.get("initial_dirty") or {}
+            root = Path(ledger.data["project_path"])
+            files += [str(root / name) for name, state in self.dirty().items() if initial.get(name) != state]
             sha = self.commit(files, f"SpeS iş {ledger.data['id']}: {milestone['title']}")
             with ledger._lock:
                 milestone.update(status="done", commit=sha, last_failure="")
@@ -609,6 +652,9 @@ def parse_command(text: str):
     rest = COMMAND.sub("", text, count=1).strip()
     if rest.lower() in {"durum", "liste", "list", ""}:
         return {"list": True}
+    note = re.match(r"^not\s*:\s*(.+)$", rest, re.S | re.I)
+    if note:
+        return {"note": note.group(1).strip()[:2000]}
     for raw in rest.splitlines():
         line = raw.strip()
         if not line:

@@ -256,3 +256,21 @@ class PermissionLevelTests(LongJobChatTests):
             self.assertEqual(chat.sent[0]["full"], full)
             note = answer["assistant_message"]["content"]
             self.assertIn("Tam Yetki" if full else "Proje izni", note)
+
+
+class ReviewerNoteTests(LongJobChatTests):
+    def test_a_note_reaches_the_next_milestone_prompt(self):
+        from core.long_job import milestone_prompt, parse_command
+        self.assertEqual(parse_command("/uzun-iş not: Kollar daha çok sallansın"), {"note": "Kollar daha çok sallansın"})
+        ledger = JobLedger.create({**self.spec(), "project_path": str(self.project), "conversation_id": "c1"})
+        ledger.data["status"] = "running"
+        chat = FakeChat(self.project, replies=[])
+        chat._jobs()[ledger.data["id"]] = chat._make_job(ledger)
+        text = "/uzun-iş not: Kollar daha çok sallansın"
+        refused = chat._long_job_command(chat.store.conv, text, parse_command(text), False)  # phone: no
+        self.assertNotIn("Denetmen notu", milestone_prompt(ledger, ledger.data["milestones"][0], "claude"))
+        answer = chat._long_job_command(chat.store.conv, text, parse_command(text), True)
+        self.assertIn("eklendi", answer["assistant_message"]["content"])
+        self.assertIn("Denetmen notu: Kollar daha çok sallansın",
+                      milestone_prompt(ledger, ledger.data["milestones"][0], "claude"))
+        self.assertIn("yazma izni", refused["assistant_message"]["content"])

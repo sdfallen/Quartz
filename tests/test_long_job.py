@@ -238,3 +238,31 @@ class MilestoneCheckpointTests(GitTests):
                                   root=Path(self.tmp.name) / "jobs")
         head = self.git("rev-parse", "HEAD").stdout.strip()
         self.assertEqual(milestone_checkpoint(ledger), {"status": "git-head", "ref": head})
+
+
+class JobWideCommitTests(GitTests):
+    def test_files_from_an_earlier_attempt_are_committed_but_the_users_are_not(self):
+        # Live 15 Nov: scripts written in a failed first attempt were missing from the commit.
+        from core.long_job import dirty_paths
+        ledger = JobLedger.create({"goal": "g", "project_path": str(self.project), "hours": 1,
+                                   "git_branch": "spes/deneme", "milestones": [{"title": "t", "acceptance": "a"}]},
+                                  root=Path(self.tmp.name) / "jobs")
+        attempts = []
+
+        def run(l, m, w, s):
+            attempts.append(1)
+            name = "early_script.py" if len(attempts) == 1 else "walk.gd"
+            (self.project / name).write_text("x\n")
+            return {"status": "completed"}
+
+        checks = iter([{"ok": False, "summary": "eksik"}, {"ok": True, "summary": "ok"}])
+        job = LongJob(ledger, run_milestone=run, verify=lambda stop: next(checks),
+                      checkpoint=lambda: {"status": "git-head", "ref": "x"},
+                      baseline=lambda: {"status": "snapshot", "ref": "b"}, awake=nullctx)
+        job.run()
+        self.assertEqual(ledger.data["status"], "done")
+        files = sorted(self.git("show", "--name-only", "--format=", "HEAD").stdout.split())
+        self.assertEqual(files, ["early_script.py", "walk.gd"])
+        self.assertIn("?? user_draft.txt", self.git("status", "--porcelain").stdout)
+        self.assertIn("user_draft.txt", ledger.data["initial_dirty"])
+        self.assertNotIn("walk.gd", dirty_paths(ledger))
