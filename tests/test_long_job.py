@@ -32,6 +32,10 @@ class LongJobTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def baseline(self):
+        self.baselines = getattr(self, "baselines", 0) + 1
+        return {"status": "snapshot", "ref": "base", "bytes": 654_000_000}
+
     def spec(self, **extra):
         return {"goal": "Animasyonlar", "project_path": str(self.project), "hours": 2,
                 "milestones": [{"title": "Yürüme", "acceptance": "8 yön"},
@@ -42,6 +46,7 @@ class LongJobTests(unittest.TestCase):
         notes = notes if notes is not None else []
         job = LongJob(ledger, run_milestone=run, verify=verify or (lambda stop: {"ok": True, "summary": "ok"}),
                       checkpoint=lambda: {"status": "snapshot", "ref": "cp"},
+                      baseline=self.baseline,
                       snapshot=lambda: {"files": {}}, changed=lambda a, b: [], commit=lambda f, m: None,
                       limits=limits or (lambda: {}), notify=lambda t, urgent=False: notes.append(t),
                       clock=self.clock, awake=nullctx)
@@ -66,6 +71,16 @@ class LongJobTests(unittest.TestCase):
         self.assertEqual(again.data["status"], "done")
         self.assertEqual([m["status"] for m in again.data["milestones"]], ["done", "done"])
         self.assertIn("bütün kilometre taşları tamam", notes[-1])
+
+    def test_the_users_files_are_saved_once_before_any_writer(self):
+        job, ledger, _ = self.job(lambda l, m, w, s: {"status": "completed"})
+        job.run()
+        self.assertEqual(self.baselines, 1)  # not once per milestone (live 15 Nov: 654 MB)
+        self.assertEqual(ledger.data["baseline_checkpoint"], "base")
+        job2, ledger2, notes = self.job(lambda l, m, w, s: self.fail("no writer without a baseline"))
+        job2.baseline = lambda: {"status": "error", "warning": "disk dolu"}
+        job2.run()
+        self.assertEqual(ledger2.data["status"], "failed")
 
     def test_failed_check_retries_then_asks_the_user_and_moves_on(self):
         runs = []
@@ -213,3 +228,13 @@ class GitTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MilestoneCheckpointTests(GitTests):
+    def test_on_a_job_branch_the_last_commit_is_the_restore_point(self):
+        from core.long_job import milestone_checkpoint
+        ledger = JobLedger.create({"goal": "g", "project_path": str(self.project), "hours": 1,
+                                   "git_branch": "spes/deneme", "milestones": [{"title": "t", "acceptance": "a"}]},
+                                  root=Path(self.tmp.name) / "jobs")
+        head = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(milestone_checkpoint(ledger), {"status": "git-head", "ref": head})

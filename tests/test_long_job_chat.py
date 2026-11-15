@@ -87,8 +87,15 @@ class LongJobChatTests(unittest.TestCase):
         self.project.mkdir()
         self.env = patch.dict(os.environ, {"QUARTZ_JOBS_HOME": str(Path(self.tmp.name) / "jobs")})
         self.env.start()
+        # No real copies in ~/.quartz/checkpoints from tests.
+        self.cp = [patch("core.long_job.baseline_checkpoint", return_value={"status": "snapshot", "ref": "b"}),
+                   patch("core.long_job.milestone_checkpoint", return_value={"status": "snapshot", "ref": "m"})]
+        for item in self.cp:
+            item.start()
 
     def tearDown(self):
+        for item in self.cp:
+            item.stop()
         self.env.stop()
         self.tmp.cleanup()
 

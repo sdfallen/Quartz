@@ -272,6 +272,26 @@ def git_commit(ledger: JobLedger, files: list[str], message: str) -> str | None:
     return _git(root, "rev-parse", "HEAD").stdout.strip()
 
 
+BASELINE_MAX_BYTES = 4 * 1024 ** 3
+
+
+def baseline_checkpoint(ledger: JobLedger) -> dict:
+    """One full copy of the project (tracked + the user's untracked files) at job start."""
+    from core.workspace_checkpoint import create_checkpoint
+    return create_checkpoint(ledger.data["project_path"], max_bytes=BASELINE_MAX_BYTES)
+
+
+def milestone_checkpoint(ledger: JobLedger) -> dict:
+    """Per milestone: the job branch's last commit is the restore point (the baseline holds
+    the user's files). Without a job branch, a bounded full checkpoint as before."""
+    if ledger.data.get("git_branch"):
+        head = _git(ledger.data["project_path"], "rev-parse", "HEAD")
+        if head.returncode == 0 and head.stdout.strip():
+            return {"status": "git-head", "ref": head.stdout.strip()}
+    from core.workspace_checkpoint import create_checkpoint
+    return create_checkpoint(ledger.data["project_path"])
+
+
 def prepare_branch(ledger: JobLedger):
     """Switch to the job's branch once, keeping the user's uncommitted files as they are."""
     branch = ledger.data.get("git_branch")
@@ -292,13 +312,13 @@ def prepare_branch(ledger: JobLedger):
 class LongJob:
     """Runs one ledger's milestones. Callbacks keep it independent of the chat service."""
 
-    def __init__(self, ledger: JobLedger, *, run_milestone, verify=None, checkpoint=None, snapshot=None,
+    def __init__(self, ledger: JobLedger, *, run_milestone, verify=None, checkpoint=None, baseline=None, snapshot=None,
                  changed=None, commit=None, limits=None, notify=None, clock=time.time, awake=keep_awake):
         self.ledger = ledger
         self.run_milestone = run_milestone
         self.verify = verify or (lambda stop: run_verify(ledger, stop))
-        self.checkpoint = checkpoint or (lambda: __import__("core.workspace_checkpoint", fromlist=["x"])
-                                         .create_checkpoint(ledger.data["project_path"]))
+        self.checkpoint = checkpoint or (lambda: milestone_checkpoint(ledger))
+        self.baseline = baseline or (lambda: baseline_checkpoint(ledger))
         from core.workspace_checkpoint import changed_workspace_files, snapshot_workspace_files
         self.snapshot = snapshot or (lambda: snapshot_workspace_files(ledger.data["project_path"]))
         self.changed = changed or (lambda before, after: changed_workspace_files(
@@ -407,6 +427,16 @@ class LongJob:
 
     def _loop(self):
         ledger = self.ledger
+        if not ledger.data.get("baseline_checkpoint"):
+            # The user's files are saved once, in full, before any agent writes (live 15 Nov:
+            # Yol Hakkı is 654 MB, so a full copy per milestone would fill the disk).
+            saved = self.baseline() or {}
+            if saved.get("status") == "error":
+                raise JobError("Başlangıç yedeği alınamadı: " + str(saved.get("warning") or ""))
+            with ledger._lock:
+                ledger.data["baseline_checkpoint"] = saved.get("ref") or saved.get("archive") or "?"
+                ledger.save()
+            ledger.event("Başlangıç yedeği alındı" + (f" ({saved.get('bytes', 0) // 1_000_000} MB)." if saved.get("bytes") else "."))
         prepare_branch(ledger)
         while True:
             if self._halt:
