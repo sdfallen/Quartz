@@ -25,6 +25,9 @@ from core.writer_journal import WriterJournal
 from core.path_identity import canonical_key
 
 
+WRITER_CHECKPOINT_MAX_BYTES = 2 * 1024 ** 3
+
+
 class WriterDispatchError(RuntimeError):
     """A start was attempted; preserve ownership even if dispatch cannot return."""
     def __init__(self, provider, claim_id, run_id=None):
@@ -143,7 +146,9 @@ class MultiAgentService:
             starting = False
             with self._lock:
                 self._writers[key]['journal_claim'] = claim
-            checkpoint = create_checkpoint(project["path"])
+            # Live 15 Nov: Yol Hakkı (654 MB of art sources) exceeded the 512 MB default and
+            # no writer could start. The rule is unchanged: no verified full copy, no write.
+            checkpoint = create_checkpoint(project["path"], max_bytes=WRITER_CHECKPOINT_MAX_BYTES)
             if (checkpoint.get("status") not in {"git", "snapshot"}
                     or not checkpoint.get("complete") or not checkpoint.get("archive")):
                 raise RuntimeError(checkpoint.get("warning") or "Doğrulanmış checkpoint olmadan yazma başlatılamaz.")
