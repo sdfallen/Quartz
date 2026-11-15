@@ -974,7 +974,8 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
         except JobError as exc:
             return self._answer_without_agents(target["id"], text, f"Uzun iş anlaşılamadı: {exc}")
         if job_spec is not None:
-            return self._long_job_command(target, text, job_spec, write and confirm_write is True)
+            return self._long_job_command(target, text, job_spec, bool(write or full_access) and confirm_write is True,
+                                          full_access=bool(full_access) and confirm_write is True)
         from core.skill_shelf import install_request, invocation
         skill = skill_install = None
         invoked = invocation(text)

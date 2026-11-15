@@ -52,11 +52,13 @@ class LongJobChatMixin:
         self._jobs()[ledger.data["id"]] = job
         self._job_note(ledger, "Uzun iş başladı: " + ledger.data["goal"][:200] + " · "
                        + f"{len(ledger.data['milestones'])} kilometre taşı, en çok {_duration(ledger.data['hours'])}"
-                       + (" · çökünce kendiliğinden devam eder" if ledger.data["auto_resume"] else "") + ".")
+                       + (" · çökünce kendiliğinden devam eder" if ledger.data["auto_resume"] else "")
+                       + (" · Tam Yetki: yazıcı komut çalıştırabilir" if ledger.data.get("permission_level") == "full"
+                          else " · Proje izni: yazıcı yalnız dosya yazar, komut çalıştıramaz") + ".")
         job.start()
         return ledger.public()
 
-    def _long_job_command(self, conv, text, spec, confirmed_write) -> dict:
+    def _long_job_command(self, conv, text, spec, confirmed_write, full_access=False) -> dict:
         """'/uzun-iş' typed in the desktop chat with project writing allowed (never the phone)."""
         if spec.get("list"):
             jobs = self.job_list()
@@ -66,6 +68,9 @@ class LongJobChatMixin:
             return self._answer_without_agents(conv["id"], text, (
                 "Uzun iş projeye saatlerce yazar; bu yüzden yalnız masaüstünde, yazma izni (Proje) açıkken "
                 "başlatılabilir. İzni açıp komutu yeniden gönder."))
+        # The chat's own permission level travels with the job (user decision 15 Nov: with
+        # Tam Yetki the writer may run Blender/Godot; with Proje it only edits files).
+        spec = {**spec, "permission_level": "full" if full_access else "project"}
         try:
             from core.long_job import validate_spec
             validate_spec({**spec, "project_path": spec.get("project_path") or "."})  # fail before any message
@@ -173,7 +178,8 @@ class LongJobChatMixin:
         agent = "collaboration" if writer == "claude" and self._team_ready() else writer
         prompt = milestone_prompt(ledger, milestone, writer)
         try:
-            sent = self.send_message(prompt, agent=agent, conversation_id=cid, write=True, confirm_write=True)
+            sent = self.send_message(prompt, agent=agent, conversation_id=cid, write=True, confirm_write=True,
+                                     full_access=ledger.data.get("permission_level") == "full")
         except Exception as exc:
             text = str(exc)
             limited = writer if any(w in text.lower() for w in LIMIT_WORDS) else None

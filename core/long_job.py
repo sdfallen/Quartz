@@ -106,6 +106,7 @@ def validate_spec(spec: dict) -> dict:
             "milestones": milestones, "hours": hours, "auto_resume": bool(spec.get("auto_resume")),
             "verify": verify, "verify_timeout": int(spec.get("verify_timeout") or 900),
             "git_branch": branch, "models": dict(spec.get("models") or {}),
+            "permission_level": "full" if spec.get("permission_level") == "full" else "project",
             "permissions": dict(spec.get("permissions") or {})}
 
 
@@ -172,7 +173,7 @@ class JobLedger:
 
     def public(self) -> dict:
         d = self.data
-        return {k: d[k] for k in ("id", "goal", "status", "deadline", "writer", "auto_resume", "git_branch",
+        return {k: d.get(k) for k in ("id", "goal", "status", "deadline", "writer", "auto_resume", "git_branch", "permission_level",
                                   "project_path", "conversation_id", "created_at")} | {
             "milestones": [{k: m[k] for k in ("id", "title", "status", "attempts", "writer", "commit")}
                            for m in d["milestones"]],

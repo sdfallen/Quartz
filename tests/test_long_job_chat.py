@@ -71,8 +71,8 @@ class FakeChat(LongJobChatMixin):
         note = self.store.append_message(cid, "assistant", answer, sender="quartz")
         return {"assistant_message": note}
 
-    def send_message(self, text, agent=None, conversation_id=None, write=False, confirm_write=False):
-        self.sent.append({"agent": agent, "write": write, "confirm": confirm_write, "text": text})
+    def send_message(self, text, agent=None, conversation_id=None, write=False, confirm_write=False, full_access=False):
+        self.sent.append({"agent": agent, "write": write, "confirm": confirm_write, "text": text, "full": full_access})
         state, reply, sender = self.replies.pop(0)
         user = self.store.append_message("c1", "user", text, sender="user",
                                          metadata={"task_id": f"t{len(self.sent)}", "instruction_state": state})
@@ -240,3 +240,19 @@ class PausedJobAfterRestartTests(LongJobChatTests):
             self.assertEqual(self.wait_done(chat, ledger.data["id"]), "done")
         with self.assertRaises(JobError):
             chat.job_control("yok-boyle-bir-is", "resume")
+
+
+class PermissionLevelTests(LongJobChatTests):
+    def test_the_chats_permission_level_travels_with_the_job(self):
+        # User decision 15 Nov: with Tam Yetki the writer may run Blender/Godot.
+        from core.long_job import parse_command
+        text = chr(10).join(["/uzun-iş", "Hedef: Yürüme", "Süre: 1 saat", "1. Yürüme | 8 yön"])
+        for full, level in ((True, "full"), (False, "project")):
+            chat = FakeChat(self.project, replies=[("completed", "Tamam.", "claude")])
+            with patch("core.long_job.keep_awake"):
+                answer = chat._long_job_command(chat.store.conv, text, parse_command(text), True, full_access=full)
+                self.assertEqual(self.wait_done(chat, answer["job"]["id"]), "done")
+            self.assertEqual(answer["job"]["permission_level"], level)
+            self.assertEqual(chat.sent[0]["full"], full)
+            note = answer["assistant_message"]["content"]
+            self.assertIn("Tam Yetki" if full else "Proje izni", note)
