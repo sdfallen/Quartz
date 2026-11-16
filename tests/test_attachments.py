@@ -109,8 +109,12 @@ class AgentAccessTests(unittest.TestCase):
             service.dispatch_codex("bak", chat_mode=True, conversation_only=True, read_root=folder, web=True)
             kwargs = codex.start.call_args.kwargs
             self.assertEqual((kwargs["project_read"], kwargs.get("web")), (root, None))
-            service.dispatch_antigravity("bak", chat_mode=True, conversation_only=True, read_root=folder)
+            # The read-guard helper is a build product; a clean checkout (CI) has none. This test
+            # is about which folder each agent reads, not about the helper (CI red since 14 Nov).
+            with patch("core.chat_coordination.write_project_read_hooks") as hooks:
+                service.dispatch_antigravity("bak", chat_mode=True, conversation_only=True, read_root=folder)
             self.assertEqual(agy.start.call_args.kwargs["read_dirs"], [root])
+            self.assertEqual([str(p) for p in hooks.call_args.args[1]], [root])
 
     def test_claude_extra_read_folder_needs_file_tools(self):
         rt = claude_runtime()

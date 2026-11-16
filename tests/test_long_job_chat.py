@@ -89,7 +89,10 @@ class LongJobChatTests(unittest.TestCase):
         self.env.start()
         # No real copies in ~/.quartz/checkpoints from tests.
         self.cp = [patch("core.long_job.baseline_checkpoint", return_value={"status": "snapshot", "ref": "b"}),
-                   patch("core.long_job.milestone_checkpoint", return_value={"status": "snapshot", "ref": "m"})]
+                   patch("core.long_job.milestone_checkpoint", return_value={"status": "snapshot", "ref": "m"}),
+                   # Never this machine's real usage record (17 Nov: a "full" Claude record made
+                   # the writer Fides and two tests failed).
+                   patch("core.agent_limits.snapshot", return_value={})]
         for item in self.cp:
             item.start()
 
