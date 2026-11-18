@@ -32,6 +32,10 @@ class LongJobTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def baseline(self):
+        self.baselines = getattr(self, "baselines", 0) + 1
+        return {"status": "snapshot", "ref": "base", "bytes": 654_000_000}
+
     def spec(self, **extra):
         return {"goal": "Animasyonlar", "project_path": str(self.project), "hours": 2,
                 "milestones": [{"title": "Yürüme", "acceptance": "8 yön"},
@@ -42,8 +46,9 @@ class LongJobTests(unittest.TestCase):
         notes = notes if notes is not None else []
         job = LongJob(ledger, run_milestone=run, verify=verify or (lambda stop: {"ok": True, "summary": "ok"}),
                       checkpoint=lambda: {"status": "snapshot", "ref": "cp"},
+                      baseline=self.baseline,
                       snapshot=lambda: {"files": {}}, changed=lambda a, b: [], commit=lambda f, m: None,
-                      limits=limits or (lambda: {}), notify=lambda t, urgent=False: notes.append(t),
+                      limits=limits or (lambda: {}), notify=lambda t, urgent=False, report=False: notes.append(t),
                       clock=self.clock, awake=nullctx)
         return job, ledger, notes
 
@@ -65,7 +70,18 @@ class LongJobTests(unittest.TestCase):
         again = JobLedger.load(ledger.path)
         self.assertEqual(again.data["status"], "done")
         self.assertEqual([m["status"] for m in again.data["milestones"]], ["done", "done"])
-        self.assertIn("bütün kilometre taşları tamam", notes[-1])
+        self.assertIn("2 kilometre taşının hepsi tamam", notes[-1])
+        self.assertIn("✔ Yürüme", notes[-1])
+
+    def test_the_users_files_are_saved_once_before_any_writer(self):
+        job, ledger, _ = self.job(lambda l, m, w, s: {"status": "completed"})
+        job.run()
+        self.assertEqual(self.baselines, 1)  # not once per milestone (live 15 Nov: 654 MB)
+        self.assertEqual(ledger.data["baseline_checkpoint"], "base")
+        job2, ledger2, notes = self.job(lambda l, m, w, s: self.fail("no writer without a baseline"))
+        job2.baseline = lambda: {"status": "error", "warning": "disk dolu"}
+        job2.run()
+        self.assertEqual(ledger2.data["status"], "failed")
 
     def test_failed_check_retries_then_asks_the_user_and_moves_on(self):
         runs = []
@@ -108,6 +124,30 @@ class LongJobTests(unittest.TestCase):
         job, ledger, _ = self.job(run, limits=lambda: limits if self.clock.now < limits["claude"]["resets_at"] else {})
         job.run()
         self.assertEqual(calls, ["codex", "claude"])
+
+    def test_a_stale_full_record_after_its_reset_does_not_block_fatum(self):
+        # Live 15 Nov: Claude's record said "full" after its 14:50 reset.
+        calls = []
+        stale = {"claude": {"state": "full", "five_hour": 100.0, "resets_at": self.clock.now - 600}}
+        job, ledger, _ = self.job(lambda l, m, w, s: calls.append(w) or {"status": "completed"},
+                                  limits=lambda: stale)
+        job.run()
+        self.assertEqual(calls, ["claude", "claude"])
+
+    def test_an_unreachable_writer_rests_and_the_attempt_is_not_counted(self):
+        # Live 15 Nov: connection and CLI start failures used up four milestones in nine minutes.
+        calls = []
+
+        def run(l, m, w, s):
+            calls.append(w)
+            return {"status": "failed", "unavailable": w} if w == "claude" else {"status": "completed"}
+
+        job, ledger, _ = self.job(run)
+        job.run()
+        self.assertEqual(calls, ["claude", "codex", "codex"])
+        self.assertEqual([m["attempts"] for m in ledger.data["milestones"]], [1, 1])
+        self.assertEqual(ledger.data["status"], "done")
+        self.assertGreater(ledger.data["limited"]["claude"], self.clock.now)
 
     def test_all_three_limited_waits_until_the_earliest_reset(self):
         resets = {"claude": 500, "codex": 200, "antigravity": 900}
@@ -203,7 +243,12 @@ class GitTests(unittest.TestCase):
         (self.project / "walk.gd").write_text("walk\n")
         (self.project / ".godot").mkdir()
         (self.project / ".godot" / "cache.bin").write_text("x")
-        sha = git_commit(ledger, [str(self.project / "walk.gd"), str(self.project / ".godot" / "cache.bin")], "m1")
+        (self.project / "__pycache__").mkdir()
+        (self.project / "__pycache__" / "walk.cpython-313.pyc").write_bytes(b"x")
+        (self.project / "walk.blend1").write_bytes(b"x")
+        sha = git_commit(ledger, [str(self.project / "walk.gd"), str(self.project / ".godot" / "cache.bin"),
+                                  str(self.project / "__pycache__" / "walk.cpython-313.pyc"),
+                                  str(self.project / "walk.blend1")], "m1")
         self.assertTrue(sha)
         files = self.git("show", "--name-only", "--format=", "HEAD").stdout.split()
         self.assertEqual(files, ["walk.gd"])
@@ -213,3 +258,41 @@ class GitTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MilestoneCheckpointTests(GitTests):
+    def test_on_a_job_branch_the_last_commit_is_the_restore_point(self):
+        from core.long_job import milestone_checkpoint
+        ledger = JobLedger.create({"goal": "g", "project_path": str(self.project), "hours": 1,
+                                   "git_branch": "spes/deneme", "milestones": [{"title": "t", "acceptance": "a"}]},
+                                  root=Path(self.tmp.name) / "jobs")
+        head = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(milestone_checkpoint(ledger), {"status": "git-head", "ref": head})
+
+
+class JobWideCommitTests(GitTests):
+    def test_files_from_an_earlier_attempt_are_committed_but_the_users_are_not(self):
+        # Live 15 Nov: scripts written in a failed first attempt were missing from the commit.
+        from core.long_job import dirty_paths
+        ledger = JobLedger.create({"goal": "g", "project_path": str(self.project), "hours": 1,
+                                   "git_branch": "spes/deneme", "milestones": [{"title": "t", "acceptance": "a"}]},
+                                  root=Path(self.tmp.name) / "jobs")
+        attempts = []
+
+        def run(l, m, w, s):
+            attempts.append(1)
+            name = "early_script.py" if len(attempts) == 1 else "walk.gd"
+            (self.project / name).write_text("x\n")
+            return {"status": "completed"}
+
+        checks = iter([{"ok": False, "summary": "eksik"}, {"ok": True, "summary": "ok"}])
+        job = LongJob(ledger, run_milestone=run, verify=lambda stop: next(checks),
+                      checkpoint=lambda: {"status": "git-head", "ref": "x"},
+                      baseline=lambda: {"status": "snapshot", "ref": "b"}, awake=nullctx)
+        job.run()
+        self.assertEqual(ledger.data["status"], "done")
+        files = sorted(self.git("show", "--name-only", "--format=", "HEAD").stdout.split())
+        self.assertEqual(files, ["early_script.py", "walk.gd"])
+        self.assertIn("?? user_draft.txt", self.git("status", "--porcelain").stdout)
+        self.assertIn("user_draft.txt", ledger.data["initial_dirty"])
+        self.assertNotIn("walk.gd", dirty_paths(ledger))

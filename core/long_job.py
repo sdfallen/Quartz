@@ -33,6 +33,7 @@ LIMIT_PERCENT = 95
 MAX_ATTEMPTS = 3
 MAX_CRASHES = 3
 LIMIT_FALLBACK_SECONDS = 60 * 60
+UNAVAILABLE_SECONDS = 10 * 60
 ACTIVE = {"running", "waiting_limit"}
 FINAL = {"done", "stopped", "expired", "failed"}
 
@@ -106,6 +107,7 @@ def validate_spec(spec: dict) -> dict:
             "milestones": milestones, "hours": hours, "auto_resume": bool(spec.get("auto_resume")),
             "verify": verify, "verify_timeout": int(spec.get("verify_timeout") or 900),
             "git_branch": branch, "models": dict(spec.get("models") or {}),
+            "permission_level": "full" if spec.get("permission_level") == "full" else "project",
             "permissions": dict(spec.get("permissions") or {})}
 
 
@@ -172,7 +174,7 @@ class JobLedger:
 
     def public(self) -> dict:
         d = self.data
-        return {k: d[k] for k in ("id", "goal", "status", "deadline", "writer", "auto_resume", "git_branch",
+        return {k: d.get(k) for k in ("id", "goal", "status", "deadline", "writer", "auto_resume", "git_branch", "permission_level",
                                   "project_path", "conversation_id", "created_at")} | {
             "milestones": [{k: m[k] for k in ("id", "title", "status", "attempts", "writer", "commit")}
                            for m in d["milestones"]],
@@ -257,7 +259,7 @@ def git_commit(ledger: JobLedger, files: list[str], message: str) -> str | None:
         ignored = _git(root, "check-ignore", "--", *relative)
         # Forward slashes only: git quotes backslash paths in its output.
         skip = {line.strip() for line in ignored.stdout.splitlines() if line.strip()}
-        relative = [r for r in relative if r not in skip]
+        relative = [r for r in relative if r not in skip and not _build_junk(r)]
     if not relative:
         return None
     added = _git(root, "add", "-A", "--", *relative)
@@ -270,6 +272,58 @@ def git_commit(ledger: JobLedger, files: list[str], message: str) -> str | None:
     if done.returncode != 0:
         raise JobError("git commit başarısız: " + (done.stderr or done.stdout).strip()[:300])
     return _git(root, "rev-parse", "HEAD").stdout.strip()
+
+
+BASELINE_MAX_BYTES = 4 * 1024 ** 3
+
+
+def baseline_checkpoint(ledger: JobLedger) -> dict:
+    """One full copy of the project (tracked + the user's untracked files) at job start."""
+    from core.workspace_checkpoint import create_checkpoint
+    return create_checkpoint(ledger.data["project_path"], max_bytes=BASELINE_MAX_BYTES)
+
+
+def milestone_checkpoint(ledger: JobLedger) -> dict:
+    """Per milestone: the job branch's last commit is the restore point (the baseline holds
+    the user's files). Without a job branch, a bounded full checkpoint as before."""
+    if ledger.data.get("git_branch"):
+        head = _git(ledger.data["project_path"], "rev-parse", "HEAD")
+        if head.returncode == 0 and head.stdout.strip():
+            return {"status": "git-head", "ref": head.stdout.strip()}
+    from core.workspace_checkpoint import create_checkpoint
+    return create_checkpoint(ledger.data["project_path"])
+
+
+JUNK_SUFFIXES = (".pyc", ".pyo", ".blend1", ".blend2", ".tmp")
+
+
+def _build_junk(relative: str) -> bool:
+    """Caches and tool backups never go into a milestone commit (live 15 Nov: .pyc, .blend1)."""
+    return "__pycache__/" in relative or relative.lower().endswith(JUNK_SUFFIXES)
+
+
+def dirty_paths(ledger: JobLedger) -> dict:
+    """{posix path: [size, mtime_ns] or None if deleted} for every non-ignored uncommitted path."""
+    root = Path(ledger.data["project_path"])
+    status = _git(root, "status", "--porcelain", "-z", "--untracked-files=all")
+    if status.returncode != 0:
+        return {}
+    found, entries, index = {}, status.stdout.split("\0"), 0
+    while index < len(entries):
+        entry = entries[index]
+        index += 1
+        if len(entry) < 4:
+            continue
+        code, name = entry[:2], entry[3:]
+        if code[0] in "RC":
+            index += 1  # the rename source follows
+        path = root / name
+        try:
+            stat = path.stat()
+            found[name] = [stat.st_size, stat.st_mtime_ns]
+        except OSError:
+            found[name] = None
+    return found
 
 
 def prepare_branch(ledger: JobLedger):
@@ -292,20 +346,22 @@ def prepare_branch(ledger: JobLedger):
 class LongJob:
     """Runs one ledger's milestones. Callbacks keep it independent of the chat service."""
 
-    def __init__(self, ledger: JobLedger, *, run_milestone, verify=None, checkpoint=None, snapshot=None,
+    def __init__(self, ledger: JobLedger, *, run_milestone, verify=None, checkpoint=None, baseline=None, dirty=None,
+                 snapshot=None,
                  changed=None, commit=None, limits=None, notify=None, clock=time.time, awake=keep_awake):
         self.ledger = ledger
         self.run_milestone = run_milestone
         self.verify = verify or (lambda stop: run_verify(ledger, stop))
-        self.checkpoint = checkpoint or (lambda: __import__("core.workspace_checkpoint", fromlist=["x"])
-                                         .create_checkpoint(ledger.data["project_path"]))
+        self.checkpoint = checkpoint or (lambda: milestone_checkpoint(ledger))
+        self.baseline = baseline or (lambda: baseline_checkpoint(ledger))
         from core.workspace_checkpoint import changed_workspace_files, snapshot_workspace_files
         self.snapshot = snapshot or (lambda: snapshot_workspace_files(ledger.data["project_path"]))
         self.changed = changed or (lambda before, after: changed_workspace_files(
             ledger.data["project_path"], before, after)[0])
         self.commit = commit or (lambda files, message: git_commit(ledger, files, message))
+        self.dirty = dirty or (lambda: dirty_paths(ledger))
         self.limits = limits or (lambda: {})
-        self.notify = notify or (lambda text, urgent=False: None)
+        self.notify = notify or (lambda text, urgent=False, report=False: None)
         self.clock, self.awake = clock, awake
         self.stop_event, self.pause_event, self.wake = threading.Event(), threading.Event(), threading.Event()
         self.thread = None
@@ -334,6 +390,12 @@ class LongJob:
             self.ledger.save()
         self.stop_event.set()
         self.wake.set()
+
+    def add_note(self, text):
+        with self.ledger._lock:
+            self.ledger.data["decisions"].append({"at": self.clock(), "text": "Denetmen notu: " + str(text)[:2000]})
+            self.ledger.save()
+        self.ledger.event("Denetmen notu eklendi.")
 
     def halt(self):
         """SpeS is closing: leave the job resumable (not Stop). Its turn is cancelled by close()."""
@@ -364,7 +426,11 @@ class LongJob:
                     default=None)
         if entry.get("state") == "full" or (worst is not None and worst >= LIMIT_PERCENT):
             reset = _reset_time(entry.get("resets_at"))
-            return reset if reset and reset > now else now + LIMIT_FALLBACK_SECONDS
+            if reset and reset <= now:
+                # Live 15 Nov: Claude's record still said "full" after its 14:50 reset (it only
+                # refreshes when Claude runs), so Fatum was never given the writer role back.
+                return 0
+            return reset if reset else now + LIMIT_FALLBACK_SECONDS
         return 0
 
     def pick_writer(self):
@@ -381,6 +447,14 @@ class LongJob:
                 return agent, None
             waits.append(until)
         return None, min(waits)
+
+    def mark_unavailable(self, agent, seconds=UNAVAILABLE_SECONDS):
+        """The agent could not be reached (connection, CLI start); rest it, keep the attempt."""
+        until = self.clock() + seconds
+        with self.ledger._lock:
+            self.ledger.data["limited"][agent] = max(float(self.ledger.data["limited"].get(agent) or 0), until)
+            self.ledger.save()
+        return until
 
     def mark_limited(self, agent):
         now = self.clock()
@@ -407,7 +481,23 @@ class LongJob:
 
     def _loop(self):
         ledger = self.ledger
+        if not ledger.data.get("baseline_checkpoint"):
+            # The user's files are saved once, in full, before any agent writes (live 15 Nov:
+            # Yol Hakkı is 654 MB, so a full copy per milestone would fill the disk).
+            saved = self.baseline() or {}
+            if saved.get("status") == "error":
+                raise JobError("Başlangıç yedeği alınamadı: " + str(saved.get("warning") or ""))
+            with ledger._lock:
+                ledger.data["baseline_checkpoint"] = saved.get("ref") or saved.get("archive") or "?"
+                ledger.save()
+            ledger.event("Başlangıç yedeği alındı" + (f" ({saved.get('bytes', 0) // 1_000_000} MB)." if saved.get("bytes") else "."))
         prepare_branch(ledger)
+        if "initial_dirty" not in ledger.data:
+            # The user's own uncommitted files as they were before the first writer: never
+            # committed by the job unless an agent changes them.
+            with ledger._lock:
+                ledger.data["initial_dirty"] = self.dirty()
+                ledger.save()
         while True:
             if self._halt:
                 return  # status stays as it was: the next start may resume it
@@ -424,16 +514,16 @@ class LongJob:
             if self.clock() >= ledger.data["deadline"]:
                 self._set(status="expired")
                 ledger.event("İş süresi doldu.")
-                self.notify("Uzun işin süresi doldu; yapılanlar defterde.", urgent=False)
+                self.notify(finish_report(ledger), urgent=True, report=True)
                 return
             milestone = ledger.current()
             if milestone is None:
                 waiting = [m for m in ledger.data["milestones"] if m["status"] == "needs_user"]
                 self._set(status="needs_user" if waiting else "done")
-                text = (f"Uzun iş bitti; {len(waiting)} kilometre taşı senin kararını bekliyor."
-                        if waiting else "Uzun iş bitti: bütün kilometre taşları tamam.")
-                ledger.event(text)
-                self.notify(text, urgent=True)
+                text = finish_report(ledger)
+                ledger.event(text.splitlines()[0])
+                # User request 15 Nov: "bitince arasınlar" — the phone rings for a report.
+                self.notify(text, urgent=True, report=True)
                 return
             writer, wake_at = self.pick_writer()
             if writer is None:
@@ -474,6 +564,17 @@ class LongJob:
                 milestone["status"] = "pending"
                 ledger.save()
             return
+        if result.get("unavailable"):
+            # Live 15 Nov: Codex lost its connection and the Antigravity CLI timed out; those
+            # failures used up four milestones' attempts in nine minutes.
+            agent = result["unavailable"]
+            until = self.mark_unavailable(agent)
+            with ledger._lock:
+                milestone.update(status="pending", attempts=max(0, milestone["attempts"] - 1))
+                ledger.save()
+            ledger.event(f"{PERSONA.get(agent, agent)}'e ulaşılamadı (bağlantı/program); deneme sayılmadı, "
+                         f"{time.strftime('%H:%M', time.localtime(until))}'e kadar dinlendiriliyor.")
+            return
         if result.get("limit"):
             until = self.mark_limited(result["limit"])
             with ledger._lock:
@@ -490,7 +591,12 @@ class LongJob:
         entry = {"at": self.clock(), "writer": writer, "turn": result.get("status"),
                  "check": bool(check.get("ok")), "note": str(check.get("summary") or "")[-300:]}
         if built and check.get("ok"):
-            files = self.changed(before, self.snapshot())
+            files = list(self.changed(before, self.snapshot()))
+            # Live 15 Nov: scripts written in an earlier failed attempt of the same milestone
+            # were left out of its commit. Anything the agents changed since the job began counts.
+            initial = ledger.data.get("initial_dirty") or {}
+            root = Path(ledger.data["project_path"])
+            files += [str(root / name) for name, state in self.dirty().items() if initial.get(name) != state]
             sha = self.commit(files, f"SpeS iş {ledger.data['id']}: {milestone['title']}")
             with ledger._lock:
                 milestone.update(status="done", commit=sha, last_failure="")
@@ -532,6 +638,28 @@ class LongJob:
             ledger.save()
         ledger.event(f"SpeS yeniden başladı; {milestone['id']} kaldığı dosyalardan yeniden deneniyor.")
         return "resume"
+
+
+def finish_report(ledger: JobLedger) -> str:
+    """The short report the phone rings with when a job ends (done, waiting or out of time)."""
+    d = ledger.data
+    done = [m for m in d["milestones"] if m["status"] == "done"]
+    waiting = [m for m in d["milestones"] if m["status"] == "needs_user"]
+    left = [m for m in d["milestones"] if m["status"] in {"pending", "running"}]
+    if d["status"] == "expired":
+        head = f"Uzun işin süresi doldu: {len(done)}/{len(d['milestones'])} kilometre taşı tamam."
+    elif waiting:
+        head = f"Uzun iş bitti: {len(done)}/{len(d['milestones'])} tamam, {len(waiting)} taş senin kararını bekliyor."
+    else:
+        head = f"Uzun iş bitti: {len(done)} kilometre taşının hepsi tamam."
+    lines = [head]
+    lines += [f"✔ {m['title']}" + (f" (commit {m['commit'][:8]})" if m.get("commit") else "") for m in done]
+    lines += [f"? {m['title']}: {(m.get('last_failure') or '').strip().splitlines()[-1][:160] if (m.get('last_failure') or '').strip() else 'geçmedi'}"
+              for m in waiting]
+    lines += [f"· {m['title']}: yapılmadı" for m in left]
+    if d.get("git_branch"):
+        lines.append(f"Dal: {d['git_branch']}")
+    return chr(10).join(lines)
 
 
 def milestone_prompt(ledger: JobLedger, milestone: dict, writer: str) -> str:
@@ -578,6 +706,9 @@ def parse_command(text: str):
     rest = COMMAND.sub("", text, count=1).strip()
     if rest.lower() in {"durum", "liste", "list", ""}:
         return {"list": True}
+    note = re.match(r"^not\s*:\s*(.+)$", rest, re.S | re.I)
+    if note:
+        return {"note": note.group(1).strip()[:2000]}
     for raw in rest.splitlines():
         line = raw.strip()
         if not line:

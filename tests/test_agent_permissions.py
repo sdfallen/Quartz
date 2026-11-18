@@ -53,7 +53,7 @@ class AgentPermissionTests(unittest.TestCase):
                 return {'id':'local-fake','status':'completed'}
             self.service.codex.start.side_effect=local_write
             self.service.codex.get.return_value={'id':'local-fake','status':'completed','files_changed':[]}
-            with patch('core.multi_agent_service.create_checkpoint',side_effect=lambda root:create_checkpoint(root,backup_root=backups)):
+            with patch('core.multi_agent_service.create_checkpoint',side_effect=lambda root,**kw:create_checkpoint(root,backup_root=backups,**kw)):
                 result=self.service.dispatch_codex('test',chat_mode=True,write=True,confirm_write=True)
                 for _ in range(100):
                     if not self.service._writer_status(self.tmp.name)['locked']:break
@@ -84,6 +84,15 @@ class AgentPermissionTests(unittest.TestCase):
             self.service.dispatch_antigravity('test', chat_mode=True, write=True, confirm_write=True)
         self.service.antigravity.probe.assert_not_called()
         self.service.antigravity.start.assert_not_called()
+
+    def test_writer_checkpoint_allows_large_art_projects(self):
+        # Live 15 Nov: a 654 MB game project exceeded the 512 MB default and no writer started.
+        from core.multi_agent_service import WRITER_CHECKPOINT_MAX_BYTES
+        with self.writer_guards(), patch('core.multi_agent_service.create_checkpoint', return_value={
+                'status':'snapshot', 'complete':True, 'archive':'x'}) as checkpoint:
+            self.service.dispatch_codex('test', chat_mode=True, write=True, confirm_write=True)
+        self.assertEqual(checkpoint.call_args.kwargs.get('max_bytes'), WRITER_CHECKPOINT_MAX_BYTES)
+        self.assertGreaterEqual(WRITER_CHECKPOINT_MAX_BYTES, 1024 ** 3)
 
     def test_readonly_needs_no_checkpoint_or_write_lock(self):
         with patch('core.multi_agent_service.create_checkpoint') as checkpoint:

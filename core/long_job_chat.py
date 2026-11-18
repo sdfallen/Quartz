@@ -12,7 +12,14 @@ import time
 from core.long_job import (JobError, JobLedger, LongJob, PERSONA, milestone_prompt, resumable)
 
 LIMIT_WORDS = ("kota hatası", "rate limit", "usage limit", "quota", "429", "kullanım sınırı")
+# Not the work failing but the agent not being reachable (live 15 Nov).
+UNREACHABLE_WORDS = ("reconnecting", "routing discovery failed", "timed out after", "bağlantısı hazır değil",
+                     "connection refused", "connection reset", "econnreset", "network error")
 POLL_SECONDS = 3.0
+# The chat refuses a new turn while the previous one's processes are being confirmed stopped.
+SETTLING_WORDS = ("süreçlerinin durduğu henüz doğrulanmadı", "çalışanı kapanıyor", "host test sürecinin kapanışı")
+SETTLE_SECONDS = 10.0
+SETTLE_TRIES = 30
 
 
 def _duration(hours: float) -> str:
@@ -52,20 +59,34 @@ class LongJobChatMixin:
         self._jobs()[ledger.data["id"]] = job
         self._job_note(ledger, "Uzun iş başladı: " + ledger.data["goal"][:200] + " · "
                        + f"{len(ledger.data['milestones'])} kilometre taşı, en çok {_duration(ledger.data['hours'])}"
-                       + (" · çökünce kendiliğinden devam eder" if ledger.data["auto_resume"] else "") + ".")
+                       + (" · çökünce kendiliğinden devam eder" if ledger.data["auto_resume"] else "")
+                       + (" · Tam Yetki: yazıcı komut çalıştırabilir" if ledger.data.get("permission_level") == "full"
+                          else " · Proje izni: yazıcı yalnız dosya yazar, komut çalıştıramaz") + ".")
         job.start()
         return ledger.public()
 
-    def _long_job_command(self, conv, text, spec, confirmed_write) -> dict:
+    def _long_job_command(self, conv, text, spec, confirmed_write, full_access=False) -> dict:
         """'/uzun-iş' typed in the desktop chat with project writing allowed (never the phone)."""
         if spec.get("list"):
             jobs = self.job_list()
             lines = [f"{j['goal'][:60]} — {j['status']}" for j in jobs[:5]]
             return self._answer_without_agents(conv["id"], text, "Uzun işler: " + ("; ".join(lines) or "yok") + ".")
+        if spec.get("note") and confirmed_write:
+            # The reviewer's note reaches every later milestone through the ledger (15 Nov).
+            job = next((j for j in self._jobs().values() if j.ledger.data.get("conversation_id") == conv["id"]
+                        and j.ledger.data["status"] in {"running", "waiting_limit", "paused"}), None)
+            if job is None:
+                return self._answer_without_agents(conv["id"], text, "Bu sohbette sürmekte olan bir uzun iş yok.")
+            job.add_note(spec["note"])
+            return self._answer_without_agents(conv["id"], text, (
+                "Not iş defterine eklendi; ekip bunu sıradaki her kilometre taşında okuyacak."))
         if not confirmed_write:
             return self._answer_without_agents(conv["id"], text, (
                 "Uzun iş projeye saatlerce yazar; bu yüzden yalnız masaüstünde, yazma izni (Proje) açıkken "
                 "başlatılabilir. İzni açıp komutu yeniden gönder."))
+        # The chat's own permission level travels with the job (user decision 15 Nov: with
+        # Tam Yetki the writer may run Blender/Godot; with Proje it only edits files).
+        spec = {**spec, "permission_level": "full" if full_access else "project"}
         try:
             from core.long_job import validate_spec
             validate_spec({**spec, "project_path": spec.get("project_path") or "."})  # fail before any message
@@ -90,7 +111,14 @@ class LongJobChatMixin:
     def job_control(self, job_id: str, action: str) -> dict:
         job = self._jobs().get(str(job_id or ""))
         if job is None:
-            raise JobError("Bu iş bulunamadı.")
+            # Live 15 Nov: a job paused before a restart is on disk only; "Devam" must find it.
+            ledger = next((l for l in JobLedger.all() if l.data["id"] == str(job_id or "")), None)
+            if ledger is None or ledger.data.get("stopped") or ledger.data["status"] in {"done", "expired", "failed"}:
+                raise JobError("Bu iş bulunamadı ya da bitmiş.")
+            job = self._make_job(ledger)
+            if action == "resume":
+                job.recover_after_crash()
+            self._jobs()[ledger.data["id"]] = job
         if action == "pause":
             job.pause()
         elif action == "resume":
@@ -141,15 +169,19 @@ class LongJobChatMixin:
     def _make_job(self, ledger):
         from core.agent_limits import snapshot
         return LongJob(ledger, run_milestone=self._job_run_milestone, limits=snapshot,
-                       notify=lambda text, urgent=False: self._job_note(ledger, text, urgent=urgent))
+                       notify=lambda text, urgent=False, report=False: self._job_note(ledger, text, urgent=urgent,
+                                                                                      report=report))
 
-    def _job_note(self, ledger, text, urgent=False):
+    def _job_note(self, ledger, text, urgent=False, report=False):
         cid = ledger.data.get("conversation_id")
         try:
             conv = self.store.get(cid)
             self.store.append_message(cid, "assistant", text, sender="quartz", metadata={
                 "sender": "quartz", "recipient": "user", "status": "completed", "long_job": ledger.data["id"],
-                **({"notify": "call"} if urgent else {}), "sequence": self._next_sequence(conv)})
+                **({"notify": "call"} if urgent else {}),
+                # The phone rings like a call for a report (mobile WatchService, "bitince haber ver").
+                **({"report": True} if report else {}),
+                "sequence": self._next_sequence(conv)})
         except Exception:
             pass
 
@@ -165,11 +197,27 @@ class LongJobChatMixin:
                 return {"status": "cancelled"}
         agent = "collaboration" if writer == "claude" and self._team_ready() else writer
         prompt = milestone_prompt(ledger, milestone, writer)
-        try:
-            sent = self.send_message(prompt, agent=agent, conversation_id=cid, write=True, confirm_write=True)
-        except Exception as exc:
-            text = str(exc)
+        sent, text = None, "SpeS yeni turu başlatamadı."
+        for _ in range(SETTLE_TRIES):
+            try:
+                sent = self.send_message(prompt, agent=agent, conversation_id=cid, write=True, confirm_write=True,
+                                         full_access=ledger.data.get("permission_level") == "full")
+                break
+            except Exception as exc:
+                text = str(exc)
+                # Live 15 Nov: the previous turn's processes were still being confirmed stopped
+                # and the attempt was counted as failed. SpeS is settling, not the work failing.
+                if any(w in text for w in SETTLING_WORDS):
+                    if stop.wait(SETTLE_SECONDS):
+                        return {"status": "cancelled"}
+                    continue
+                break
+        if sent is None:
+            if any(w in text for w in SETTLING_WORDS):
+                return {"status": "failed", "summary": text, "unavailable": writer}
             limited = writer if any(w in text.lower() for w in LIMIT_WORDS) else None
+            if not limited and any(w in text.lower() for w in UNREACHABLE_WORDS):
+                return {"status": "failed", "summary": text, "unavailable": writer}
             return {"status": "failed", "summary": text, **({"limit": limited} if limited else {})}
         user_id = sent["user_message"]["id"]
         turn_id = (sent["user_message"].get("metadata") or {}).get("task_id")
@@ -210,5 +258,10 @@ class LongJobChatMixin:
             # A reviewer at its limit does not move the writer role; the job's check decides.
             if limited == writer:
                 return {"status": status, "limit": writer}
+        if status == "failed":
+            own = " ".join(str(m.get("content") or "") + " " + str((m.get("metadata") or {}).get("error") or "")
+                           for m in replies if m.get("sender") == writer).lower()
+            if any(w in own for w in UNREACHABLE_WORDS):
+                return {"status": status, "unavailable": writer}
         summary = str(replies[-1].get("content") or "")[-1500:] if replies else ""
         return {"status": status, "summary": summary}

@@ -398,6 +398,11 @@ class Api:
                 # A cloud-agent message cannot start REA, desktop control or
                 # become an instruction to a running local operator.
                 return {'status':'ok','data':{'handled':False,'intent':'conversation'}}
+            from core.long_job import COMMAND as LONG_JOB_COMMAND
+            if LONG_JOB_COMMAND.match(str(text or '')):
+                # Live 15 Nov: a long job's milestone text ("kapı", "el uzatıp") started a
+                # desktop task. '/uzun-iş' goes to the chat only; it never controls the screen.
+                return {'status':'ok','data':{'handled':False,'intent':'task'}}
             message_kind = message_intent(text)
             from core.diagnostics_intent import diagnostics_intent
             diagnostic_command = diagnostics_intent(text)

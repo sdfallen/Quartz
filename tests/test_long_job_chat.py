@@ -71,8 +71,8 @@ class FakeChat(LongJobChatMixin):
         note = self.store.append_message(cid, "assistant", answer, sender="quartz")
         return {"assistant_message": note}
 
-    def send_message(self, text, agent=None, conversation_id=None, write=False, confirm_write=False):
-        self.sent.append({"agent": agent, "write": write, "confirm": confirm_write, "text": text})
+    def send_message(self, text, agent=None, conversation_id=None, write=False, confirm_write=False, full_access=False):
+        self.sent.append({"agent": agent, "write": write, "confirm": confirm_write, "text": text, "full": full_access})
         state, reply, sender = self.replies.pop(0)
         user = self.store.append_message("c1", "user", text, sender="user",
                                          metadata={"task_id": f"t{len(self.sent)}", "instruction_state": state})
@@ -87,8 +87,18 @@ class LongJobChatTests(unittest.TestCase):
         self.project.mkdir()
         self.env = patch.dict(os.environ, {"QUARTZ_JOBS_HOME": str(Path(self.tmp.name) / "jobs")})
         self.env.start()
+        # No real copies in ~/.quartz/checkpoints from tests.
+        self.cp = [patch("core.long_job.baseline_checkpoint", return_value={"status": "snapshot", "ref": "b"}),
+                   patch("core.long_job.milestone_checkpoint", return_value={"status": "snapshot", "ref": "m"}),
+                   # Never this machine's real usage record (17 Nov: a "full" Claude record made
+                   # the writer Fides and two tests failed).
+                   patch("core.agent_limits.snapshot", return_value={})]
+        for item in self.cp:
+            item.start()
 
     def tearDown(self):
+        for item in self.cp:
+            item.stop()
         self.env.stop()
         self.tmp.cleanup()
 
@@ -208,3 +218,111 @@ class DurationTextTests(unittest.TestCase):
         self.assertEqual(_duration(40 / 60), "40 dakika")  # live 15 Nov: "0.666667 saat"
         self.assertEqual(_duration(2), "2 saat")
         self.assertEqual(_duration(1.5), "1 saat 30 dakika")
+
+
+class LongJobRoutingTests(unittest.TestCase):
+    def test_the_command_never_reaches_the_desktop_router(self):
+        # Live 15 Nov: milestone words like "kapı" and "el uzatıp" started a desktop task.
+        import gui
+        api = gui.Api()
+        text = "/uzun-iş\nHedef: Kapıyı el uzatıp açma animasyonu\n1. Kapı | ekrana tıkla ve klavyede yaz"
+        with patch.object(api, "_coordination_service", side_effect=AssertionError("desktop router reached")):
+            result = api.coordination_route(text, "c1", "p1", {}, "project", "claude")
+        self.assertEqual(result, {"status": "ok", "data": {"handled": False, "intent": "task"}})
+
+
+class PausedJobAfterRestartTests(LongJobChatTests):
+    def test_resume_finds_a_job_paused_before_the_restart(self):
+        # Live 15 Nov: after a restart the paused job was on disk only and "Devam" said not found.
+        ledger = JobLedger.create({**self.spec(), "project_path": str(self.project), "conversation_id": "c1"})
+        ledger.data["status"] = "paused"
+        ledger.save()
+        chat = FakeChat(self.project, replies=[("completed", "Tamam.", "claude")])
+        with patch("core.long_job.keep_awake"):
+            chat.job_control(ledger.data["id"], "resume")
+            self.assertEqual(self.wait_done(chat, ledger.data["id"]), "done")
+        with self.assertRaises(JobError):
+            chat.job_control("yok-boyle-bir-is", "resume")
+
+
+class PermissionLevelTests(LongJobChatTests):
+    def test_the_chats_permission_level_travels_with_the_job(self):
+        # User decision 15 Nov: with Tam Yetki the writer may run Blender/Godot.
+        from core.long_job import parse_command
+        text = chr(10).join(["/uzun-iş", "Hedef: Yürüme", "Süre: 1 saat", "1. Yürüme | 8 yön"])
+        for full, level in ((True, "full"), (False, "project")):
+            chat = FakeChat(self.project, replies=[("completed", "Tamam.", "claude")])
+            with patch("core.long_job.keep_awake"):
+                answer = chat._long_job_command(chat.store.conv, text, parse_command(text), True, full_access=full)
+                self.assertEqual(self.wait_done(chat, answer["job"]["id"]), "done")
+            self.assertEqual(answer["job"]["permission_level"], level)
+            self.assertEqual(chat.sent[0]["full"], full)
+            note = answer["assistant_message"]["content"]
+            self.assertIn("Tam Yetki" if full else "Proje izni", note)
+
+
+class ReviewerNoteTests(LongJobChatTests):
+    def test_a_note_reaches_the_next_milestone_prompt(self):
+        from core.long_job import milestone_prompt, parse_command
+        self.assertEqual(parse_command("/uzun-iş not: Kollar daha çok sallansın"), {"note": "Kollar daha çok sallansın"})
+        ledger = JobLedger.create({**self.spec(), "project_path": str(self.project), "conversation_id": "c1"})
+        ledger.data["status"] = "running"
+        chat = FakeChat(self.project, replies=[])
+        chat._jobs()[ledger.data["id"]] = chat._make_job(ledger)
+        text = "/uzun-iş not: Kollar daha çok sallansın"
+        refused = chat._long_job_command(chat.store.conv, text, parse_command(text), False)  # phone: no
+        self.assertNotIn("Denetmen notu", milestone_prompt(ledger, ledger.data["milestones"][0], "claude"))
+        answer = chat._long_job_command(chat.store.conv, text, parse_command(text), True)
+        self.assertIn("eklendi", answer["assistant_message"]["content"])
+        self.assertIn("Denetmen notu: Kollar daha çok sallansın",
+                      milestone_prompt(ledger, ledger.data["milestones"][0], "claude"))
+        self.assertIn("yazma izni", refused["assistant_message"]["content"])
+
+
+class UnreachableWriterTests(LongJobChatTests):
+    def test_a_lost_connection_is_not_a_failed_attempt(self):
+        chat = FakeChat(self.project, replies=[
+            ("failed", "Reconnecting... 5/5 (workspace routing discovery failed)", "codex")])
+        outcome = None
+        chat.send_message("x", agent="codex", conversation_id="c1", write=True, confirm_write=True)
+        user_id = chat.store.conv["messages"][-2]["id"]
+        outcome = chat._job_turn_outcome("c1", user_id, "codex", None)
+        self.assertEqual(outcome.get("unavailable"), "codex")
+        real = FakeChat(self.project, replies=[("failed", "Test kırık: walk_0 bulunamadı", "codex")])
+        real.send_message("x", agent="codex", conversation_id="c1", write=True, confirm_write=True)
+        user_id = real.store.conv["messages"][-2]["id"]
+        self.assertNotIn("unavailable", real._job_turn_outcome("c1", user_id, "codex", None))
+
+
+class FinishCallTests(LongJobChatTests):
+    def test_the_end_of_a_job_rings_the_phone_with_a_report(self):
+        # User request 15 Nov: "işler bitince arasınlar"; the phone rings for metadata.report.
+        chat = FakeChat(self.project, replies=[("completed", "Tamam.", "claude")])
+        with patch("core.long_job.keep_awake"):
+            job = chat.job_start(self.spec(git_branch=None))
+            self.assertEqual(self.wait_done(chat, job["id"]), "done")
+        last = [m for m in chat.store.conv["messages"] if m["sender"] == "quartz"][-1]
+        self.assertTrue(last["metadata"].get("report"))
+        self.assertIn("Uzun iş bitti", last["content"])
+        self.assertIn("✔ Yürüme", last["content"])
+
+
+class SettlingTurnTests(LongJobChatTests):
+    def test_a_settling_chat_is_waited_for_not_counted(self):
+        # Live 15 Nov: "Önceki ajan süreçlerinin durduğu henüz doğrulanmadı" used up an attempt.
+        chat = FakeChat(self.project, replies=[("completed", "Tamam.", "claude")])
+        original, calls = chat.send_message, []
+
+        def flaky(*args, **kwargs):
+            calls.append(1)
+            if len(calls) < 3:
+                raise RuntimeError("Önceki ajan süreçlerinin durduğu henüz doğrulanmadı.")
+            return original(*args, **kwargs)
+
+        chat.send_message = flaky
+        ledger = JobLedger.create({**self.spec(), "project_path": str(self.project), "conversation_id": "c1"})
+        stop = threading.Event()
+        with patch("core.long_job_chat.SETTLE_SECONDS", 0.01):
+            result = chat._job_run_milestone(ledger, ledger.data["milestones"][0], "claude", stop)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(len(calls), 3)
