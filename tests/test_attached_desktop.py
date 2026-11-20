@@ -202,3 +202,14 @@ class DispatchAttachTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SessionEndKeepsWriterTests(AttachedDesktopTests):
+    def test_a_closed_target_ends_the_screen_session_but_not_the_writer(self):
+        # Live 20 Nov: the agent closed the test window as asked; the session ended "blocked"
+        # and cancelled the writer's turn, which then counted as a failed milestone.
+        self.attach()
+        run = FakeRun()
+        self.task.bind_run("claude", run, "run-1")
+        self.task.stop("blocked: target closed or inaccessible")
+        self.assertEqual(run.cancelled, [])

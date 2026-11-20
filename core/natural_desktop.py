@@ -1749,6 +1749,11 @@ class NaturalDesktopTask:
         if self.warband:
             cleanup_step(report, "warband", self.warband.shutdown)
         for provider, (runtime, rid) in list(self.runs.items()):
+            if self.job and self.job.get("external") and reason != "cancelled":
+                # An attached writer's turn outlives its screen session (live 20 Nov: the test
+                # window closed, the broker ended the session and the writer's turn was cancelled).
+                # Only the user's Stop ends the writer.
+                continue
             cleanup_step(report, "runtime:" + provider, lambda runtime=runtime, rid=rid: runtime.cancel(rid))
         for index, workspace in enumerate(list(self.workspaces)):
             cleanup_step(report, "workspace:" + str(index), workspace.cleanup)
