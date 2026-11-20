@@ -1,7 +1,9 @@
 """One rule for which agent runs may use the web (user request 14 Nov 2026: "all agents").
 
-Web is allowed only for a tool-less conversation run: no project read, no write or full
-access, no desktop connection. Build steps and project checks never search.
+Web is allowed for a tool-less conversation run (no project read, no write, no desktop
+connection) and, since 20 Nov 2026, for every "Tam yetki" (full access) run: the user decided
+that full access means each agent's own full strength (Claude WebSearch + WebFetch, Codex
+web_search="live", Antigravity its own tools). Project-scoped writes and checks never search.
 
 - Fatum (Claude): the "web" sandbox, WebSearch only (no WebFetch), proven from the CLI's
   init event (core.claude_runtime).

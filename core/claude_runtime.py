@@ -40,6 +40,9 @@ from core.process_tree import (CREATE_SUSPENDED, bind_kill_on_close_job,
 READ_TOOLS = ("Read", "Grep", "Glob")
 EDIT_TOOLS = ("Edit", "Write", "NotebookEdit")
 SHELL_TOOLS = ("Bash", "PowerShell")
+# User decision 20 Nov: under "Tam yetki" an agent works with its own full strength, so
+# the writer may read documentation on the web while it builds (shells reach the web anyway).
+WEB_TOOLS = ("WebSearch", "WebFetch")
 TOOLS_BY_SANDBOX = {
     # Plain conversation: no tools at all (the init event must report []).
     "none": (),
@@ -49,7 +52,7 @@ TOOLS_BY_SANDBOX = {
     # No OS sandbox for Claude Code shells on Windows: file edits only.
     "workspace-write": READ_TOOLS + EDIT_TOOLS,
     # The user's explicit "Tam yetki" choice: shells too.
-    "danger-full-access": READ_TOOLS + EDIT_TOOLS + SHELL_TOOLS,
+    "danger-full-access": READ_TOOLS + EDIT_TOOLS + SHELL_TOOLS + WEB_TOOLS,
 }
 # Fatum's desktop-task tools: coordinate, never observe or touch the screen.
 MCP_SERVER = "quartz_desktop"
@@ -72,7 +75,7 @@ ALLOWED_BY_SANDBOX = {
     "read-only": (),
     "workspace-write": ("Edit(./**)",),
     # Shells can reach any path anyway; the user's "Tam yetki" choice.
-    "danger-full-access": READ_TOOLS + EDIT_TOOLS + SHELL_TOOLS,
+    "danger-full-access": READ_TOOLS + EDIT_TOOLS + SHELL_TOOLS + WEB_TOOLS,
 }
 FILE_TOOLS = {"Edit": "update", "Write": "add", "NotebookEdit": "update"}
 # Variables that would make the child think it runs inside another Claude

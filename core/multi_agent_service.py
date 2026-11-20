@@ -26,6 +26,7 @@ from core.path_identity import canonical_key
 
 
 WRITER_CHECKPOINT_MAX_BYTES = 2 * 1024 ** 3
+FULL_ACCESS_TURN_TIMEOUT = "2h"
 
 
 class WriterDispatchError(RuntimeError):
@@ -809,6 +810,9 @@ class MultiAgentService:
             start_kwargs = {
                 "write": effective_write,
                 "full_access": bool(full_access),
+                # The runtime's 10-minute default cut long builds and renders (20 Nov);
+                # under "Tam yetki" a turn may run two hours. Stop still ends it at once.
+                **({"timeout": FULL_ACCESS_TURN_TIMEOUT} if full_access else {}),
                 "squad_task_id": squad_task_id,
                 "squad_agent_id": agent_id,
                 "conversation_id": conversation_id,

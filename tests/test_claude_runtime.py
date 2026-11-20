@@ -67,10 +67,14 @@ class CommandTests(unittest.TestCase):
         self.assertNotIn("Bash", rt.tools_for("workspace-write"))
         self.assertIn("Bash", rt.tools_for("danger-full-access"))
         for sandbox in claude_runtime.TOOLS_BY_SANDBOX:
-            for risky in ("SendMessage", "WebFetch", "CronCreate", "Task", "Artifact", "Skill"):
+            for risky in ("SendMessage", "CronCreate", "Task", "Artifact", "Skill"):
                 self.assertNotIn(risky, rt.tools_for(sandbox))
-        # Web search exists in exactly one mode, alone: no fetch, no files, no shell (13 Nov).
-        self.assertEqual([s for s in claude_runtime.TOOLS_BY_SANDBOX if "WebSearch" in rt.tools_for(s)], ["web"])
+        # Web: search alone in conversations (13 Nov); search and page reading under the
+        # user's "Tam yetki" (20 Nov). Read-only and project-write runs never reach the web.
+        self.assertEqual([s for s in claude_runtime.TOOLS_BY_SANDBOX if "WebSearch" in rt.tools_for(s)],
+                         ["web", "danger-full-access"])
+        self.assertEqual([s for s in claude_runtime.TOOLS_BY_SANDBOX if "WebFetch" in rt.tools_for(s)],
+                         ["danger-full-access"])
         self.assertEqual(rt.tools_for("web"), ("WebSearch",))
         args = rt.build_args("web")
         self.assertEqual(args[args.index("--tools") + 1], "WebSearch")

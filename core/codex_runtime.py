@@ -426,6 +426,8 @@ class CodexRuntime:
         common = ["--cd", str(project)]
         if sandbox == "danger-full-access":
             common.append("--dangerously-bypass-approvals-and-sandbox")
+            # User decision 20 Nov: "Tam yetki" means Codex's own full strength, live web included.
+            common += ["-c", 'web_search="live"']
         elif sandbox == "workspace-write" and approval == "on-request":
             common.append("--approve-for-me")
         else:
