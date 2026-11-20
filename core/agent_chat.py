@@ -46,6 +46,8 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
 
     def __init__(self, agent_service: MultiAgentService, store_path: str | Path):
         self.agent_service = agent_service
+        # Tam Yetki writers operate the desktop inside their own turn (user decision 20 Nov).
+        agent_service.desktop_attach = self._attach_desktop_session
         self.store = ConversationStore(store_path)
         from core.user_memory import FILE_NAME, UserMemory
         # Facts the user explicitly asked to remember, shared by every conversation.
@@ -400,6 +402,12 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
             self._closed = True
         for job in list(self.__dict__.get("_long_jobs", {}).values()):
             job.halt()  # resumable after restart; Stop is the user's only final word
+        session = self.__dict__.get("_desktop_session")
+        if session is not None:
+            try:
+                session.stop("cancelled")  # releases the lease, overlay and tool server
+            except Exception:
+                pass
         try:
             result = self.cancel_active()
         finally:
@@ -630,6 +638,30 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
 
     def set_response_detail(self, level):
         return self.store.set_response_detail(level)
+
+    def _attach_desktop_session(self, provider, project, prompt):
+        """A desktop session for the running turn's Tam Yetki writer (see NaturalDesktopTask.attach).
+
+        One session at a time: the operator lease also excludes a desktop task started from
+        the GUI. Stop in the chat cancels the writer, which ends this session; the overlay's
+        Stop ends the session, which cancels the writer.
+        """
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("SpeS kapanıyor")
+            cid = (self._active_turn or {}).get("conversation_id")
+        if not cid:
+            raise RuntimeError("Masaüstü oturumu yalnız çalışan bir turda açılır")
+        task = self.__dict__.get("_desktop_session")
+        if task is None:
+            from core.desktop_agents import DesktopAgentService
+            from core.natural_desktop import NaturalDesktopTask
+            task = NaturalDesktopTask(DesktopAgentService(), self.coordination_message)
+            self._desktop_session = task
+        models = {provider: self.store.get_agent_model(cid, provider)}
+        result = task.attach(str(prompt)[:8000], project, cid, provider, models)
+        return {"connection": result["connection"], "bind": task.bind_run,
+                "stop": lambda reason="failed": task.stop(reason)}
 
     def coordination_message(self, cid, sender, content, metadata=None):
         if sender not in {"user", "quartz", "codex", "antigravity", "claude"}:

@@ -66,7 +66,9 @@ class DesktopBroker:
     def grant(self, handle, provider, *, confirmed=False, seconds=600, launches=None, expected_targets=None, persistent_control=False, continuous=False):
         if confirmed is not True:
             raise PermissionError("Explicit desktop-control confirmation required")
-        if provider not in {"codex", "antigravity", "notion"}:
+        # Claude joins as an operator only as a Tam Yetki writer in its own turn (user decision
+        # 20 Nov); in desktop tasks Fatum still coordinates without input (natural_desktop).
+        if provider not in {"codex", "antigravity", "notion", "claude"}:
             raise ValueError("Select one input operator")
         if self.admission_guard is not None:
             self.admission_guard()  # May veto, never grants or restores authority.

@@ -58,6 +58,17 @@ TOOLS_BY_SANDBOX = {
 MCP_SERVER = "quartz_desktop"
 COLLABORATOR_TOOLS = ("task_context", "task_wait", "task_message")
 COLLABORATOR_MCP_TOOLS = tuple(f"mcp__{MCP_SERVER}__{name}" for name in COLLABORATOR_TOOLS)
+
+
+def _operator_tool_names():
+    from core.desktop_mcp import TOOLS
+    return tuple(t["name"] for t in TOOLS)
+
+
+# A Tam Yetki writer is also the desktop operator of its own turn (user decision 20 Nov):
+# every SpeS desktop tool, all of them still going through the broker (Stop, lease,
+# denied applications), next to the writer's own file, shell and web tools.
+OPERATOR_MCP_TOOLS = tuple(f"mcp__{MCP_SERVER}__{name}" for name in _operator_tool_names())
 # Read-only project access (plan/decision steps, user request 14 Nov): the same SpeS
 # project-read server Codex uses, which enforces the root, hides secret files and
 # bounds result sizes. Claude's own file tools stay off.
@@ -173,15 +184,23 @@ class ClaudeRuntime(CodexRuntime):
         from core.project_read_mcp import expected_server
         return {"mcpServers": {PROJECT_SERVER: {"type": "stdio", **expected_server(root)}}}
 
+    @staticmethod
+    def operator_mcp_config():
+        from core.helper_command import mcp_command
+        command = mcp_command()
+        return {"mcpServers": {MCP_SERVER: {"type": "stdio", "command": command[0], "args": [*command[1:]]}}}
+
     def build_args(self, sandbox, *, model=None, effort=None, session_id=None, resume_id=None, desktop=False,
                    project_root=None, read_dirs=()):
         tools = ",".join(self.tools_for(sandbox))
-        servers = (self.collaborator_mcp_config() if desktop else
+        operator = desktop == "operator"
+        servers = (self.operator_mcp_config() if operator else self.collaborator_mcp_config() if desktop else
                    self.project_mcp_config(project_root) if project_root else {"mcpServers": {}})
         args = ["-p", "--output-format", "stream-json", "--verbose",
                 "--strict-mcp-config", "--mcp-config", json.dumps(servers),
                 "--setting-sources", "", "--permission-mode", "dontAsk", "--tools", tools]
-        allowed = ",".join(ALLOWED_BY_SANDBOX[sandbox] + (COLLABORATOR_MCP_TOOLS if desktop else ())
+        allowed = ",".join(ALLOWED_BY_SANDBOX[sandbox]
+                           + (OPERATOR_MCP_TOOLS if operator else COLLABORATOR_MCP_TOOLS if desktop else ())
                            + (PROJECT_MCP_TOOLS if project_root else ()))
         if allowed:
             args += ["--allowedTools", allowed]
@@ -235,20 +254,27 @@ class ClaudeRuntime(CodexRuntime):
                 raise NotADirectoryError(str(read_root))
             expected_tools = tuple(expected_tools) + PROJECT_MCP_TOOLS
         desktop_env = None
+        desktop_mode = False
         if desktop_connection is not None:
-            # Orchestrator of a desktop task: coordination tools only, no built-in tools.
-            if sandbox != "none":
-                raise PermissionError("Claude joins a desktop task only without built-in tools")
             from core.desktop_agents import connection_environment
+            if sandbox == "danger-full-access":
+                # Tam Yetki writer operating the desktop in its own turn (20 Nov).
+                desktop_mode = "operator"
+                expected_tools = tuple(expected_tools) + OPERATOR_MCP_TOOLS
+            elif sandbox == "none":
+                # Orchestrator of a desktop task: coordination tools only, no built-in tools.
+                desktop_mode = "collaborator"
+                expected_tools = COLLABORATOR_MCP_TOOLS
+            else:
+                raise PermissionError("Claude joins a desktop task only without built-in tools, or under Tam Yetki")
             desktop_env = connection_environment(desktop_connection, self.child_environment())
-            expected_tools = COLLABORATOR_MCP_TOOLS
         extra_dirs = []
         for folder in read_dirs or ():
             path = Path(folder).resolve(strict=True)
             if not path.is_dir():
                 raise NotADirectoryError(str(path))
             extra_dirs.append(str(path))
-        if extra_dirs and (desktop_env is not None or sandbox == "none"):
+        if extra_dirs and (desktop_mode == "collaborator" or sandbox == "none"):
             raise PermissionError("Extra read folders need Claude's file tools and no desktop tools")
         project = Path(project_path).resolve(strict=True)
         if not project.is_dir():
@@ -302,7 +328,7 @@ class ClaudeRuntime(CodexRuntime):
             raise RuntimeError("Claude run cancelled before start")
         command = self._command(self.build_args(sandbox, model=clean_model, effort=clean_effort,
                                                 session_id=session_id, resume_id=resume_thread_id,
-                                                desktop=desktop_env is not None, project_root=read_root,
+                                                desktop=desktop_mode, project_root=read_root,
                                                 read_dirs=extra_dirs))
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | CREATE_SUSPENDED
         job_errors: list[str] = []

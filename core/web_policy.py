@@ -24,6 +24,8 @@ CODEX_MODES = ("cached", "live", "disabled")
 
 def web_allowed(agent: str, *, conversation_only: bool, project_read: bool = False, write: bool = False,
                 full_access: bool = False, desktop: bool = False) -> bool:
+    """The `web` flag of a conversation run. Full-access runs do not use this flag: their
+    runtimes switch the web on themselves (claude_runtime, codex_runtime; 20 Nov)."""
     return (agent in WEB_AGENTS and bool(conversation_only) and not project_read and not write
             and not full_access and not desktop)
 

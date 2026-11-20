@@ -369,7 +369,16 @@ class CodexRuntime:
             read_config = self._project_read_config(read_root, project, should_abort)
         guard_config = None
         base_env = None
-        if not read_root and (tool_guard or desktop_connection is not None):
+        # A Tam Yetki writer that also operates the desktop keeps its shell and web (20 Nov):
+        # only SpeS's desktop server is added, every input still goes through the broker.
+        full_operator = (desktop_connection is not None and sandbox == "danger-full-access" and not tool_guard
+                         and not read_root)
+        if full_operator:
+            from core.desktop_agents import codex_mcp_override
+            from core.cli_installer import cli_environment
+            base_env = cli_environment()
+            guard_config = ["-c", codex_mcp_override(desktop_connection)]
+        elif not read_root and (tool_guard or desktop_connection is not None):
             # Proven before any record/writer lock exists, like project read;
             # the probe and the real run share one base environment.
             from core.cli_installer import cli_environment
