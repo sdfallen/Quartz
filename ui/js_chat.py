@@ -211,7 +211,8 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     if (!convTeam.length) convTeam = TEAM_ORDER.slice();
     if (typeof renderCrew === 'function') renderCrew();
   }
-  document.querySelectorAll('.team-toggle').forEach(btn => btn.addEventListener('click', async () => {
+  // Headless test documents have no querySelectorAll; the real page always does.
+  (typeof document.querySelectorAll === 'function' ? Array.from(document.querySelectorAll('.team-toggle')) : []).forEach(btn => btn.addEventListener('click', async () => {
     const agent = btn.dataset.teamAgent;
     const active = !convTeam.includes(agent);
     if (!currentConvId || btn.disabled) return;
