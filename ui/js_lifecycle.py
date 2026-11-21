@@ -136,6 +136,7 @@ JAVASCRIPT = r"""  let lastUserActivityAt = Date.now();
               chatConvTitle.textContent = conv.title || 'Yeni Sohbet';
               if (conv.agent) syncAgentUI(conv.agent);
               syncModelCatalogAndSelection(st.data.models, conv.models);
+              if (typeof syncTeamMembers === 'function') syncTeamMembers(conv.team_passive);
               if (switched) {
                 const permSelect = document.getElementById('mainPermissionLevel');
                 if (permSelect) {

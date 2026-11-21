@@ -202,6 +202,36 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     antigravity: {col: 'laneColAgy', card: 'laneAgy', state: 'laneAgyState', trail: 'laneAgyTrail', status: 'laneAgyStatus'},
     claude: {col: 'laneColClaude', card: 'laneClaude', state: 'laneClaudeState', trail: 'laneClaudeTrail', status: 'laneClaudeStatus'},
   };
+  // Birlikte members of the current conversation; passive agents sit the team turn out (21 Nov).
+  const TEAM_ORDER = ['claude', 'codex', 'antigravity'];
+  let convTeam = TEAM_ORDER.slice();
+  function syncTeamMembers(passive) {
+    const off = new Set(Array.isArray(passive) ? passive : []);
+    convTeam = TEAM_ORDER.filter(a => !off.has(a));
+    if (!convTeam.length) convTeam = TEAM_ORDER.slice();
+    if (typeof renderCrew === 'function') renderCrew();
+  }
+  document.querySelectorAll('.team-toggle').forEach(btn => btn.addEventListener('click', async () => {
+    const agent = btn.dataset.teamAgent;
+    const active = !convTeam.includes(agent);
+    if (!currentConvId || btn.disabled) return;
+    btn.disabled = true;
+    try {
+      const res = await window.pywebview.api.chat_set_team_member(currentConvId, agent, active);
+      if (res && res.status === 'ok' && res.data && Array.isArray(res.data.team)) {
+        convTeam = TEAM_ORDER.filter(a => res.data.team.includes(a));
+        logLine(`${CREW_NAMES[agent] || agent} ${active ? 'ekibe döndü' : 'pasif yapıldı'}.`);
+      } else {
+        logLine(`Ekip güncellenemedi: ${(res && res.data) || 'bilinmeyen hata'}`);
+      }
+    } catch (e) {
+      logLine(`Ekip güncellenemedi: ${e}`);
+    } finally {
+      btn.disabled = false;
+      renderCrew();
+    }
+  }));
+  const CREW_NAMES = {claude: 'Fatum', codex: 'Fides', antigravity: 'Eos'};
   let crewProgress = {};
   let crewTrail = {};  // Last run's steps per agent; kept after the run so the column is not blank.
   let crewDesktop = null;
@@ -319,13 +349,22 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       card.setAttribute('aria-pressed', focus === agent ? 'true' : 'false');
       // Birlikte is Codex + Antigravity; Claude joins only when selected on its own.
       // Birlikte is the team: Fatum leads when Claude is connected, else the Codex + Antigravity pair.
-      card.dataset.included = focus === agent || (focus === 'collaboration' && (agent !== 'claude' || !unavailable)) ? 'true' : 'false';
+      const inTeam = convTeam.includes(agent);
+      card.dataset.included = focus === agent || (focus === 'collaboration' && inTeam && (agent !== 'claude' || !unavailable)) ? 'true' : 'false';
+      const teamBtn = document.querySelector(`.team-toggle[data-team-agent="${agent}"]`);
+      if (teamBtn) {
+        teamBtn.setAttribute('aria-pressed', inTeam ? 'true' : 'false');
+        teamBtn.textContent = inTeam ? 'Ekipte' : 'Pasif';
+        const who = CREW_NAMES[agent] || agent;
+        teamBtn.title = inTeam ? `Birlikte modunda ${who} ekipte; tıklayınca pasif olur`
+          : `${who} pasif: Birlikte turlarına katılmaz; tıklayınca ekibe döner`;
+      }
       card.dataset.state = view.state;
       if (view.state !== 'idle') flow.push(agent);
       const stateEl = document.getElementById(lane.state);
       if (stateEl && stateEl.textContent !== view.text) stateEl.textContent = view.text;
       const col = document.getElementById(lane.col);
-      if (col) { col.dataset.state = view.state; col.dataset.included = card.dataset.included; }
+      if (col) { col.dataset.state = view.state; col.dataset.included = card.dataset.included; col.dataset.team = inTeam ? 'on' : 'off'; }
       renderCrewTrail(lane, crewTrail[agent] || [], crewProgress[agent]?.status === 'running');
       renderLaneStatus(agent, lane);
     }
@@ -349,7 +388,9 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     // The label is upper-cased by CSS; in Turkish "Antigravity" would become "ANTİGRAVİTY".
     if (label) label.lang = coreText.includes('Antigravity') ? 'en' : 'tr';
     if (core) {
-      const teamText = crewSeg('claude')?.disabled ? 'Fides ve Eos' : 'Fatum, Fides ve Eos';
+      const teamAgents = convTeam.filter(a => a !== 'claude' || !crewSeg('claude')?.disabled).map(a => CREW_NAMES[a]);
+      const teamText = teamAgents.length > 1 ? teamAgents.slice(0, -1).join(', ') + ' ve ' + teamAgents[teamAgents.length - 1]
+        : (teamAgents[0] || 'Fides ve Eos');
       const coreTitle = focus === 'collaboration' ? `Birlikte: ${teamText} planlayıp birlikte çalışıyor`
         : `Birlikte moduna geç: ${teamText} planlayıp birlikte çalışır`;
       if (core.getAttribute?.('title') !== coreTitle) core.setAttribute('title', coreTitle);
@@ -568,6 +609,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       chatConvTitle.textContent = conv.title || 'Yeni Sohbet';
       if (conv.agent) syncAgentUI(conv.agent);
       syncModelCatalogAndSelection(data.models, conv.models);
+      syncTeamMembers(conv.team_passive);
       const activeProjectId = conv.project_id || 'squad-pilot';
       mainProjectSelect.value = activeProjectId;
       if (chatProjectTag) chatProjectTag.textContent = projects.find(p => p.id === activeProjectId)?.name || activeProjectId;

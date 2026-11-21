@@ -348,8 +348,11 @@ class LongJob:
 
     def __init__(self, ledger: JobLedger, *, run_milestone, verify=None, checkpoint=None, baseline=None, dirty=None,
                  snapshot=None,
-                 changed=None, commit=None, limits=None, notify=None, clock=time.time, awake=keep_awake):
+                 changed=None, commit=None, limits=None, notify=None, clock=time.time, awake=keep_awake,
+                 writers=None):
         self.ledger = ledger
+        # The agents the user keeps active in this conversation (passive ones never write, 21 Nov).
+        self.writers = writers or (lambda: WRITER_ORDER)
         self.run_milestone = run_milestone
         self.verify = verify or (lambda stop: run_verify(ledger, stop))
         self.checkpoint = checkpoint or (lambda: milestone_checkpoint(ledger))
@@ -441,7 +444,11 @@ class LongJob:
         except Exception:
             snapshot = {}
         waits = []
-        for agent in WRITER_ORDER:
+        try:
+            order = [a for a in WRITER_ORDER if a in set(self.writers() or ())] or list(WRITER_ORDER)
+        except Exception:
+            order = list(WRITER_ORDER)
+        for agent in order:
             until = self._limited_until(agent, snapshot, now)
             if not until:
                 return agent, None

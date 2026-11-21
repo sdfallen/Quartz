@@ -598,6 +598,13 @@ class IPCServer:
             res = self._get_agent_chat().set_agent_model(cid, agent, model=model, effort=effort)
             return {"status": "ok", "data": res}
 
+        if action == "chat_set_team_member":
+            data = req.get("data", {}) or {}
+            cid = str(data.get("conversation_id", "")).strip() or None
+            res = self._get_agent_chat().set_team_member(cid, str(data.get("agent", "")),
+                                                         data.get("active") is True)
+            return {"status": "ok", "data": res}
+
         if action == "chat_models":
             force = bool((req.get("data", {}) or {}).get("force", False))
             return {"status": "ok", "data": self._get_agent_center().list_models(force=force)}

@@ -168,7 +168,9 @@ class LongJobChatMixin:
     # -- internals ------------------------------------------------------------------
     def _make_job(self, ledger):
         from core.agent_limits import snapshot
+        cid = ledger.data.get("conversation_id")
         return LongJob(ledger, run_milestone=self._job_run_milestone, limits=snapshot,
+                       writers=lambda: self._job_members(cid),
                        notify=lambda text, urgent=False, report=False: self._job_note(ledger, text, urgent=urgent,
                                                                                       report=report))
 
@@ -190,12 +192,21 @@ class LongJobChatMixin:
             turn = self._active_turn
             return bool(turn and (turn.get("status") in {"running", "cancelling"} or turn.get("worker_pending")))
 
+    def _job_members(self, cid) -> list:
+        """The conversation's active Birlikte members (all three when the chat has no team setting)."""
+        members = getattr(self, "_team_members", None)
+        return (members(cid) if callable(members) else None) or ["claude", "codex", "antigravity"]
+
     def _job_run_milestone(self, ledger, milestone, writer, stop: threading.Event) -> dict:
         cid = ledger.data["conversation_id"]
         while self._job_turn_busy():  # the user's own turn goes first
             if stop.wait(POLL_SECONDS):
                 return {"status": "cancelled"}
-        agent = "collaboration" if writer == "claude" and self._team_ready() else writer
+        # The team leads with its first active member; a passive Fatum never gets here as writer.
+        members = self._job_members(cid)
+        # Fatum leads only when logged in; another lead needs no probe (21 Nov).
+        agent = ("collaboration" if writer == members[0] and len(members) > 1
+                 and (writer != "claude" or self._team_ready()) else writer)
         prompt = milestone_prompt(ledger, milestone, writer)
         sent, text = None, "SpeS yeni turu başlatamadı."
         for _ in range(SETTLE_TRIES):

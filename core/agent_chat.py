@@ -629,6 +629,21 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
                 "active_conversation": conv,
             }
 
+    def set_team_member(self, conversation_id: str | None, agent: str, active: bool) -> dict:
+        """Birlikte: make an agent passive (limit reached, not fit for the job) or active (21 Nov).
+
+        Takes effect from the next turn; a running turn keeps the team it started with."""
+        with self._lock:
+            cid = conversation_id or self.store.get_active()["id"]
+            team = self.store.set_team_member(cid, agent, bool(active))
+            return {"conversation_id": cid, "team": team, "active_conversation": self.store.get(cid)}
+
+    def _team_members(self, cid) -> list:
+        try:
+            return self.store.get_team(cid) or list(TEAM)
+        except Exception:
+            return list(TEAM)
+
     def get_model_selection(self, conversation_id: str | None = None) -> dict:
         """Read a detached selection snapshot without probing providers or writing history."""
         with self._lock:
@@ -909,6 +924,12 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
                 raise RuntimeError("Mesaj geçmişi olan sohbet başka projeye taşınamaz; proje seçiciyi kullanın.")
             self.store.update_project(conversation_id, project_id)
 
+    def _active_group_targets(self, cid, text) -> list[str]:
+        """The classic pair without the agents the user made passive (21 Nov)."""
+        targets = self._resolve_group_targets(text)
+        members = self._team_members(cid)
+        return [a for a in targets if a in members] or [a for a in members if a in {"codex", "antigravity"}] or targets
+
     @staticmethod
     def _resolve_group_targets(text: str) -> list[str]:
         """Allow addressing only Codex, only Antigravity, or both in Birlikte mode."""
@@ -1114,11 +1135,11 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
 
             conv = self.store.get(cid)
             bot_seq = self._next_sequence(conv)
-            team_turn = selected_agent in {"collaboration", "both"} and self._team_ready()
+            team_turn = selected_agent in {"collaboration", "both"} and self._team_ready(cid)
             if team_turn:
-                first_sender, first_recipient = TEAM[0], "all"
+                first_sender, first_recipient = self._team_members(cid)[0], "all"
             elif selected_agent in {"collaboration", "both"}:
-                targets = self._resolve_group_targets(text)
+                targets = self._active_group_targets(cid, text)
                 first_sender = targets[0]
                 first_recipient = "all" if len(targets) > 1 else "user"
             else:
@@ -2284,7 +2305,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
         if self._is_turn_cancelled(first_msg_id):
             return
 
-        targets = self._resolve_group_targets(prompt)
+        targets = self._active_group_targets(cid, prompt)
         rounds = self.MAX_GROUP_ROUNDS
         if self._conversation_only(cid) and not re.search(r"tartış|değerlendir|karşılaştır|birbirin|review", prompt, re.I):
             rounds = 1

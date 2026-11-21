@@ -1073,6 +1073,10 @@ class Api:
             "effort": effort or None,
         })
 
+    def chat_set_team_member(self, conversation_id: str, agent: str, active: bool) -> dict:
+        return ipc_send("chat_set_team_member", {"conversation_id": conversation_id or None,
+                                                 "agent": agent, "active": active is True})
+
     def chat_models(self, force: bool = False) -> dict:
         return ipc_send("chat_models", {"force": bool(force)})
 

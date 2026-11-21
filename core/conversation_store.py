@@ -323,6 +323,35 @@ class ConversationStore:
             self._save()
             return dict(models[agent_key])
 
+    TEAM_AGENTS = ("claude", "codex", "antigravity")
+
+    def get_team(self, conversation_id: str) -> list:
+        """Active Birlikte members of this conversation, in team order (all by default)."""
+        with self._lock:
+            passive = set(self.get(conversation_id).get("team_passive") or ())
+            return [a for a in self.TEAM_AGENTS if a not in passive]
+
+    def set_team_member(self, conversation_id: str, agent: str, active: bool) -> list:
+        """Make an agent passive (out of Birlikte turns) or active again; one must stay active."""
+        agent_key = str(agent or "").strip().lower()
+        if agent_key not in self.TEAM_AGENTS:
+            raise ValueError(f"Geçersiz ajan türü: {agent}")
+        with self._lock:
+            if conversation_id not in self._conversations:
+                raise KeyError(f"Conversation not found: {conversation_id}")
+            conv = self._conversations[conversation_id]
+            passive = [a for a in self.TEAM_AGENTS if a in set(conv.get("team_passive") or ())]
+            if active:
+                passive = [a for a in passive if a != agent_key]
+            elif agent_key not in passive:
+                if len(passive) + 1 >= len(self.TEAM_AGENTS):
+                    raise ValueError("En az bir ajan aktif kalmalı.")
+                passive.append(agent_key)
+            conv["team_passive"] = [a for a in self.TEAM_AGENTS if a in passive]
+            conv["updated_at"] = time.time()
+            self._save()
+            return [a for a in self.TEAM_AGENTS if a not in passive]
+
     def get_agent_model(self, conversation_id: str, agent: str) -> dict:
         agent_key = str(agent or "").strip().lower()
         with self._lock:
