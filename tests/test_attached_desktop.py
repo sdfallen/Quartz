@@ -213,3 +213,87 @@ class SessionEndKeepsWriterTests(AttachedDesktopTests):
         self.task.bind_run("claude", run, "run-1")
         self.task.stop("blocked: target closed or inaccessible")
         self.assertEqual(run.cancelled, [])
+
+
+class EosAttachTests(unittest.TestCase):
+    """Eos (Antigravity) joins the Tam Yetki writers on the screen (user request 21 Nov)."""
+
+    def service(self, folder, ready=True):
+        from core.multi_agent_service import MultiAgentService
+        import threading
+        service = MultiAgentService.__new__(MultiAgentService)
+        service.projects = MagicMock()
+        service.projects.get.return_value = service.projects.selected.return_value = {
+            "id": "p1", "path": str(folder), "name": "p"}
+        service.antigravity = MagicMock()
+        service.antigravity.probe.return_value = {"ready": True}
+        service.antigravity.operator_desktop_ready.return_value = ready
+        service.antigravity.start.return_value = {"id": "ag-run", "status": "running"}
+        service._lock = threading.RLock()
+        service._links = {}
+        service.check_squad_connection = lambda project_id: {"connected": False}
+        service._start_writer = lambda provider, project, start, *args, **kwargs: start(*args, **kwargs)
+        session = {"connection": {"url": "u", "token": "t"}, "bind": Mock(), "stop": Mock()}
+        service.desktop_attach = Mock(return_value=session)
+        return service, session
+
+    def test_a_full_access_eos_writer_is_attached_and_bound(self):
+        with tempfile.TemporaryDirectory() as folder:
+            service, session = self.service(folder)
+            service.dispatch_antigravity("oyunu test et", chat_mode=True, write=True, confirm_write=True,
+                                         full_access=True)
+        self.assertEqual(service.antigravity.start.call_args.kwargs["desktop_connection"], {"url": "u", "token": "t"})
+        session["bind"].assert_called_once_with("antigravity", service.antigravity, "ag-run")
+
+    def test_without_the_consented_registration_eos_runs_without_the_screen(self):
+        with tempfile.TemporaryDirectory() as folder:
+            service, _ = self.service(folder, ready=False)
+            service.dispatch_antigravity("derle", chat_mode=True, write=True, confirm_write=True, full_access=True)
+        service.desktop_attach.assert_not_called()
+        self.assertNotIn("desktop_connection", service.antigravity.start.call_args.kwargs)
+
+    def test_a_failed_start_releases_the_screen(self):
+        with tempfile.TemporaryDirectory() as folder:
+            service, session = self.service(folder)
+            service.antigravity.start.side_effect = RuntimeError("agy down")
+            with self.assertRaises(RuntimeError):
+                service.dispatch_antigravity("x", chat_mode=True, write=True, confirm_write=True, full_access=True)
+        session["stop"].assert_called_once_with("failed")
+
+    def test_agy_is_ready_only_when_already_registered_and_never_registers(self):
+        from core.antigravity_runtime import AntigravityRuntime
+        runtime = AntigravityRuntime.__new__(AntigravityRuntime)
+        with tempfile.TemporaryDirectory() as folder:
+            exe = Path(folder) / "agy.exe"
+            exe.touch()
+            runtime.executable = str(exe)
+            with patch("core.desktop_agents.mcp_command", return_value=["helper.exe"]), \
+                    patch("core.desktop_agents.is_antigravity_mcp_registered", return_value=False) as registered, \
+                    patch("subprocess.run", side_effect=AssertionError("no mcp add")):
+                self.assertFalse(runtime.operator_desktop_ready())
+                registered.return_value = True
+                self.assertTrue(runtime.operator_desktop_ready())
+
+    def _gemini_settings(self, full_access, tool_guard=False):
+        from core.gemini_runtime import GeminiRuntime
+        runtime = object.__new__(GeminiRuntime)
+        with patch("core.gemini_runtime.cli_environment", return_value={}), \
+                patch("core.desktop_agents.mcp_command", return_value=["helper.exe"]):
+            options = runtime._process_options({"env": {}}, Path("."), {"token": "t", "url": "http://localhost/tool"},
+                                               tool_guard, full_access=full_access)
+        path = Path(options["env"]["GEMINI_CLI_SYSTEM_SETTINGS_PATH"])
+        try:
+            return json.loads(path.read_text())
+        finally:
+            path.unlink()
+            path.parent.rmdir()
+
+    def test_gemini_full_access_writer_keeps_its_tools_and_adds_the_desktop(self):
+        settings = self._gemini_settings(full_access=True)
+        self.assertNotIn("tools", settings)
+        self.assertIn("quartz-desktop", settings["mcpServers"])
+        self.assertEqual(settings["mcp"]["allowed"], ["quartz-desktop"])
+
+    def test_gemini_desktop_task_stays_restricted_to_desktop_tools(self):
+        settings = self._gemini_settings(full_access=False)
+        self.assertTrue(all(n.startswith("mcp_quartz-desktop_") for n in settings["tools"]["core"]))

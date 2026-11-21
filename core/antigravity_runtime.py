@@ -210,6 +210,16 @@ class AntigravityRuntime:
             self._SHARED_MODELS_CACHE[cache_key] = (self._models_cache_at, dict(result))
         return dict(result)
 
+    def operator_desktop_ready(self) -> bool:
+        """agy reads its MCP servers from the user's own config. A Tam Yetki writer gets the
+        desktop only when an earlier, consented desktop task already registered SpeS there;
+        SpeS never writes that config from a work turn (user configs stay untouched)."""
+        from core.desktop_agents import is_antigravity_mcp_registered, mcp_command
+        try:
+            return Path(str(self.executable or "")).is_file() and is_antigravity_mcp_registered(mcp_command())
+        except Exception:
+            return False
+
     def probe(self, force: bool = False) -> dict:
         if not self.executable:
             res = {
@@ -360,7 +370,8 @@ class AntigravityRuntime:
         if desktop_connection is not None:
             from core.desktop_agents import connection_environment
             process_options["env"] = connection_environment(desktop_connection)
-        process_options = self._process_options(process_options, project, desktop_connection, tool_guard)
+        process_options = self._process_options(process_options, project, desktop_connection, tool_guard,
+                                                full_access=full_access)
         job_errors: list[str] = []
         try:
             process = subprocess.Popen(
@@ -481,7 +492,7 @@ class AntigravityRuntime:
     def _command(self, args):
         return [self.executable, *args]
 
-    def _process_options(self, options, project, desktop_connection, tool_guard):
+    def _process_options(self, options, project, desktop_connection, tool_guard, full_access=False):
         return options
 
     def _normalize_event(self, event):

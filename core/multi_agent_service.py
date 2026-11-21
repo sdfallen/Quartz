@@ -863,8 +863,17 @@ class MultiAgentService:
             if model or effort:
                 start_kwargs["model"] = model
                 start_kwargs["effort"] = effort
-            run = (self._start_writer("antigravity", project, self.antigravity.start, str(prompt), project["path"], **start_kwargs)
-                   if effective_write else self.antigravity.start(str(prompt), project["path"], **start_kwargs))
+            ready = getattr(self.antigravity, "operator_desktop_ready", None)
+            desktop = (self._attach_desktop("antigravity", project, prompt, start_kwargs, full_access and effective_write)
+                       if full_access and effective_write and callable(ready) and ready() else None)
+            try:
+                run = (self._start_writer("antigravity", project, self.antigravity.start, str(prompt), project["path"], **start_kwargs)
+                       if effective_write else self.antigravity.start(str(prompt), project["path"], **start_kwargs))
+            except Exception:
+                if desktop:
+                    desktop["stop"]("failed")
+                raise
+            self._bind_desktop(desktop, "antigravity", self.antigravity, run)
             with self._lock:
                 self._links[run["id"]] = {
                     "provider": "antigravity", "project_id": project["id"],
