@@ -17,6 +17,11 @@ Android uygulaması. Google/Firebase kullanmaz: telefon yalnız **Tailscale**
   barındırdığı Nemotron Bolt modeli) ya da soruyu ekibe iletir ve "Ekibe soruyorum" der.
   NVIDIA'ya yalnız ekip durumu ve son mesajların kısaltılmış metni gider; kod, dosya,
   hafıza (ve "bunu hatırla" dediğin mesajlar), yol ve gizli değerler gitmez. İş isteği ve risk/güvenlik soruları her zaman ekibe gider.
+- **Piper sesi (isteğe bağlı):** Bilgisayarda Piper kuruluysa cevaplar onun sesiyle okunur.
+  Bilgisayar metni kendi üzerinde sese çevirir (`/api/speech`, WAV); metin başka yere gitmez.
+  Piper yoksa ya da ulaşılamıyorsa telefon Android'in sesine döner. Kurulum yeri:
+  `%LOCALAPPDATA%\Quartz\voice\piper-venv` (piper-tts) ve `...\voice\models\tr_TR-dfki-medium.onnx`.
+  Türkçe ses CC BY-NC-SA 4.0 lisanslı: yalnız kişisel kullanım, SpeS paketine konmaz.
 - **Hafıza:** Ayarlar'da ajanların hatırladıkları görünür; her satır silinebilir.
 
 ## Kurulum (bir kez)

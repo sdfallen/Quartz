@@ -64,6 +64,8 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private val said = mutableStateOf("")
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    // The desktop's Piper voice when it has one; Android's voice otherwise (22 Nov).
+    private var piper: PiperPlayer? = null
     private var recognizer: SpeechRecognizer? = null
     private var pendingSpeech: String? = null
     @Volatile private var open = true
@@ -86,6 +88,7 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         super.onCreate(savedInstanceState)
         Notifier.cancelAlarm(this)
         tts = TextToSpeech(this, this)
+        piper = runCatching { PiperPlayer(this, Prefs.api(this), ::afterSpeech, ::androidSay) }.getOrNull()
         pendingSpeech = intent.getStringExtra(EXTRA_OPENING) ?: "Merhaba, SpeS seni dinliyor. Ne sormak istersin?"
         setContent { SpesTheme { Screen() } }
     }
@@ -107,7 +110,7 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     private fun afterSpeech(id: String?) {
         if (!open) return
-        val stillTalking = tts?.isSpeaking == true
+        val stillTalking = speaking()
         if (id == UTTER_LISTEN || (listenWhenQuiet && !stillTalking)) {
             listenWhenQuiet = false
             listen()
@@ -118,17 +121,33 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     /** Back to listening once the last queued sentence has been read. */
     private fun listenWhenDone() {
-        if (tts?.isSpeaking == true) listenWhenQuiet = true else listen()
+        if (speaking()) listenWhenQuiet = true else listen()
     }
+
+    private fun speaking() = tts?.isSpeaking == true || piper?.busy == true
+
+    private fun silence() { tts?.stop(); piper?.stop() }
 
     private fun say(text: String, listenAfter: Boolean = true, queue: Boolean = false) {
         said.value = text
+        val id = if (listenAfter) UTTER_LISTEN else UTTER_ONLY
+        val voice = piper
+        if (voice != null && voice.enabled) {
+            phase.value = Phase.Speaking
+            // Team replies queue up behind each other; a new answer never cuts the previous one off.
+            voice.speak(text, id, queue)
+            return
+        }
+        if (!queue) tts?.stop()
+        androidSay(text, id)
+    }
+
+    /** Android's own voice; also where Piper hands its text back when the desktop has none. */
+    private fun androidSay(text: String, id: String) {
         val engine = tts
         if (!ttsReady || engine == null) { phase.value = Phase.Idle; return }
         phase.value = Phase.Speaking
-        // Team replies queue up behind each other; a new answer never cuts the previous one off.
-        engine.speak(text, if (queue) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH, null,
-            if (listenAfter) UTTER_LISTEN else UTTER_ONLY)
+        engine.speak(text, TextToSpeech.QUEUE_ADD, null, id)
     }
 
     private fun listen() {
@@ -203,7 +222,7 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
      */
     private fun stopEverything(api: SpesApi) {
         generation++
-        tts?.stop()
+        silence()
         runCatching { recognizer?.cancel() }
         listenWhenQuiet = false
         waitingSeq = -1
@@ -256,6 +275,7 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     override fun onDestroy() {
         open = false
         recognizer?.destroy()
+        piper?.close()
         tts?.stop(); tts?.shutdown()
         super.onDestroy()
     }
@@ -282,7 +302,7 @@ class VoiceActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 }
             }
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = { tts?.stop(); silentTries = 0; listen() }, modifier = Modifier.fillMaxWidth().height(64.dp), shape = CircleShape) {
+                Button(onClick = { silence(); silentTries = 0; listen() }, modifier = Modifier.fillMaxWidth().height(64.dp), shape = CircleShape) {
                     Text(if (p == Phase.Listening) "Dinliyorum…" else "Konuş", fontSize = 18.sp)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {

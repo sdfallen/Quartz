@@ -147,6 +147,25 @@ class SpesApi(baseUrl: String, private val token: String) {
         return Triple(json.optString("route", "team"), json.optString("reply"), json.optInt("after"))
     }
 
+    /** The desktop's Piper voice for this text as WAV (22 Nov); IOException when it has none. */
+    fun speech(text: String): ByteArray {
+        val connection = (URL("$base/api/speech").openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"; connectTimeout = 10_000; readTimeout = 60_000; useCaches = false; doOutput = true
+            setRequestProperty("Accept", "audio/wav")
+            setRequestProperty("Authorization", "Bearer $token")
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        }
+        try {
+            connection.outputStream.use { it.write(JSONObject().put("text", text).toString().toByteArray(Charsets.UTF_8)) }
+            val code = connection.responseCode
+            if (code == 401) throw AuthException()
+            if (code !in 200..299) throw IOException("Bilgisayarda Piper sesi yok ($code)")
+            return connection.inputStream.use { it.readBytes() }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     fun send(text: String) {
         request("POST", "/api/send", JSONObject().put("message", text), 20_000)
     }

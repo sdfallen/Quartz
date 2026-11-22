@@ -71,6 +71,7 @@ class MobileGateway:
         self._pair_lock = threading.Lock()
         self._voice_lock = threading.Lock()
         self._voice_history = []  # last spoken exchanges, memory only
+        self._speech = None  # Piper on this computer, started on first use (22 Nov)
         self.host, self.port = host, port
         self._server = None
         self._attempts = defaultdict(deque)
@@ -324,7 +325,7 @@ class MobileGateway:
                 if not self._authorized(): self._json(401, {"error": "Yetkisiz erişim"}); return
                 if path == "/api/health": self._json(200, {"components": gateway.assistant.health_status()}); return
                 if path == "/api/tasks": self._json(200, gateway.assistant.list_tasks()); return
-                if path == "/api/ping": self._json(200, {"app": "SpeS", "api": 5}); return
+                if path == "/api/ping": self._json(200, {"app": "SpeS", "api": 6, "speech": gateway.speech().available()}); return
                 if path in ("/api/overview", "/api/conversations", "/api/memory"):
                     try: self._json(200, gateway.overview() if path == "/api/overview" else
                                     gateway.conversations() if path == "/api/conversations" else {"items": gateway._chat().memory_list()})
@@ -386,6 +387,18 @@ class MobileGateway:
                     except RuntimeError as exc: self._json(409, {"error": str(exc)})
                     except Exception: log.exception("Mobile voice failed"); self._json(500, {"error": "Sesli istek yapılamadı"})
                     return
+                if path == "/api/speech":
+                    try:
+                        length = int(self.headers.get("Content-Length", "0"))
+                        if length < 1 or length > 16384: raise ValueError("Geçersiz istek boyutu")
+                        raw = gateway.speech().synthesize(str(json.loads(self.rfile.read(length)).get("text", "")))
+                        self.send_response(200); self.send_header("Content-Type", "audio/wav")
+                        self.send_header("Content-Length", str(len(raw))); self.send_header("Cache-Control", "no-store")
+                        self.send_header("X-Content-Type-Options", "nosniff"); self.end_headers(); self.wfile.write(raw)
+                    except ValueError as exc: self._json(400, {"error": str(exc)})
+                    except LookupError as exc: self._json(503, {"error": str(exc)})
+                    except Exception: log.exception("Mobile speech failed"); self._json(500, {"error": "Ses üretilemedi"})
+                    return
                 if path == "/api/send":
                     try:
                         length = int(self.headers.get("Content-Length", "0"))
@@ -415,7 +428,17 @@ class MobileGateway:
         log.info("Mobile gateway listening locally on %s:%d", self.host, self.port)
         self._server.serve_forever(poll_interval=.5)
 
+    def speech(self):
+        """Piper voice for the phone (separate local process; never sends text anywhere)."""
+        if self._speech is None:
+            from core.piper_speech import PiperSpeech
+            self._speech = PiperSpeech()
+        return self._speech
+
     def stop(self):
+        if self._speech is not None:
+            try: self._speech.close()
+            except Exception: log.warning("Piper did not close cleanly")
         if self._server:
             try:
                 self._server.shutdown()
