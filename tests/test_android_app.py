@@ -62,8 +62,10 @@ class AndroidAppTests(unittest.TestCase):
     def test_stop_silences_and_does_not_listen_again(self):
         voice = (SOURCES / "VoiceActivity.kt").read_text(encoding="utf-8")
         stop = voice[voice.index("private fun stopEverything"):voice.index("private fun ask")]
-        for needed in ("tts?.stop()", "recognizer?.cancel()", "generation++", "api.stop()", "listenAfter = false"):
+        for needed in ("silence()", "recognizer?.cancel()", "generation++", "api.stop()", "listenAfter = false"):
             self.assertIn(needed, stop)
+        # Dur silences both voices: Android's and the desktop's Piper (22 Nov).
+        self.assertIn("private fun silence() { tts?.stop(); piper?.stop() }", voice)
         self.assertNotIn("Başka bir şey var mı", voice)
 
     def test_personas_match_the_desktop(self):
