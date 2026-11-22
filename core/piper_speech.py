@@ -159,6 +159,10 @@ class PiperSpeech:
                 proc.kill()
             except Exception:
                 pass
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
 
     def close(self):
         with self._lock:
