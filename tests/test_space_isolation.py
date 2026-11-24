@@ -99,24 +99,31 @@ class SecurityAlertsStayInWorkspaceTests(unittest.TestCase):
     def texts(self, conv):
         return [m["content"] for m in self.store.get(conv["id"])["messages"]]
 
-    def test_a_medium_alert_goes_to_the_latest_workspace_task(self):
+    def security_log(self):
+        logs = [c for c in self.store.list() if self.store.get(c["id"]).get("kind") == "security"]
+        self.assertEqual(len(logs), 1, "one log, reused")
+        return self.store.get(logs[0]["id"])
+
+    def test_a_medium_alert_goes_to_eos_own_workspace_log(self):
+        # Live 24 Nov: 84 alerts had filled the user's 'Yeni Görev' task.
         self.alert("medium")
+        self.alert("medium")
+        log = self.security_log()
+        self.assertEqual((log["title"], log["space"]), ("Eos · Güvenlik", "work"))
+        self.assertEqual(sum("Güvenlik uyarısı (Orta)" in m["content"] for m in log["messages"]), 2)
         self.assertEqual(self.texts(self.chat), [])
-        self.assertTrue(any("Güvenlik uyarısı (Orta)" in t for t in self.texts(self.task)))
-        self.assertEqual(self.store.get_active()["id"], self.chat["id"], "the user stays in Sohbet")
+        self.assertEqual(self.texts(self.task), [])
+        self.assertEqual(self.store.get_active()["id"], self.chat["id"], "the user stays where they are")
 
     def test_a_high_alert_still_reaches_the_open_conversation(self):
         self.alert("high")
         self.assertTrue(any("Güvenlik uyarısı (Yüksek)" in t for t in self.texts(self.chat)))
 
-    def test_without_any_workspace_task_the_alert_is_not_lost(self):
-        for conv in self.store.list():
-            if conv["space"] == "work":
-                self.service.delete_conversation(conv["id"], confirmed=True)
-        self.assertIsNone(self.store.latest_in_space("work"))
-        self.assertEqual(self.store.get_active()["id"], self.chat["id"])
+    def test_the_log_survives_a_restart_and_is_reused(self):
         self.alert("medium")
-        self.assertTrue(any("Güvenlik uyarısı" in t for t in self.texts(self.chat)))
+        first = self.security_log()["id"]
+        again = AgentChatService(MagicMock(), self.store.path)
+        self.assertEqual(again.store.special_conversation("security", "Eos · Güvenlik"), first)
 
     def test_the_environment_check_is_hidden_in_sohbet(self):
         self.assertIn(':root[data-space="chat"] #envHealth { display: none !important; }', gui._HTML)

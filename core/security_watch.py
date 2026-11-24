@@ -45,6 +45,7 @@ ABUSE = [
 ]
 ALERT_TTL = 30 * 60
 MAX_ALERTS_PER_10_MIN = 6
+REPEAT_QUIET = 24 * 60 * 60  # the same program's medium alert is said once a day
 
 
 def _user_dirs():
@@ -163,6 +164,9 @@ class SecurityWatch:
         self._defender_record = 0
         self._alerts: dict[str, dict] = {}
         self._recent: list[float] = []
+        # Program name -> last time its medium alert was said. Windows and Visual Studio start
+        # the same helpers from Temp again and again (DismHost.exe, BackgroundDownload.exe).
+        self._said: dict[str, float] = {}
         self._stop = threading.Event()
         self._thread = None
 
@@ -312,6 +316,13 @@ class SecurityWatch:
                 except OSError:
                     alert["actions"] = ["ignore"]
             self._alerts[alert["id"]] = alert
+            repeat_key = (kind, str(target.get("name") or "").lower()) if kind == "process" else None
+            if severity == "medium" and repeat_key and repeat_key[1]:
+                last = self._said.get(repeat_key)
+                self._said[repeat_key] = now
+                if last is not None and now - last < REPEAT_QUIET:
+                    # Kept in the list (and actionable there), not said again.
+                    return self.public(alert)
         public = self.public(alert)
         try:
             self.emit(public)

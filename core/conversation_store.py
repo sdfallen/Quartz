@@ -213,6 +213,20 @@ class ConversationStore:
             self._save()
             return deepcopy(record)
 
+    def special_conversation(self, kind: str, title: str, space: str = "work") -> str:
+        """A conversation SpeS keeps for itself (e.g. Eos's security log), created on first use.
+        It never becomes the active conversation on its own: the user stays where they are."""
+        with self._lock:
+            found = [c for c in self._conversations.values() if c.get("kind") == kind]
+            if found:
+                return max(found, key=lambda c: c.get("updated_at", 0))["id"]
+            active = self._active_id
+            record = self.create(title=title, agent="collaboration", space=space)
+            self._conversations[record["id"]]["kind"] = kind
+            self._active_id = active if active in self._conversations else record["id"]
+            self._save()
+            return record["id"]
+
     def get_active(self) -> dict:
         with self._lock:
             if not self._active_id or self._active_id not in self._conversations:

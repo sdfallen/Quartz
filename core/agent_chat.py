@@ -829,12 +829,12 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
         return self.security
 
     def _alert_conversation(self, severity) -> str:
-        """Where Eos speaks. Sohbet is for talking (24 Nov): a medium finding goes to the latest
-        Workspace task. A high one rings the phone, so it stays where the user is."""
-        active = self.store.get_active()
-        if severity == "high" or space_of(active) == "work":
-            return active["id"]
-        return (self.store.latest_in_space("work") or active)["id"]
+        """Where Eos speaks. A medium finding goes to Eos's own Workspace log, never into a task
+        or a Sohbet (live 24 Nov: 84 alerts filled a task). A high one rings the phone, so it
+        stays where the user is."""
+        if severity == "high":
+            return self.store.get_active()["id"]
+        return self.store.special_conversation("security", "Eos · Güvenlik", "work")
 
     def _post_security_alert(self, alert):
         # Low findings (a new download) stay in the watcher's list; the rest is said in chat.

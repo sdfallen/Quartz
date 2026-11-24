@@ -163,6 +163,39 @@ class WatchTests(unittest.TestCase):
         self.assertTrue(any(a["severity"] == "high" for a in self.emitted))
 
 
+class RepeatQuietTests(WatchTests):
+    """Live 24 Nov: DismHost.exe and Visual Studio's BackgroundDownload.exe started from Temp
+    dozens of times and each start was said in the chat."""
+
+    def start(self, pid, name, folder="a"):
+        exe = self.temp / folder / name
+        self.procs.append({"pid": pid, "name": name, "exe": str(exe), "create": float(pid), "cmdline": ""})
+
+    def test_the_same_temp_program_is_said_once_a_day(self):
+        self.watch.tick(force=True)
+        self.start(20, "DismHost.exe", "6CE3586A")
+        self.tick()
+        self.start(21, "DismHost.exe", "A3C8DB23")
+        self.start(22, "kurulum.exe")
+        self.tick()
+        said = [a["detail"].split(" ")[0] for a in self.emitted if a["kind"] == "process"]
+        self.assertEqual(said, ["DismHost.exe", "kurulum.exe"])
+        self.assertEqual(sum(a["detail"].startswith("DismHost.exe") for a in self.watch.alerts()), 2,
+                         "the repeat stays in the list and can still be acted on")
+        self.clock.now += security_watch.REPEAT_QUIET
+        self.start(23, "DismHost.exe", "B1")
+        self.tick()
+        self.assertEqual([a["detail"].split(" ")[0] for a in self.emitted if a["kind"] == "process"][-1], "DismHost.exe")
+
+    def test_a_high_finding_is_never_quieted(self):
+        self.watch.tick(force=True)
+        for pid in (30, 31):
+            self.procs.append({"pid": pid, "name": "powershell.exe", "exe": "C:/Windows/powershell.exe",
+                               "create": float(pid), "cmdline": "powershell -NoP -enc " + "SQBFAFgA" * 6})
+            self.tick()
+        self.assertEqual(sum(a["severity"] == "high" for a in self.emitted), 2)
+
+
 class ChatTests(unittest.TestCase):
     def test_alerts_reach_the_chat_and_high_ones_ring(self):
         with tempfile.TemporaryDirectory() as directory:
