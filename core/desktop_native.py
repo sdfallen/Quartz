@@ -106,6 +106,31 @@ def _uia_operation(method):
     return scoped
 
 
+
+def mask_occluded(image, target_rect, occluders):
+    """Black out every part of the crop that another application's window covers.
+
+    The screenshot is a crop of the screen at the target's rectangle. A window above the
+    target (always-on-top tools, notifications, a second app dragged over it) would leak
+    its pixels into the evidence; input never goes there, but the picture did. Returns the
+    number of regions masked. Rectangles are screen coordinates (left, top, right, bottom).
+    """
+    left, top, right, bottom = target_rect
+    masked = 0
+    if not occluders:
+        return 0
+    from PIL import ImageDraw
+    draw = ImageDraw.Draw(image)
+    for o_left, o_top, o_right, o_bottom in occluders:
+        x0, y0 = max(o_left, left), max(o_top, top)
+        x1, y1 = min(o_right, right), min(o_bottom, bottom)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        draw.rectangle((x0 - left, y0 - top, x1 - left - 1, y1 - top - 1), fill=(0, 0, 0))
+        masked += 1
+    return masked
+
+
 class NativeDesktopBackend:
     def __init__(self):
         self.controller = DesktopController()
@@ -261,6 +286,47 @@ class NativeDesktopBackend:
                 return True
         return False
 
+    def occluders(self, target):
+        """Rectangles of other applications' visible windows above the target in Z-order.
+
+        The target's own process tree (menus, dialogs, WebView renderers) is not an occluder.
+        Click-through overlays (WS_EX_TRANSPARENT) and cloaked or minimised windows draw
+        nothing over the target and are skipped."""
+        import ctypes
+        from ctypes import wintypes
+        user32 = self._user32()
+        user32.GetWindow.restype = wintypes.HWND
+        user32.GetWindow.argtypes = [wintypes.HWND, ctypes.c_uint]
+        user32.GetWindowLongW.restype = ctypes.c_long
+        user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        target_pid = int(target.get("pid") or 0)
+        found, hwnd, guard = [], wintypes.HWND(int(target["handle"])), 0
+        while guard < 512:
+            guard += 1
+            hwnd = user32.GetWindow(hwnd, 3)  # GW_HWNDPREV: the next window above
+            if not hwnd:
+                break
+            if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
+                continue
+            if user32.GetWindowLongW(hwnd, -20) & 0x20:  # GWL_EXSTYLE, WS_EX_TRANSPARENT
+                continue
+            cloaked = wintypes.DWORD()
+            try:
+                ctypes.windll.dwmapi.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), ctypes.sizeof(cloaked))
+            except Exception:
+                cloaked.value = 0
+            if cloaked.value:
+                continue
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if target_pid and _same_application(int(pid.value), target_pid):
+                continue
+            rect = wintypes.RECT()
+            if not user32.GetWindowRect(hwnd, ctypes.byref(rect)) or rect.right <= rect.left or rect.bottom <= rect.top:
+                continue
+            found.append((rect.left, rect.top, rect.right, rect.bottom))
+        return found
+
     def foreground_identity(self):
         """Diagnostic metadata only; never focus or act on this other window."""
         import ctypes
@@ -412,10 +478,18 @@ class NativeDesktopBackend:
             raise PermissionError("Input desktop or foreground changed during capture")
         if image.size != (right - left, bottom - top):
             raise PermissionError("Screenshot pixels and target window geometry disagree")
+        try:
+            covering = self.occluders(target)
+        except Exception:
+            # Unknown Z-order: do not hand out a crop that might show another application.
+            return {"ui": state, "image_available": False, "note": "Window stacking could not be read; no screenshot"}
+        masked = mask_occluded(image, (left, top, right, bottom), covering)
         output = io.BytesIO()
         image.save(output, format="PNG", compress_level=1)
         return {"ui": state, "width": image.width, "height": image.height,
                 "image_base64": base64.b64encode(output.getvalue()).decode(),
+                **({"masked_regions": masked,
+                    "note": "Black areas: another application's window was above the target"} if masked else {}),
                 "capture": "foreground-window-crop; GPU compatibility not guaranteed"}
 
     @_uia_operation
