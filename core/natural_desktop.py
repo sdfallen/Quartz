@@ -1633,7 +1633,7 @@ class NaturalDesktopTask:
                         self.stop("permission expired"); break
                     if (self.connection and self.connection is connection
                             and broker_active is False and not stopped.is_set()):
-                        self.stop("blocked: " + self.broker.stop_reason); break
+                        self.stop(self._session_end_reason(self.broker.stop_reason)); break
                     for p, (runtime, rid) in list(self.runs.items()):
                         run = runtime.get(rid)
                         key = (p, rid)
@@ -1708,6 +1708,15 @@ class NaturalDesktopTask:
         out["operator"] = {"session": self.broker.status()}
         out["runs"] = {p: {k: r.get(rid).get(k) for k in ("status", "pid", "model", "effort")} for p, (r, rid) in runs}
         return out
+
+    def _session_end_reason(self, broker_reason) -> str:
+        """Why the task ends when the broker closed its session. An attached writer that closed its
+        own target window has not been blocked: the screen session simply ended and the writer's
+        turn goes on (live 21 Nov: the chat said 'Engellendi - görev tamamlanamadı')."""
+        why = str(broker_reason or "")
+        if (self.job or {}).get("external") and why.startswith("target closed"):
+            return "screen ended: " + why
+        return "blocked: " + why
 
     def stop(self, reason="cancelled", *, expected_job=None):
         with self.changed:

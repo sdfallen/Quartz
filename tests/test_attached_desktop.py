@@ -214,6 +214,25 @@ class SessionEndKeepsWriterTests(AttachedDesktopTests):
         self.task.stop("blocked: target closed or inaccessible")
         self.assertEqual(run.cancelled, [])
 
+    def test_a_closed_target_is_not_reported_as_blocked_for_an_attached_writer(self):
+        # Live 21 Nov: the writer finished and closed its window; the chat said "Engellendi".
+        from core.task_outcome import stop_summary
+        self.attach()
+        reason = self.task._session_end_reason("target closed or inaccessible")
+        self.assertEqual(reason, "screen ended: target closed or inaccessible")
+        self.assertNotRegex(reason, r"^(blocked|permission)")  # the UI's 'Engellendi' rule
+        self.assertIn("Yazıcının turu sürüyor", stop_summary(reason))
+        self.assertNotIn("tamamlanamadı", stop_summary(reason))
+        self.assertEqual(self.task._session_end_reason("target process changed"), "blocked: target process changed")
+
+    def test_a_desktop_task_whose_target_closes_stays_blocked(self):
+        from core.task_outcome import stop_summary
+        self.task.job = {"external": False}
+        reason = self.task._session_end_reason("target closed or inaccessible")
+        self.assertTrue(reason.startswith("blocked: "))
+        self.assertIn("pencere kapandığı", stop_summary(reason))
+        self.task.job = None
+
 
 class EosAttachTests(unittest.TestCase):
     """Eos (Antigravity) joins the Tam Yetki writers on the screen (user request 21 Nov)."""

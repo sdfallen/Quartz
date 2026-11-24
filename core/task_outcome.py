@@ -38,6 +38,10 @@ def stop_summary(reason, verification=None):
         return 'Ajan aynı işlemi sonuçsuz tekrarladığı için görev durduruldu; hedef tamamlanmış sayılmadı.'
     if 'permission' in value:
         return 'İzin reddedildi veya süresi doldu; görev durduruldu.'
+    if value.startswith('screen ended'):
+        return 'Hedef pencere kapandı; ekran oturumu bitti. Yazıcının turu sürüyor, sonucunu kendisi yazacak.'
+    if 'target closed' in value:
+        return 'Hedef pencere kapandığı için bilgisayar kontrolü durdu; görev tamamlanmış sayılmadı.'
     if value == 'cancelled': return 'Görev durduruldu; yeni işlem yapılmayacak.'
     if value == 'completed':
         check = verification or {}
