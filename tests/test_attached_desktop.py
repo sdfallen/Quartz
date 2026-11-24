@@ -316,3 +316,30 @@ class EosAttachTests(unittest.TestCase):
     def test_gemini_desktop_task_stays_restricted_to_desktop_tools(self):
         settings = self._gemini_settings(full_access=False)
         self.assertTrue(all(n.startswith("mcp_quartz-desktop_") for n in settings["tools"]["core"]))
+
+
+class ScreenEvidenceTests(unittest.TestCase):
+    """The writer's screen work counts in the chat's evidence badge (24 Nov: it said 'Kanıt yok')."""
+
+    def test_observations_on_disk_are_counted(self):
+        import tempfile
+        from core.agent_chat import desktop_evidence
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(desktop_evidence(folder), {})
+            for n in (1, 2, 3):
+                Path(folder, f"observation-{n:04d}.json").write_text("{}")
+                Path(folder, f"observation-{n:04d}.png").write_bytes(b"")
+            self.assertEqual(desktop_evidence(folder), {"observations": 3, "folder": folder})
+        self.assertEqual(desktop_evidence(None), {})
+
+    def test_the_writer_receipt_reads_the_screen_evidence_of_its_own_run(self):
+        from core.multi_agent_service import MultiAgentService
+        service = MultiAgentService.__new__(MultiAgentService)
+        session = {"bind": Mock(), "stop": Mock(), "evidence": lambda: {"observations": 5, "folder": "f"}}
+        service._bind_desktop(session, "claude", Mock(), {"id": "run-7"})
+        session["bind"].assert_called_once()
+        self.assertEqual(service._desktop_evidence["run-7"](), {"observations": 5, "folder": "f"})
+
+    def test_the_badge_names_screen_evidence(self):
+        import gui
+        self.assertIn("screen ? ['warn', 'Ekran kanıtı'] : ['warn', 'Kanıt yok']", gui._HTML)

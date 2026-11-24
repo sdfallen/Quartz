@@ -194,17 +194,21 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
         // Test commands the agent ran, with exit status observed from the CLI events (14 Nov:
         // 18/18 Node tests passed and the badge still said "Kanıt yok"). core.test_evidence.
         const tests = meta.host_evidence?.agent_tests;
+        // The writer's screen work, observed by SpeS itself (24 Nov); weaker than a test.
+        const screen = Number(meta.host_evidence?.desktop?.observations) || 0;
         state = check?.status === 'FAILED' ? 'Ajan bitti; kaynak sözdizimi kontrolü başarısız.'
           : tests?.status === 'FAILED' ? 'Ajanın çalıştırdığı test komutu başarısız bitti.'
           : tests?.status === 'PASSED' ? 'Ajanın çalıştırdığı testler geçti (komut çıktısı gözlendi); SpeS testleri kendisi çalıştırmadı.'
           : tests?.status === 'RAN' ? 'Ajan test çalıştırdı ama komut çıkış kodunu gizledi; sonuç ayırt edilemedi.'
           : check?.status === 'VERIFIED' ? 'Python sözdizimi doğrulandı; çalışma/test başarısı doğrulanmış değil.'
+          : screen ? `Ajan ekranı ${screen} kez gözlemledi; görüntüler kanıt klasöründe. Sonuç ayrıca doğrulanmadı.`
           : 'Ajan yanıtı tamamlandı; bağımsız çalışma/test kanıtı yok.';
         [tone, label] = check?.status === 'FAILED' ? ['fail', 'Kontrol başarısız']
           : tests?.status === 'FAILED' ? ['fail', 'Test başarısız']
           : tests?.status === 'PASSED' ? ['ok', 'Testler geçti']
           : tests?.status === 'RAN' ? ['warn', 'Test belirsiz']
-          : check?.status === 'VERIFIED' ? ['warn', 'Kısmen doğrulandı'] : ['warn', 'Kanıt yok'];
+          : check?.status === 'VERIFIED' ? ['warn', 'Kısmen doğrulandı']
+          : screen ? ['warn', 'Ekran kanıtı'] : ['warn', 'Kanıt yok'];
         if (meta.host_evidence?.historical) state = 'Önceki oturumun kaynak kanıtı: ' + state;
       } else if (meta.natural_task && meta.host_check?.status === 'OBSERVED UI CRITERION VERIFIED'
                  && Array.isArray(meta.host_check.expected_text) && meta.host_check.expected_text.length) {

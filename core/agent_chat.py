@@ -42,6 +42,18 @@ from core.skill_turn import SkillTurnMixin
 from core.long_job_chat import LongJobChatMixin
 
 
+
+def desktop_evidence(folder) -> dict:
+    """What an attached writer did on the screen: SpeS's own observations, kept on disk (24 Nov).
+
+    Counted from the evidence folder, not from the model's words. Empty when it never looked."""
+    try:
+        root = Path(folder) if folder else None
+        count = len(list(root.glob("observation-*.json"))) if root and root.is_dir() else 0
+    except OSError:
+        count = 0
+    return {"observations": count, "folder": str(folder)} if count else {}
+
 class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
     MAX_GROUP_ROUNDS = 2
 
@@ -696,8 +708,10 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
             self._desktop_session = task
         models = {provider: self.store.get_agent_model(cid, provider)}
         result = task.attach(str(prompt)[:8000], project, cid, provider, models)
+        folder = getattr(task, "evidence", None)
         return {"connection": result["connection"], "bind": task.bind_run,
-                "stop": lambda reason="failed": task.stop(reason)}
+                "stop": lambda reason="failed": task.stop(reason),
+                "evidence": lambda: desktop_evidence(folder)}
 
     def coordination_message(self, cid, sender, content, metadata=None):
         if sender not in {"user", "quartz", "codex", "antigravity", "claude"}:

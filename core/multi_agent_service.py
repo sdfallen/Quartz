@@ -205,9 +205,17 @@ class MultiAgentService:
             # Test commands the agent ran, with exit status from the CLI events (14 Nov).
             from core.test_evidence import agent_test_result
             tests = agent_test_result(observed_runtime.get("command_results"))
+            screen = {}
+            read_screen = self.__dict__.get("_desktop_evidence", {}).pop(run_id, None)
+            if callable(read_screen):
+                try:
+                    screen = read_screen() or {}
+                except Exception:
+                    screen = {}
             with self._lock:
                 receipt = {"files_changed": changed, "evidence_warning": warning,
-                    "source_validation": validation, **({"agent_tests": tests} if tests else {}), **observed_runtime}
+                    "source_validation": validation, **({"agent_tests": tests} if tests else {}),
+                    **({"desktop": screen} if screen else {}), **observed_runtime}
                 self._file_changes[run_id] = receipt
             try:
                 self._evidence_store.put(run_id, receipt)
@@ -758,10 +766,13 @@ class MultiAgentService:
         start_kwargs["desktop_connection"] = session["connection"]
         return session
 
-    @staticmethod
-    def _bind_desktop(session, provider, runtime, run):
+    def _bind_desktop(self, session, provider, runtime, run):
         if session is None:
             return
+        evidence = session.get("evidence")
+        if callable(evidence):
+            # Read when the writer's turn ends (_watch_writer), into its receipt.
+            self.__dict__.setdefault("_desktop_evidence", {})[run["id"]] = evidence
         try:
             session["bind"](provider, runtime, run["id"])
         except Exception as exc:
