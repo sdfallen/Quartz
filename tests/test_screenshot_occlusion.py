@@ -7,7 +7,7 @@ import unittest
 
 from PIL import Image
 
-from core.desktop_native import mask_occluded
+from core.desktop_native import mask_occluded, outside_frame
 
 
 class MaskOccludedTests(unittest.TestCase):
@@ -36,6 +36,25 @@ class MaskOccludedTests(unittest.TestCase):
 
     def test_no_occluders_is_a_no_op(self):
         self.assertEqual(mask_occluded(self.image(), (0, 0, 200, 100), []), 0)
+
+
+class InvisibleBorderTests(unittest.TestCase):
+    """Live 24 Nov: the 7 px resize border showed another window's text at the crop's left edge."""
+
+    def test_the_strips_outside_the_visible_frame_are_masked(self):
+        rect, frame = (156, 156, 812, 615), (163, 156, 805, 608)  # measured on Windows 10
+        strips = outside_frame(rect, frame)
+        self.assertEqual(sorted(strips), sorted([(156, 608, 812, 615), (156, 156, 163, 608), (805, 156, 812, 608)]))
+        img = Image.new("RGB", (656, 459), (255, 255, 255))
+        mask_occluded(img, rect, strips)
+        self.assertEqual(img.getpixel((0, 200)), (0, 0, 0))
+        self.assertEqual(img.getpixel((655, 200)), (0, 0, 0))
+        self.assertEqual(img.getpixel((300, 458)), (0, 0, 0))
+        self.assertEqual(img.getpixel((300, 200)), (255, 255, 255))
+
+    def test_no_frame_information_masks_nothing_extra(self):
+        self.assertEqual(outside_frame((0, 0, 10, 10), None), [])
+        self.assertEqual(outside_frame((0, 0, 10, 10), (0, 0, 10, 10)), [])
 
 
 class CaptureRefusesUnknownStackingTests(unittest.TestCase):

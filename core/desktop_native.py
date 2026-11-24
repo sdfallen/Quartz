@@ -131,6 +131,24 @@ def mask_occluded(image, target_rect, occluders):
     return masked
 
 
+def outside_frame(rect, frame):
+    """Strips of the window rectangle that lie outside its visible frame.
+
+    GetWindowRect includes Windows 10's invisible resize border (about 7 px left, right
+    and bottom); a crop of the screen there shows whatever is behind the window (live 24 Nov:
+    another window's text at the left edge). `frame` is DWM's extended frame bounds."""
+    if not frame:
+        return []
+    left, top, right, bottom = rect
+    f_left, f_top = max(frame[0], left), max(frame[1], top)
+    f_right, f_bottom = min(frame[2], right), min(frame[3], bottom)
+    if f_right <= f_left or f_bottom <= f_top:
+        return [tuple(rect)]
+    strips = [(left, top, right, f_top), (left, f_bottom, right, bottom),
+              (left, f_top, f_left, f_bottom), (f_right, f_top, right, f_bottom)]
+    return [s for s in strips if s[2] > s[0] and s[3] > s[1]]
+
+
 class NativeDesktopBackend:
     def __init__(self):
         self.controller = DesktopController()
@@ -327,6 +345,17 @@ class NativeDesktopBackend:
             found.append((rect.left, rect.top, rect.right, rect.bottom))
         return found
 
+    def visible_frame(self, target):
+        """DWM's extended frame bounds (the window without its invisible border), or None."""
+        import ctypes
+        from ctypes import wintypes
+        rect = wintypes.RECT()
+        result = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+            wintypes.HWND(int(target["handle"])), 9, ctypes.byref(rect), ctypes.sizeof(rect))
+        if result != 0:
+            return None
+        return (rect.left, rect.top, rect.right, rect.bottom)
+
     def foreground_identity(self):
         """Diagnostic metadata only; never focus or act on this other window."""
         import ctypes
@@ -480,6 +509,7 @@ class NativeDesktopBackend:
             raise PermissionError("Screenshot pixels and target window geometry disagree")
         try:
             covering = self.occluders(target)
+            covering += outside_frame((left, top, right, bottom), self.visible_frame(target))
         except Exception:
             # Unknown Z-order: do not hand out a crop that might show another application.
             return {"ui": state, "image_available": False, "note": "Window stacking could not be read; no screenshot"}
