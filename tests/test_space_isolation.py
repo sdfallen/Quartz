@@ -78,6 +78,50 @@ class SpaceIsolationTests(unittest.TestCase):
         self.assertIn(chat["id"], ids)
 
 
+class SecurityAlertsStayInWorkspaceTests(unittest.TestCase):
+    """Eos's findings are work: a medium one never lands in a Sohbet (live 24 Nov)."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.service = AgentChatService(MagicMock(), Path(self.temp.name) / "chats.json")
+        self.store = self.service.store
+        self.task = self.store.create("Görev", project_id="p", space="work")
+        self.chat = self.store.create("Sohbet", project_id="p", space="chat")
+        self.store.select(self.chat["id"])
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def alert(self, severity):
+        self.service._post_security_alert({"id": "a-" + severity, "severity": severity,
+                                           "title": "Geçici klasörden program", "detail": "x.exe"})
+
+    def texts(self, conv):
+        return [m["content"] for m in self.store.get(conv["id"])["messages"]]
+
+    def test_a_medium_alert_goes_to_the_latest_workspace_task(self):
+        self.alert("medium")
+        self.assertEqual(self.texts(self.chat), [])
+        self.assertTrue(any("Güvenlik uyarısı (Orta)" in t for t in self.texts(self.task)))
+        self.assertEqual(self.store.get_active()["id"], self.chat["id"], "the user stays in Sohbet")
+
+    def test_a_high_alert_still_reaches_the_open_conversation(self):
+        self.alert("high")
+        self.assertTrue(any("Güvenlik uyarısı (Yüksek)" in t for t in self.texts(self.chat)))
+
+    def test_without_any_workspace_task_the_alert_is_not_lost(self):
+        for conv in self.store.list():
+            if conv["space"] == "work":
+                self.service.delete_conversation(conv["id"], confirmed=True)
+        self.assertIsNone(self.store.latest_in_space("work"))
+        self.assertEqual(self.store.get_active()["id"], self.chat["id"])
+        self.alert("medium")
+        self.assertTrue(any("Güvenlik uyarısı" in t for t in self.texts(self.chat)))
+
+    def test_the_environment_check_is_hidden_in_sohbet(self):
+        self.assertIn(':root[data-space="chat"] #envHealth { display: none !important; }', gui._HTML)
+
+
 class SpaceIsolationUiTests(unittest.TestCase):
     def test_sohbet_hides_the_project_picker_and_cleans_only_sohbets(self):
         html = gui._HTML

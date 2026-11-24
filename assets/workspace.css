@@ -851,7 +851,8 @@ body.show-preview .preview-pane { display: flex; }
 :root[data-space="chat"] #writerBadge,
 :root[data-space="chat"] #btnRepairPlan,
 :root[data-space="chat"] #btnSelfDiagnostics,
-:root[data-space="chat"] #btnContinueCollab { display: none !important; }
+:root[data-space="chat"] #btnContinueCollab,
+:root[data-space="chat"] #envHealth { display: none !important; }
 :root[data-space="chat"] .stage.crew { grid-template-columns: minmax(0, 1fr) !important; }
 /* Sohbet uses the full reading width: the padding centres the measure in the whole column
    (live 24 Nov: a 760 px box with window-based padding left messages 394 px wide). */

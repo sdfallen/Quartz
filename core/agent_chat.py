@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from copy import deepcopy
 
-from core.space_policy import normalize as normalize_space
+from core.space_policy import normalize as normalize_space, space_of
 from core.conversation_store import ConversationStore
 from core.multi_agent_service import MultiAgentService, WriterDispatchError
 from core.response_style import communication_instruction, DETAIL_MARKER
@@ -814,12 +814,20 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
             self.security.start()
         return self.security
 
+    def _alert_conversation(self, severity) -> str:
+        """Where Eos speaks. Sohbet is for talking (24 Nov): a medium finding goes to the latest
+        Workspace task. A high one rings the phone, so it stays where the user is."""
+        active = self.store.get_active()
+        if severity == "high" or space_of(active) == "work":
+            return active["id"]
+        return (self.store.latest_in_space("work") or active)["id"]
+
     def _post_security_alert(self, alert):
         # Low findings (a new download) stay in the watcher's list; the rest is said in chat.
         if alert.get("severity") == "low":
             return
         try:
-            cid = self.store.get_active()["id"]
+            cid = self._alert_conversation(alert.get("severity"))
         except Exception:
             return
         icon = "Yüksek" if alert["severity"] == "high" else "Orta"
@@ -840,7 +848,9 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
         result = watch.act(str(alert_id or ""), str(action or ""))
         if result.get("ok") and action != "ignore":
             try:
-                cid = self.store.get_active()["id"]
+                severity = next((a.get("severity") for a in watch.alerts()
+                                 if str(a.get("id")) == str(alert_id)), "medium")
+                cid = self._alert_conversation(severity)
                 self.store.append_message(cid, "assistant", "Eos: " + result["message"], sender="quartz", metadata={
                     "sender": "quartz", "persona": "Eos", "recipient": "user", "status": "completed",
                     "security_result": {"alert": str(alert_id), "action": action, "undo": bool(result.get("undo"))},
