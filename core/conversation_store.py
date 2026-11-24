@@ -181,6 +181,7 @@ class ConversationStore:
                     "permission_level": "full",
                     "models": self._normalize_models(cdata.get("models")),
                     "space": space_of(cdata),
+                    "kind": cdata.get("kind"),
                     "message_count": len(cdata.get("messages", [])),
                     "is_active": cid == self._active_id,
                 })
@@ -308,7 +309,8 @@ class ConversationStore:
         """Most recently updated conversation of a space (for the space switch)."""
         wanted = normalize_space(space)
         with self._lock:
-            found = [c for c in self._conversations.values() if space_of(c) == wanted]
+            # SpeS's own logs (Eos · Güvenlik) are never what a space switch opens (24 Nov).
+            found = [c for c in self._conversations.values() if space_of(c) == wanted and not c.get("kind")]
             if not found:
                 return None
             return deepcopy(max(found, key=lambda c: c.get("updated_at", 0)))

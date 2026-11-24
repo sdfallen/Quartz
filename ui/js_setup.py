@@ -145,11 +145,12 @@ JAVASCRIPT = r"""
       return ['pending', state.configured ? 'Bağlantı doğrulanmalı' : 'Hesap bağlantısı bekleniyor'];
     };
     const active = agentConnectionView.active;
+    // Persona names in the team's order, as everywhere else in SpeS (24 Nov).
     const rows = [
-      ['codex', 'Codex', describe(known?.codex), active === 'codex' || active === 'collaboration'],
-      ['antigravity', 'Antigravity', describe(known?.gemini), active === 'antigravity' || active === 'collaboration'],
       // Shown once the backend reports Claude (older payloads keep two rows).
-      ...(known?.claude ? [['claude', 'Claude', describe(known.claude), active === 'claude']] : []),
+      ...(known?.claude ? [['claude', 'Fatum · Claude', describe(known.claude), active === 'claude' || active === 'collaboration']] : []),
+      ['codex', 'Fides · Codex', describe(known?.codex), active === 'codex' || active === 'collaboration'],
+      ['antigravity', 'Eos · Antigravity', describe(known?.gemini), active === 'antigravity' || active === 'collaboration'],
     ];
     box.replaceChildren();
     for (const [id, name, [state, text], current] of rows) {

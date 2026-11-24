@@ -145,3 +145,24 @@ class SpaceIsolationUiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TaskListTests(unittest.TestCase):
+    """Workspace list (24 Nov): the project's tasks, Eos's log pinned, a time beside each entry."""
+
+    def test_a_space_switch_never_opens_the_security_log(self):
+        with tempfile.TemporaryDirectory() as folder:
+            service = AgentChatService(MagicMock(), Path(folder) / "chats.json")
+            task = service.store.create("Görev", project_id="p", space="work")
+            service._post_security_alert({"id": "a", "severity": "medium", "title": "t", "detail": "d"})
+            log = service.store.special_conversation("security", "Eos · Güvenlik")
+            self.assertNotEqual(log, task["id"])
+            self.assertEqual(service.store.latest_in_space("work")["id"], task["id"])
+            self.assertEqual({c["id"]: c["kind"] for c in service.store.list()}[log], "security")
+
+    def test_the_list_filters_by_project_and_pins_logs(self):
+        html = gui._HTML
+        self.assertIn("items.filter(c => !c.kind && ((c.project_id || 'squad-pilot') === project || c.id === currentConvId))", html)
+        self.assertIn("for(const conv of [...pinned, ...items])", html)
+        self.assertIn("when.textContent=conversationWhen(conv.updated_at)", html)
+        self.assertIn("'Bu projede görev yok. + ile yeni görev aç.'", html)

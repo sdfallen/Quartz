@@ -45,7 +45,9 @@ class ClaudeScriptTests(unittest.TestCase):
 
     def test_mode_button_readiness_comes_from_claude_provider(self):
         self.assertIn("['codex','antigravity','claude','collaboration'].includes(agent)", SETUP_JS)
-        self.assertIn("...(known?.claude ? [['claude', 'Claude', describe(known.claude), active === 'claude']] : [])", SETUP_JS)
+        # Persona names in team order since 24 Nov; Claude still appears only once reported.
+        self.assertIn("...(known?.claude ? [['claude', 'Fatum · Claude', describe(known.claude), active === 'claude' || active === 'collaboration']] : [])", SETUP_JS)
+        self.assertLess(SETUP_JS.index("'Fatum · Claude'"), SETUP_JS.index("'Fides · Codex'"))
 
 
 class ClaudeReadinessTests(unittest.TestCase):

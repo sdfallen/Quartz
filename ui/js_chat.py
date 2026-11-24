@@ -606,13 +606,14 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       currentConvId = conv.id;
       applySpace(conv.space);
       if (typeof refreshAttachChips === 'function') refreshAttachChips();
-      renderConversationNavigation(data.conversations || []);
       chatConvTitle.textContent = conv.title || 'Yeni Sohbet';
       if (conv.agent) syncAgentUI(conv.agent);
       syncModelCatalogAndSelection(data.models, conv.models);
       syncTeamMembers(conv.team_passive);
       const activeProjectId = conv.project_id || 'squad-pilot';
-      mainProjectSelect.value = activeProjectId;
+      // A log (Eos · Güvenlik) has no project of its own: keep the project the user picked.
+      if (!conv.kind || !mainProjectSelect.value) mainProjectSelect.value = activeProjectId;
+      renderConversationNavigation(data.conversations || []);
       if (chatProjectTag) chatProjectTag.textContent = projects.find(p => p.id === activeProjectId)?.name || activeProjectId;
       const permSelect = document.getElementById('mainPermissionLevel');
       if (permSelect) {
@@ -1238,21 +1239,47 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     } finally { deletionPending = false; }
   }
 
+  // Short time beside a list entry: today's hour, 'dün', or the day (24 Nov: six identical
+  // 'Yeni Görev' rows could not be told apart).
+  function conversationWhen(seconds) {
+    const at = new Date(Number(seconds || 0) * 1000);
+    if (!seconds || isNaN(at)) return '';
+    const now = new Date();
+    const day = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const days = Math.round((day(now) - day(at)) / 86400000);
+    if (days <= 0) return at.toLocaleTimeString('tr-TR', {hour: '2-digit', minute: '2-digit'});
+    if (days === 1) return 'dün';
+    return at.toLocaleDateString('tr-TR', {day: 'numeric', month: 'short'});
+  }
   function renderConversationNavigation(items) {
     const list=document.getElementById('conversationList'); if(!list)return;
-    // Each space lists only its own conversations.
+    // Each space lists only its own conversations. Workspace lists the selected project's tasks;
+    // SpeS's own logs (Eos · Güvenlik) stay pinned on top whatever the project (24 Nov).
     items = (items || []).filter(c => (c.space || 'work') === currentSpace);
+    const project = mainProjectSelect.value || 'squad-pilot';
+    const pinned = currentSpace === 'work' ? items.filter(c => c.kind) : [];
+    items = currentSpace === 'work'
+      ? items.filter(c => !c.kind && ((c.project_id || 'squad-pilot') === project || c.id === currentConvId))
+      : items;
     navigationConversations = items;
-    const key=JSON.stringify([currentSpace,currentConvId,(items||[]).map(c=>[c.id,c.title,c.project_id])]);
+    const key=JSON.stringify([currentSpace,currentConvId,project,[...pinned,...items].map(c=>[c.id,c.title,c.project_id,c.updated_at])]);
     if(list.dataset.key===key)return;list.dataset.key=key;
     const top=list.scrollTop;list.replaceChildren();
-    for(const conv of items||[]){
-      const row=document.createElement('div');row.className='conversation-row';
+    if (!pinned.length && !items.length) {
+      const empty=document.createElement('p');empty.className='conversation-empty';
+      empty.textContent=currentSpace==='chat'?'Henüz sohbet yok. + ile başla.':'Bu projede görev yok. + ile yeni görev aç.';
+      list.append(empty);
+    }
+    for(const conv of [...pinned, ...items]){
+      const row=document.createElement('div');row.className='conversation-row'+(conv.kind?' pinned':'');
+      if (conv.kind) row.dataset.kind = conv.kind;
       const button=document.createElement('button');button.className='conversation-entry'+(conv.id===currentConvId?' active':'');
-      button.textContent=conv.title||'Yeni sohbet';button.title=button.textContent;
+      const name=document.createElement('span');name.className='conversation-name';name.textContent=conv.title||'Yeni sohbet';
+      const when=document.createElement('span');when.className='conversation-when';when.textContent=conversationWhen(conv.updated_at);
+      button.append(name, when);button.title=name.textContent;
       button.onclick=async()=>{if(thinking||deletionPending)return;const result=await window.pywebview.api.chat_select(conv.id);if(result.status==='ok')await loadActiveConversation();};
       const remove=document.createElement('button');remove.className='conversation-delete';remove.textContent='×';
-      remove.title='Sohbeti sil';remove.setAttribute('aria-label',`${button.textContent} sohbetini sil`);
+      remove.title='Sohbeti sil';remove.setAttribute('aria-label',`${name.textContent} sohbetini sil`);
       remove.onclick=()=>requestChatDeletion([conv]);row.append(button,remove);list.append(row);
     }
     list.scrollTop=top;
