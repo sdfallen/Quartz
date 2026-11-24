@@ -90,7 +90,7 @@ SHELL_MARKUP = r"""
       <div class="brand">SpeS</div>
       <button type="button" class="icon-btn" id="btnDrawerClose" title="Kapat (Esc)" aria-label="Sohbetler panelini kapat">@@i:close:sm@@</button>
     </div>
-    <div class="side-section">
+    <div class="side-section space-work-only" id="projectSection">
       <div class="workspace-nav-title">Proje</div>
       <div class="workspace-project">
         <select class="project-picker" id="mainProjectSelect" title="Aktif proje" aria-label="Aktif proje"></select>

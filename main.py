@@ -574,6 +574,12 @@ class IPCServer:
             data = req.get("data", {}) or {}
             return {"status": "ok", "data": self._get_agent_chat().delete_project_conversations(
                 str(data.get("project_id") or ""), data.get("conversation_ids"),
+                confirmed=data.get("confirmed") is True, space=data.get("space") or None)}
+
+        if action == "chat_delete_space":
+            data = req.get("data", {}) or {}
+            return {"status": "ok", "data": self._get_agent_chat().delete_space_conversations(
+                str(data.get("space") or ""), data.get("conversation_ids"),
                 confirmed=data.get("confirmed") is True)}
 
         if action == "project_remove":

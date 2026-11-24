@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 from copy import deepcopy
 
+from core.space_policy import normalize as normalize_space
 from core.conversation_store import ConversationStore
 from core.multi_agent_service import MultiAgentService, WriterDispatchError
 from core.response_style import communication_instruction, DETAIL_MARKER
@@ -555,16 +556,36 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
                 self._active_turn = None
             return result
 
-    def delete_project_conversations(self, project_id: str, conversation_ids, *, confirmed=False) -> dict:
+    def delete_project_conversations(self, project_id: str, conversation_ids, *, confirmed=False,
+                                     space=None) -> dict:
+        """A project's conversations; with a space, only that space's (Workspace cleanup never
+        touches the Sohbet side, 24 Nov)."""
         with self._lock:
             self._allow_delete(confirmed)
             self.agent_service.projects.get(project_id)
             if not isinstance(conversation_ids, list) or any(not isinstance(cid, str) for cid in conversation_ids):
                 raise ValueError("Onaylanan sohbet listesi gerekli.")
+            wanted = normalize_space(space) if space else None
             current = [c["id"] for c in self.store.list()
-                       if (c.get("project_id") or "squad-pilot") == project_id]
+                       if (c.get("project_id") or "squad-pilot") == project_id
+                       and (wanted is None or c.get("space") == wanted)]
             if not current or set(current) != set(conversation_ids):
                 raise ValueError("Projenin sohbet listesi değişti; yenileyip tekrar onaylayın.")
+            result = self.store.delete_many(current)
+            if self._active_turn and self._active_turn.get("conversation_id") in current:
+                self._active_turn = None
+            return result
+
+    def delete_space_conversations(self, space: str, conversation_ids, *, confirmed=False) -> dict:
+        """Every conversation of one space, whatever project it was opened in (Sohbet has no projects)."""
+        with self._lock:
+            self._allow_delete(confirmed)
+            wanted = normalize_space(space)
+            if not isinstance(conversation_ids, list) or any(not isinstance(cid, str) for cid in conversation_ids):
+                raise ValueError("Onaylanan sohbet listesi gerekli.")
+            current = [c["id"] for c in self.store.list() if c.get("space") == wanted]
+            if not current or set(current) != set(conversation_ids):
+                raise ValueError("Sohbet listesi değişti; yenileyip tekrar onaylayın.")
             result = self.store.delete_many(current)
             if self._active_turn and self._active_turn.get("conversation_id") in current:
                 self._active_turn = None

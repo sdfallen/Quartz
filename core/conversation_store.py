@@ -267,14 +267,16 @@ class ConversationStore:
             remaining = {cid: rec for cid, rec in self._conversations.items() if cid not in removed}
             if active not in remaining:
                 project = fallback_project_id or previous.get("project_id")
-                candidates = [c for c in remaining.values() if
-                              (c.get("project_id") or "squad-pilot") == (project or "squad-pilot")]
+                # Stay in the same space: deleting a Sohbet never lands in a Workspace task (24 Nov).
+                space = space_of(previous)
+                candidates = [c for c in remaining.values() if space_of(c) == space and (
+                    space == "chat" or (c.get("project_id") or "squad-pilot") == (project or "squad-pilot"))]
                 if candidates:
                     active = max(candidates, key=lambda c: c.get("updated_at", 0))["id"]
                 else:
                     active = uuid.uuid4().hex
                     now = time.time()
-                    remaining[active] = {"id": active, "title": "Yeni Sohbet",
+                    remaining[active] = {"id": active, "title": "Yeni Sohbet", "space": space,
                         "agent": previous.get("agent", "antigravity"), "project_id": project,
                         "models": self._normalize_models(previous.get("models")),
                         "sessions": {"antigravity": None, "codex": None},

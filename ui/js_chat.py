@@ -794,6 +794,9 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     }
     const title = document.getElementById('conversationListTitle');
     if (title) title.textContent = currentSpace === 'chat' ? 'Sohbetler' : 'Görevler';
+    // Sohbet has no projects: its cleanup covers every Sohbet, Workspace's only the project's tasks.
+    const cleanup = document.getElementById('btnDeleteProjectChats');
+    if (cleanup) cleanup.textContent = currentSpace === 'chat' ? 'Bütün sohbetleri temizle' : 'Bu projenin görevlerini temizle';
     const input = document.getElementById('msgInput');
     if (input) input.placeholder = currentSpace === 'chat' ? 'Ekiple sohbet et…' : 'Bir görev ver veya ekibe sor…';
   }
@@ -1206,18 +1209,24 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
   async function requestChatDeletion(conversations, projectId = null) {
     if (deletionPending || thinking || !conversations.length) return;
     const projectName = mainProjectSelect.selectedOptions[0]?.textContent || 'Seçili proje';
-    const message = projectId
-      ? `“${projectName}” projesinin ${conversations.length} sohbeti silinsin mi?`
+    const allChats = projectId === '*chat';
+    const message = allChats
+      ? `Sohbet alanındaki ${conversations.length} sohbetin hepsi silinsin mi?`
+      : projectId
+      ? `“${projectName}” projesinin ${conversations.length} görevi silinsin mi?`
       : `“${conversations[0].title || 'Yeni sohbet'}” sohbeti silinsin mi?`;
     const confirmed = await requestUiConfirm(
-      message + '\nProje dosyaları silinmez. Sohbetlerin yerel kurtarma yedeği tutulur.',
+      message + (currentSpace === 'chat' ? '' : '\nProje dosyaları silinmez.') + '\nYerel kurtarma yedeği tutulur.',
       {title: 'Sohbet silme onayı', confirmLabel: 'Sil', danger: true}
     );
     if (!confirmed) return;
     deletionPending = true;
     try {
-      const result = projectId
-        ? await window.pywebview.api.chat_delete_project(projectId, conversations.map(c => c.id), true)
+      const ids = conversations.map(c => c.id);
+      const result = allChats
+        ? await window.pywebview.api.chat_delete_space('chat', ids, true)
+        : projectId
+        ? await window.pywebview.api.chat_delete_project(projectId, ids, true, currentSpace)
         : await window.pywebview.api.chat_delete(conversations[0].id, true);
       if (result.status !== 'ok') throw new Error(result.data || 'Sohbet silinemedi');
       if (chatPollInterval) { clearInterval(chatPollInterval); chatPollInterval = null; }

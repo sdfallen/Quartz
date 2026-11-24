@@ -853,7 +853,9 @@ body.show-preview .preview-pane { display: flex; }
 :root[data-space="chat"] #btnSelfDiagnostics,
 :root[data-space="chat"] #btnContinueCollab { display: none !important; }
 :root[data-space="chat"] .stage.crew { grid-template-columns: minmax(0, 1fr) !important; }
-:root[data-space="chat"] .chat { max-width: 760px; margin-inline: auto; width: 100%; }
+/* Sohbet uses the full reading width: the padding centres the measure in the whole column
+   (live 24 Nov: a 760 px box with window-based padding left messages 394 px wide). */
+:root[data-space="chat"] .chat { padding-inline: max(16px, calc((100% - var(--measure)) / 2)); }
 :root[data-space="chat"] .msg.user .bubble { background: color-mix(in srgb, var(--agent-claude) 14%, var(--surface-2)); }
 .space-hint { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
 .space-hint-btn { border: 1px solid var(--line-strong); background: var(--surface-1); color: var(--text); border-radius: 999px; padding: 5px 12px; font-size: 12.5px; cursor: pointer; transition: background .15s ease, transform .15s ease; }

@@ -1044,11 +1044,21 @@ class Api:
         except Exception as exc:
             return {"status": "error", "data": str(exc)}
 
-    def chat_delete_project(self, project_id: str, conversation_ids, confirmed: bool = False) -> dict:
+    def chat_delete_project(self, project_id: str, conversation_ids, confirmed: bool = False,
+                            space: str = "") -> dict:
         try:
             with self._natural_start_lock:
                 self._chat_delete_guard()
-                return ipc_send("chat_delete_project", {"project_id": project_id,
+                return ipc_send("chat_delete_project", {"project_id": project_id, "space": space or None,
+                    "conversation_ids": conversation_ids, "confirmed": confirmed is True})
+        except Exception as exc:
+            return {"status": "error", "data": str(exc)}
+
+    def chat_delete_space(self, space: str, conversation_ids, confirmed: bool = False) -> dict:
+        try:
+            with self._natural_start_lock:
+                self._chat_delete_guard()
+                return ipc_send("chat_delete_space", {"space": space,
                     "conversation_ids": conversation_ids, "confirmed": confirmed is True})
         except Exception as exc:
             return {"status": "error", "data": str(exc)}
