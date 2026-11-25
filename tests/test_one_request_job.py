@@ -265,3 +265,51 @@ class FidesReviewTests(unittest.TestCase):
         self.assertEqual(len(steps), 8)
         self.assertIn("T9: ölçüt 9", steps[-1]["acceptance"])
         self.assertIn("T10: ölçüt 10", steps[-1]["acceptance"])
+
+
+class LivePlanChangeTests(unittest.TestCase):
+    """Eos and Fides 25 Nov: the plan of a running job changes in plain words."""
+
+    def test_the_words(self):
+        from core.job_intent import job_change
+        self.assertEqual(job_change("3. adımı iptal et"), ("skip", 3))
+        self.assertEqual(job_change("Peki 2. adımı atla"), ("skip", 2))
+        self.assertEqual(job_change("4 numaralı adımı iptal et"), ("skip", 4))
+        self.assertEqual(job_change("Koyu tema da ekle"), ("add", "Koyu tema"))
+        self.assertEqual(job_change("Şunu da ekle: skor tablosu"), ("add", "skor tablosu"))
+        self.assertEqual(job_change("yeni adım ekle: ses efektleri"), ("add", "ses efektleri"))
+        self.assertIsNone(job_change("menüyü mavi yap"))
+        self.assertEqual(job_message_kind("3. adımı iptal et"), "skip")
+        self.assertEqual(job_message_kind("Koyu tema da ekle"), "add")
+
+    def test_a_running_job_skips_and_adds_milestones(self):
+        from tests.test_long_job_chat import FakeChat
+        from core.long_job import JobLedger, finish_report
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict("os.environ", {"QUARTZ_JOBS_HOME": str(Path(directory) / "jobs")}), \
+                patch("core.agent_limits.snapshot", return_value={}):
+            project = Path(directory) / "p"
+            project.mkdir()
+            chat = FakeChat(project, replies=[])
+            ledger = JobLedger.create({"goal": "Oyun", "project_path": str(project), "hours": 1,
+                                       "conversation_id": "c1",
+                                       "milestones": [{"title": f"T{i}", "acceptance": "ok"} for i in (1, 2, 3)]})
+            ledger.data["status"] = "running"
+            ledger.data["milestones"][0]["status"] = "done"
+            chat._jobs()[ledger.data["id"]] = chat._make_job(ledger)
+            job = chat._active_job_in("c1")
+            say = lambda text: chat._job_conversation_message(chat.store.conv, text, job)["assistant_message"]["content"]
+            self.assertIn("plandan çıkarıldı", say("3. adımı iptal et"))
+            self.assertEqual(ledger.data["milestones"][2]["status"], "skipped")
+            self.assertIn("zaten bitti", say("1. adımı iptal et"))
+            self.assertIn("Planda 9. adım yok", say("9. adımı iptal et"))
+            self.assertIn("Plana eklendi: 4. adım — Koyu tema", say("Koyu tema da ekle"))
+            added = ledger.data["milestones"][3]
+            self.assertEqual((added["status"], added["added_by_user"]), ("pending", True))
+            self.assertIn("Koyu tema", added["acceptance"])
+            self.assertEqual(job.ledger.current()["id"], "m2", "the skipped one is never picked")
+            ledger.data["milestones"][1]["status"] = ledger.data["milestones"][3]["status"] = "done"
+            ledger.data["status"] = "done"
+            report = finish_report(ledger)
+            self.assertIn("1 taşı senin isteğinle atlandı", report)
+            self.assertIn("– T3: senin isteğinle atlandı", report)

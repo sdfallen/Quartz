@@ -84,6 +84,22 @@ class JobPlannerMixin:
                       + (f" · şimdi: {current['title']}" if current else "")
                       + f" · durum: {data['status']}.")
             return self._answer_without_agents(conv["id"], text, answer)
+        if kind in {"skip", "add"}:
+            # Live re-plan (Eos/Fides 25 Nov): the plan changes in plain words while the job runs.
+            from core.job_intent import job_change
+            from core.long_job import JobError
+            _, value = job_change(text)
+            try:
+                if kind == "skip":
+                    milestone = job.skip_milestone(value)
+                    answer = f"{value}. adım ({milestone['title']}) plandan çıkarıldı; ekip ona geçmeyecek."
+                else:
+                    milestone = job.add_milestone(value)
+                    answer = (f"Plana eklendi: {milestone['id'][1:]}. adım — {milestone['title']}. "
+                              "Sıradaki adımlardan sonra yapılacak ve denetlenecek.")
+            except JobError as exc:
+                answer = str(exc)
+            return self._answer_without_agents(conv["id"], text, answer)
         if kind in {"stop", "pause", "resume"}:
             if kind == "resume" and data["status"] != "paused":
                 return self._answer_without_agents(conv["id"], text, "İş zaten sürüyor.")

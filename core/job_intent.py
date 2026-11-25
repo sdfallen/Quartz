@@ -211,6 +211,32 @@ _FILLER = re.compile(r"^(?:(?:peki|tamam|simdi|su\s+an|simdilik|lutfen|hey|spes|
                      r"(?:[\s,]+(?:lutfen|simdilik|artik|hemen|su\s+an))+(?=\s*[?.!]*\s*$)")
 
 
+_SKIP = re.compile(r"\b(\d{1,2})\s*\.?\s*(?:(?:numarali|nolu|inci|nci|uncu|ncu)\s+)?(?:adim|tas|asama|kilometre\s+tasi)\w*\s+(?:iptal\s+et|cikar|atla|kaldir|yapma)")
+_LEAD = re.compile(r"^(?:(?:peki|tamam|simdi|su\s+an|simdilik|lutfen|hey|spes|ya)[\s,]+)+")
+_ADD_TAIL = re.compile(r"^(.{3,}?)\s+(?:de|da)\s+ekle(?:r\s*misin|yin|\s+lutfen)?\s*[.!]*\s*$")
+_ADD_HEAD = re.compile(r"^(?:(?:sunu|bunu|su|bu)\s+da\s+ekle|yeni\s+(?:bir\s+)?(?:adim|tas|asama)\s+ekle|plana\s+ekle|"
+                       r"ayrica\s+ekle)\s*[:,-]?\s*(.{3,})$")
+
+
+def job_change(text: str):
+    """("skip", 3) for "3. adımı iptal et"; ("add", "koyu tema") for "koyu tema da ekle"; else None."""
+    raw = " ".join(str(text or "").split())
+    folded = turkish_fold(raw)
+    if len(folded) != len(raw):  # spelling the fold cannot keep aligned: use the folded text
+        raw = folded
+    lead = _LEAD.match(folded)
+    cut = lead.end() if lead else 0
+    body, raw_body = folded[cut:], raw[cut:]
+    skip = _SKIP.search(body)
+    if skip:
+        return ("skip", int(skip.group(1)))
+    for pattern in (_ADD_HEAD, _ADD_TAIL):
+        match = pattern.match(body)
+        if match:
+            return ("add", raw_body[match.start(1):match.end(1)].strip(" .!:,-"))
+    return None
+
+
 def job_message_kind(text: str) -> str:
     """What a message in a conversation with a running job means: status, stop, pause, resume or note.
 
@@ -225,4 +251,7 @@ def job_message_kind(text: str) -> str:
         return "pause"
     if _RESUME_WORD.match(folded):
         return "resume"
+    change = job_change(text)
+    if change:
+        return change[0]
     return "note"

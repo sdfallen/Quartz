@@ -168,7 +168,7 @@ class JobLedger:
         d = self.data
         lines = [f"HEDEF: {d['goal']}", "KİLOMETRE TAŞLARI:"]
         for m in d["milestones"]:
-            mark = {"done": "✔", "needs_user": "?", "running": "→"}.get(m["status"], "·")
+            mark = {"done": "✔", "needs_user": "?", "running": "→", "skipped": "–"}.get(m["status"], "·")
             lines.append(f" {mark} {m['id']} {m['title']} [{m['status']}]"
                          + (f" (commit {m['commit'][:8]})" if m.get("commit") else ""))
         if d["decisions"]:
@@ -412,6 +412,43 @@ class LongJob:
             self.ledger.data["decisions"].append({"at": self.clock(), "text": "Denetmen notu: " + str(text)[:2000]})
             self.ledger.save()
         self.ledger.event("Denetmen notu eklendi.")
+
+    def skip_milestone(self, number: int) -> dict:
+        """The user drops a milestone that has not started ("3. adımı iptal et", 25 Nov)."""
+        with self.ledger._lock:
+            milestones = self.ledger.data["milestones"]
+            if not 1 <= number <= len(milestones):
+                raise JobError(f"Planda {number}. adım yok; plan {len(milestones)} adım.")
+            milestone = milestones[number - 1]
+            if milestone["status"] == "done":
+                raise JobError(f"{number}. adım zaten bitti ({milestone['title']}).")
+            if milestone["status"] == "running":
+                raise JobError(f"{number}. adım şu an yapılıyor; önce 'bekle' yaz, sonra iptal et.")
+            if milestone["status"] == "skipped":
+                raise JobError(f"{number}. adım zaten atlandı.")
+            milestone["status"] = "skipped"
+            self.ledger.save()
+        self.ledger.event(f"{milestone['id']} kullanıcının isteğiyle atlandı: {milestone['title']}")
+        return milestone
+
+    def add_milestone(self, request: str) -> dict:
+        """The user adds work to the running plan ("koyu tema da ekle", 25 Nov)."""
+        request = " ".join(str(request or "").split())[:2000]
+        if len(request) < 3:
+            raise JobError("Eklenecek iş anlaşılmadı.")
+        with self.ledger._lock:
+            milestones = self.ledger.data["milestones"]
+            if len(milestones) >= 20:
+                raise JobError("Plan 20 adımı geçemez.")
+            milestone = {"id": f"m{len(milestones) + 1}", "title": request[:200],
+                         "acceptance": "Kullanıcının sonradan eklediği istek yapıldı ve denendi: " + request,
+                         "status": "pending", "attempts": 0, "crashes": 0, "writer": None, "commit": None,
+                         "checkpoint": None, "last_failure": "", "history": [], "added_by_user": True}
+            milestones.append(milestone)
+            self.ledger.save()
+        self.ledger.event(f"{milestone['id']} kullanıcının isteğiyle plana eklendi: {milestone['title']}")
+        self.wake.set()
+        return milestone
 
     def halt(self):
         """SpeS is closing: leave the job resumable (not Stop). Its turn is cancelled by close()."""
@@ -681,10 +718,13 @@ def finish_report(ledger: JobLedger) -> str:
     done = [m for m in d["milestones"] if m["status"] == "done"]
     waiting = [m for m in d["milestones"] if m["status"] == "needs_user"]
     left = [m for m in d["milestones"] if m["status"] in {"pending", "running"}]
+    skipped = [m for m in d["milestones"] if m["status"] == "skipped"]
     if d["status"] == "expired":
         head = f"Uzun işin süresi doldu: {len(done)}/{len(d['milestones'])} kilometre taşı tamam."
     elif waiting:
         head = f"Uzun iş bitti: {len(done)}/{len(d['milestones'])} tamam, {len(waiting)} taş senin kararını bekliyor."
+    elif skipped:
+        head = f"Uzun iş bitti: {len(done)} kilometre taşı tamam, {len(skipped)} taşı senin isteğinle atlandı."
     else:
         head = f"Uzun iş bitti: {len(done)} kilometre taşının hepsi tamam."
     lines = [head]
@@ -698,6 +738,7 @@ def finish_report(ledger: JobLedger) -> str:
     lines += [f"? {m['title']}: {(m.get('last_failure') or '').strip().splitlines()[-1][:160] if (m.get('last_failure') or '').strip() else 'geçmedi'}"
               for m in waiting]
     lines += [f"· {m['title']}: yapılmadı" for m in left]
+    lines += [f"– {m['title']}: senin isteğinle atlandı" for m in skipped]
     if d.get("git_branch"):
         lines.append(f"Dal: {d['git_branch']}")
     return chr(10).join(lines)
