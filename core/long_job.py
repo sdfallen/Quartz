@@ -413,6 +413,27 @@ class LongJob:
             self.ledger.save()
         self.ledger.event("Denetmen notu eklendi.")
 
+    def extend(self, hours: float, clock=time.time) -> None:
+        """More time for a job that ran out of it (26 Nov). Never past 12 hours in all."""
+        hours = max(0.05, min(12.0, float(hours)))
+        with self.ledger._lock:
+            d = self.ledger.data
+            if d.get("stopped") or d["status"] in {"done", "stopped", "failed"}:
+                raise JobError("Bu iş bitmiş ya da durdurulmuş; süresi uzatılamaz.")
+            if not any(m["status"] in {"pending", "running"} for m in d["milestones"]):
+                raise JobError("Bu işte yapılacak adım kalmadı.")
+            now = clock()
+            used = max(0.0, (min(now, d["deadline"]) - d["created_at"]) / 3600)
+            if used + hours > 12:
+                raise JobError("Bir iş toplamda 12 saati geçemez.")
+            d["deadline"] = max(d["deadline"], now) + hours * 3600
+            d["hours"] = round(d.get("hours", 0) + hours, 3)
+            if d["status"] == "expired":
+                d["status"] = "running"
+            self.ledger.save()
+        self.ledger.event(f"Kullanıcı süreyi uzattı: {round(hours * 60)} dakika daha.")
+        self.wake.set()
+
     def skip_milestone(self, number: int) -> dict:
         """The user drops a milestone that has not started ("3. adımı iptal et", 25 Nov)."""
         with self.ledger._lock:

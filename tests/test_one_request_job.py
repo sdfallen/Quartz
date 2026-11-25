@@ -403,3 +403,69 @@ class SelectedWriterTests(unittest.TestCase):
         self.assertEqual(chat.sent[1]["agent"], "claude", "a teammate reviews")
         self.assertEqual(ledger.data["milestones"][0]["reviewer"], "claude")
         self.assertNotIn("Fatum limitte", chat.sent[0]["text"])
+
+
+class ExtendTests(unittest.TestCase):
+    """Live 26 Nov: a job ran out of time one milestone short; "15 dakika daha çalış" continues it."""
+
+    def test_the_words(self):
+        from core.job_intent import extension_hours
+        self.assertEqual(extension_hours("15 dakika daha çalış"), 0.25)
+        self.assertEqual(extension_hours("bir saat daha devam et"), 1)
+        self.assertEqual(extension_hours("süreyi 30 dakika uzat"), 0.5)
+        self.assertIsNone(extension_hours("30 dakikada oyun yap"))
+        self.assertIsNone(extension_hours("menüyü mavi yap"))
+
+    def make(self, directory, status="expired"):
+        from tests.test_long_job_chat import FakeChat
+        from core.long_job import JobLedger
+        project = Path(directory) / "p"
+        project.mkdir()
+        chat = FakeChat(project, replies=[("completed", "Tamam.", "claude")])
+        ledger = JobLedger.create({"goal": "Oyun", "project_path": str(project), "hours": 0.25,
+                                   "conversation_id": "c1",
+                                   "milestones": [{"title": "T1", "acceptance": "ok"},
+                                                  {"title": "T2", "acceptance": "ok"}]})
+        ledger.data["milestones"][0]["status"] = "done"
+        ledger.data["status"] = status
+        ledger.data["deadline"] = time.time() - 10
+        ledger.save()
+        return chat, ledger
+
+    def test_an_expired_job_continues_where_it_stopped(self):
+        from core.long_job import JobLedger
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict("os.environ", {"QUARTZ_JOBS_HOME": str(Path(directory) / "jobs")}), \
+                patch("core.agent_limits.snapshot", return_value={}), patch("core.long_job.keep_awake"):
+            chat, ledger = self.make(directory)
+            self.assertIsNone(chat._extend_expired_job(chat.store.conv, "menüyü mavi yap"))
+            answer = chat._extend_expired_job(chat.store.conv, "15 dakika daha çalış")
+            self.assertIn("15 dakika uzatıldı", answer["assistant_message"]["content"])
+            self.assertIn("T2", answer["assistant_message"]["content"])
+            job = chat._jobs()[ledger.data["id"]]
+            for _ in range(300):
+                if job.ledger.data["status"] == "done":
+                    break
+                time.sleep(0.02)
+            job.thread.join(5)
+            saved = JobLedger.load(ledger.path).data
+        self.assertEqual(saved["status"], "done")
+        self.assertEqual([m["status"] for m in saved["milestones"]], ["done", "done"])
+        self.assertEqual(len(chat.sent), 1, "only the milestone that was left")
+        self.assertAlmostEqual(saved["hours"], 0.5)
+
+    def test_a_running_job_gets_more_time_and_limits_hold(self):
+        from core.long_job import JobError
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict("os.environ", {"QUARTZ_JOBS_HOME": str(Path(directory) / "jobs")}), \
+                patch("core.agent_limits.snapshot", return_value={}):
+            chat, ledger = self.make(directory, status="running")
+            ledger.data["deadline"] = time.time() + 60
+            job = chat._make_job(ledger)
+            chat._jobs()[ledger.data["id"]] = job
+            before = ledger.data["deadline"]
+            said = chat._job_conversation_message(chat.store.conv, "30 dakika daha çalış", job)
+            self.assertIn("30 dakika uzatıldı", said["assistant_message"]["content"])
+            self.assertAlmostEqual(ledger.data["deadline"] - before, 1800, delta=2)
+            with self.assertRaises(JobError):
+                job.extend(12)

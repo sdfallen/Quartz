@@ -99,6 +99,40 @@ class JobPlannerMixin:
                 "sequence": self._next_sequence(self.store.get(cid))})
 
     # -- a conversation whose job is running: plain words, no commands -------------
+    def _expired_job_in(self, cid):
+        """The conversation's latest job when it ran out of time with work left."""
+        from core.long_job import JobLedger
+        found = [l for l in JobLedger.all() if l.data.get("conversation_id") == cid]
+        if not found:
+            return None
+        latest = max(found, key=lambda l: l.data.get("created_at") or 0)
+        left = any(m["status"] in {"pending", "running"} for m in latest.data["milestones"])
+        return latest if latest.data["status"] == "expired" and left and not latest.data.get("stopped") else None
+
+    def _extend_expired_job(self, conv, text):
+        """"15 dakika daha çalış" after the job ran out of time: it continues where it stopped."""
+        from core.job_intent import extension_hours
+        from core.long_job import JobError
+        hours = extension_hours(text)
+        ledger = self._expired_job_in(conv["id"]) if hours else None
+        if ledger is None:
+            return None
+        if any(j.ledger.data["status"] in {"running", "waiting_limit", "paused"} for j in self._jobs().values()):
+            return self._answer_without_agents(conv["id"], text, "Şu an başka bir uzun iş sürüyor; önce o bitmeli.")
+        job = self._make_job(ledger)
+        try:
+            job.extend(hours)
+        except JobError as exc:
+            return self._answer_without_agents(conv["id"], text, str(exc))
+        job.recover_after_crash()  # a milestone left "running" by the deadline is simply retried
+        self._jobs()[ledger.data["id"]] = job
+        left = [m for m in ledger.data["milestones"] if m["status"] in {"pending", "running"}]
+        answer = self._answer_without_agents(conv["id"], text, (
+            f"Süre {round(hours * 60)} dakika uzatıldı; iş kaldığı yerden sürüyor "
+            f"({len(left)} adım kaldı: {left[0]['title']}…)."))
+        job.start()
+        return answer
+
     def _active_job_in(self, cid):
         return next((j for j in self._jobs().values() if j.ledger.data.get("conversation_id") == cid
                      and j.ledger.data["status"] in {"running", "waiting_limit", "paused"}), None)
@@ -107,6 +141,17 @@ class JobPlannerMixin:
         from core.job_intent import job_message_kind
         kind = job_message_kind(text)
         data = job.ledger.data
+        from core.job_intent import extension_hours
+        more = extension_hours(text)
+        if more:
+            # "30 dakika daha çalış" while the job runs: the deadline moves (26 Nov).
+            from core.long_job import JobError
+            try:
+                job.extend(more)
+                answer = f"Süre {round(more * 60)} dakika uzatıldı."
+            except JobError as exc:
+                answer = str(exc)
+            return self._answer_without_agents(conv["id"], text, answer)
         if kind == "status":
             done = sum(1 for m in data["milestones"] if m["status"] == "done")
             current = job.ledger.current()

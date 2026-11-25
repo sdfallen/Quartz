@@ -1100,6 +1100,10 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
             running_job = self._active_job_in(target["id"])
             if running_job is not None:
                 return self._job_conversation_message(target, text, running_job)
+            # "15 dakika daha çalış" after the job ran out of time (26 Nov).
+            extended = self._extend_expired_job(target, text)
+            if extended is not None:
+                return extended
         from core.skill_shelf import install_request, list_request, named_skill
         skill = None
         skill_install = install_request(text)

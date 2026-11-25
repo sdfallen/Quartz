@@ -263,6 +263,17 @@ def job_change(text: str):
     return None
 
 
+_EXTEND = re.compile(r"\b(?:daha|ek\s+(?:sure|zaman)|fazladan|uzat)\b")
+
+
+def extension_hours(text: str) -> float | None:
+    """"15 dakika daha çalış", "bir saat daha devam et", "süreyi 30 dakika uzat" -> hours."""
+    folded = turkish_fold(instruction_text(text))
+    if not _EXTEND.search(folded) or not (_HOURS.search(folded) or _WORD_HOURS.search(folded)):
+        return None
+    return requested_hours(text)
+
+
 def job_message_kind(text: str) -> str:
     """What a message in a conversation with a running job means: status, stop, pause, resume or note.
 
