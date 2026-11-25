@@ -6,6 +6,7 @@ own conversation, and reads the turn's outcome from the conversation afterwards.
 """
 from __future__ import annotations
 
+import re
 import threading
 import time
 
@@ -126,7 +127,7 @@ class LongJobChatMixin:
     def _make_job(self, ledger):
         from core.agent_limits import snapshot
         cid = ledger.data.get("conversation_id")
-        return LongJob(ledger, run_milestone=self._job_run_milestone, limits=snapshot,
+        return LongJob(ledger, run_milestone=self._job_run_milestone, limits=snapshot, accept=self._job_accept,
                        writers=lambda: self._job_members(cid),
                        notify=lambda text, urgent=False, report=False: self._job_note(ledger, text, urgent=urgent,
                                                                                       report=report))
@@ -207,6 +208,56 @@ class LongJobChatMixin:
         if stop.is_set():
             return {"status": "cancelled"}
         return self._job_turn_outcome(cid, user_id, writer, step_status)
+
+    def _job_accept(self, ledger, milestone, writer, check, stop: threading.Event) -> dict:
+        """A teammate who did not write the milestone reads the project against its acceptance
+        criterion in a read-only turn of the job's conversation (Fides/Eos 25 Nov)."""
+        cid = ledger.data["conversation_id"]
+        limited = set((ledger.data.get("limited") or {}).keys())
+        reviewers = [m for m in self._job_members(cid) if m != writer and m not in limited]
+        if not reviewers:
+            return {"ok": None, "summary": "Denetleyecek ikinci ajan yok."}
+        reviewer = reviewers[0]
+        while self._job_turn_busy():
+            if stop.wait(POLL_SECONDS):
+                return {"ok": None, "by": reviewer}
+        summary = str(check.get("summary") or "").strip()
+        prompt = (f"UZUN İŞ — KABUL DENETİMİ. Yalnız incele; hiçbir dosyayı değiştirme.\n"
+                  f"{PERSONA.get(writer, writer)} şu kilometre taşını bitirdiğini söyledi.\n"
+                  f"HEDEF: {ledger.data['goal'][:600]}\nTAŞ: {milestone['title']}\n"
+                  f"KABUL ÖLÇÜTÜ: {milestone['acceptance']}\n"
+                  + (f"SpeS'in kontrol çıktısı: {summary[-600:]}\n" if summary else "")
+                  + "Projedeki dosyaları okuyarak ölçütün gerçekten karşılandığını incele: istenen her şey var mı, "
+                    "kod çalışacak gibi mi, yer tutucu/TODO/eksik kaldı mı. En fazla 5 kısa cümle yaz ve SON "
+                    "SATIRA tam olarak 'KABUL: EVET' ya da 'KABUL: HAYIR — <eksik olan>' yaz. Emin değilsen HAYIR de.")
+        try:
+            sent = self.send_message(prompt, agent=reviewer, conversation_id=cid, write=False, origin="long_job")
+        except Exception as exc:
+            return {"ok": None, "by": reviewer, "summary": str(exc)[:300]}
+        user_id = sent["user_message"]["id"]
+        turn_id = (sent["user_message"].get("metadata") or {}).get("task_id")
+        with self._lock:
+            if self._active_turn and self._active_turn.get("turn_id") == turn_id:
+                self._active_turn["long_job"] = ledger.data["id"]
+        while True:
+            with self._lock:
+                turn = self._active_turn
+                running = bool(turn and turn.get("turn_id") == turn_id
+                               and (turn.get("status") in {"running", "cancelling"} or turn.get("worker_pending")))
+            if not running:
+                break
+            if stop.is_set():
+                self.cancel_active()
+            stop.wait(POLL_SECONDS)
+        messages = self.store.get(cid).get("messages", [])
+        index = next((i for i, m in enumerate(messages) if m.get("id") == user_id), None)
+        replies = [m for m in (messages[index + 1:] if index is not None else [])
+                   if m.get("role") == "assistant" and m.get("sender") == reviewer]
+        text = " ".join(str(m.get("content") or "") for m in replies)
+        verdicts = re.findall(r"KABUL\s*:\s*(EVET|HAYIR)", text, re.I)
+        if not verdicts:
+            return {"ok": None, "by": reviewer, "summary": text[-400:]}
+        return {"ok": verdicts[-1].upper() == "EVET", "by": reviewer, "summary": text[-1200:]}
 
     def _job_turn_outcome(self, cid, user_id, writer, step_status):
         messages = self.store.get(cid).get("messages", [])

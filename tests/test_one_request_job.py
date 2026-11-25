@@ -188,3 +188,71 @@ class PlanningTurnTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AcceptanceReviewTests(unittest.TestCase):
+    """Fides 25 Nov: without a test, "done" was the writer's word alone."""
+
+    def make(self, accept, **spec):
+        from tests.test_long_job import Clock, nullctx
+        from core.long_job import JobLedger, LongJob
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        (root / "p").mkdir()
+        ledger = JobLedger.create({"goal": "Oyun", "project_path": str(root / "p"), "hours": 2, "review": True,
+                                   "milestones": [{"title": "Pencere", "acceptance": "açılıyor"}], **spec},
+                                  root=root / "jobs", clock=Clock())
+        notes, writers = [], []
+        job = LongJob(ledger, run_milestone=lambda l, m, w, s: writers.append(w) or {"status": "completed"},
+                      verify=lambda stop: {"ok": True, "summary": "Kontrol komutu tanımlanmadı."},
+                      checkpoint=lambda: {"status": "snapshot", "ref": "cp"},
+                      baseline=lambda: {"status": "snapshot", "ref": "b"}, snapshot=lambda: {},
+                      changed=lambda a, b: [], commit=lambda f, m: None,
+                      notify=lambda t, urgent=False, report=False: notes.append(t),
+                      clock=Clock(), awake=nullctx, accept=accept)
+        return job, ledger, notes, writers
+
+    def test_a_teammates_yes_makes_the_milestone_verified(self):
+        job, ledger, notes, _ = self.make(lambda l, m, w, c, s: {"ok": True, "by": "codex", "summary": "KABUL: EVET"})
+        job.run()
+        milestone = ledger.data["milestones"][0]
+        self.assertEqual((milestone["status"], milestone["verified"], milestone["reviewer"]), ("done", True, "codex"))
+        self.assertIn("Fides denetledi", notes[-1])
+
+    def test_a_teammates_no_sends_it_back(self):
+        answers = iter([{"ok": False, "by": "codex", "summary": "KABUL: HAYIR — skor yok"},
+                        {"ok": True, "by": "codex", "summary": "KABUL: EVET"}])
+        job, ledger, notes, writers = self.make(lambda l, m, w, c, s: next(answers))
+        job.run()
+        milestone = ledger.data["milestones"][0]
+        self.assertEqual(len(writers), 2, "the writer tried again after the 'no'")
+        self.assertEqual(milestone["status"], "done")
+        self.assertFalse(milestone["history"][0]["check"])
+        self.assertIn("Fides kabul etmedi", milestone["history"][0]["note"])
+
+    def test_what_nobody_checked_is_said(self):
+        job, ledger, notes, _ = self.make(lambda l, m, w, c, s: {"ok": None, "summary": "Denetleyecek ikinci ajan yok."})
+        job.run()
+        self.assertFalse(ledger.data["milestones"][0]["verified"])
+        self.assertIn("denetlenmedi", notes[-1])
+        self.assertIn("ne bir test ne de ikinci bir ajan", notes[-1])
+
+    def test_a_job_without_review_asks_nobody_but_still_says_it_was_not_checked(self):
+        job, ledger, notes, _ = self.make(lambda *a: self.fail("no review asked"), review=False)
+        job.run()
+        self.assertEqual(ledger.data["milestones"][0]["status"], "done")
+        self.assertIn("denetlenmedi", notes[-1])
+
+
+class FidesReviewTests(unittest.TestCase):
+    def test_a_property_of_the_thing_is_not_a_work_budget(self):
+        self.assertEqual(requested_hours("2 saatlik videoyu özetleyen uygulama yap"), 1.0)
+        self.assertEqual(requested_hours("30 dakikalık bir tur için oyun yap, 2 saat çalış"), 2.0)
+
+    def test_overflow_steps_are_folded_not_dropped(self):
+        many = "PLAN\n" + "\n".join(f"{i}. T{i} | ölçüt {i}" for i in range(1, 11)) + "\nSON"
+        steps = parse_plan(many)
+        self.assertEqual(len(steps), 8)
+        self.assertIn("T9: ölçüt 9", steps[-1]["acceptance"])
+        self.assertIn("T10: ölçüt 10", steps[-1]["acceptance"])

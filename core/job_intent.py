@@ -42,15 +42,16 @@ _BIG_THING = re.compile(
     r"oyun\s+motoru|editor\w*|dashboard)")
 _SCALE = re.compile(
     r"\b(?:bastan\s+sona|bastan\s+asagi|eksiksiz|tamamen|komple|tum\s+ozellik|butun\s+ozellik|her\s+seyi|"
-    r"\d+(?:[.,]\d+)?\s*(?:saat|sa\b|dakika|dk\b)|uzun\s+(?:bir\s+)?is|adim\s+adim|asama\s+asama|"
+    r"\d+(?:[.,]\d+)?\s*(?:saat|sa\b|dakika|dk\b)(?!l[iu]k)|uzun\s+(?:bir\s+)?is|adim\s+adim|asama\s+asama|"
     r"kendin\s+bitir|sonuna\s+kadar|calisir\s+hale|oynanabilir|yayinlanabilir|from\s+scratch|end\s+to\s+end|"
     r"(?:tum|butun)\s+\w+(?:lari|leri)\w*|%\s*\d+|yuzde\s*\d+|"
-    r"(?:bir|iki|uc|dort|bes|alti|yarim|bir\s+bucuk)\s+(?:saat|dakika))")
+    r"(?:bir|iki|uc|dort|bes|alti|yarim|bir\s+bucuk)\s+(?:saat|dakika)(?!l[iu]k))")
 # Questions and explanations about such things stay ordinary turns.
 _QUESTION = re.compile(r"\b(?:nasil\s+yapilir|nedir|ne\s+demek|nasil\s+(?:yapar|yapabilirim)|"
                        r"onerir\s*mi?sin|fikir\s+ver|ne\s+dusunuyorsun|mumkun\s+mu)\b")
-_HOURS = re.compile(r"(\d+(?:[.,]\d+)?)(?:\s*-\s*(\d+(?:[.,]\d+)?))?\s*(saat|sa\b|dakika|dk\b)")
-_WORD_HOURS = re.compile(r"\b(bir\s+bucuk|yarim|bir|iki|uc|dort|bes|alti|yedi|sekiz|dokuz|on)\s+(saat|dakika)")
+_HOURS = re.compile(r"(\d+(?:[.,]\d+)?)(?:\s*-\s*(\d+(?:[.,]\d+)?))?\s*(saat|sa\b|dakika|dk\b)(?!l[iu]k)")
+_WORD_HOURS = re.compile(r"\b(bir\s+bucuk|yarim|bir|iki|uc|dort|bes|alti|yedi|sekiz|dokuz|on)\s+(saat|dakika)"
+                         r"(?!l[iu]k)")
 _NUMBER_WORDS = {"yarim": 0.5, "bir bucuk": 1.5, "bir": 1, "iki": 2, "uc": 3, "dort": 4, "bes": 5, "alti": 6,
                  "yedi": 7, "sekiz": 8, "dokuz": 9, "on": 10}
 _RESUME = re.compile(r"\b(?:coks(?:e|un)\s+(?:bile\s+)?devam|kapan(?:sa|irsa)\s+(?:bile\s+)?devam|"
@@ -131,7 +132,12 @@ def parse_plan(text: str) -> list[dict]:
             acceptance = match.group(3).strip(" *`")
             if title and acceptance:
                 steps.append({"title": title[:200], "acceptance": acceptance[:2000]})
-    return steps[:MAX_MILESTONES]
+    if len(steps) > MAX_MILESTONES:
+        last, extra = steps[MAX_MILESTONES - 1], steps[MAX_MILESTONES:]
+        folded = "; ".join(f"{s['title']}: {s['acceptance']}" for s in extra)
+        steps = steps[:MAX_MILESTONES - 1] + [{"title": last["title"][:200],
+                                               "acceptance": (last["acceptance"] + " Ayrıca: " + folded)[:2000]}]
+    return steps
 
 
 def fallback_plan(text: str) -> list[dict]:
@@ -189,7 +195,7 @@ def job_spec(text: str, milestones: list[dict], project_path, clock_text: str) -
     goal = " ".join(str(text or "").split())
     return {"goal": goal[:4000], "milestones": milestones or fallback_plan(text),
             "hours": requested_hours(text), "auto_resume": wants_auto_resume(text),
-            "verify": detected_check(project_path), "auto_check": True,
+            "verify": detected_check(project_path), "auto_check": True, "review": True,
             "git_branch": job_branch(project_path, goal, clock_text)}
 
 

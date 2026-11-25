@@ -93,5 +93,15 @@ class JobPlannerMixin:
                      "resume": "İş kaldığı kilometre taşından sürüyor."}
             return self._answer_without_agents(conv["id"], text, words[kind])
         job.add_note(text)
+        # Fides 25 Nov: "müşteri dosyasına dokunma" must not wait for the next milestone. The
+        # writer of the running milestone gets it as an instruction now, with no wider rights.
+        with self._lock:
+            turn = self._active_turn
+            if (turn and turn.get("long_job") == data["id"] and turn.get("status") == "running"
+                    and turn.get("conversation_id") == conv["id"]):
+                try:
+                    return self._queue_instruction(text, turn.get("agent"), conv["id"], False, False)
+                except (RuntimeError, PermissionError):
+                    pass
         return self._answer_without_agents(conv["id"], text, (
             "Bunu iş defterine yazdım; ekip sıradaki her kilometre taşında okuyacak."))
