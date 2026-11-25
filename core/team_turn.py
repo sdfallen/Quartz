@@ -290,7 +290,11 @@ class TeamTurnMixin:
         plan = self._team_say(cid, first_msg_id, lead, header(lead) + self._team_rules(3) + (
             f"Görevin: kullanıcının isteği için kısa bir plan ve iş bölümü öner (kim ne yapacak: "
             f"{team_names}). Sohbet sorusuysa nasıl yanıtlayacağınızı söyle. İstek proje dosyalarına "
-            "dayanıyorsa (ör. bir ilan, README, mevcut kod) önce onları oku; okumadığını okumuş gibi yazma.\n")
+            "dayanıyorsa (ör. bir ilan, README, mevcut kod) önce onları oku; okumadığını okumuş gibi yazma.\n"
+            # Live 25 Nov: given a milestone ("dosya yazarak tamamla"), the lead wrote "m1
+            # tamamlanmadı: yalnız okuma araçlarım var" in its plan step; building comes next.
+            + ("" if chat_only else "Bu adımda yalnız planlıyorsun; dosya yazmak bir sonraki yapım adımında "
+               "olacak. 'Yapamadım' ya da 'tamamlanmadı' yazma; planı yaz.\n"))
             + user_block, project_id, step=1, **read_project)
         if self._is_turn_cancelled(first_msg_id) or not plan:
             with self._lock:

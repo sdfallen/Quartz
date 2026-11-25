@@ -1121,6 +1121,15 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
         job_request = (origin != "long_job" and not chat_space and not research and not skill and not skill_install
                        and bool(write or full_access) and confirm_write is True and big_job_request(text))
         conversation_only = (chat_space or research or bool(skill_install) or not looks_like_task) and not job_request
+        new_project = None
+        if job_request:
+            from core.job_intent import wants_new_project
+            busy = bool(self._active_turn and self._active_turn.get("status") == "running")
+            if wants_new_project(text) and not busy:
+                try:
+                    new_project = self._new_project_for_job(target, text)
+                except Exception as exc:
+                    return self._answer_without_agents(target["id"], text, f"Yeni proje klasörü açılamadı: {exc}")
         if conversation_only:
             write = full_access = confirm_write = False
         write = bool(write or full_access)
@@ -1283,7 +1292,8 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
                 turn_state["skill_install"] = skill_install
             if job_request:
                 turn_state["job_plan"] = {"planner": first_sender, "text": text,
-                                          "full_access": bool(full_access)}
+                                          "full_access": bool(full_access),
+                                          **({"new_project": new_project.get("path")} if new_project else {})}
             # "Bitince haber ver": SpeS writes a short report when this turn ends (core.finish_report).
             from core.finish_report import wants_finish_report
             if wants_finish_report(text):

@@ -313,3 +313,51 @@ class LivePlanChangeTests(unittest.TestCase):
             report = finish_report(ledger)
             self.assertIn("1 taşı senin isteğinle atlandı", report)
             self.assertIn("– T3: senin isteğinle atlandı", report)
+
+
+class NewProjectTests(unittest.TestCase):
+    """Eos 25 Nov: "yeni bir klasörde sıfırdan ... kur" had no project to work in."""
+
+    def test_the_words(self):
+        from core.job_intent import wants_new_project
+        self.assertTrue(wants_new_project("Yeni bir klasörde sıfırdan stok takip uygulaması yap"))
+        self.assertTrue(wants_new_project("Ayrı bir projede baştan sona oyun yap"))
+        self.assertFalse(wants_new_project("Bu projede baştan sona oyun yap"))
+
+    def test_the_folder_is_new_named_and_a_git_repository(self):
+        import subprocess
+        from core.job_intent import new_project_folder
+        from core.job_planner import create_project_folder
+        with tempfile.TemporaryDirectory() as directory:
+            first = new_project_folder("Yeni bir klasörde stok takip uygulaması yap", "1125-2300", base=directory)
+            self.assertEqual(first.name, "stok-takip-uygulamasi-1125-2300")
+            create_project_folder(first)
+            second = new_project_folder("Yeni bir klasörde stok takip uygulaması yap", "1125-2300", base=directory)
+            self.assertEqual(second.name, "stok-takip-uygulamasi-1125-2300-2", "never an existing folder")
+            head = subprocess.run(["git", "-C", str(first), "log", "--oneline"], capture_output=True, text=True)
+            self.assertIn("SpeS: yeni proje", head.stdout)
+            name = subprocess.run(["git", "-C", str(first), "config", "user.name"], capture_output=True, text=True)
+            self.assertEqual(name.stdout.strip(), "SpeS", "identity of this repository only")
+
+    def test_the_conversation_gets_the_new_project_before_planning(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict("os.environ", {"SPES_PROJECTS_HOME": str(Path(directory) / "projeler")}):
+            chat = make_chat(directory)
+            projects = {}
+            chat.agent_service.projects.add.side_effect = lambda path, name=None: projects.setdefault(
+                "p", {"id": "p-new", "path": path})
+            run = TeamRun(chat)
+            run.reply = PlanningTurnTests.PLAN
+            started = []
+            with patch.object(chat, "job_start", side_effect=lambda spec: started.append(spec) or {"id": "j"}):
+                turn = run.run("Yeni bir klasörde baştan sona stok takip uygulaması yap",
+                               write=True, confirm_write=True)
+                deadline = time.monotonic() + 5
+                while not started and time.monotonic() < deadline:
+                    time.sleep(0.02)
+            chat._diagnostics.close()
+            conv = chat.store.get(turn["conversation_id"])
+            self.assertEqual(conv["project_id"], "p-new")
+            self.assertTrue(Path(projects["p"]["path"]).is_dir())
+            plan = next(m for m in conv["messages"] if (m.get("metadata") or {}).get("job_plan"))
+            self.assertIn("Yeni proje klasörü açıldı:", plan["content"])

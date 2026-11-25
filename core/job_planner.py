@@ -19,7 +19,36 @@ def plan_text(milestones) -> str:
     return "İş planı:\n" + "\n".join(lines)
 
 
+def create_project_folder(folder) -> None:
+    """The folder, a Git repository and one empty commit, so the job's branch has a base."""
+    import subprocess
+    from pathlib import Path
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=False)
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(folder), *args], capture_output=True, text=True,
+                              timeout=60, check=False, creationflags=flags)
+    if git("init", "-q").returncode != 0:
+        return  # still a folder; the job simply runs without commits
+    # Identity for this repository only; the user's own Git settings are never touched.
+    git("config", "user.name", "SpeS")
+    git("config", "user.email", "spes@localhost")
+    git("commit", "-q", "--allow-empty", "-m", "SpeS: yeni proje")
+
+
 class JobPlannerMixin:
+    def _new_project_for_job(self, conv, text) -> dict | None:
+        """Eos 25 Nov: a request for a new project gets its own folder and becomes this
+        conversation's project before the plan is written."""
+        from core.job_intent import new_project_folder
+        folder = new_project_folder(text, time.strftime("%m%d-%H%M"))
+        create_project_folder(folder)
+        project = self.agent_service.projects.add(str(folder))
+        self.store.update_project(conv["id"], project["id"])
+        return project
+
     def _run_job_plan(self, cid, msg_id, request, project_id):
         planner = (self._active_turn or {}).get("job_plan", {}).get("planner") or "claude"
         from core.team_turn import persona_name
@@ -46,8 +75,9 @@ class JobPlannerMixin:
         with self._lock:
             message = next((m for m in self.store.get(cid).get("messages", []) if m["id"] == msg_id), None)
             if message is not None:
-                note = plan_text(spec["milestones"]) + ("" if milestones else
-                                                        "\n(Plan okunamadı; istek tek kilometre taşı olarak yapılacak.)")
+                note = (f"Yeni proje klasörü açıldı: {request['new_project']}\n" if request.get("new_project") else "") \
+                    + plan_text(spec["milestones"]) + ("" if milestones else
+                                                       "\n(Plan okunamadı; istek tek kilometre taşı olarak yapılacak.)")
                 self.store.update_message_content(cid, msg_id, note, metadata={
                     **(message.get("metadata") or {}), "job_plan": True, "status": "completed"})
             self._finish_turn(msg_id, "completed")

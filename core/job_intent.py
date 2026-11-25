@@ -80,6 +80,32 @@ def big_job_request(text: str) -> bool:
                 and not _RUN_FILE.search(folded))
 
 
+_NEW_PROJECT = re.compile(r"\b(?:yeni\s+(?:bir\s+)?(?:klasor|proje|depo|repo)\w*|bos\s+(?:bir\s+)?klasor\w*|"
+                          r"ayri\s+(?:bir\s+)?(?:klasor|proje)\w*|new\s+(?:folder|project))")
+
+
+def wants_new_project(text: str) -> bool:
+    """"Yeni bir klasörde sıfırdan ... yap": the job gets a project of its own (Eos, 25 Nov)."""
+    return bool(_NEW_PROJECT.search(turkish_fold(instruction_text(text))))
+
+
+def new_project_folder(text: str, clock_text: str, base=None) -> Path:
+    """A fresh, unused folder named after the request, under Documents\\SpeS Projeleri."""
+    import os
+    base = Path(base or os.getenv("SPES_PROJECTS_HOME") or Path.home() / "Documents" / "SpeS Projeleri")
+    words = [w for w in re.findall(r"[a-z0-9]+", turkish_fold(instruction_text(text)))
+             if w not in {"bir", "ve", "ile", "icin", "bu", "su", "yeni", "klasor", "klasorde", "proje", "projede",
+                          "bana", "sifirdan", "bastan", "sona", "yap", "olustur", "gelistir", "kur", "saat", "dakika"}
+             and not w.isdigit()]
+    slug = "-".join(words[:4])[:40].strip("-") or "is"
+    folder = base / f"{slug}-{clock_text}"
+    index = 2
+    while folder.exists():
+        folder = base / f"{slug}-{clock_text}-{index}"
+        index += 1
+    return folder
+
+
 def requested_hours(text: str) -> float:
     """The duration in the user's own words; otherwise the default. Never above 12 hours."""
     folded = turkish_fold(instruction_text(text))
