@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 import time
@@ -688,6 +689,10 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
         cached = self.__dict__.get("_limit_cache")
         if cached and now - cached[0] < 30:
             return cached[1]
+        if os.getenv("QUARTZ_AGENT_LIMITS_OFF") == "1":
+            # The test runner never reads this computer's real usage records (26 Nov: a full
+            # agent on the build machine made eight unrelated team tests fail).
+            return set()
         try:
             from core.agent_limits import at_limit, snapshot
             full = {agent for agent, entry in (snapshot() or {}).items() if at_limit(entry, now)}
