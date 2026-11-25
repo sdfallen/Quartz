@@ -1,4 +1,4 @@
-"""The skill shelf: agents install a GitHub skill, /skill uses it (14 Nov 2026)."""
+"""The skill shelf: agents install a GitHub skill; naming it uses it (14/25 Nov 2026)."""
 import io
 import tempfile
 import unittest
@@ -6,7 +6,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from core.skill_shelf import SkillError, SkillShelf, install_request, invocation, prompt_block, verdict
+from core.skill_shelf import (SkillError, SkillShelf, install_request, list_request, named_skill, prompt_block,
+                               verdict)
 from tests.test_team_turn import TeamRun, make_chat
 
 SKILL_MD = "---\nname: pdf-ozet\ndescription: PDF dosyalarını özetler\n---\n# PDF özeti\nAdımlar: ...\n"
@@ -38,9 +39,16 @@ class ParsingTests(unittest.TestCase):
         self.assertIsNone(install_request("Skill kur ama link yok"))
 
     def test_invocation_and_verdict(self):
-        self.assertEqual(invocation("/skill pdf-ozet şu dosyayı özetle"), ("pdf-ozet", "şu dosyayı özetle"))
-        self.assertEqual(invocation("/skill"), ("", ""))
-        self.assertIsNone(invocation("skill nedir"))
+        # No command any more (25 Nov): the message names the skill; the longest name wins.
+        names = ["pdf", "pdf-ozet", "frontend-design"]
+        self.assertEqual(named_skill("pdf-ozet ile şu dosyayı özetle", names), "pdf-ozet")
+        self.assertEqual(named_skill("Bu PDF'i özetle", names), "pdf")
+        self.assertEqual(named_skill("frontend-design skill'iyle bir sayfa yap", names), "frontend-design")
+        self.assertIsNone(named_skill("skill nedir", names))
+        self.assertIsNone(named_skill("pdfler hakkında konuşalım", names))
+        self.assertTrue(list_request("Hangi skill'ler var?"))
+        self.assertTrue(list_request("skill'leri göster"))
+        self.assertFalse(list_request("pdf-ozet ile özetle"))
         self.assertEqual(verdict("Güvenli görünüyor.\nKARAR: UYGUN"), "UYGUN")
         self.assertEqual(verdict("KARAR: UYGUN DEĞİL"), "UYGUN DEĞİL")
         self.assertIsNone(verdict("Bence iyi."))
@@ -129,7 +137,7 @@ class InstallTurnTests(unittest.TestCase):
         self.assertEqual(sorted(c["agent"] for c in run.calls), ["antigravity", "claude", "codex"])
         self.assertTrue(all(not c["write"] and not c["web"] for c in run.calls))
         note = [m for m in messages if m.get("sender") == "quartz" and (m.get("metadata") or {}).get("skill_install")]
-        self.assertIn("/skill pdf-ozet", note[0]["content"])
+        self.assertIn("Skill rafa eklendi: pdf-ozet", note[0]["content"])
 
     def test_reviewers_are_shown_every_file_of_the_skill(self):
         # Live 14 Nov: only SKILL.md was listed, so the scripts looked "not attached".
@@ -202,17 +210,15 @@ class UseTests(unittest.TestCase):
             fetched = chat.skills.fetch(install_request("skill kur https://github.com/a/b"))
             chat.skills.register(fetched["skills"][0], source="https://github.com/a/b", sha=fetched["sha"], reviewers={})
             cid = chat.new_conversation(agent="claude", space="chat")["id"]
-            listed = chat.send_message("/skill liste")
+            listed = chat.send_message("Hangi skill'ler var?")
             self.assertEqual(listed["agent"], "quartz")
-            self.assertIn("/skill pdf-ozet", listed["assistant_message"]["content"])
-            unknown = chat.send_message("/skill yok-boyle")
-            self.assertIn("rafta yok", unknown["assistant_message"]["content"])
+            self.assertIn("pdf-ozet —", listed["assistant_message"]["content"])
             run = TeamRun(chat)
-            run.run("/skill pdf-ozet bu notu özetle")
+            run.run("pdf-ozet ile bu notu özetle")
             user = [m for m in chat.store.get(cid)["messages"] if m["role"] == "user"][-1]
             prompt = chat._communication_prompt(cid, "X")
             chat._diagnostics.close()
-        self.assertEqual((user["content"], user["metadata"]["skill"]), ("bu notu özetle", "pdf-ozet"))
+        self.assertEqual((user["content"], user["metadata"]["skill"]), ("pdf-ozet ile bu notu özetle", "pdf-ozet"))
         self.assertIn("SKILL: pdf-ozet", prompt)
 
 

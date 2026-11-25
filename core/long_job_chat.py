@@ -65,49 +65,6 @@ class LongJobChatMixin:
         job.start()
         return ledger.public()
 
-    def _long_job_command(self, conv, text, spec, confirmed_write, full_access=False) -> dict:
-        """'/uzun-iş' typed in the desktop chat with project writing allowed (never the phone)."""
-        if spec.get("list"):
-            jobs = self.job_list()
-            lines = [f"{j['goal'][:60]} — {j['status']}" for j in jobs[:5]]
-            return self._answer_without_agents(conv["id"], text, "Uzun işler: " + ("; ".join(lines) or "yok") + ".")
-        if spec.get("note") and confirmed_write:
-            # The reviewer's note reaches every later milestone through the ledger (15 Nov).
-            job = next((j for j in self._jobs().values() if j.ledger.data.get("conversation_id") == conv["id"]
-                        and j.ledger.data["status"] in {"running", "waiting_limit", "paused"}), None)
-            if job is None:
-                return self._answer_without_agents(conv["id"], text, "Bu sohbette sürmekte olan bir uzun iş yok.")
-            job.add_note(spec["note"])
-            return self._answer_without_agents(conv["id"], text, (
-                "Not iş defterine eklendi; ekip bunu sıradaki her kilometre taşında okuyacak."))
-        if not confirmed_write:
-            return self._answer_without_agents(conv["id"], text, (
-                "Uzun iş projeye saatlerce yazar; bu yüzden yalnız masaüstünde, yazma izni (Proje) açıkken "
-                "başlatılabilir. İzni açıp komutu yeniden gönder."))
-        # The chat's own permission level travels with the job (user decision 15 Nov: with
-        # Tam Yetki the writer may run Blender/Godot; with Proje it only edits files).
-        spec = {**spec, "permission_level": "full" if full_access else "project"}
-        try:
-            from core.long_job import validate_spec
-            validate_spec({**spec, "project_path": spec.get("project_path") or "."})  # fail before any message
-        except JobError as exc:
-            return self._answer_without_agents(conv["id"], text, f"Uzun iş başlatılamadı: {exc}")
-        with self._lock:
-            user = self.store.append_message(conv["id"], "user", text, sender="user", metadata={
-                "sender": "user", "recipient": "quartz", "long_job_command": True,
-                "sequence": self._next_sequence(self.store.get(conv["id"]))})
-        try:
-            job = self.job_start({**spec, "conversation_id": conv["id"]})
-        except (JobError, ValueError) as exc:
-            note = self.store.append_message(conv["id"], "assistant", f"Uzun iş başlatılamadı: {exc}", sender="quartz",
-                                             metadata={"sender": "quartz", "recipient": "user", "status": "completed",
-                                                       "sequence": self._next_sequence(self.store.get(conv["id"]))})
-            return {"conversation_id": conv["id"], "user_message": user, "assistant_message": note, "agent": "quartz"}
-        note = next((m for m in reversed(self.store.get(conv["id"]).get("messages", []))
-                     if (m.get("metadata") or {}).get("long_job") == job["id"]), None)
-        return {"conversation_id": conv["id"], "user_message": user, "assistant_message": note,
-                "agent": "quartz", "job": job}
-
     def job_control(self, job_id: str, action: str) -> dict:
         job = self._jobs().get(str(job_id or ""))
         if job is None:
@@ -212,7 +169,8 @@ class LongJobChatMixin:
         for _ in range(SETTLE_TRIES):
             try:
                 sent = self.send_message(prompt, agent=agent, conversation_id=cid, write=True, confirm_write=True,
-                                         full_access=ledger.data.get("permission_level") == "full")
+                                         full_access=ledger.data.get("permission_level") == "full",
+                                         origin="long_job")
                 break
             except Exception as exc:
                 text = str(exc)

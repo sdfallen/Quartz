@@ -897,21 +897,20 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       attachResult(await window.pywebview.api.chat_attach_data(currentConvId || '', file.name || 'yapistirilan.png', data));
     }
   }
-  // "/skill" in the composer lists the shelf; a click fills in the name (14 Nov).
+  // Typing the word "skill" lists the shelf; a click puts the skill's name in the sentence (no command, 25 Nov).
   let skillShelfCache = null;
   async function updateSkillHint() {
     const box = document.getElementById('skillHint');
     const input = document.getElementById('msgInput');
     if (!box || !input) return;
     const value = input.value;
-    const match = /^\/skill(?:\s+(\S*))?$/i.exec(value);
+    const match = /(^|\s)skill\S*$/i.exec(value);
     if (!match) { box.hidden = true; return; }
     if (!skillShelfCache) {
       try { const r = await window.pywebview.api.skills_list(); skillShelfCache = r.status === 'ok' ? r.data : []; }
       catch (_) { skillShelfCache = []; }
     }
-    const typed = (match[1] || '').toLowerCase();
-    const items = skillShelfCache.filter(s => s.name.startsWith(typed)).slice(0, 8);
+    const items = skillShelfCache.slice(0, 8);
     box.replaceChildren();
     if (!items.length) {
       const empty = document.createElement('span'); empty.className = 'skill-empty';
@@ -920,16 +919,16 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     }
     for (const skill of items) {
       const b = document.createElement('button'); b.type = 'button'; b.className = 'skill-option'; b.setAttribute('role', 'option');
-      const name = document.createElement('strong'); name.textContent = '/skill ' + skill.name;
+      const name = document.createElement('strong'); name.textContent = skill.name;
       const desc = document.createElement('span'); desc.textContent = skill.description || '';
       b.append(name, desc);
-      b.onclick = () => { input.value = `/skill ${skill.name} `; box.hidden = true; input.focus(); };
+      b.onclick = () => { input.value = input.value.replace(/(^|\s)skill\S*$/i, `$1${skill.name} ile `); box.hidden = true; input.focus(); };
       box.append(b);
     }
     box.hidden = false;
   }
   document.getElementById('msgInput')?.addEventListener('input', () => {
-    if (!/^\/skill/i.test(document.getElementById('msgInput').value)) skillShelfCache = null;
+    if (!/(^|\s)skill\S*$/i.test(document.getElementById('msgInput').value)) skillShelfCache = null;
     updateSkillHint();
   });
 
@@ -1056,10 +1055,9 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       routeModels.claude = {model:claudeModelSelect.value,effort:(claudeEffortSelect && claudeEffortSelect.value) || ''};
     // Sohbet never starts desktop, diagnostics or file work: the message goes straight to the chat.
     const chatSpace = typeof currentSpace !== 'undefined' && currentSpace === 'chat';
-    // '/uzun-iş' never reaches the desktop router (live 15 Nov: it started a desktop task).
-    const longJobText = /^\s*\/uzun[-_ ]?i[şs]/i.test(text);
+    // A big build request ("baştan sona bir oyun yap") is recognised by the host router,
+    // which keeps it away from the desktop path and lets the chat plan the job (25 Nov).
     try { coordinated = chatSpace ? {status:'ok',data:{handled:false,intent:'conversation'}}
-      : longJobText ? {status:'ok',data:{handled:false,intent:'task'}}
       : await window.pywebview.api.coordination_route(text, currentConvId, mainProjectSelect.value,
       routeModels,selectedPermissionLevel, submittedAgent); }
     catch(e) { appendMsg('err','SPES',String(e)); return; }
@@ -1103,9 +1101,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     }
 
     const writeSelect = document.getElementById('mainPermissionLevel');
-    // '/uzun-iş' is always work: live 15 Nov a goal containing "Durdurma" read as a conversation.
-    const longJobCommand = /^\s*\/uzun[-_ ]?i[şs]/i.test(text);
-    const conversationOnly = coordinated.data?.intent === 'conversation' && !longJobCommand;
+    const conversationOnly = coordinated.data?.intent === 'conversation';
     const permissionLevel = conversationOnly ? 'read-only' : selectedPermissionLevel;
     const isWrite = permissionLevel === 'full' || permissionLevel === 'project';
     const confirmWrite = isWrite;

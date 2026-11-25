@@ -73,7 +73,7 @@ class SkillTurnMixin:
         if approved:
             installed = [shelf.register(s, source=request["url"], sha=fetched["sha"], reviewers=who)
                          for s in fetched["skills"]]
-            text = ("Skill rafa eklendi: " + ", ".join(f"/skill {e['name']}" for e in installed)
+            text = ("Skill rafa eklendi: " + ", ".join(e["name"] for e in installed)
                     + f". Sürüm {fetched['sha'][:12] or 'bilinmiyor'}; kararlar: "
                     + ", ".join(f"{k} {v}" for k, v in who.items()) + ".")
         else:
@@ -117,7 +117,7 @@ class SkillTurnMixin:
                                               reviewers=reviewers) for s in fetched["skills"]]
         finally:
             self.skills.discard(fetched["staging"])
-        text = ("Skill senin onayınla rafa eklendi: " + ", ".join(f"/skill {e['name']}" for e in installed)
+        text = ("Skill senin onayınla rafa eklendi: " + ", ".join(e["name"] for e in installed)
                 + ". Kayıtta ekibin kararları da duruyor: "
                 + ", ".join(f"{k} {v}" for k, v in pending["who"].items()) + ".")
         self._post_skill_note(cid, text, installed=True)
@@ -139,5 +139,6 @@ class SkillTurnMixin:
         if not skills:
             return ("Rafta henüz skill yok. Kurmak için GitHub bağlantısıyla yaz: "
                     "\"şu skill'i kur: https://github.com/kullanici/depo\".")
-        return "Raftaki skill'ler: " + "; ".join(
-            f"/skill {s['name']} — {s.get('description') or 'açıklama yok'}" for s in skills) + "."
+        return ("Raftaki skill'ler: " + "; ".join(
+            f"{s['name']} — {s.get('description') or 'açıklama yok'}" for s in skills)
+            + ". Kullanmak için mesajında adını an (ör. \"" + skills[0]["name"] + " ile şunu yap\").")

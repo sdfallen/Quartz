@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core.long_job import JobError, JobLedger
+from core.job_planner import JobPlannerMixin
 from core.long_job_chat import LongJobChatMixin
 
 
@@ -45,7 +46,7 @@ class Service:
         self.projects = Projects(path, **extra)
 
 
-class FakeChat(LongJobChatMixin):
+class FakeChat(LongJobChatMixin, JobPlannerMixin):
     """Just enough of AgentChatService for the long-job layer."""
 
     def __init__(self, project, *, replies, space="work", **project_extra):
@@ -71,8 +72,10 @@ class FakeChat(LongJobChatMixin):
         note = self.store.append_message(cid, "assistant", answer, sender="quartz")
         return {"assistant_message": note}
 
-    def send_message(self, text, agent=None, conversation_id=None, write=False, confirm_write=False, full_access=False):
-        self.sent.append({"agent": agent, "write": write, "confirm": confirm_write, "text": text, "full": full_access})
+    def send_message(self, text, agent=None, conversation_id=None, write=False, confirm_write=False, full_access=False,
+                     origin=None):
+        self.sent.append({"agent": agent, "write": write, "confirm": confirm_write, "text": text, "full": full_access,
+                          "origin": origin})
         state, reply, sender = self.replies.pop(0)
         user = self.store.append_message("c1", "user", text, sender="user",
                                          metadata={"task_id": f"t{len(self.sent)}", "instruction_state": state})
@@ -186,26 +189,13 @@ class LongJobChatTests(unittest.TestCase):
         self.assertTrue(JobLedger.load(ledger.path).data["stopped"])
 
 
-    def test_the_typed_command_starts_a_job_only_with_desktop_write_permission(self):
-        from core.long_job import parse_command
-        text = "\n".join(["/uzun-iş", "Hedef: Yürüme animasyonu", "Süre: 30 dakika", "Devam: evet",
-                          'Kontrol: python -c "print(1)"', "Dal: spes/deneme-1",
-                          "1. Yürüme | 8 yön döngü", "2. Koşma | 8 yön"])
-        spec = parse_command(text)
-        self.assertEqual(spec["goal"], "Yürüme animasyonu")
-        self.assertAlmostEqual(spec["hours"], 0.5)
-        self.assertTrue(spec["auto_resume"])
-        self.assertEqual(spec["verify"], ["python", "-c", "print(1)"])
-        self.assertEqual(spec["git_branch"], "spes/deneme-1")
-        self.assertEqual([m["title"] for m in spec["milestones"]], ["Yürüme", "Koşma"])
-        self.assertIsNone(parse_command("uzun iş hakkında ne düşünüyorsun?"))
-        self.assertEqual(parse_command("/uzun-iş durum"), {"list": True})
-        with self.assertRaises(JobError):
-            parse_command("/uzun-iş\nNe: olur")
-        chat = FakeChat(self.project, replies=[])
-        answer = chat._long_job_command(chat.store.conv, text, spec, False)  # phone / no write permission
-        self.assertIn("yazma izni", answer["assistant_message"]["content"])
-        self.assertEqual(chat._jobs(), {})
+    def test_there_is_no_typed_command_any_more(self):
+        # User request 25 Nov: "/uzun-iş gibi komutları kaldır; tek istekle her şeyi yapsın".
+        import core.long_job as long_job
+        import core.long_job_chat as long_job_chat
+        self.assertFalse(hasattr(long_job, "parse_command"))
+        self.assertFalse(hasattr(long_job, "COMMAND"))
+        self.assertFalse(hasattr(long_job_chat.LongJobChatMixin, "_long_job_command"))
 
 
 if __name__ == "__main__":
@@ -221,11 +211,12 @@ class DurationTextTests(unittest.TestCase):
 
 
 class LongJobRoutingTests(unittest.TestCase):
-    def test_the_command_never_reaches_the_desktop_router(self):
-        # Live 15 Nov: milestone words like "kapı" and "el uzatıp" started a desktop task.
+    def test_a_big_build_request_never_reaches_the_desktop_router(self):
+        # Live 15 Nov: milestone words like "kapı" and "el uzatıp" started a desktop task; a
+        # one-request job names games and windows too (25 Nov).
         import gui
         api = gui.Api()
-        text = "/uzun-iş\nHedef: Kapıyı el uzatıp açma animasyonu\n1. Kapı | ekrana tıkla ve klavyede yaz"
+        text = "Baştan sona oynanabilir bir kapı açma oyunu yap; oyuncu el uzatıp kapıyı açsın, pencere de olsun"
         with patch.object(api, "_coordination_service", side_effect=AssertionError("desktop router reached")):
             result = api.coordination_route(text, "c1", "p1", {}, "project", "claude")
         self.assertEqual(result, {"status": "ok", "data": {"handled": False, "intent": "task"}})
@@ -248,35 +239,51 @@ class PausedJobAfterRestartTests(LongJobChatTests):
 class PermissionLevelTests(LongJobChatTests):
     def test_the_chats_permission_level_travels_with_the_job(self):
         # User decision 15 Nov: with Tam Yetki the writer may run Blender/Godot.
-        from core.long_job import parse_command
-        text = chr(10).join(["/uzun-iş", "Hedef: Yürüme", "Süre: 1 saat", "1. Yürüme | 8 yön"])
+        from core.job_intent import job_spec
+        spec = job_spec("Baştan sona yürüme animasyonu sistemi yap", [{"title": "Yürüme", "acceptance": "8 yön"}],
+                        self.project, "1125-1200")
         for full, level in ((True, "full"), (False, "project")):
             chat = FakeChat(self.project, replies=[("completed", "Tamam.", "claude")])
             with patch("core.long_job.keep_awake"):
-                answer = chat._long_job_command(chat.store.conv, text, parse_command(text), True, full_access=full)
-                self.assertEqual(self.wait_done(chat, answer["job"]["id"]), "done")
-            self.assertEqual(answer["job"]["permission_level"], level)
+                chat._start_planned_job("c1", spec, {"full_access": full})
+                job_id = next(iter(chat._jobs()))
+                self.assertEqual(self.wait_done(chat, job_id), "done")
+            self.assertEqual(chat._jobs()[job_id].ledger.data["permission_level"], level)
             self.assertEqual(chat.sent[0]["full"], full)
-            note = answer["assistant_message"]["content"]
-            self.assertIn("Tam Yetki" if full else "Proje izni", note)
+            # A milestone SpeS sends is never planned again or read as the user talking.
+            self.assertEqual(chat.sent[0]["origin"], "long_job")
+            start = next(m["content"] for m in chat.store.conv["messages"] if m["content"].startswith("Uzun iş başladı"))
+            self.assertIn("Tam Yetki" if full else "Proje izni", start)
 
 
-class ReviewerNoteTests(LongJobChatTests):
-    def test_a_note_reaches_the_next_milestone_prompt(self):
-        from core.long_job import milestone_prompt, parse_command
-        self.assertEqual(parse_command("/uzun-iş not: Kollar daha çok sallansın"), {"note": "Kollar daha çok sallansın"})
+class TalkingToAJobTests(LongJobChatTests):
+    def running(self, chat):
         ledger = JobLedger.create({**self.spec(), "project_path": str(self.project), "conversation_id": "c1"})
         ledger.data["status"] = "running"
-        chat = FakeChat(self.project, replies=[])
         chat._jobs()[ledger.data["id"]] = chat._make_job(ledger)
-        text = "/uzun-iş not: Kollar daha çok sallansın"
-        refused = chat._long_job_command(chat.store.conv, text, parse_command(text), False)  # phone: no
-        self.assertNotIn("Denetmen notu", milestone_prompt(ledger, ledger.data["milestones"][0], "claude"))
-        answer = chat._long_job_command(chat.store.conv, text, parse_command(text), True)
-        self.assertIn("eklendi", answer["assistant_message"]["content"])
+        return ledger
+
+    def test_a_plain_message_becomes_a_note_for_the_next_milestone(self):
+        from core.long_job import milestone_prompt
+        chat = FakeChat(self.project, replies=[])
+        ledger = self.running(chat)
+        job = chat._active_job_in("c1")
+        answer = chat._job_conversation_message(chat.store.conv, "Kollar daha çok sallansın", job)
+        self.assertIn("iş defterine", answer["assistant_message"]["content"])
         self.assertIn("Denetmen notu: Kollar daha çok sallansın",
                       milestone_prompt(ledger, ledger.data["milestones"][0], "claude"))
-        self.assertIn("yazma izni", refused["assistant_message"]["content"])
+
+    def test_status_and_stop_in_plain_words(self):
+        chat = FakeChat(self.project, replies=[])
+        ledger = self.running(chat)
+        job = chat._active_job_in("c1")
+        status = chat._job_conversation_message(chat.store.conv, "ne durumda?", job)
+        self.assertIn("0/1 kilometre taşı", status["assistant_message"]["content"])
+        self.assertIn("Yürüme", status["assistant_message"]["content"])
+        stopped = chat._job_conversation_message(chat.store.conv, "dur", job)
+        self.assertIn("durduruldu", stopped["assistant_message"]["content"])
+        self.assertTrue(JobLedger.load(ledger.path).data["stopped"])
+        self.assertIsNone(chat._active_job_in("c1"))
 
 
 class UnreachableWriterTests(LongJobChatTests):

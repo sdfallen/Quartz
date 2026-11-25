@@ -398,10 +398,11 @@ class Api:
                 # A cloud-agent message cannot start REA, desktop control or
                 # become an instruction to a running local operator.
                 return {'status':'ok','data':{'handled':False,'intent':'conversation'}}
-            from core.long_job import COMMAND as LONG_JOB_COMMAND
-            if LONG_JOB_COMMAND.match(str(text or '')):
-                # Live 15 Nov: a long job's milestone text ("kapı", "el uzatıp") started a
-                # desktop task. '/uzun-iş' goes to the chat only; it never controls the screen.
+            from core.job_intent import big_job_request
+            if permission_level != 'read-only' and big_job_request(text):
+                # "Baştan sona bir oyun yap" names a game but asks for a build: it goes to the
+                # chat, which plans the job (25 Nov); it never controls the screen. (Live 15
+                # Nov: a job's words "kapı", "el uzatıp" had started a desktop task.)
                 return {'status':'ok','data':{'handled':False,'intent':'task'}}
             message_kind = message_intent(text)
             from core.diagnostics_intent import diagnostics_intent
@@ -978,7 +979,7 @@ class Api:
         return ipc_send("skill_override", {"conversation_id": conversation_id, "id": override_id})
 
     def skills_list(self) -> dict:
-        """The skill shelf (name, description, source, version) for the /skill hint."""
+        """The skill shelf (name, description, source, version) for the composer's skill hint."""
         return ipc_send("skills_list")
 
     def panel_result(self, conversation_id: str = "") -> dict:

@@ -40,6 +40,7 @@ def _writer_failed(message, run, run_id):
 
 from core.skill_turn import SkillTurnMixin
 from core.long_job_chat import LongJobChatMixin
+from core.job_planner import JobPlannerMixin
 
 
 
@@ -54,7 +55,7 @@ def desktop_evidence(folder) -> dict:
         count = 0
     return {"observations": count, "folder": str(folder)} if count else {}
 
-class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
+class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlannerMixin):
     MAX_GROUP_ROUNDS = 2
 
     def __init__(self, agent_service: MultiAgentService, store_path: str | Path):
@@ -71,7 +72,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
         # The work panel's live previews of what the team built (127.0.0.1 only).
         from core.local_preview import PreviewServers
         self.previews = PreviewServers()
-        # SpeS's skill shelf: the agents install GitHub skills, /skill uses them (14 Nov).
+        # SpeS's skill shelf: the agents install GitHub skills; a message naming one uses it (14/25 Nov).
         from core.skill_shelf import SkillShelf
         self.skills = SkillShelf()
         self.recovery = self.store.recover_interrupted()
@@ -1077,7 +1078,9 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
     def send_message(self, text: str, agent: str | None = None,
                      conversation_id: str | None = None, write: bool = False,
                      confirm_write: bool = False, full_access: bool = False,
-                     requested_permission_level: str | None = None) -> dict:
+                     requested_permission_level: str | None = None, origin: str | None = None) -> dict:
+        """``origin="long_job"`` marks a milestone SpeS itself sends; it is never planned again
+        and never read as the user talking to the job."""
         text = str(text or "").strip()
         if not text:
             raise ValueError("Mesaj boş olamaz.")
@@ -1086,27 +1089,25 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
         if requested_permission_level not in {'read-only','project','full'}: raise ValueError('Invalid requested permission level')
         from core.space_policy import is_chat
         target = self.store.get(conversation_id) if conversation_id else self.store.get_active()
-        from core.long_job import JobError, parse_command
-        try:
-            job_spec = parse_command(text)
-        except JobError as exc:
-            return self._answer_without_agents(target["id"], text, f"Uzun iş anlaşılamadı: {exc}")
-        if job_spec is not None:
-            return self._long_job_command(target, text, job_spec, bool(write or full_access) and confirm_write is True,
-                                          full_access=bool(full_access) and confirm_write is True)
-        from core.skill_shelf import install_request, invocation
-        skill = skill_install = None
-        invoked = invocation(text)
-        if invoked is not None:
-            name, rest = invoked
-            skill = self.skills.load(name) if name not in ("", "liste", "list") else None
-            if skill is None:
-                # "/skill", "/skill liste" or an unknown name: SpeS answers with the shelf.
-                prefix = f"'{name}' adında bir skill rafta yok. " if name not in ("", "liste", "list") else ""
-                return self._answer_without_agents(target["id"], text, prefix + self._skill_list_text())
-            text = rest or f"{skill['name']} skill'ini uygula."
-        else:
-            skill_install = install_request(text)
+        if origin != "long_job" and target is not None and not is_chat(target):
+            # A conversation with a running job: the user talks to it in plain words
+            # ("ne durumda?", "dur", "devam", anything else is a note) - no commands (25 Nov).
+            running_job = self._active_job_in(target["id"])
+            if running_job is not None:
+                return self._job_conversation_message(target, text, running_job)
+        from core.skill_shelf import install_request, list_request, named_skill
+        skill = None
+        skill_install = install_request(text)
+        if not skill_install:
+            if list_request(text):
+                # "Hangi skill'ler var?": SpeS answers with the shelf (no command, 25 Nov).
+                return self._answer_without_agents(target["id"], text, self._skill_list_text())
+            try:
+                shelf_names = [entry["name"] for entry in self.skills.list()]
+            except Exception:
+                shelf_names = []
+            name = named_skill(text, shelf_names)
+            skill = self.skills.load(name) if name else None
         looks_like_task = message_intent(text) == "task"
         # Sohbet space never starts work, whatever the wording (user request 14 Nov).
         chat_space = is_chat(target)
@@ -1114,7 +1115,12 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
         # build (user request 14 Nov). A request that also names files or code stays a task.
         from core.result_cards import is_research
         research = is_research(text)
-        conversation_only = chat_space or research or bool(skill_install) or not looks_like_task
+        # "Baştan sona bir oyun yap": one request becomes a planned long job (25 Nov). Only in
+        # Workspace, only with project writing switched on and confirmed (never the phone).
+        from core.job_intent import big_job_request
+        job_request = (origin != "long_job" and not chat_space and not research and not skill and not skill_install
+                       and bool(write or full_access) and confirm_write is True and big_job_request(text))
+        conversation_only = (chat_space or research or bool(skill_install) or not looks_like_task) and not job_request
         if conversation_only:
             write = full_access = confirm_write = False
         write = bool(write or full_access)
@@ -1195,6 +1201,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
                     **({"research": True} if research else {}),
                     **({"skill": skill["name"]} if skill else {}),
                     **({"skill_install": skill_install["url"]} if skill_install else {}),
+                    **({"job_request": True} if job_request else {}),
                 },
             )
 
@@ -1271,6 +1278,9 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
                 turn_state["skill"] = skill
             if skill_install:
                 turn_state["skill_install"] = skill_install
+            if job_request:
+                turn_state["job_plan"] = {"planner": first_sender, "text": text,
+                                          "full_access": bool(full_access)}
             # "Bitince haber ver": SpeS writes a short report when this turn ends (core.finish_report).
             from core.finish_report import wants_finish_report
             if wants_finish_report(text):
@@ -1785,8 +1795,11 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
                       'proje okuma turunda yalnız seçili projeyi okuma, görev turunda seçilen yetki. '
                       'Gerçekte yapmadığın bir gözlemi veya işlemi yapmış gibi iddia etme.\n\n') + prompt
             install = (self._active_turn or {}).get("skill_install")
+            job_plan = (self._active_turn or {}).get("job_plan")
             if install:
                 self._run_skill_install(cid, msg_id, install, project_id)
+            elif job_plan:
+                self._run_job_plan(cid, msg_id, job_plan, project_id)
             elif agent == "antigravity":
                 self._run_antigravity_turn(cid, msg_id, prompt, project_id, write, confirm_write, full_access)
             elif agent == "codex":
