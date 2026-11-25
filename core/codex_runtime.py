@@ -1045,7 +1045,8 @@ class CodexRuntime:
                         })
                     if record.get("cancel_requested"):
                         record["status"] = "cancelled"
-                    elif not timed_out and code == 0 and record.get("result") and not record.get("unauthorized_write_detected"):
+                    elif (not timed_out and (code == 0 or record.get("_closed_after_result")) and record.get("result")
+                          and not record.get("unauthorized_write_detected")):
                         record["status"] = "completed"
                     else:
                         record["status"] = "failed"

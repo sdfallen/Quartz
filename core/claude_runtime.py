@@ -40,6 +40,8 @@ from core.process_tree import (CREATE_SUSPENDED, bind_kill_on_close_job,
 READ_TOOLS = ("Read", "Grep", "Glob")
 EDIT_TOOLS = ("Edit", "Write", "NotebookEdit")
 SHELL_TOOLS = ("Bash", "PowerShell")
+# After Claude's final result, how long its process may linger before SpeS closes it (25 Nov).
+RESULT_GRACE_SECONDS = 20
 # User decision 20 Nov: under "Tam yetki" an agent works with its own full strength, so
 # the writer may read documentation on the web while it builds (shells reach the web anyway).
 WEB_TOOLS = ("WebSearch", "WebFetch")
@@ -365,7 +367,31 @@ class ClaudeRuntime(CodexRuntime):
         stderr_thread.start()
         threading.Thread(target=self._wait, args=(run_id, process, project_key, stdout_thread, stderr_thread),
                          name=f"claude-wait-{run_id[:8]}", daemon=True).start()
+        threading.Thread(target=self._close_after_answer, args=(run_id, process),
+                         name=f"claude-linger-{run_id[:8]}", daemon=True).start()
         return self.get(run_id)
+
+    def _close_after_answer(self, run_id, process, grace=None, poll=1.0):
+        """Live 25 Nov: Claude answered ("Başarılı… Test penceresi hâlâ açık.") but the test
+        program it had started from its shell kept the CLI, and so the turn, running for good.
+        Once Claude's final result is in and the process has not ended within the grace time,
+        its process tree is closed (programs an agent starts already end with its turn) and the
+        turn counts on the answer it gave."""
+        grace = RESULT_GRACE_SECONDS if grace is None else grace
+        while process.poll() is None:
+            with self._lock:
+                record = self._runs.get(run_id)
+                if not record or record.get("status") in self.TERMINAL:
+                    return
+                answered = record.get("_result_at")
+            if answered and time.time() - answered >= grace:
+                with self._lock:
+                    record["_closed_after_result"] = True
+                    record.setdefault("notes", []).append(
+                        "Claude yanıtını verdi; açık bıraktığı programlar yüzünden kapanmayan süreç kapatıldı.")
+                stop_process_tree(process, timeout=5)
+                return
+            time.sleep(poll)
 
     def resume(self, run_id, prompt, *, model: str | None = None, effort: str | None = None) -> dict:
         previous = self.get(run_id)
@@ -452,6 +478,7 @@ class ClaudeRuntime(CodexRuntime):
                                 self.forget_probe()  # the next readiness check asks the CLI again
                         elif text_val:
                             record["result"] = text_val
+                        record["_result_at"] = time.time()
                 if refused:
                     stop_process_tree(process, timeout=5)
                     return
