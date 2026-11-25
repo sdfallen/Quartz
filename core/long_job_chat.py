@@ -150,10 +150,23 @@ class LongJobChatMixin:
             turn = self._active_turn
             return bool(turn and (turn.get("status") in {"running", "cancelling"} or turn.get("worker_pending")))
 
+    def _selected_agent(self, cid):
+        """The single agent the user selected for this conversation ("Yalnız Codex"), else None."""
+        try:
+            agent = (self.store.get(cid) or {}).get("agent")
+        except Exception:
+            return None
+        return agent if agent in PERSONA else None
+
     def _job_members(self, cid) -> list:
-        """The conversation's active Birlikte members (all three when the chat has no team setting)."""
+        """The conversation's active Birlikte members (all three when the chat has no team setting),
+        the agent the user selected first (live 26 Nov: "Yalnız Codex" was written by Fatum)."""
         members = getattr(self, "_team_members", None)
-        return (members(cid) if callable(members) else None) or ["claude", "codex", "antigravity"]
+        members = list((members(cid) if callable(members) else None) or ["claude", "codex", "antigravity"])
+        selected = self._selected_agent(cid)
+        if selected in members:
+            members = [selected] + [m for m in members if m != selected]
+        return members
 
     def _job_run_milestone(self, ledger, milestone, writer, stop: threading.Event) -> dict:
         cid = ledger.data["conversation_id"]
@@ -163,7 +176,7 @@ class LongJobChatMixin:
         # The team leads with its first active member; a passive Fatum never gets here as writer.
         members = self._job_members(cid)
         # Fatum leads only when logged in; another lead needs no probe (21 Nov).
-        agent = ("collaboration" if writer == members[0] and len(members) > 1
+        agent = ("collaboration" if writer == members[0] and len(members) > 1 and not self._selected_agent(cid)
                  and (writer != "claude" or self._team_ready()) else writer)
         prompt = milestone_prompt(ledger, milestone, writer)
         sent, text = None, "SpeS yeni turu başlatamadı."

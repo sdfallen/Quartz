@@ -174,10 +174,19 @@ class PlanningTurnTests(unittest.TestCase):
         plan = next(m for m in messages if (m.get("metadata") or {}).get("job_plan"))
         self.assertTrue(plan["content"].startswith("İş planı:\n1. Oyun penceresi — pencere açılıyor"))
 
-    def test_without_write_permission_it_is_an_ordinary_turn(self):
-        _chat, _run, turn, started = self.run_turn("Godot ile bir yılan oyunu geliştir ve sonuna kadar kendin bitir")
-        self.assertEqual(started, [])
-        self.assertNotIn("job_plan", turn)
+    def test_without_write_permission_spes_says_what_it_needs(self):
+        # 26 Nov: with "yalnız okuma" a whole build became a reading turn; SpeS now answers
+        # itself with what it would do and which switch it needs, and starts nothing.
+        with tempfile.TemporaryDirectory() as directory:
+            chat = make_chat(directory)
+            answer = chat.send_message("Godot ile bir yılan oyunu geliştir ve sonuna kadar kendin bitir, 2 saat çalış")
+            chat._diagnostics.close()
+        self.assertEqual(answer["agent"], "quartz")
+        text = answer["assistant_message"]["content"]
+        self.assertIn("en çok 2 saat", text)
+        self.assertIn("Proje", text)
+        self.assertIn("Tam Yetki", text)
+        self.assertIsNone(chat._active_turn)
 
     def test_a_milestone_spes_sends_is_never_planned_again(self):
         chat, _run, turn, started = self.run_turn("Godot ile bir yılan oyunu geliştir ve sonuna kadar kendin bitir",
@@ -361,3 +370,36 @@ class NewProjectTests(unittest.TestCase):
             self.assertTrue(Path(projects["p"]["path"]).is_dir())
             plan = next(m for m in conv["messages"] if (m.get("metadata") or {}).get("job_plan"))
             self.assertIn("Yeni proje klasörü açıldı:", plan["content"])
+
+
+class SelectedWriterTests(unittest.TestCase):
+    """Live 26 Nov: with "Yalnız Codex" selected, Fatum wrote the job's milestones."""
+
+    def test_the_selected_agent_writes_in_its_own_turns_and_another_reviews(self):
+        from tests.test_long_job_chat import FakeChat
+        from core.long_job import JobLedger
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict("os.environ", {"QUARTZ_JOBS_HOME": str(Path(directory) / "jobs")}), \
+                patch("core.agent_limits.snapshot", return_value={}), patch("core.long_job.keep_awake"):
+            project = Path(directory) / "p"
+            project.mkdir()
+            chat = FakeChat(project, replies=[("completed", "Yapıldı.", "codex"),
+                                              ("completed", "İnceledim.\nKABUL: EVET", "claude")])
+            chat.store.conv["agent"] = "codex"
+            self.assertEqual(chat._job_members("c1")[0], "codex")
+            ledger = JobLedger.create({"goal": "Oyun", "project_path": str(project), "hours": 1, "review": True,
+                                       "conversation_id": "c1",
+                                       "milestones": [{"title": "T1", "acceptance": "ok"}]})
+            job = chat._make_job(ledger)
+            chat._jobs()[ledger.data["id"]] = job
+            job.start()
+            for _ in range(300):
+                if ledger.data["status"] in {"done", "needs_user", "failed"}:
+                    break
+                time.sleep(0.02)
+            job.thread.join(5)
+        self.assertEqual(ledger.data["status"], "done")
+        self.assertEqual(chat.sent[0]["agent"], "codex", "a single-agent turn, not Birlikte")
+        self.assertEqual(chat.sent[1]["agent"], "claude", "a teammate reviews")
+        self.assertEqual(ledger.data["milestones"][0]["reviewer"], "claude")
+        self.assertNotIn("Fatum limitte", chat.sent[0]["text"])

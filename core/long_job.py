@@ -495,7 +495,8 @@ class LongJob:
             snapshot = {}
         waits = []
         try:
-            order = [a for a in WRITER_ORDER if a in set(self.writers() or ())] or list(WRITER_ORDER)
+            # The order the chat gives (the agent the user selected first, 26 Nov), never a fixed one.
+            order = [a for a in (self.writers() or ()) if a in WRITER_ORDER] or list(WRITER_ORDER)
         except Exception:
             order = list(WRITER_ORDER)
         for agent in order:
@@ -761,5 +762,6 @@ def milestone_prompt(ledger: JobLedger, milestone: dict, writer: str) -> str:
         parts.append("Önceki deneme SpeS yeniden başladığı için yarıda kaldı; projede yarım değişiklikler "
                      "olabilir. Önce mevcut durumu incele.")
     if d.get("writer") and writer != "claude":
-        parts.append(f"Bu taşta yazıcı sensin ({PERSONA.get(writer, writer)}); Fatum limitte.")
+        # 26 Nov: the user may select Fides or Eos; the writer is not always standing in for Fatum.
+        parts.append(f"Bu taşta yazıcı sensin ({PERSONA.get(writer, writer)}).")
     return "\n\n".join(parts)

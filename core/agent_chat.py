@@ -1126,6 +1126,17 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
         job_request = (origin != "long_job" and not chat_space and not research and not skill and not skill_install
                        and bool(write or full_access) and confirm_write is True and big_job_request(text))
         conversation_only = (chat_space or research or bool(skill_install) or not looks_like_task) and not job_request
+        if (not job_request and origin != "long_job" and not chat_space and not research and not skill
+                and not skill_install and not (write or full_access) and big_job_request(text)):
+            # 26 Nov: with the switch on "yalnız okuma" a whole build became a reading turn and
+            # the agent said it could not write. SpeS says what it needs instead.
+            from core.job_intent import requested_hours
+            from core.long_job_chat import _duration
+            return self._answer_without_agents(target["id"], text, (
+                "Bu büyük bir iş: SpeS planlayıp kilometre taşlarıyla en çok "
+                f"{_duration(requested_hours(text))} çalışır, her taşı başka bir ajan denetler. "
+                "Başlatmak için yetkiyi Proje (yalnız dosya) ya da Tam Yetki (komut da çalıştırır) yapıp "
+                "aynı mesajı yeniden gönder."))
         new_project = None
         if job_request:
             from core.job_intent import wants_new_project
