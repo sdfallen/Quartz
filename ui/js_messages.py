@@ -408,32 +408,52 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     }
     const body = document.createElement('div');
     const isUserMessage = msg?.role === 'user' || String(msg?.sender || '').toLowerCase() === 'user';
+    const alert = msg?.metadata?.security_alert;
     if (isUserMessage) {
       body.textContent = view.summary;
+    } else if (alert) {
+      // Long Temp paths hid the program name (24 Nov); the full text stays in the tooltip.
+      appendMessageText(body, shortenWindowsPaths(view.summary));
+      body.title = view.summary;
     } else {
       appendMessageText(body, view.summary);
     }
     bubble.append(body);
     if (cards.length && !isUserMessage) bubble.append(renderResultCards(cards));
-    const alert = msg?.metadata?.security_alert;
     if (alert && Array.isArray(alert.actions) && !isUserMessage) {
       // Eos's security alert: the alert's own one-tap actions; the host checks the target again.
       const LABEL = {stop: 'Süreci durdur', quarantine: 'Karantinaya al', remove_autorun: 'Açılıştan kaldır', ignore: 'Yoksay', undo: 'Geri al'};
       bubble.closest?.('.msg')?.setAttribute('data-severity', String(alert.severity || ''));
       const row = document.createElement('div'); row.className = 'security-actions';
-      for (const action of alert.actions) {
+      const note = document.createElement('span'); note.className = 'security-note';
+      const expired = Number(alert.expires) > 0 && Number(alert.expires) * 1000 < Date.now();
+      if (expired) {
+        // The host refuses an expired alert anyway; do not offer buttons that cannot work.
+        note.textContent = 'Bu uyarının süresi doldu; işlem artık yapılamaz.';
+        row.append(note); bubble.append(row);
+      }
+      for (const action of (expired ? [] : alert.actions)) {
         if (!LABEL[action] || action === 'undo') continue;
         const b = document.createElement('button'); b.type = 'button'; b.dataset.action = action; b.textContent = LABEL[action];
         b.onclick = async () => {
           row.querySelectorAll('button').forEach(x => { x.disabled = true; });
           const result = await window.pywebview.api.security_act(String(alert.id), action);
           const data = result && result.data ? result.data : {};
-          if (!data.ok) { row.querySelectorAll('button').forEach(x => { x.disabled = false; }); }
-          logLine('Eos: ' + String(data.message || result?.data || ''));
+          const said = String(data.message || result?.data || '');
+          if (data.ok) {
+            // The outcome on the card itself, not only in the status line.
+            row.querySelectorAll('button').forEach(x => x.remove());
+            note.textContent = action === 'ignore' ? 'Yoksayıldı.' : said;
+            row.append(note);
+          } else {
+            row.querySelectorAll('button').forEach(x => { x.disabled = false; });
+            note.textContent = said; row.append(note);
+          }
+          logLine('Eos: ' + said);
         };
         row.append(b);
       }
-      bubble.append(row);
+      if (!expired) bubble.append(row);
     }
     const override = msg?.metadata?.skill_override;
     if (override && override.id && !isUserMessage) {
@@ -514,6 +534,10 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
   }
 
   // Fenced ``` blocks become monospace code panels. Text only: no HTML is parsed.
+  // C:\Users\X\AppData\Local\Temp\abc\x.exe -> …\Temp\abc\x.exe (display only).
+  function shortenWindowsPaths(text) {
+    return String(text || '').replace(/[A-Za-z]:\\(?:[^\\\s'"]+\\){3,}([^\\\s'"]+\\[^\\\s'"]+\\[^\\\s'"]+)/g, '…\\$1');
+  }
   function appendMessageText(container, text) {
   const INLINE_RE = /(?<!`)`([^`\n]+)`(?!`)|(?<=^|[\s([{"'«“‘])(?:\[([^\[\]\n]+)\]\((https?:\/\/[^()\s\n]+)\)|\*\*(?=[^\s*\n])([^*\n]+)(?<=[^\s*\n])\*\*|__(?=[^\s_\n])([^_\n]+)(?<=[^\s_\n])__|\*(?!\*)(?=[^\s*.\n])([^*\n]+)(?<=[^\s*\n])\*(?!\*)|_(?!_)(?=[^\s_.\n])([^_\n]+)(?<=[^\s_\n])_(?!_))(?=$|[\s)\]}"'»”’,!?:;]|\.(?=$|[\s)\]}"'»”’]))/u;
   function hasMarkdownSyntax(value) {

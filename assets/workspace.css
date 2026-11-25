@@ -936,6 +936,7 @@ body.show-preview .preview-pane { display: flex; }
 .security-actions button { border: 1px solid var(--line-strong); background: var(--surface-1); color: var(--text); border-radius: 999px; padding: 4px 12px; font-size: 12.5px; cursor: pointer; }
 .security-actions button[data-action="stop"], .security-actions button[data-action="quarantine"], .security-actions button[data-action="remove_autorun"] { border-color: var(--danger); color: var(--danger); }
 .security-actions button:hover { background: var(--danger-soft); }
+.security-note { align-self: center; font-size: var(--text-xs); color: var(--text-3); }
 .security-actions button:disabled { opacity: .45; cursor: default; }
 .msg[data-severity="high"] .bubble { border-left: 3px solid var(--danger); }
 .msg[data-severity="medium"] .bubble { border-left: 3px solid var(--warn); }
