@@ -671,7 +671,11 @@ class LongJob:
         if built and check.get("ok") and self.accept is not None and ledger.data.get("review"):
             # Fides 25 Nov: with no test, "done" was the writer's word alone. A teammate reads
             # the project against the acceptance criterion; a "no" sends the milestone back.
-            review = self.accept(ledger, milestone, writer, check, self.stop_event) or {}
+            # Live 26 Nov: Fides refused a milestone for "no command output shown" while the
+            # writer's own report with that output never reached it. The reviewer reads it now.
+            review = self.accept(ledger, milestone, writer,
+                                 {**check, "writer_report": str(result.get("summary") or "")[-2500:]},
+                                 self.stop_event) or {}
             if self.stop_event.is_set():
                 return
             if review.get("ok") is False:
@@ -776,6 +780,10 @@ def milestone_prompt(ledger: JobLedger, milestone: dict, writer: str) -> str:
         f"KABUL ÖLÇÜTÜ: {milestone['acceptance']}",
         "Yalnız bu taşın işini yap; sonraki taşlara geçme. Bitince ne yaptığını ve ölçütü nasıl "
         "karşıladığını kısaca yaz. SpeS işi bitince projenin kendi kontrolünü çalıştıracak.",
+        # 26 Nov: a teammate accepts the milestone and reads this report; claims need proof.
+        "Yanıtının sonuna 'KANIT:' başlığıyla çalıştırdığın komutları ve çıktılarından ilgili satırları "
+        "yaz (ör. test sonucu, programın gerçek çıktısı). Çalıştıramadığın bir şeyi çalıştırmış gibi yazma; "
+        "bir ekip arkadaşın bu raporu projeyle karşılaştırıp kabul edecek.",
     ]
     if milestone.get("last_failure"):
         parts.append("ÖNCEKİ DENEME GEÇMEDİ. Kontrol çıktısının sonu:\n" + milestone["last_failure"])
