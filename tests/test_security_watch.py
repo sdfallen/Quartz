@@ -32,10 +32,18 @@ class WatchTests(unittest.TestCase):
         self.procs, self.autoruns, self.defender = [], [], []
         self.emitted = []
         self.clock = Clock()
+        # Signatures are faked (25 Nov): the real check runs Windows' Authenticode through
+        # PowerShell, which tests must not depend on. Unknown files are unsigned, gone ones missing.
+        self.signed = {}
         self.watch = SecurityWatch(self.emitted.append, clock=self.clock, quarantine_root=base / "q", collectors={
             "processes": lambda: list(self.procs), "autoruns": lambda: list(self.autoruns),
             "downloads": security_watch.collect_downloads,
-            "defender": lambda after: [r for r in self.defender if r["record"] > after]})
+            "defender": lambda after: [r for r in self.defender if r["record"] > after]},
+            signatures=self.fake_signatures)
+
+    def fake_signatures(self, paths):
+        return {p: {"verdict": self.signed.get(p, "unsigned" if Path(p).exists() else "missing"),
+                    "publisher": "Microsoft Corporation" if self.signed.get(p) == "microsoft" else ""} for p in paths}
 
     def tearDown(self):
         self.dirs.stop()
@@ -165,27 +173,33 @@ class WatchTests(unittest.TestCase):
 
 class RepeatQuietTests(WatchTests):
     """Live 24 Nov: DismHost.exe and Visual Studio's BackgroundDownload.exe started from Temp
-    dozens of times and each start was said in the chat."""
+    dozens of times and each start was said in the chat. Since 25 Nov the same FILE CONTENT is
+    said once a day; a renamed copy does not escape and another program is not silenced."""
 
-    def start(self, pid, name, folder="a"):
+    def start(self, pid, name, folder="a", content=b"MZ-unsigned-tool"):
         exe = self.temp / folder / name
+        exe.parent.mkdir(parents=True, exist_ok=True)
+        exe.write_bytes(content)
         self.procs.append({"pid": pid, "name": name, "exe": str(exe), "create": float(pid), "cmdline": ""})
 
-    def test_the_same_temp_program_is_said_once_a_day(self):
+    def said(self):
+        return [a["detail"].split(" ")[0] for a in self.emitted if a["kind"] == "process"]
+
+    def test_the_same_file_is_said_once_a_day(self):
         self.watch.tick(force=True)
-        self.start(20, "DismHost.exe", "6CE3586A")
+        self.start(20, "aracim.exe", "6CE3586A")
         self.tick()
-        self.start(21, "DismHost.exe", "A3C8DB23")
-        self.start(22, "kurulum.exe")
+        self.start(21, "aracim.exe", "A3C8DB23")             # same bytes, other folder
+        self.start(22, "baska-ad.exe", "B7")                 # same bytes, renamed
+        self.start(23, "kurulum.exe", content=b"MZ-other")   # other program
         self.tick()
-        said = [a["detail"].split(" ")[0] for a in self.emitted if a["kind"] == "process"]
-        self.assertEqual(said, ["DismHost.exe", "kurulum.exe"])
-        self.assertEqual(sum(a["detail"].startswith("DismHost.exe") for a in self.watch.alerts()), 2,
+        self.assertEqual(self.said(), ["aracim.exe", "kurulum.exe"])
+        self.assertEqual(sum(a["detail"].startswith("aracim.exe") for a in self.watch.alerts()), 2,
                          "the repeat stays in the list and can still be acted on")
         self.clock.now += security_watch.REPEAT_QUIET
-        self.start(23, "DismHost.exe", "B1")
+        self.start(24, "aracim.exe", "C1")
         self.tick()
-        self.assertEqual([a["detail"].split(" ")[0] for a in self.emitted if a["kind"] == "process"][-1], "DismHost.exe")
+        self.assertEqual(self.said()[-1], "aracim.exe")
 
     def test_a_high_finding_is_never_quieted(self):
         self.watch.tick(force=True)

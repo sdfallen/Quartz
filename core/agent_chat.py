@@ -845,7 +845,9 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
         except Exception:
             return
         icon = "Yüksek" if alert["severity"] == "high" else "Orta"
-        self.store.append_message(cid, "assistant", f"Güvenlik uyarısı ({icon}): {alert['title']}. {alert['detail']}",
+        # The manifest's reason (core.security_manifest) goes with the finding (25 Nov).
+        why = f" Neden: {alert['why']}" if alert.get("why") else ""
+        self.store.append_message(cid, "assistant", f"Güvenlik uyarısı ({icon}): {alert['title']}. {alert['detail']}{why}",
                                   sender="quartz", metadata={
             "sender": "quartz", "persona": "Eos", "recipient": "user", "status": "completed",
             "security_alert": alert, **({"notify": "call"} if alert["severity"] == "high" else {}),
