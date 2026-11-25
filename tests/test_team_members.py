@@ -95,6 +95,45 @@ class TeamTurnWithPassiveAgentsTests(unittest.TestCase):
         self.assertEqual([c["agent"] for c in calls], ["claude"])
 
 
+class FullAgentsSitOutTests(unittest.TestCase):
+    """25 Nov: an agent whose usage limit is full is skipped until its window resets."""
+
+    def run_turn(self, full, text, passive=(), **kwargs):
+        with tempfile.TemporaryDirectory() as directory:
+            chat = make_chat(directory)
+            cid = chat.store.get_active()["id"]
+            for agent in passive:
+                chat.set_team_member(cid, agent, False)
+            chat._limit_cache = (float("inf"), set(full))
+            run = TeamRun(chat)
+            turn = run.run(text, **kwargs)
+            chat._diagnostics.close()
+        return run.calls, turn
+
+    def test_a_full_fides_sits_out_and_the_turn_completes(self):
+        calls, turn = self.run_turn({"codex"}, "Bir giriş sayfası yap", **WRITE)
+        self.assertNotIn("codex", {c["agent"] for c in calls})
+        self.assertEqual([c["agent"] for c in calls if c["write"]], ["claude"])
+        self.assertEqual(turn["status"], "completed")
+
+    def test_a_full_fatum_hands_the_lead_to_fides(self):
+        calls, _ = self.run_turn({"claude"}, "Bir giriş sayfası yap", **WRITE)
+        self.assertEqual([c["agent"] for c in calls if c["write"]], ["codex"])
+
+    def test_when_every_kept_agent_is_full_the_users_choice_stands(self):
+        calls, _ = self.run_turn({"claude", "codex"}, "Bu mimari hakkında ne düşünüyorsunuz?", passive=("antigravity",))
+        self.assertEqual(sorted({c["agent"] for c in calls}), ["claude", "codex"])
+
+    def test_the_limit_rule(self):
+        from core.agent_limits import at_limit
+        self.assertTrue(at_limit({"five_hour": 97, "week": 40}, 1000))
+        self.assertTrue(at_limit({"state": "full"}, 1000))
+        self.assertFalse(at_limit({"five_hour": 94, "week": 94}, 1000))
+        self.assertFalse(at_limit({"five_hour": 100, "resets_at": 900}, 1000), "the window has reset")
+        self.assertTrue(at_limit({"five_hour": 100, "resets_at": 2000}, 1000))
+        self.assertFalse(at_limit(None, 1000))
+
+
 class LongJobSkipsPassiveWritersTests(unittest.TestCase):
     def test_pick_writer_never_chooses_a_passive_agent(self):
         with tempfile.TemporaryDirectory() as directory:

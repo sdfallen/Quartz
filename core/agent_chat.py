@@ -672,10 +672,28 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
             return {"conversation_id": cid, "team": team, "active_conversation": self.store.get(cid)}
 
     def _team_members(self, cid) -> list:
+        """The active Birlikte members the user kept, minus any whose usage limit is full until it
+        resets (25 Nov: a full agent failed its step and the turn waited on it). If every kept
+        member is full, the user's choice stands and the agents report their own limit."""
         try:
-            return self.store.get_team(cid) or list(TEAM)
+            members = self.store.get_team(cid) or list(TEAM)
         except Exception:
-            return list(TEAM)
+            members = list(TEAM)
+        full = self._agents_at_limit()
+        return [m for m in members if m not in full] or members
+
+    def _agents_at_limit(self) -> set:
+        now = time.time()
+        cached = self.__dict__.get("_limit_cache")
+        if cached and now - cached[0] < 30:
+            return cached[1]
+        try:
+            from core.agent_limits import at_limit, snapshot
+            full = {agent for agent, entry in (snapshot() or {}).items() if at_limit(entry, now)}
+        except Exception:
+            full = set()
+        self._limit_cache = (now, full)
+        return full
 
     def get_model_selection(self, conversation_id: str | None = None) -> dict:
         """Read a detached selection snapshot without probing providers or writing history."""

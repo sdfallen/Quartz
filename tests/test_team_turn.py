@@ -15,7 +15,10 @@ def make_chat(directory, *, claude_ready=True):
     service = MagicMock()
     service.check_squad_connection.return_value = {"connected": False}
     service.claude.probe.return_value = {"ready": claude_ready}
-    return AgentChatService(service, Path(directory) / "conversations.json")
+    chat = AgentChatService(service, Path(directory) / "conversations.json")
+    # Usage limits are read from this computer's agent records; tests never depend on them (25 Nov).
+    chat._limit_cache = (float("inf"), set())
+    return chat
 
 
 class TeamRun:

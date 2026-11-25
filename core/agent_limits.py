@@ -108,6 +108,37 @@ def claude_limits(store=STORE):
     return _entry(source="none")
 
 
+FULL_PERCENT = 95  # same threshold as the long job's writer choice (core.long_job.LIMIT_PERCENT)
+
+
+def _epoch(value):
+    if value in (None, ""):
+        return None
+    try:
+        number = float(value)
+        return number / 1000 if number > 1e12 else number
+    except (TypeError, ValueError):
+        pass
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def at_limit(entry, now) -> bool:
+    """The agent's 5-hour or weekly window is full and has not reset yet.
+
+    A record whose reset time has passed is not full any more, even if it still says so
+    (live 15 Nov: Claude's record only refreshes when Claude runs)."""
+    entry = entry or {}
+    worst = max([p for p in (entry.get("five_hour"), entry.get("week")) if isinstance(p, (int, float))], default=None)
+    if not (entry.get("state") == "full" or (worst is not None and worst >= FULL_PERCENT)):
+        return False
+    reset = _epoch(entry.get("resets_at"))
+    return not (reset and reset <= now)
+
+
 def snapshot(codex_home=None, store=STORE):
     return {"codex": codex_limits(codex_home), "claude": claude_limits(store),
             "antigravity": _entry(source="unavailable")}
