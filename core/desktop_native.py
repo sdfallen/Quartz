@@ -107,6 +107,14 @@ def _uia_operation(method):
 
 
 
+def is_blank(image, threshold=8) -> bool:
+    """Nearly all black: what a screen crop of an exclusive full-screen game returns."""
+    try:
+        return all(high <= threshold for _, high in image.convert("RGB").getextrema())
+    except Exception:
+        return False
+
+
 def mask_occluded(image, target_rect, occluders):
     """Black out every part of the crop that another application's window covers.
 
@@ -345,6 +353,37 @@ class NativeDesktopBackend:
             found.append((rect.left, rect.top, rect.right, rect.bottom))
         return found
 
+    def _print_window(self, hwnd, w, h):
+        """The window's own render into a bitmap (PW_RENDERFULLCONTENT); resources always freed."""
+        import ctypes
+        from ctypes import wintypes
+        from PIL import Image
+        user32 = self._user32()
+        gdi32 = ctypes.windll.gdi32
+        hdc_screen = user32.GetDC(0)
+        hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+        hbm = gdi32.CreateCompatibleBitmap(hdc_screen, w, h)
+        try:
+            gdi32.SelectObject(hdc_mem, hbm)
+            if not user32.PrintWindow(hwnd, hdc_mem, 2):
+                return None
+
+            class BITMAPINFOHEADER(ctypes.Structure):
+                _fields_ = [('biSize', wintypes.DWORD), ('biWidth', wintypes.LONG), ('biHeight', wintypes.LONG),
+                            ('biPlanes', wintypes.WORD), ('biBitCount', wintypes.WORD), ('biCompression', wintypes.DWORD),
+                            ('biSizeImage', wintypes.DWORD), ('biXPelsPerMeter', wintypes.LONG), ('biYPelsPerMeter', wintypes.LONG),
+                            ('biClrUsed', wintypes.DWORD), ('biClrImportant', wintypes.DWORD)]
+            bmi = BITMAPINFOHEADER()
+            bmi.biSize, bmi.biWidth, bmi.biHeight, bmi.biPlanes, bmi.biBitCount = ctypes.sizeof(BITMAPINFOHEADER), w, -h, 1, 32
+            buf = ctypes.create_string_buffer(w * h * 4)
+            if not gdi32.GetDIBits(hdc_mem, hbm, 0, h, buf, ctypes.byref(bmi), 0):
+                return None
+            return Image.frombuffer('RGBA', (w, h), buf, 'raw', 'BGRA', 0, 1).convert('RGB')
+        finally:
+            gdi32.DeleteObject(hbm)
+            gdi32.DeleteDC(hdc_mem)
+            user32.ReleaseDC(0, hdc_screen)
+
     def visible_frame(self, target):
         """DWM's extended frame bounds (the window without its invisible border), or None."""
         import ctypes
@@ -471,38 +510,23 @@ class NativeDesktopBackend:
         from PIL import ImageGrab
         left, top, right, bottom = target["rect"]
         if right <= left or bottom <= top: raise ValueError("Invalid window bounds")
+        w, h = right - left, bottom - top
+        source = "foreground-window-crop"
         try:
             image = ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True)
         except Exception:
-            import ctypes
-            from ctypes import wintypes
-            from PIL import Image
-            user32 = self._user32()
-            gdi32 = ctypes.windll.gdi32
-            hwnd = target["handle"]
-            w, h = right - left, bottom - top
-            hdc_screen = user32.GetDC(0)
-            hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
-            hbm = gdi32.CreateCompatibleBitmap(hdc_screen, w, h)
-            gdi32.SelectObject(hdc_mem, hbm)
-            user32.PrintWindow(hwnd, hdc_mem, 2)
-            class BITMAPINFOHEADER(ctypes.Structure):
-                _fields_ = [('biSize', wintypes.DWORD), ('biWidth', wintypes.LONG), ('biHeight', wintypes.LONG),
-                            ('biPlanes', wintypes.WORD), ('biBitCount', wintypes.WORD), ('biCompression', wintypes.DWORD),
-                            ('biSizeImage', wintypes.DWORD), ('biXPelsPerMeter', wintypes.LONG), ('biYPelsPerMeter', wintypes.LONG),
-                            ('biClrUsed', wintypes.DWORD), ('biClrImportant', wintypes.DWORD)]
-            bmi = BITMAPINFOHEADER()
-            bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-            bmi.biWidth = w
-            bmi.biHeight = -h
-            bmi.biPlanes = 1
-            bmi.biBitCount = 32
-            buf = ctypes.create_string_buffer(w * h * 4)
-            gdi32.GetDIBits(hdc_mem, hbm, 0, h, buf, ctypes.byref(bmi), 0)
-            image = Image.frombuffer('RGBA', (w, h), buf, 'raw', 'BGRA', 0, 1).convert('RGB')
-            gdi32.DeleteObject(hbm)
-            gdi32.DeleteDC(hdc_mem)
-            user32.ReleaseDC(0, hdc_screen)
+            image = None
+        if image is None or is_blank(image):
+            # A DirectX/Vulkan game in exclusive full screen is black in a screen crop. The
+            # window's own render (PrintWindow, PW_RENDERFULLCONTENT) often still has it (25 Nov).
+            try:
+                rendered = self._print_window(target["handle"], w, h)
+            except Exception:
+                rendered = None
+            if rendered is not None and (image is None or not is_blank(rendered)):
+                image, source = rendered, "window-render"
+        if image is None:
+            raise RuntimeError("Screenshot could not be taken")
         if not self.is_foreground(target):
             raise PermissionError("Input desktop or foreground changed during capture")
         if image.size != (right - left, bottom - top):
@@ -516,8 +540,14 @@ class NativeDesktopBackend:
         masked = mask_occluded(image, (left, top, right, bottom), covering)
         output = io.BytesIO()
         image.save(output, format="PNG", compress_level=1)
+        blank = is_blank(image)
         return {"ui": state, "width": image.width, "height": image.height,
                 "image_base64": base64.b64encode(output.getvalue()).decode(),
+                **({"image_blank": True,
+                    "blank_hint": "Görüntü siyah geldi: uygulama tam ekran özel modda çiziyor olabilir. "
+                                  "Oyun ayarlarından pencereli ya da kenarlıksız pencere moduna alın; "
+                                  "kontroller ve UIA bilgisi yine geçerli."} if blank else {}),
+                "capture_source": source,
                 **({"masked_regions": masked,
                     "note": "Black areas: another application's window was above the target"} if masked else {}),
                 "capture": "foreground-window-crop; GPU compatibility not guaranteed"}

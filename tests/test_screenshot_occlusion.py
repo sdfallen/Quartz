@@ -67,3 +67,24 @@ class CaptureRefusesUnknownStackingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BlankFrameTests(unittest.TestCase):
+    """Full-screen games (25 Nov): a black screen crop falls back to the window's own render,
+    and a frame that stays black carries a hint instead of passing as an observation."""
+
+    def test_only_nearly_black_frames_count_as_blank(self):
+        from core.desktop_native import is_blank
+        self.assertTrue(is_blank(Image.new("RGB", (40, 40), (0, 0, 0))))
+        self.assertTrue(is_blank(Image.new("RGB", (40, 40), (6, 6, 6))))
+        self.assertFalse(is_blank(Image.new("RGB", (40, 40), (30, 38, 48))), "a dark theme is not blank")
+        img = Image.new("RGB", (40, 40), (0, 0, 0))
+        img.putpixel((5, 5), (255, 255, 255))
+        self.assertFalse(is_blank(img), "one bright pixel is content")
+
+    def test_capture_falls_back_and_reports_a_black_frame(self):
+        from pathlib import Path
+        source = Path(__file__).resolve().parents[1].joinpath("core", "desktop_native.py").read_text(encoding="utf-8")
+        self.assertIn("if image is None or is_blank(image):", source)
+        self.assertIn('image, source = rendered, "window-render"', source)
+        self.assertIn('"image_blank": True', source)
