@@ -1202,6 +1202,9 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
                     **({"skill": skill["name"]} if skill else {}),
                     **({"skill_install": skill_install["url"]} if skill_install else {}),
                     **({"job_request": True} if job_request else {}),
+                    # SpeS's own instruction to the team inside a long job, not the user's words.
+                    **({"job_internal": "review" if text.startswith("UZUN İŞ — KABUL DENETİMİ") else "milestone"}
+                       if origin == "long_job" else {}),
                 },
             )
 

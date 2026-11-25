@@ -180,10 +180,19 @@ class PlanningTurnTests(unittest.TestCase):
         self.assertNotIn("job_plan", turn)
 
     def test_a_milestone_spes_sends_is_never_planned_again(self):
-        _chat, _run, turn, started = self.run_turn("Godot ile bir yılan oyunu geliştir ve sonuna kadar kendin bitir",
-                                                   write=True, confirm_write=True, origin="long_job")
+        chat, _run, turn, started = self.run_turn("Godot ile bir yılan oyunu geliştir ve sonuna kadar kendin bitir",
+                                                  write=True, confirm_write=True, origin="long_job")
         self.assertEqual(started, [])
         self.assertNotIn("job_plan", turn)
+        # Live 25 Nov: SpeS's prompt is marked as its own, so the chat folds it instead of
+        # showing it as the user's message.
+        user = next(m for m in chat.store.get(turn["conversation_id"])["messages"] if m["role"] == "user")
+        self.assertEqual(user["metadata"].get("job_internal"), "milestone")
+
+    def test_the_chat_folds_speS_instructions(self):
+        from ui.js_messages import JAVASCRIPT as source
+        self.assertIn("job_internal", source)
+        self.assertIn("Kilometre taşı görevi verildi", source)
 
 
 if __name__ == "__main__":

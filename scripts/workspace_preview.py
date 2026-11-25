@@ -16,7 +16,8 @@ let previewDesktop={code:'normal',label:'Normal sohbet',detail:'PREVIEW ONLY —
 const sampleConversation={id:'preview',space:'work',title:'SpeS çalışma alanı',agent:'collaboration',project_id:'preview-project',models:{codex:{model:'gpt-6-luna',effort:'low'},antigravity:{model:'gemini-3.8-flash-low',effort:'low'}},messages:[
 {id:'one',role:'user',sender:'user',content:'Codex test penceresini kontrol etsin; Gemini gerçek logları incelesin.',metadata:{}},
 {id:'two',role:'assistant',sender:'quartz',content:'Önce pencere, kapsam ve süre için onay isteyeceğim. Aynı anda yalnız bir ajan klavye ve fareyi kullanabilir.',metadata:{status:'completed'}},
-{id:'three',role:'assistant',sender:'codex',content:'Test sonucunu gerçek pencere ve log kanıtıyla değerlendireceğim.\\n\\n---TEKNIK_AYRINTILAR---\\nBu sayfa yalnız görsel test verisidir; gerçek görevi başlatmaz.',metadata:{status:'completed'}}]};
+{id:'three',role:'assistant',sender:'codex',content:'Test sonucunu gerçek pencere ve log kanıtıyla değerlendireceğim.\\n\\n---TEKNIK_AYRINTILAR---\\nBu sayfa yalnız görsel test verisidir; gerçek görevi başlatmaz.',metadata:{status:'completed'}},
+{id:'four',role:'user',sender:'user',content:'UZUN İŞ — KİLOMETRE TAŞI GÖREVİ. Projede dosya yazarak bu taşı tamamla. · HEDEF: Sayaç uygulaması · ŞU ANKİ TAŞ: m2 — Tkinter penceresi ve düğmeler · KABUL ÖLÇÜTÜ: pencere açılıyor',metadata:{job_internal:'milestone'}}]};
 // Sohbet space sample (14 Nov): warm small talk and a work request with the Workspace chip.
 let previewSpace=location.hash.includes('chat')?'chat':'work';
 const chatConversation={id:'chat-preview',space:'chat',title:'Akşam sohbeti',agent:'collaboration',project_id:'preview-project',models:sampleConversation.models,messages:[
