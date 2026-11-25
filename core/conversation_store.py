@@ -181,6 +181,7 @@ class ConversationStore:
                     "permission_level": "full",
                     "models": self._normalize_models(cdata.get("models")),
                     "space": space_of(cdata),
+                    "kind": cdata.get("kind"),
                     "message_count": len(cdata.get("messages", [])),
                     "is_active": cid == self._active_id,
                 })
@@ -212,6 +213,20 @@ class ConversationStore:
             self._active_id = cid
             self._save()
             return deepcopy(record)
+
+    def special_conversation(self, kind: str, title: str, space: str = "work") -> str:
+        """A conversation SpeS keeps for itself (e.g. Eos's security log), created on first use.
+        It never becomes the active conversation on its own: the user stays where they are."""
+        with self._lock:
+            found = [c for c in self._conversations.values() if c.get("kind") == kind]
+            if found:
+                return max(found, key=lambda c: c.get("updated_at", 0))["id"]
+            active = self._active_id
+            record = self.create(title=title, agent="collaboration", space=space)
+            self._conversations[record["id"]]["kind"] = kind
+            self._active_id = active if active in self._conversations else record["id"]
+            self._save()
+            return record["id"]
 
     def get_active(self) -> dict:
         with self._lock:
@@ -267,14 +282,16 @@ class ConversationStore:
             remaining = {cid: rec for cid, rec in self._conversations.items() if cid not in removed}
             if active not in remaining:
                 project = fallback_project_id or previous.get("project_id")
-                candidates = [c for c in remaining.values() if
-                              (c.get("project_id") or "squad-pilot") == (project or "squad-pilot")]
+                # Stay in the same space: deleting a Sohbet never lands in a Workspace task (24 Nov).
+                space = space_of(previous)
+                candidates = [c for c in remaining.values() if space_of(c) == space and (
+                    space == "chat" or (c.get("project_id") or "squad-pilot") == (project or "squad-pilot"))]
                 if candidates:
                     active = max(candidates, key=lambda c: c.get("updated_at", 0))["id"]
                 else:
                     active = uuid.uuid4().hex
                     now = time.time()
-                    remaining[active] = {"id": active, "title": "Yeni Sohbet",
+                    remaining[active] = {"id": active, "title": "Yeni Sohbet", "space": space,
                         "agent": previous.get("agent", "antigravity"), "project_id": project,
                         "models": self._normalize_models(previous.get("models")),
                         "sessions": {"antigravity": None, "codex": None},
@@ -292,7 +309,8 @@ class ConversationStore:
         """Most recently updated conversation of a space (for the space switch)."""
         wanted = normalize_space(space)
         with self._lock:
-            found = [c for c in self._conversations.values() if space_of(c) == wanted]
+            # SpeS's own logs (Eos · Güvenlik) are never what a space switch opens (24 Nov).
+            found = [c for c in self._conversations.values() if space_of(c) == wanted and not c.get("kind")]
             if not found:
                 return None
             return deepcopy(max(found, key=lambda c: c.get("updated_at", 0)))
@@ -322,6 +340,35 @@ class ConversationStore:
             conv["updated_at"] = time.time()
             self._save()
             return dict(models[agent_key])
+
+    TEAM_AGENTS = ("claude", "codex", "antigravity")
+
+    def get_team(self, conversation_id: str) -> list:
+        """Active Birlikte members of this conversation, in team order (all by default)."""
+        with self._lock:
+            passive = set(self.get(conversation_id).get("team_passive") or ())
+            return [a for a in self.TEAM_AGENTS if a not in passive]
+
+    def set_team_member(self, conversation_id: str, agent: str, active: bool) -> list:
+        """Make an agent passive (out of Birlikte turns) or active again; one must stay active."""
+        agent_key = str(agent or "").strip().lower()
+        if agent_key not in self.TEAM_AGENTS:
+            raise ValueError(f"Geçersiz ajan türü: {agent}")
+        with self._lock:
+            if conversation_id not in self._conversations:
+                raise KeyError(f"Conversation not found: {conversation_id}")
+            conv = self._conversations[conversation_id]
+            passive = [a for a in self.TEAM_AGENTS if a in set(conv.get("team_passive") or ())]
+            if active:
+                passive = [a for a in passive if a != agent_key]
+            elif agent_key not in passive:
+                if len(passive) + 1 >= len(self.TEAM_AGENTS):
+                    raise ValueError("En az bir ajan aktif kalmalı.")
+                passive.append(agent_key)
+            conv["team_passive"] = [a for a in self.TEAM_AGENTS if a in passive]
+            conv["updated_at"] = time.time()
+            self._save()
+            return [a for a in self.TEAM_AGENTS if a not in passive]
 
     def get_agent_model(self, conversation_id: str, agent: str) -> dict:
         agent_key = str(agent or "").strip().lower()

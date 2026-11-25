@@ -6,6 +6,7 @@ own conversation, and reads the turn's outcome from the conversation afterwards.
 """
 from __future__ import annotations
 
+import re
 import threading
 import time
 
@@ -64,49 +65,6 @@ class LongJobChatMixin:
                           else " · Proje izni: yazıcı yalnız dosya yazar, komut çalıştıramaz") + ".")
         job.start()
         return ledger.public()
-
-    def _long_job_command(self, conv, text, spec, confirmed_write, full_access=False) -> dict:
-        """'/uzun-iş' typed in the desktop chat with project writing allowed (never the phone)."""
-        if spec.get("list"):
-            jobs = self.job_list()
-            lines = [f"{j['goal'][:60]} — {j['status']}" for j in jobs[:5]]
-            return self._answer_without_agents(conv["id"], text, "Uzun işler: " + ("; ".join(lines) or "yok") + ".")
-        if spec.get("note") and confirmed_write:
-            # The reviewer's note reaches every later milestone through the ledger (15 Nov).
-            job = next((j for j in self._jobs().values() if j.ledger.data.get("conversation_id") == conv["id"]
-                        and j.ledger.data["status"] in {"running", "waiting_limit", "paused"}), None)
-            if job is None:
-                return self._answer_without_agents(conv["id"], text, "Bu sohbette sürmekte olan bir uzun iş yok.")
-            job.add_note(spec["note"])
-            return self._answer_without_agents(conv["id"], text, (
-                "Not iş defterine eklendi; ekip bunu sıradaki her kilometre taşında okuyacak."))
-        if not confirmed_write:
-            return self._answer_without_agents(conv["id"], text, (
-                "Uzun iş projeye saatlerce yazar; bu yüzden yalnız masaüstünde, yazma izni (Proje) açıkken "
-                "başlatılabilir. İzni açıp komutu yeniden gönder."))
-        # The chat's own permission level travels with the job (user decision 15 Nov: with
-        # Tam Yetki the writer may run Blender/Godot; with Proje it only edits files).
-        spec = {**spec, "permission_level": "full" if full_access else "project"}
-        try:
-            from core.long_job import validate_spec
-            validate_spec({**spec, "project_path": spec.get("project_path") or "."})  # fail before any message
-        except JobError as exc:
-            return self._answer_without_agents(conv["id"], text, f"Uzun iş başlatılamadı: {exc}")
-        with self._lock:
-            user = self.store.append_message(conv["id"], "user", text, sender="user", metadata={
-                "sender": "user", "recipient": "quartz", "long_job_command": True,
-                "sequence": self._next_sequence(self.store.get(conv["id"]))})
-        try:
-            job = self.job_start({**spec, "conversation_id": conv["id"]})
-        except (JobError, ValueError) as exc:
-            note = self.store.append_message(conv["id"], "assistant", f"Uzun iş başlatılamadı: {exc}", sender="quartz",
-                                             metadata={"sender": "quartz", "recipient": "user", "status": "completed",
-                                                       "sequence": self._next_sequence(self.store.get(conv["id"]))})
-            return {"conversation_id": conv["id"], "user_message": user, "assistant_message": note, "agent": "quartz"}
-        note = next((m for m in reversed(self.store.get(conv["id"]).get("messages", []))
-                     if (m.get("metadata") or {}).get("long_job") == job["id"]), None)
-        return {"conversation_id": conv["id"], "user_message": user, "assistant_message": note,
-                "agent": "quartz", "job": job}
 
     def job_control(self, job_id: str, action: str) -> dict:
         job = self._jobs().get(str(job_id or ""))
@@ -168,7 +126,9 @@ class LongJobChatMixin:
     # -- internals ------------------------------------------------------------------
     def _make_job(self, ledger):
         from core.agent_limits import snapshot
-        return LongJob(ledger, run_milestone=self._job_run_milestone, limits=snapshot,
+        cid = ledger.data.get("conversation_id")
+        return LongJob(ledger, run_milestone=self._job_run_milestone, limits=snapshot, accept=self._job_accept,
+                       writers=lambda: self._job_members(cid),
                        notify=lambda text, urgent=False, report=False: self._job_note(ledger, text, urgent=urgent,
                                                                                       report=report))
 
@@ -190,18 +150,28 @@ class LongJobChatMixin:
             turn = self._active_turn
             return bool(turn and (turn.get("status") in {"running", "cancelling"} or turn.get("worker_pending")))
 
+    def _job_members(self, cid) -> list:
+        """The conversation's active Birlikte members (all three when the chat has no team setting)."""
+        members = getattr(self, "_team_members", None)
+        return (members(cid) if callable(members) else None) or ["claude", "codex", "antigravity"]
+
     def _job_run_milestone(self, ledger, milestone, writer, stop: threading.Event) -> dict:
         cid = ledger.data["conversation_id"]
         while self._job_turn_busy():  # the user's own turn goes first
             if stop.wait(POLL_SECONDS):
                 return {"status": "cancelled"}
-        agent = "collaboration" if writer == "claude" and self._team_ready() else writer
+        # The team leads with its first active member; a passive Fatum never gets here as writer.
+        members = self._job_members(cid)
+        # Fatum leads only when logged in; another lead needs no probe (21 Nov).
+        agent = ("collaboration" if writer == members[0] and len(members) > 1
+                 and (writer != "claude" or self._team_ready()) else writer)
         prompt = milestone_prompt(ledger, milestone, writer)
         sent, text = None, "SpeS yeni turu başlatamadı."
         for _ in range(SETTLE_TRIES):
             try:
                 sent = self.send_message(prompt, agent=agent, conversation_id=cid, write=True, confirm_write=True,
-                                         full_access=ledger.data.get("permission_level") == "full")
+                                         full_access=ledger.data.get("permission_level") == "full",
+                                         origin="long_job")
                 break
             except Exception as exc:
                 text = str(exc)
@@ -238,6 +208,56 @@ class LongJobChatMixin:
         if stop.is_set():
             return {"status": "cancelled"}
         return self._job_turn_outcome(cid, user_id, writer, step_status)
+
+    def _job_accept(self, ledger, milestone, writer, check, stop: threading.Event) -> dict:
+        """A teammate who did not write the milestone reads the project against its acceptance
+        criterion in a read-only turn of the job's conversation (Fides/Eos 25 Nov)."""
+        cid = ledger.data["conversation_id"]
+        limited = set((ledger.data.get("limited") or {}).keys())
+        reviewers = [m for m in self._job_members(cid) if m != writer and m not in limited]
+        if not reviewers:
+            return {"ok": None, "summary": "Denetleyecek ikinci ajan yok."}
+        reviewer = reviewers[0]
+        while self._job_turn_busy():
+            if stop.wait(POLL_SECONDS):
+                return {"ok": None, "by": reviewer}
+        summary = str(check.get("summary") or "").strip()
+        prompt = (f"UZUN İŞ — KABUL DENETİMİ. Yalnız incele; hiçbir dosyayı değiştirme.\n"
+                  f"{PERSONA.get(writer, writer)} şu kilometre taşını bitirdiğini söyledi.\n"
+                  f"HEDEF: {ledger.data['goal'][:600]}\nTAŞ: {milestone['title']}\n"
+                  f"KABUL ÖLÇÜTÜ: {milestone['acceptance']}\n"
+                  + (f"SpeS'in kontrol çıktısı: {summary[-600:]}\n" if summary else "")
+                  + "Projedeki dosyaları okuyarak ölçütün gerçekten karşılandığını incele: istenen her şey var mı, "
+                    "kod çalışacak gibi mi, yer tutucu/TODO/eksik kaldı mı. En fazla 5 kısa cümle yaz ve SON "
+                    "SATIRA tam olarak 'KABUL: EVET' ya da 'KABUL: HAYIR — <eksik olan>' yaz. Emin değilsen HAYIR de.")
+        try:
+            sent = self.send_message(prompt, agent=reviewer, conversation_id=cid, write=False, origin="long_job")
+        except Exception as exc:
+            return {"ok": None, "by": reviewer, "summary": str(exc)[:300]}
+        user_id = sent["user_message"]["id"]
+        turn_id = (sent["user_message"].get("metadata") or {}).get("task_id")
+        with self._lock:
+            if self._active_turn and self._active_turn.get("turn_id") == turn_id:
+                self._active_turn["long_job"] = ledger.data["id"]
+        while True:
+            with self._lock:
+                turn = self._active_turn
+                running = bool(turn and turn.get("turn_id") == turn_id
+                               and (turn.get("status") in {"running", "cancelling"} or turn.get("worker_pending")))
+            if not running:
+                break
+            if stop.is_set():
+                self.cancel_active()
+            stop.wait(POLL_SECONDS)
+        messages = self.store.get(cid).get("messages", [])
+        index = next((i for i, m in enumerate(messages) if m.get("id") == user_id), None)
+        replies = [m for m in (messages[index + 1:] if index is not None else [])
+                   if m.get("role") == "assistant" and m.get("sender") == reviewer]
+        text = " ".join(str(m.get("content") or "") for m in replies)
+        verdicts = re.findall(r"KABUL\s*:\s*(EVET|HAYIR)", text, re.I)
+        if not verdicts:
+            return {"ok": None, "by": reviewer, "summary": text[-400:]}
+        return {"ok": verdicts[-1].upper() == "EVET", "by": reviewer, "summary": text[-1200:]}
 
     def _job_turn_outcome(self, cid, user_id, writer, step_status):
         messages = self.store.get(cid).get("messages", [])

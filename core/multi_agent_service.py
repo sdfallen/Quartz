@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 import uuid
@@ -25,7 +26,9 @@ from core.writer_journal import WriterJournal
 from core.path_identity import canonical_key
 
 
+log = logging.getLogger(__name__)
 WRITER_CHECKPOINT_MAX_BYTES = 2 * 1024 ** 3
+FULL_ACCESS_TURN_TIMEOUT = "2h"
 
 
 class WriterDispatchError(RuntimeError):
@@ -202,9 +205,17 @@ class MultiAgentService:
             # Test commands the agent ran, with exit status from the CLI events (14 Nov).
             from core.test_evidence import agent_test_result
             tests = agent_test_result(observed_runtime.get("command_results"))
+            screen = {}
+            read_screen = self.__dict__.get("_desktop_evidence", {}).pop(run_id, None)
+            if callable(read_screen):
+                try:
+                    screen = read_screen() or {}
+                except Exception:
+                    screen = {}
             with self._lock:
                 receipt = {"files_changed": changed, "evidence_warning": warning,
-                    "source_validation": validation, **({"agent_tests": tests} if tests else {}), **observed_runtime}
+                    "source_validation": validation, **({"agent_tests": tests} if tests else {}),
+                    **({"desktop": screen} if screen else {}), **observed_runtime}
                 self._file_changes[run_id] = receipt
             try:
                 self._evidence_store.put(run_id, receipt)
@@ -670,8 +681,15 @@ class MultiAgentService:
             if model or effort:
                 start_kwargs["model"] = model
                 start_kwargs["effort"] = effort
-            run = (self._start_writer("codex", project, self.codex.start, str(prompt), project["path"], **start_kwargs)
-                   if effective_write else self.codex.start(str(prompt), project["path"], **start_kwargs))
+            desktop = self._attach_desktop("codex", project, prompt, start_kwargs, full_access and effective_write)
+            try:
+                run = (self._start_writer("codex", project, self.codex.start, str(prompt), project["path"], **start_kwargs)
+                       if effective_write else self.codex.start(str(prompt), project["path"], **start_kwargs))
+            except Exception:
+                if desktop:
+                    desktop["stop"]("failed")
+                raise
+            self._bind_desktop(desktop, "codex", self.codex, run)
             with self._lock:
                 self._links[run["id"]] = {
                     "provider": "codex", "project_id": project["id"],
@@ -731,6 +749,36 @@ class MultiAgentService:
         ).start()
         return {"task": task, "run": run, "agent_id": agent_id}
 
+    def _attach_desktop(self, provider, project, prompt, start_kwargs, full_access):
+        """Under Tam Yetki the writer also gets SpeS's desktop tools in its own turn (20 Nov).
+
+        `desktop_attach` is set by the chat service; without it, or when another desktop
+        session holds the screen, the writer simply runs without screen tools.
+        """
+        attach = getattr(self, "desktop_attach", None)
+        if not full_access or not callable(attach):
+            return None
+        try:
+            session = attach(provider, project, str(prompt))
+        except Exception as exc:
+            log.warning("Desktop tools not attached for %s: %s", provider, exc)
+            return None
+        start_kwargs["desktop_connection"] = session["connection"]
+        return session
+
+    def _bind_desktop(self, session, provider, runtime, run):
+        if session is None:
+            return
+        evidence = session.get("evidence")
+        if callable(evidence):
+            # Read when the writer's turn ends (_watch_writer), into its receipt.
+            self.__dict__.setdefault("_desktop_evidence", {})[run["id"]] = evidence
+        try:
+            session["bind"](provider, runtime, run["id"])
+        except Exception as exc:
+            log.warning("Desktop session could not follow %s: %s", provider, exc)
+            session["stop"]("failed")
+
     def dispatch_claude(self, prompt, *, title=None, project_id=None,
                         write=False, confirm_write=False, full_access=False,
                         resume_thread_id=None, chat_mode=False, squad_task_id=None,
@@ -762,8 +810,15 @@ class MultiAgentService:
         if read_root:
             # The builder sees the user's attachments for this turn, read-only (14 Nov).
             start_kwargs["read_dirs"] = [str(read_root)]
-        run = (self._start_writer("claude", project, self.claude.start, str(prompt), project["path"], **start_kwargs)
-               if effective_write else self.claude.start(str(prompt), project["path"], **start_kwargs))
+        desktop = self._attach_desktop("claude", project, prompt, start_kwargs, full_access and effective_write)
+        try:
+            run = (self._start_writer("claude", project, self.claude.start, str(prompt), project["path"], **start_kwargs)
+                   if effective_write else self.claude.start(str(prompt), project["path"], **start_kwargs))
+        except Exception:
+            if desktop:
+                desktop["stop"]("failed")
+            raise
+        self._bind_desktop(desktop, "claude", self.claude, run)
         with self._lock:
             self._links[run["id"]] = {
                 "provider": "claude", "project_id": project["id"],
@@ -809,6 +864,9 @@ class MultiAgentService:
             start_kwargs = {
                 "write": effective_write,
                 "full_access": bool(full_access),
+                # The runtime's 10-minute default cut long builds and renders (20 Nov);
+                # under "Tam yetki" a turn may run two hours. Stop still ends it at once.
+                **({"timeout": FULL_ACCESS_TURN_TIMEOUT} if full_access else {}),
                 "squad_task_id": squad_task_id,
                 "squad_agent_id": agent_id,
                 "conversation_id": conversation_id,
@@ -816,8 +874,17 @@ class MultiAgentService:
             if model or effort:
                 start_kwargs["model"] = model
                 start_kwargs["effort"] = effort
-            run = (self._start_writer("antigravity", project, self.antigravity.start, str(prompt), project["path"], **start_kwargs)
-                   if effective_write else self.antigravity.start(str(prompt), project["path"], **start_kwargs))
+            ready = getattr(self.antigravity, "operator_desktop_ready", None)
+            desktop = (self._attach_desktop("antigravity", project, prompt, start_kwargs, full_access and effective_write)
+                       if full_access and effective_write and callable(ready) and ready() else None)
+            try:
+                run = (self._start_writer("antigravity", project, self.antigravity.start, str(prompt), project["path"], **start_kwargs)
+                       if effective_write else self.antigravity.start(str(prompt), project["path"], **start_kwargs))
+            except Exception:
+                if desktop:
+                    desktop["stop"]("failed")
+                raise
+            self._bind_desktop(desktop, "antigravity", self.antigravity, run)
             with self._lock:
                 self._links[run["id"]] = {
                     "provider": "antigravity", "project_id": project["id"],

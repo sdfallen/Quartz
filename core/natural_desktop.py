@@ -81,6 +81,9 @@ _QUOTED = re.compile("(?:^|(?<=[\\s(\\[:,]))(['\"‘“«])"
 # It never holds input authority: its MCP server lists only task_context, task_wait
 # and task_message, and the owner refuses screen/input calls for its token.
 ORCHESTRATOR = "claude"
+# Tools that look at or act on the screen; the first one shows the overlay of an attached writer.
+SCREEN_TOOLS = {"desktop_request_access", "desktop_switch", "desktop_launch", "desktop_focus",
+                "desktop_observe", "desktop_act"}
 ORCHESTRATOR_GRACE_SECONDS = 75
 PERSONA = {"claude": "Fatum", "codex": "Fides", "antigravity": "Eos"}
 ORCHESTRATOR_INSTRUCTIONS = """You are Fatum (Claude), the ORCHESTRATOR of this SpeS desktop task.
@@ -378,9 +381,19 @@ class NaturalDesktopTask:
             self._adv_ctrl = advanced_controller
         return self._sys_ctrl, self._adv_ctrl
 
-    def start(self, text, project, cid, models, *, requested_permission_level='read-only', conversation_context=''):
+    def start(self, text, project, cid, models, *, requested_permission_level='read-only', conversation_context='',
+              external_operator=None):
+        """external_operator (20 Nov): a Tam Yetki writer already running in a work turn becomes
+        this task's only operator. SpeS launches no agent; attach() returns the connection and
+        bind_run() hands over the writer's run, so Stop, the lease, the overlay, the denied-app
+        list and the evidence work exactly as for a desktop task."""
         from core.multi_agent_service import MultiAgentService
-        selected = MultiAgentService.validate_model_selections(models)
+        if external_operator is not None:
+            if external_operator not in PERSONA or requested_permission_level != 'full':
+                raise PermissionError("Only a Tam Yetki writer can operate the desktop inside its own turn")
+            selected = {external_operator: dict((models or {}).get(external_operator) or {})}
+        else:
+            selected = MultiAgentService.validate_model_selections(models)
         if requested_permission_level not in {'read-only','project','full'}: raise ValueError('Invalid requested file permission')
         if not isinstance(text, str) or not text.strip() or len(text) > 8000:
             raise ValueError("1–8000 karakterlik görev gerekli")
@@ -415,7 +428,8 @@ class NaturalDesktopTask:
                 self.stopped = threading.Event()
             if self.job or self.broker.status()["active"]:
                 raise RuntimeError("Önceki görevi kapatmadan yeni operatör başlatılamaz")
-            roles = task_roles(text)
+            roles = (task_roles(text) if external_operator is None else
+                     {"operator": external_operator, "observer": None, "assignments": {external_operator: text}})
             task_id = uuid.uuid4().hex
             if warband_project:
                 self.evidence = self.evidence_root / task_id
@@ -436,7 +450,7 @@ class NaturalDesktopTask:
             # still filed under the shelved ASTER project is an ordinary task (live 14 Nov: the
             # first live run had no Fatum because the selected project was ASTER).
             orchestrator = (ORCHESTRATOR if ORCHESTRATOR in self.factories and ORCHESTRATOR not in selected
-                            and not warband_profile else None)
+                            and not warband_profile and external_operator is None else None)
             members = [*selected, *([orchestrator] if orchestrator else [])]
             self.agent_ids = {p: "quartz-" + p + "-" + task_id[:10] for p in members}
             for p, identity in self.agent_ids.items():
@@ -464,13 +478,21 @@ class NaturalDesktopTask:
                                                and isinstance(models.get(ORCHESTRATOR), dict) else {}),
                         "expires_at": None, "task_id": task["id"], "events": [],
                         "verification": {"status": "NOT VERIFIED"}, "evidence": str(self.evidence_root / task_id),
-                        "requested_text": requested_literals(text), "requested_text_before_input": False}
+                        "requested_text": requested_literals(text), "requested_text_before_input": False,
+                        "external": external_operator is not None}
             self.evidence = self.evidence_root / task_id
             self.evidence.mkdir(parents=True, exist_ok=warband_project)
             self.tokens = {p: secrets.token_urlsafe(32) for p in members}
             self._cleanup_done.clear()
             self._serve()
             self.broker.context_provider = lambda: list(self.notes[-12:])
+            if external_operator is not None:
+                # The writer's run is bound later (bind_run); the overlay appears on the first
+                # screen tool call, so a long build that never looks at the screen holds nothing.
+                self.job["status"] = "running"
+                return {"connection": {"url": f"http://127.0.0.1:{self.server.server_port}/tool",
+                                       "token": self.tokens[external_operator]},
+                        "task_id": task_id}
         try:
             # Durable chat lifecycle before launching either external runtime.
             # Contains no broker token, snapshot, connection URL or permission.
@@ -507,6 +529,29 @@ class NaturalDesktopTask:
                     self.job["error"] = str(exc)
             self.stop("failed")
             raise
+
+    def attach(self, text, project, cid, provider, models=None):
+        """A desktop connection for a Tam Yetki writer's own turn (see start)."""
+        return self.start(text, project, cid, models or {}, requested_permission_level='full',
+                          external_operator=provider)
+
+    def bind_run(self, provider, runtime, run_id):
+        """Hand the writer's run to this task: it ends the task when it ends, Stop cancels it."""
+        with self.lock:
+            if not self.job or not self.job.get("external") or self.stopped.is_set():
+                raise RuntimeError("No attached desktop session")
+            if provider != self.job["roles"]["operator"]:
+                raise PermissionError("Only the attached operator's run can be bound")
+            self.runs[provider] = (runtime, run_id)
+            self.thread = threading.Thread(target=self._watch, args=(self.job, self.stopped), daemon=True,
+                                           name="quartz-attached-desktop")
+            self.thread.start()
+
+    def _show_overlay_once(self, provider):
+        """Marks that an attached writer used the screen. The overlay itself appears when
+        control is granted (approve), exactly as for a desktop task."""
+        if self.job and self.job.get("external"):
+            self.job["overlay_shown"] = True
 
     def _launch_provider(self, provider, *, after_approval=False):
         """Start a restricted CLI turn with this task's unchanged MCP token.
@@ -1331,11 +1376,16 @@ class NaturalDesktopTask:
         if tool_name.startswith("warband_"):
             return self._warband_call(token, request)
         if tool_name.startswith("jarvis_"):
+            if tool_name == "jarvis_input":
+                with self.changed:
+                    self._show_overlay_once(self._provider(token))
             return self._jarvis_call(token, request)
         with self.changed:
             provider = self._provider(token)
             job = self.job
             tool, args = request.get("name"), request.get("arguments") or {}
+            if tool in SCREEN_TOOLS:
+                self._show_overlay_once(provider)
             if tool == "task_wait":
                 # Bounded server wait, not model busy polling. Stop wakes it immediately.
                 self.changed.wait(timeout=20)
@@ -1583,7 +1633,7 @@ class NaturalDesktopTask:
                         self.stop("permission expired"); break
                     if (self.connection and self.connection is connection
                             and broker_active is False and not stopped.is_set()):
-                        self.stop("blocked: " + self.broker.stop_reason); break
+                        self.stop(self._session_end_reason(self.broker.stop_reason)); break
                     for p, (runtime, rid) in list(self.runs.items()):
                         run = runtime.get(rid)
                         key = (p, rid)
@@ -1595,12 +1645,15 @@ class NaturalDesktopTask:
                             granted_at = self._approval_resume_at.pop(p, None)
                             saw_consent = granted_at is not None and self._seen_at.get(p, 0) > granted_at
                             if (self._approval_resume.pop(p, None) == rid and run['status'] == 'completed'
-                                    and not saw_consent):
+                                    and not saw_consent and not self.job.get("external")):
                                 if self.relaunches[p] >= 4:
                                     self._event('quartz','İzin verildi ancak güvenli devam turu sınırına ulaşıldı; görev tamamlanmış sayılmadı.')
                                     self.stop('continuation limit'); return
                                 self._launch_provider(p, after_approval=True)
                                 continue
+                            if self.job.get("external"):
+                                # The writer's own turn reports its result in the chat (20 Nov).
+                                self.stop("completed" if run["status"] == "completed" else "failed"); return
                             if run["status"] != "completed" and p == self.job["roles"]["operator"]:
                                 self._message(p, run.get("result") or "Ajan durdu: " + "; ".join(run.get("errors") or [run["status"]]))
                                 self.stop("failed"); return
@@ -1628,7 +1681,8 @@ class NaturalDesktopTask:
                         if any(k['state'] in {'queued','running'} for k in knowledge):
                             continue
                         operator = self.job['roles']['operator']
-                        if knowledge and operator not in self._learning_seen and self.relaunches[operator] < 4:
+                        if (knowledge and operator not in self._learning_seen and self.relaunches[operator] < 4
+                                and not self.job.get("external")):
                             self._learning_seen.add(operator)
                             self._launch_provider(operator, after_approval=True)
                             continue
@@ -1654,6 +1708,15 @@ class NaturalDesktopTask:
         out["operator"] = {"session": self.broker.status()}
         out["runs"] = {p: {k: r.get(rid).get(k) for k in ("status", "pid", "model", "effort")} for p, (r, rid) in runs}
         return out
+
+    def _session_end_reason(self, broker_reason) -> str:
+        """Why the task ends when the broker closed its session. An attached writer that closed its
+        own target window has not been blocked: the screen session simply ended and the writer's
+        turn goes on (live 21 Nov: the chat said 'Engellendi - görev tamamlanamadı')."""
+        why = str(broker_reason or "")
+        if (self.job or {}).get("external") and why.startswith("target closed"):
+            return "screen ended: " + why
+        return "blocked: " + why
 
     def stop(self, reason="cancelled", *, expected_job=None):
         with self.changed:
@@ -1695,6 +1758,11 @@ class NaturalDesktopTask:
         if self.warband:
             cleanup_step(report, "warband", self.warband.shutdown)
         for provider, (runtime, rid) in list(self.runs.items()):
+            if self.job and self.job.get("external") and reason != "cancelled":
+                # An attached writer's turn outlives its screen session (live 20 Nov: the test
+                # window closed, the broker ended the session and the writer's turn was cancelled).
+                # Only the user's Stop ends the writer.
+                continue
             cleanup_step(report, "runtime:" + provider, lambda runtime=runtime, rid=rid: runtime.cancel(rid))
         for index, workspace in enumerate(list(self.workspaces)):
             cleanup_step(report, "workspace:" + str(index), workspace.cleanup)
@@ -1712,7 +1780,8 @@ class NaturalDesktopTask:
             self.job["broker_audit"] = [entry for entry in self.broker.audit
                                         if not isinstance(entry, dict) or float(entry.get("at") or 0) >= started]
             summary_text = stop_summary(reason, self.job["verification"])
-            cleanup_step(report, "chat-event", lambda: self._event("quartz",
+            silent = bool(self.job.get("external") and not self.job.get("overlay_shown"))
+            cleanup_step(report, "chat-event", lambda: None if silent else self._event("quartz",
                 summary_text +
                 "\n\n---TEKNIK_AYRINTILAR---\nDurum: " + summary_text + "; kanıt: " + self.job["verification"]["status"] +
                 "\nKanıt klasörü: " + str(self.evidence), final=True,

@@ -40,11 +40,14 @@ class ClaudeScriptTests(unittest.TestCase):
         self.assertIn("['codex', 'antigravity', 'claude', 'collaboration'].includes(agent)", CHAT_JS)
 
     def test_birlikte_mode_includes_claude_only_when_connected(self):
-        self.assertIn("(focus === 'collaboration' && (agent !== 'claude' || !unavailable))", CHAT_JS)
+        # A passive agent (21 Nov) also sits the Birlikte turn out.
+        self.assertIn("(focus === 'collaboration' && inTeam && (agent !== 'claude' || !unavailable))", CHAT_JS)
 
     def test_mode_button_readiness_comes_from_claude_provider(self):
         self.assertIn("['codex','antigravity','claude','collaboration'].includes(agent)", SETUP_JS)
-        self.assertIn("...(known?.claude ? [['claude', 'Claude', describe(known.claude), active === 'claude']] : [])", SETUP_JS)
+        # Persona names in team order since 24 Nov; Claude still appears only once reported.
+        self.assertIn("...(known?.claude ? [['claude', 'Fatum · Claude', describe(known.claude), active === 'claude' || active === 'collaboration']] : [])", SETUP_JS)
+        self.assertLess(SETUP_JS.index("'Fatum · Claude'"), SETUP_JS.index("'Fides · Codex'"))
 
 
 class ClaudeReadinessTests(unittest.TestCase):

@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 from copy import deepcopy
 
+from core.space_policy import normalize as normalize_space, space_of
 from core.conversation_store import ConversationStore
 from core.multi_agent_service import MultiAgentService, WriterDispatchError
 from core.response_style import communication_instruction, DETAIL_MARKER
@@ -39,13 +40,28 @@ def _writer_failed(message, run, run_id):
 
 from core.skill_turn import SkillTurnMixin
 from core.long_job_chat import LongJobChatMixin
+from core.job_planner import JobPlannerMixin
 
 
-class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
+
+def desktop_evidence(folder) -> dict:
+    """What an attached writer did on the screen: SpeS's own observations, kept on disk (24 Nov).
+
+    Counted from the evidence folder, not from the model's words. Empty when it never looked."""
+    try:
+        root = Path(folder) if folder else None
+        count = len(list(root.glob("observation-*.json"))) if root and root.is_dir() else 0
+    except OSError:
+        count = 0
+    return {"observations": count, "folder": str(folder)} if count else {}
+
+class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlannerMixin):
     MAX_GROUP_ROUNDS = 2
 
     def __init__(self, agent_service: MultiAgentService, store_path: str | Path):
         self.agent_service = agent_service
+        # Tam Yetki writers operate the desktop inside their own turn (user decision 20 Nov).
+        agent_service.desktop_attach = self._attach_desktop_session
         self.store = ConversationStore(store_path)
         from core.user_memory import FILE_NAME, UserMemory
         # Facts the user explicitly asked to remember, shared by every conversation.
@@ -56,7 +72,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
         # The work panel's live previews of what the team built (127.0.0.1 only).
         from core.local_preview import PreviewServers
         self.previews = PreviewServers()
-        # SpeS's skill shelf: the agents install GitHub skills, /skill uses them (14 Nov).
+        # SpeS's skill shelf: the agents install GitHub skills; a message naming one uses it (14/25 Nov).
         from core.skill_shelf import SkillShelf
         self.skills = SkillShelf()
         self.recovery = self.store.recover_interrupted()
@@ -400,6 +416,12 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
             self._closed = True
         for job in list(self.__dict__.get("_long_jobs", {}).values()):
             job.halt()  # resumable after restart; Stop is the user's only final word
+        session = self.__dict__.get("_desktop_session")
+        if session is not None:
+            try:
+                session.stop("cancelled")  # releases the lease, overlay and tool server
+            except Exception:
+                pass
         try:
             result = self.cancel_active()
         finally:
@@ -547,16 +569,36 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
                 self._active_turn = None
             return result
 
-    def delete_project_conversations(self, project_id: str, conversation_ids, *, confirmed=False) -> dict:
+    def delete_project_conversations(self, project_id: str, conversation_ids, *, confirmed=False,
+                                     space=None) -> dict:
+        """A project's conversations; with a space, only that space's (Workspace cleanup never
+        touches the Sohbet side, 24 Nov)."""
         with self._lock:
             self._allow_delete(confirmed)
             self.agent_service.projects.get(project_id)
             if not isinstance(conversation_ids, list) or any(not isinstance(cid, str) for cid in conversation_ids):
                 raise ValueError("Onaylanan sohbet listesi gerekli.")
+            wanted = normalize_space(space) if space else None
             current = [c["id"] for c in self.store.list()
-                       if (c.get("project_id") or "squad-pilot") == project_id]
+                       if (c.get("project_id") or "squad-pilot") == project_id
+                       and (wanted is None or c.get("space") == wanted)]
             if not current or set(current) != set(conversation_ids):
                 raise ValueError("Projenin sohbet listesi değişti; yenileyip tekrar onaylayın.")
+            result = self.store.delete_many(current)
+            if self._active_turn and self._active_turn.get("conversation_id") in current:
+                self._active_turn = None
+            return result
+
+    def delete_space_conversations(self, space: str, conversation_ids, *, confirmed=False) -> dict:
+        """Every conversation of one space, whatever project it was opened in (Sohbet has no projects)."""
+        with self._lock:
+            self._allow_delete(confirmed)
+            wanted = normalize_space(space)
+            if not isinstance(conversation_ids, list) or any(not isinstance(cid, str) for cid in conversation_ids):
+                raise ValueError("Onaylanan sohbet listesi gerekli.")
+            current = [c["id"] for c in self.store.list() if c.get("space") == wanted]
+            if not current or set(current) != set(conversation_ids):
+                raise ValueError("Sohbet listesi değişti; yenileyip tekrar onaylayın.")
             result = self.store.delete_many(current)
             if self._active_turn and self._active_turn.get("conversation_id") in current:
                 self._active_turn = None
@@ -621,6 +663,39 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
                 "active_conversation": conv,
             }
 
+    def set_team_member(self, conversation_id: str | None, agent: str, active: bool) -> dict:
+        """Birlikte: make an agent passive (limit reached, not fit for the job) or active (21 Nov).
+
+        Takes effect from the next turn; a running turn keeps the team it started with."""
+        with self._lock:
+            cid = conversation_id or self.store.get_active()["id"]
+            team = self.store.set_team_member(cid, agent, bool(active))
+            return {"conversation_id": cid, "team": team, "active_conversation": self.store.get(cid)}
+
+    def _team_members(self, cid) -> list:
+        """The active Birlikte members the user kept, minus any whose usage limit is full until it
+        resets (25 Nov: a full agent failed its step and the turn waited on it). If every kept
+        member is full, the user's choice stands and the agents report their own limit."""
+        try:
+            members = self.store.get_team(cid) or list(TEAM)
+        except Exception:
+            members = list(TEAM)
+        full = self._agents_at_limit()
+        return [m for m in members if m not in full] or members
+
+    def _agents_at_limit(self) -> set:
+        now = time.time()
+        cached = self.__dict__.get("_limit_cache")
+        if cached and now - cached[0] < 30:
+            return cached[1]
+        try:
+            from core.agent_limits import at_limit, snapshot
+            full = {agent for agent, entry in (snapshot() or {}).items() if at_limit(entry, now)}
+        except Exception:
+            full = set()
+        self._limit_cache = (now, full)
+        return full
+
     def get_model_selection(self, conversation_id: str | None = None) -> dict:
         """Read a detached selection snapshot without probing providers or writing history."""
         with self._lock:
@@ -630,6 +705,32 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
 
     def set_response_detail(self, level):
         return self.store.set_response_detail(level)
+
+    def _attach_desktop_session(self, provider, project, prompt):
+        """A desktop session for the running turn's Tam Yetki writer (see NaturalDesktopTask.attach).
+
+        One session at a time: the operator lease also excludes a desktop task started from
+        the GUI. Stop in the chat cancels the writer, which ends this session; the overlay's
+        Stop ends the session, which cancels the writer.
+        """
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("SpeS kapanıyor")
+            cid = (self._active_turn or {}).get("conversation_id")
+        if not cid:
+            raise RuntimeError("Masaüstü oturumu yalnız çalışan bir turda açılır")
+        task = self.__dict__.get("_desktop_session")
+        if task is None:
+            from core.desktop_agents import DesktopAgentService
+            from core.natural_desktop import NaturalDesktopTask
+            task = NaturalDesktopTask(DesktopAgentService(), self.coordination_message)
+            self._desktop_session = task
+        models = {provider: self.store.get_agent_model(cid, provider)}
+        result = task.attach(str(prompt)[:8000], project, cid, provider, models)
+        folder = getattr(task, "evidence", None)
+        return {"connection": result["connection"], "bind": task.bind_run,
+                "stop": lambda reason="failed": task.stop(reason),
+                "evidence": lambda: desktop_evidence(folder)}
 
     def coordination_message(self, cid, sender, content, metadata=None):
         if sender not in {"user", "quartz", "codex", "antigravity", "claude"}:
@@ -746,16 +847,26 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
             self.security.start()
         return self.security
 
+    def _alert_conversation(self, severity) -> str:
+        """Where Eos speaks. A medium finding goes to Eos's own Workspace log, never into a task
+        or a Sohbet (live 24 Nov: 84 alerts filled a task). A high one rings the phone, so it
+        stays where the user is."""
+        if severity == "high":
+            return self.store.get_active()["id"]
+        return self.store.special_conversation("security", "Eos · Güvenlik", "work")
+
     def _post_security_alert(self, alert):
         # Low findings (a new download) stay in the watcher's list; the rest is said in chat.
         if alert.get("severity") == "low":
             return
         try:
-            cid = self.store.get_active()["id"]
+            cid = self._alert_conversation(alert.get("severity"))
         except Exception:
             return
         icon = "Yüksek" if alert["severity"] == "high" else "Orta"
-        self.store.append_message(cid, "assistant", f"Güvenlik uyarısı ({icon}): {alert['title']}. {alert['detail']}",
+        # The manifest's reason (core.security_manifest) goes with the finding (25 Nov).
+        why = f" Neden: {alert['why']}" if alert.get("why") else ""
+        self.store.append_message(cid, "assistant", f"Güvenlik uyarısı ({icon}): {alert['title']}. {alert['detail']}{why}",
                                   sender="quartz", metadata={
             "sender": "quartz", "persona": "Eos", "recipient": "user", "status": "completed",
             "security_alert": alert, **({"notify": "call"} if alert["severity"] == "high" else {}),
@@ -772,7 +883,9 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
         result = watch.act(str(alert_id or ""), str(action or ""))
         if result.get("ok") and action != "ignore":
             try:
-                cid = self.store.get_active()["id"]
+                severity = next((a.get("severity") for a in watch.alerts()
+                                 if str(a.get("id")) == str(alert_id)), "medium")
+                cid = self._alert_conversation(severity)
                 self.store.append_message(cid, "assistant", "Eos: " + result["message"], sender="quartz", metadata={
                     "sender": "quartz", "persona": "Eos", "recipient": "user", "status": "completed",
                     "security_result": {"alert": str(alert_id), "action": action, "undo": bool(result.get("undo"))},
@@ -877,6 +990,12 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
                 raise RuntimeError("Mesaj geçmişi olan sohbet başka projeye taşınamaz; proje seçiciyi kullanın.")
             self.store.update_project(conversation_id, project_id)
 
+    def _active_group_targets(self, cid, text) -> list[str]:
+        """The classic pair without the agents the user made passive (21 Nov)."""
+        targets = self._resolve_group_targets(text)
+        members = self._team_members(cid)
+        return [a for a in targets if a in members] or [a for a in members if a in {"codex", "antigravity"}] or targets
+
     @staticmethod
     def _resolve_group_targets(text: str) -> list[str]:
         """Allow addressing only Codex, only Antigravity, or both in Birlikte mode."""
@@ -959,7 +1078,9 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
     def send_message(self, text: str, agent: str | None = None,
                      conversation_id: str | None = None, write: bool = False,
                      confirm_write: bool = False, full_access: bool = False,
-                     requested_permission_level: str | None = None) -> dict:
+                     requested_permission_level: str | None = None, origin: str | None = None) -> dict:
+        """``origin="long_job"`` marks a milestone SpeS itself sends; it is never planned again
+        and never read as the user talking to the job."""
         text = str(text or "").strip()
         if not text:
             raise ValueError("Mesaj boş olamaz.")
@@ -968,27 +1089,25 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
         if requested_permission_level not in {'read-only','project','full'}: raise ValueError('Invalid requested permission level')
         from core.space_policy import is_chat
         target = self.store.get(conversation_id) if conversation_id else self.store.get_active()
-        from core.long_job import JobError, parse_command
-        try:
-            job_spec = parse_command(text)
-        except JobError as exc:
-            return self._answer_without_agents(target["id"], text, f"Uzun iş anlaşılamadı: {exc}")
-        if job_spec is not None:
-            return self._long_job_command(target, text, job_spec, bool(write or full_access) and confirm_write is True,
-                                          full_access=bool(full_access) and confirm_write is True)
-        from core.skill_shelf import install_request, invocation
-        skill = skill_install = None
-        invoked = invocation(text)
-        if invoked is not None:
-            name, rest = invoked
-            skill = self.skills.load(name) if name not in ("", "liste", "list") else None
-            if skill is None:
-                # "/skill", "/skill liste" or an unknown name: SpeS answers with the shelf.
-                prefix = f"'{name}' adında bir skill rafta yok. " if name not in ("", "liste", "list") else ""
-                return self._answer_without_agents(target["id"], text, prefix + self._skill_list_text())
-            text = rest or f"{skill['name']} skill'ini uygula."
-        else:
-            skill_install = install_request(text)
+        if origin != "long_job" and target is not None and not is_chat(target):
+            # A conversation with a running job: the user talks to it in plain words
+            # ("ne durumda?", "dur", "devam", anything else is a note) - no commands (25 Nov).
+            running_job = self._active_job_in(target["id"])
+            if running_job is not None:
+                return self._job_conversation_message(target, text, running_job)
+        from core.skill_shelf import install_request, list_request, named_skill
+        skill = None
+        skill_install = install_request(text)
+        if not skill_install:
+            if list_request(text):
+                # "Hangi skill'ler var?": SpeS answers with the shelf (no command, 25 Nov).
+                return self._answer_without_agents(target["id"], text, self._skill_list_text())
+            try:
+                shelf_names = [entry["name"] for entry in self.skills.list()]
+            except Exception:
+                shelf_names = []
+            name = named_skill(text, shelf_names)
+            skill = self.skills.load(name) if name else None
         looks_like_task = message_intent(text) == "task"
         # Sohbet space never starts work, whatever the wording (user request 14 Nov).
         chat_space = is_chat(target)
@@ -996,7 +1115,12 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
         # build (user request 14 Nov). A request that also names files or code stays a task.
         from core.result_cards import is_research
         research = is_research(text)
-        conversation_only = chat_space or research or bool(skill_install) or not looks_like_task
+        # "Baştan sona bir oyun yap": one request becomes a planned long job (25 Nov). Only in
+        # Workspace, only with project writing switched on and confirmed (never the phone).
+        from core.job_intent import big_job_request
+        job_request = (origin != "long_job" and not chat_space and not research and not skill and not skill_install
+                       and bool(write or full_access) and confirm_write is True and big_job_request(text))
+        conversation_only = (chat_space or research or bool(skill_install) or not looks_like_task) and not job_request
         if conversation_only:
             write = full_access = confirm_write = False
         write = bool(write or full_access)
@@ -1077,16 +1201,17 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
                     **({"research": True} if research else {}),
                     **({"skill": skill["name"]} if skill else {}),
                     **({"skill_install": skill_install["url"]} if skill_install else {}),
+                    **({"job_request": True} if job_request else {}),
                 },
             )
 
             conv = self.store.get(cid)
             bot_seq = self._next_sequence(conv)
-            team_turn = selected_agent in {"collaboration", "both"} and self._team_ready()
+            team_turn = selected_agent in {"collaboration", "both"} and self._team_ready(cid)
             if team_turn:
-                first_sender, first_recipient = TEAM[0], "all"
+                first_sender, first_recipient = self._team_members(cid)[0], "all"
             elif selected_agent in {"collaboration", "both"}:
-                targets = self._resolve_group_targets(text)
+                targets = self._active_group_targets(cid, text)
                 first_sender = targets[0]
                 first_recipient = "all" if len(targets) > 1 else "user"
             else:
@@ -1153,6 +1278,9 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
                 turn_state["skill"] = skill
             if skill_install:
                 turn_state["skill_install"] = skill_install
+            if job_request:
+                turn_state["job_plan"] = {"planner": first_sender, "text": text,
+                                          "full_access": bool(full_access)}
             # "Bitince haber ver": SpeS writes a short report when this turn ends (core.finish_report).
             from core.finish_report import wants_finish_report
             if wants_finish_report(text):
@@ -1667,8 +1795,11 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
                       'proje okuma turunda yalnız seçili projeyi okuma, görev turunda seçilen yetki. '
                       'Gerçekte yapmadığın bir gözlemi veya işlemi yapmış gibi iddia etme.\n\n') + prompt
             install = (self._active_turn or {}).get("skill_install")
+            job_plan = (self._active_turn or {}).get("job_plan")
             if install:
                 self._run_skill_install(cid, msg_id, install, project_id)
+            elif job_plan:
+                self._run_job_plan(cid, msg_id, job_plan, project_id)
             elif agent == "antigravity":
                 self._run_antigravity_turn(cid, msg_id, prompt, project_id, write, confirm_write, full_access)
             elif agent == "codex":
@@ -2252,7 +2383,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin):
         if self._is_turn_cancelled(first_msg_id):
             return
 
-        targets = self._resolve_group_targets(prompt)
+        targets = self._active_group_targets(cid, prompt)
         rounds = self.MAX_GROUP_ROUNDS
         if self._conversation_only(cid) and not re.search(r"tartış|değerlendir|karşılaştır|birbirin|review", prompt, re.I):
             rounds = 1

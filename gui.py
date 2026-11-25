@@ -398,10 +398,11 @@ class Api:
                 # A cloud-agent message cannot start REA, desktop control or
                 # become an instruction to a running local operator.
                 return {'status':'ok','data':{'handled':False,'intent':'conversation'}}
-            from core.long_job import COMMAND as LONG_JOB_COMMAND
-            if LONG_JOB_COMMAND.match(str(text or '')):
-                # Live 15 Nov: a long job's milestone text ("kapı", "el uzatıp") started a
-                # desktop task. '/uzun-iş' goes to the chat only; it never controls the screen.
+            from core.job_intent import big_job_request
+            if permission_level != 'read-only' and big_job_request(text):
+                # "Baştan sona bir oyun yap" names a game but asks for a build: it goes to the
+                # chat, which plans the job (25 Nov); it never controls the screen. (Live 15
+                # Nov: a job's words "kapı", "el uzatıp" had started a desktop task.)
                 return {'status':'ok','data':{'handled':False,'intent':'task'}}
             message_kind = message_intent(text)
             from core.diagnostics_intent import diagnostics_intent
@@ -978,7 +979,7 @@ class Api:
         return ipc_send("skill_override", {"conversation_id": conversation_id, "id": override_id})
 
     def skills_list(self) -> dict:
-        """The skill shelf (name, description, source, version) for the /skill hint."""
+        """The skill shelf (name, description, source, version) for the composer's skill hint."""
         return ipc_send("skills_list")
 
     def panel_result(self, conversation_id: str = "") -> dict:
@@ -1044,11 +1045,21 @@ class Api:
         except Exception as exc:
             return {"status": "error", "data": str(exc)}
 
-    def chat_delete_project(self, project_id: str, conversation_ids, confirmed: bool = False) -> dict:
+    def chat_delete_project(self, project_id: str, conversation_ids, confirmed: bool = False,
+                            space: str = "") -> dict:
         try:
             with self._natural_start_lock:
                 self._chat_delete_guard()
-                return ipc_send("chat_delete_project", {"project_id": project_id,
+                return ipc_send("chat_delete_project", {"project_id": project_id, "space": space or None,
+                    "conversation_ids": conversation_ids, "confirmed": confirmed is True})
+        except Exception as exc:
+            return {"status": "error", "data": str(exc)}
+
+    def chat_delete_space(self, space: str, conversation_ids, confirmed: bool = False) -> dict:
+        try:
+            with self._natural_start_lock:
+                self._chat_delete_guard()
+                return ipc_send("chat_delete_space", {"space": space,
                     "conversation_ids": conversation_ids, "confirmed": confirmed is True})
         except Exception as exc:
             return {"status": "error", "data": str(exc)}
@@ -1072,6 +1083,10 @@ class Api:
             "model": model or None,
             "effort": effort or None,
         })
+
+    def chat_set_team_member(self, conversation_id: str, agent: str, active: bool) -> dict:
+        return ipc_send("chat_set_team_member", {"conversation_id": conversation_id or None,
+                                                 "agent": agent, "active": active is True})
 
     def chat_models(self, force: bool = False) -> dict:
         return ipc_send("chat_models", {"force": bool(force)})

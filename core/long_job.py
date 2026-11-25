@@ -107,6 +107,10 @@ def validate_spec(spec: dict) -> dict:
             "milestones": milestones, "hours": hours, "auto_resume": bool(spec.get("auto_resume")),
             "verify": verify, "verify_timeout": int(spec.get("verify_timeout") or 900),
             "git_branch": branch, "models": dict(spec.get("models") or {}),
+            # SpeS looks for the project's own tests again before each check (one-request jobs).
+            "auto_check": bool(spec.get("auto_check")),
+            # A teammate who did not write the milestone accepts it (one-request jobs, Fides 25 Nov).
+            "review": bool(spec.get("review")),
             "permission_level": "full" if spec.get("permission_level") == "full" else "project",
             "permissions": dict(spec.get("permissions") or {})}
 
@@ -216,6 +220,9 @@ def keep_awake():
 def run_verify(ledger: JobLedger, stop: threading.Event) -> dict:
     """The job's own check, defined by the user when the job started (never by an agent)."""
     argv = ledger.data.get("verify")
+    if not argv and ledger.data.get("auto_check"):
+        from core.job_intent import detected_check
+        argv = detected_check(ledger.data.get("project_path"))
     if not argv:
         return {"ok": True, "summary": "Kontrol komutu tanımlanmadı."}
     from core.process_tree import stop_process_tree
@@ -235,6 +242,10 @@ def run_verify(ledger: JobLedger, stop: threading.Event) -> dict:
             return {"ok": False, "summary": "Kontrol durduruldu." if stop.is_set() else "Kontrol süreyi aştı."}
         time.sleep(0.5)
     reader.join(5)
+    try:
+        process.stdout.close()
+    except OSError:
+        pass
     tail = "".join(output)[-1500:]
     return {"ok": process.returncode == 0, "exit_code": process.returncode, "summary": tail}
 
@@ -348,9 +359,14 @@ class LongJob:
 
     def __init__(self, ledger: JobLedger, *, run_milestone, verify=None, checkpoint=None, baseline=None, dirty=None,
                  snapshot=None,
-                 changed=None, commit=None, limits=None, notify=None, clock=time.time, awake=keep_awake):
+                 changed=None, commit=None, limits=None, notify=None, clock=time.time, awake=keep_awake,
+                 writers=None, accept=None):
         self.ledger = ledger
+        # The agents the user keeps active in this conversation (passive ones never write, 21 Nov).
+        self.writers = writers or (lambda: WRITER_ORDER)
         self.run_milestone = run_milestone
+        # accept(ledger, milestone, writer, check, stop) -> {"ok": True/False/None, "summary", "by"}
+        self.accept = accept
         self.verify = verify or (lambda stop: run_verify(ledger, stop))
         self.checkpoint = checkpoint or (lambda: milestone_checkpoint(ledger))
         self.baseline = baseline or (lambda: baseline_checkpoint(ledger))
@@ -441,7 +457,11 @@ class LongJob:
         except Exception:
             snapshot = {}
         waits = []
-        for agent in WRITER_ORDER:
+        try:
+            order = [a for a in WRITER_ORDER if a in set(self.writers() or ())] or list(WRITER_ORDER)
+        except Exception:
+            order = list(WRITER_ORDER)
+        for agent in order:
             until = self._limited_until(agent, snapshot, now)
             if not until:
                 return agent, None
@@ -588,8 +608,19 @@ class LongJob:
             {"ok": False, "summary": result.get("summary") or "Tur tamamlanmadı."}
         if self.stop_event.is_set():
             return
+        review = None
+        if built and check.get("ok") and self.accept is not None and ledger.data.get("review"):
+            # Fides 25 Nov: with no test, "done" was the writer's word alone. A teammate reads
+            # the project against the acceptance criterion; a "no" sends the milestone back.
+            review = self.accept(ledger, milestone, writer, check, self.stop_event) or {}
+            if self.stop_event.is_set():
+                return
+            if review.get("ok") is False:
+                check = {"ok": False, "summary": f"{PERSONA.get(review.get('by'), 'Denetçi')} kabul etmedi: "
+                                                 + str(review.get("summary") or "")[-1200:]}
         entry = {"at": self.clock(), "writer": writer, "turn": result.get("status"),
-                 "check": bool(check.get("ok")), "note": str(check.get("summary") or "")[-300:]}
+                 "check": bool(check.get("ok")), "note": str(check.get("summary") or "")[-300:],
+                 **({"review": review.get("ok"), "reviewer": review.get("by")} if review is not None else {})}
         if built and check.get("ok"):
             files = list(self.changed(before, self.snapshot()))
             # Live 15 Nov: scripts written in an earlier failed attempt of the same milestone
@@ -598,11 +629,15 @@ class LongJob:
             root = Path(ledger.data["project_path"])
             files += [str(root / name) for name, state in self.dirty().items() if initial.get(name) != state]
             sha = self.commit(files, f"SpeS iş {ledger.data['id']}: {milestone['title']}")
+            ran_check = "tanımlanmadı" not in str(check.get("summary") or "")
+            accepted_by = review.get("by") if review and review.get("ok") is True else None
             with ledger._lock:
-                milestone.update(status="done", commit=sha, last_failure="")
+                milestone.update(status="done", commit=sha, last_failure="",
+                                 verified=bool(accepted_by or ran_check), reviewer=accepted_by)
                 milestone["history"].append(entry)
                 ledger.save()
-            ledger.event(f"{milestone['id']} tamam" + (f" (commit {sha[:8]})." if sha else "."))
+            ledger.event(f"{milestone['id']} tamam" + (f" (commit {sha[:8]})" if sha else "")
+                         + (f", {PERSONA.get(accepted_by, accepted_by)} kabul etti." if accepted_by else "."))
             self.notify(f"Kilometre taşı tamam: {milestone['title']}")
             return
         failure = str(check.get("summary") or result.get("summary") or "")[-1500:]
@@ -653,7 +688,13 @@ def finish_report(ledger: JobLedger) -> str:
     else:
         head = f"Uzun iş bitti: {len(done)} kilometre taşının hepsi tamam."
     lines = [head]
-    lines += [f"✔ {m['title']}" + (f" (commit {m['commit'][:8]})" if m.get("commit") else "") for m in done]
+    lines += [f"✔ {m['title']}" + (f" (commit {m['commit'][:8]})" if m.get("commit") else "")
+              + (f" · {PERSONA.get(m['reviewer'], m['reviewer'])} denetledi" if m.get("reviewer") else "")
+              + ("" if m.get("verified", True) else " · denetlenmedi") for m in done]
+    unchecked = [m for m in done if not m.get("verified", True)]
+    if unchecked:
+        # Fides 25 Nov: what nobody checked is said, not reported as proven.
+        lines.append(f"Dikkat: {len(unchecked)} taşı ne bir test ne de ikinci bir ajan denetleyebildi.")
     lines += [f"? {m['title']}: {(m.get('last_failure') or '').strip().splitlines()[-1][:160] if (m.get('last_failure') or '').strip() else 'geçmedi'}"
               for m in waiting]
     lines += [f"· {m['title']}: yapılmadı" for m in left]
@@ -681,59 +722,3 @@ def milestone_prompt(ledger: JobLedger, milestone: dict, writer: str) -> str:
     if d.get("writer") and writer != "claude":
         parts.append(f"Bu taşta yazıcı sensin ({PERSONA.get(writer, writer)}); Fatum limitte.")
     return "\n\n".join(parts)
-
-
-COMMAND = re.compile(r"^\s*/uzun[-_ ]?i[şs]\b", re.I)
-FIELDS = {"hedef": "goal", "süre": "hours", "sure": "hours", "devam": "auto_resume", "kontrol": "verify",
-          "dal": "git_branch"}
-
-
-def parse_command(text: str):
-    """'/uzun-iş' typed by the user in a Workspace chat -> a job spec (None if not a command).
-
-    /uzun-iş
-    Hedef: ...
-    Süre: 2 saat
-    Devam: evet            (çökünce kendiliğinden devam)
-    Kontrol: python -m unittest      (argümanlar boşlukla; kabuk yok)
-    Dal: spes/deneme-1
-    1. Başlık | kabul ölçütü
-    """
-    if not COMMAND.match(str(text or "")):
-        return None
-    import shlex
-    spec = {"milestones": []}
-    rest = COMMAND.sub("", text, count=1).strip()
-    if rest.lower() in {"durum", "liste", "list", ""}:
-        return {"list": True}
-    note = re.match(r"^not\s*:\s*(.+)$", rest, re.S | re.I)
-    if note:
-        return {"note": note.group(1).strip()[:2000]}
-    for raw in rest.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        step = re.match(r"^\d+[.)]\s*(.+?)\s*\|\s*(.+)$", line)
-        if step:
-            spec["milestones"].append({"title": step.group(1), "acceptance": step.group(2)})
-            continue
-        key, sep, value = line.partition(":")
-        field = FIELDS.get(key.strip().lower())
-        if not sep or not field:
-            raise JobError(f"Anlaşılmayan satır: {line[:80]}")
-        value = value.strip()
-        if field == "hours":
-            number = re.search(r"\d+(?:[.,]\d+)?", value)
-            if not number:
-                raise JobError("Süre sayı olmalı (ör. 2 saat).")
-            amount = float(number.group(0).replace(",", "."))
-            spec["hours"] = amount / 60 if re.search(r"dak", value, re.I) else amount
-        elif field == "auto_resume":
-            spec["auto_resume"] = value.lower() in {"evet", "e", "açık", "acik", "yes", "true"}
-        elif field == "verify":
-            # Windows paths keep their backslashes; surrounding quotes are dropped.
-            spec["verify"] = [part[1:-1] if len(part) > 1 and part[0] == part[-1] and part[0] in "\"'" else part
-                              for part in shlex.split(value, posix=False)] if value else None
-        else:
-            spec[field] = value
-    return spec

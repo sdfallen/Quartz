@@ -146,7 +146,7 @@ class ConversationDeleteTests(unittest.TestCase):
         handler = gui._HTML[start:end]
         harness = r'''
 const assert=require('node:assert/strict');
-let thinking=false,deletionPending=false,chatPollInterval=null,activeBotBubble=null;
+let thinking=false,deletionPending=false,chatPollInterval=null,activeBotBubble=null,currentSpace='work';
 let reloads=0,calls=[],errors=[],accepted=false,response={status:'ok',data:{deleted_count:1}},lastPrompt='';
 const mainProjectSelect={selectedOptions:[{textContent:'Project P'}]};
 const confirmModal={hidden:true};
@@ -158,7 +158,8 @@ const confirmScrim={onclick:null};
 const document={activeElement:null,getElementById:id=>({confirmModal,confirmTitle,confirmMessage,confirmCancel,confirmAccept,confirmScrim})[id]||null};
 const window={pywebview:{api:{
 chat_delete:async(...a)=>{calls.push(['single',...a]);return response;},
-chat_delete_project:async(...a)=>{calls.push(['project',...a]);return response;}}}};
+chat_delete_project:async(...a)=>{calls.push(['project',...a]);return response;},
+chat_delete_space:async(...a)=>{calls.push(['space',...a]);return response;}}}};
 const loadActiveConversation=async()=>reloads++;
 const logLine=()=>{};const appendMsg=(...a)=>errors.push(a);
 '''
@@ -169,9 +170,12 @@ await requestChatDeletion([a]);assert.equal(calls.length,0);assert.equal(reloads
 assert.equal(confirmModal.hidden,true);assert.match(lastPrompt,/“A” sohbeti silinsin mi\?/);
 accepted=true;await requestChatDeletion([a]);assert.deepEqual(calls.pop(),['single','a',true]);
 assert.equal(reloads,1);assert.equal(deletionPending,false);
-await requestChatDeletion([a,b],'p');assert.deepEqual(calls.pop(),['project','p',['a','b'],true]);
-assert.match(lastPrompt,/“Project P” projesinin 2 sohbeti silinsin mi\?/);
+await requestChatDeletion([a,b],'p');assert.deepEqual(calls.pop(),['project','p',['a','b'],true,'work']);
+assert.match(lastPrompt,/“Project P” projesinin 2 görevi silinsin mi\?/);
 assert.equal(reloads,2);
+currentSpace='chat';await requestChatDeletion([a,b],'*chat');assert.deepEqual(calls.pop(),['space','chat',['a','b'],true]);
+assert.match(lastPrompt,/2 sohbetin hepsi silinsin mi\?/);assert.doesNotMatch(lastPrompt,/Proje dosyaları/);
+currentSpace='work';reloads=2;
 response={status:'error',data:'busy'};await requestChatDeletion([a]);
 assert.equal(errors.length,1);assert.equal(reloads,2);assert.equal(deletionPending,false);
 thinking=true;await requestChatDeletion([a]);assert.equal(calls.length,1);

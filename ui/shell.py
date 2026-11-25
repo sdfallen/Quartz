@@ -90,7 +90,7 @@ SHELL_MARKUP = r"""
       <div class="brand">SpeS</div>
       <button type="button" class="icon-btn" id="btnDrawerClose" title="Kapat (Esc)" aria-label="Sohbetler panelini kapat">@@i:close:sm@@</button>
     </div>
-    <div class="side-section">
+    <div class="side-section space-work-only" id="projectSection">
       <div class="workspace-nav-title">Proje</div>
       <div class="workspace-project">
         <select class="project-picker" id="mainProjectSelect" title="Aktif proje" aria-label="Aktif proje"></select>
@@ -162,6 +162,7 @@ SHELL_MARKUP = r"""
               <span class="lane-state" id="laneCodexState">Hazır</span>
             </span>
           </button>
+          <button type="button" class="team-toggle" data-team-agent="codex" aria-pressed="true" title="Birlikte modunda Fides ekipte; tıklayınca pasif olur">Ekipte</button>
           <div class="model-selector-pill" id="codexModelPill" title="Codex modeli ve düşünme seviyesi">
               <span class="pill-agent-name">Codex</span>
               <select id="codexModelSelect" aria-label="Codex modeli">
@@ -196,6 +197,7 @@ SHELL_MARKUP = r"""
               <span class="lane-state" id="laneClaudeState">Hazır</span>
             </span>
           </button>
+          <button type="button" class="team-toggle" data-team-agent="claude" aria-pressed="true" title="Birlikte modunda Fatum ekipte; tıklayınca pasif olur">Ekipte</button>
           <div class="model-selector-pill" id="claudeModelPill" title="Claude modeli ve düşünme seviyesi">
               <span class="pill-agent-name">Claude</span>
               <select id="claudeModelSelect" aria-label="Claude modeli">
@@ -337,6 +339,7 @@ SHELL_MARKUP = r"""
               <span class="lane-state" id="laneAgyState">Hazır</span>
             </span>
           </button>
+          <button type="button" class="team-toggle" data-team-agent="antigravity" aria-pressed="true" title="Birlikte modunda Eos ekipte; tıklayınca pasif olur">Ekipte</button>
           <div class="model-selector-pill active-agy" id="agyModelPill" title="Antigravity modeli ve düşünme seviyesi">
               <span class="pill-agent-name">Antigravity</span>
               <select id="agyModelSelect" aria-label="Antigravity modeli">

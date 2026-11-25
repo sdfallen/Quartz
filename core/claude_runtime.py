@@ -40,6 +40,11 @@ from core.process_tree import (CREATE_SUSPENDED, bind_kill_on_close_job,
 READ_TOOLS = ("Read", "Grep", "Glob")
 EDIT_TOOLS = ("Edit", "Write", "NotebookEdit")
 SHELL_TOOLS = ("Bash", "PowerShell")
+# After Claude's final result, how long its process may linger before SpeS closes it (25 Nov).
+RESULT_GRACE_SECONDS = 20
+# User decision 20 Nov: under "Tam yetki" an agent works with its own full strength, so
+# the writer may read documentation on the web while it builds (shells reach the web anyway).
+WEB_TOOLS = ("WebSearch", "WebFetch")
 TOOLS_BY_SANDBOX = {
     # Plain conversation: no tools at all (the init event must report []).
     "none": (),
@@ -49,12 +54,23 @@ TOOLS_BY_SANDBOX = {
     # No OS sandbox for Claude Code shells on Windows: file edits only.
     "workspace-write": READ_TOOLS + EDIT_TOOLS,
     # The user's explicit "Tam yetki" choice: shells too.
-    "danger-full-access": READ_TOOLS + EDIT_TOOLS + SHELL_TOOLS,
+    "danger-full-access": READ_TOOLS + EDIT_TOOLS + SHELL_TOOLS + WEB_TOOLS,
 }
 # Fatum's desktop-task tools: coordinate, never observe or touch the screen.
 MCP_SERVER = "quartz_desktop"
 COLLABORATOR_TOOLS = ("task_context", "task_wait", "task_message")
 COLLABORATOR_MCP_TOOLS = tuple(f"mcp__{MCP_SERVER}__{name}" for name in COLLABORATOR_TOOLS)
+
+
+def _operator_tool_names():
+    from core.desktop_mcp import TOOLS
+    return tuple(t["name"] for t in TOOLS)
+
+
+# A Tam Yetki writer is also the desktop operator of its own turn (user decision 20 Nov):
+# every SpeS desktop tool, all of them still going through the broker (Stop, lease,
+# denied applications), next to the writer's own file, shell and web tools.
+OPERATOR_MCP_TOOLS = tuple(f"mcp__{MCP_SERVER}__{name}" for name in _operator_tool_names())
 # Read-only project access (plan/decision steps, user request 14 Nov): the same SpeS
 # project-read server Codex uses, which enforces the root, hides secret files and
 # bounds result sizes. Claude's own file tools stay off.
@@ -72,7 +88,7 @@ ALLOWED_BY_SANDBOX = {
     "read-only": (),
     "workspace-write": ("Edit(./**)",),
     # Shells can reach any path anyway; the user's "Tam yetki" choice.
-    "danger-full-access": READ_TOOLS + EDIT_TOOLS + SHELL_TOOLS,
+    "danger-full-access": READ_TOOLS + EDIT_TOOLS + SHELL_TOOLS + WEB_TOOLS,
 }
 FILE_TOOLS = {"Edit": "update", "Write": "add", "NotebookEdit": "update"}
 # Variables that would make the child think it runs inside another Claude
@@ -170,15 +186,23 @@ class ClaudeRuntime(CodexRuntime):
         from core.project_read_mcp import expected_server
         return {"mcpServers": {PROJECT_SERVER: {"type": "stdio", **expected_server(root)}}}
 
+    @staticmethod
+    def operator_mcp_config():
+        from core.helper_command import mcp_command
+        command = mcp_command()
+        return {"mcpServers": {MCP_SERVER: {"type": "stdio", "command": command[0], "args": [*command[1:]]}}}
+
     def build_args(self, sandbox, *, model=None, effort=None, session_id=None, resume_id=None, desktop=False,
                    project_root=None, read_dirs=()):
         tools = ",".join(self.tools_for(sandbox))
-        servers = (self.collaborator_mcp_config() if desktop else
+        operator = desktop == "operator"
+        servers = (self.operator_mcp_config() if operator else self.collaborator_mcp_config() if desktop else
                    self.project_mcp_config(project_root) if project_root else {"mcpServers": {}})
         args = ["-p", "--output-format", "stream-json", "--verbose",
                 "--strict-mcp-config", "--mcp-config", json.dumps(servers),
                 "--setting-sources", "", "--permission-mode", "dontAsk", "--tools", tools]
-        allowed = ",".join(ALLOWED_BY_SANDBOX[sandbox] + (COLLABORATOR_MCP_TOOLS if desktop else ())
+        allowed = ",".join(ALLOWED_BY_SANDBOX[sandbox]
+                           + (OPERATOR_MCP_TOOLS if operator else COLLABORATOR_MCP_TOOLS if desktop else ())
                            + (PROJECT_MCP_TOOLS if project_root else ()))
         if allowed:
             args += ["--allowedTools", allowed]
@@ -232,20 +256,27 @@ class ClaudeRuntime(CodexRuntime):
                 raise NotADirectoryError(str(read_root))
             expected_tools = tuple(expected_tools) + PROJECT_MCP_TOOLS
         desktop_env = None
+        desktop_mode = False
         if desktop_connection is not None:
-            # Orchestrator of a desktop task: coordination tools only, no built-in tools.
-            if sandbox != "none":
-                raise PermissionError("Claude joins a desktop task only without built-in tools")
             from core.desktop_agents import connection_environment
+            if sandbox == "danger-full-access":
+                # Tam Yetki writer operating the desktop in its own turn (20 Nov).
+                desktop_mode = "operator"
+                expected_tools = tuple(expected_tools) + OPERATOR_MCP_TOOLS
+            elif sandbox == "none":
+                # Orchestrator of a desktop task: coordination tools only, no built-in tools.
+                desktop_mode = "collaborator"
+                expected_tools = COLLABORATOR_MCP_TOOLS
+            else:
+                raise PermissionError("Claude joins a desktop task only without built-in tools, or under Tam Yetki")
             desktop_env = connection_environment(desktop_connection, self.child_environment())
-            expected_tools = COLLABORATOR_MCP_TOOLS
         extra_dirs = []
         for folder in read_dirs or ():
             path = Path(folder).resolve(strict=True)
             if not path.is_dir():
                 raise NotADirectoryError(str(path))
             extra_dirs.append(str(path))
-        if extra_dirs and (desktop_env is not None or sandbox == "none"):
+        if extra_dirs and (desktop_mode == "collaborator" or sandbox == "none"):
             raise PermissionError("Extra read folders need Claude's file tools and no desktop tools")
         project = Path(project_path).resolve(strict=True)
         if not project.is_dir():
@@ -299,7 +330,7 @@ class ClaudeRuntime(CodexRuntime):
             raise RuntimeError("Claude run cancelled before start")
         command = self._command(self.build_args(sandbox, model=clean_model, effort=clean_effort,
                                                 session_id=session_id, resume_id=resume_thread_id,
-                                                desktop=desktop_env is not None, project_root=read_root,
+                                                desktop=desktop_mode, project_root=read_root,
                                                 read_dirs=extra_dirs))
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | CREATE_SUSPENDED
         job_errors: list[str] = []
@@ -336,7 +367,31 @@ class ClaudeRuntime(CodexRuntime):
         stderr_thread.start()
         threading.Thread(target=self._wait, args=(run_id, process, project_key, stdout_thread, stderr_thread),
                          name=f"claude-wait-{run_id[:8]}", daemon=True).start()
+        threading.Thread(target=self._close_after_answer, args=(run_id, process),
+                         name=f"claude-linger-{run_id[:8]}", daemon=True).start()
         return self.get(run_id)
+
+    def _close_after_answer(self, run_id, process, grace=None, poll=1.0):
+        """Live 25 Nov: Claude answered ("Başarılı… Test penceresi hâlâ açık.") but the test
+        program it had started from its shell kept the CLI, and so the turn, running for good.
+        Once Claude's final result is in and the process has not ended within the grace time,
+        its process tree is closed (programs an agent starts already end with its turn) and the
+        turn counts on the answer it gave."""
+        grace = RESULT_GRACE_SECONDS if grace is None else grace
+        while process.poll() is None:
+            with self._lock:
+                record = self._runs.get(run_id)
+                if not record or record.get("status") in self.TERMINAL:
+                    return
+                answered = record.get("_result_at")
+            if answered and time.time() - answered >= grace:
+                with self._lock:
+                    record["_closed_after_result"] = True
+                    record.setdefault("notes", []).append(
+                        "Claude yanıtını verdi; açık bıraktığı programlar yüzünden kapanmayan süreç kapatıldı.")
+                stop_process_tree(process, timeout=5)
+                return
+            time.sleep(poll)
 
     def resume(self, run_id, prompt, *, model: str | None = None, effort: str | None = None) -> dict:
         previous = self.get(run_id)
@@ -423,6 +478,7 @@ class ClaudeRuntime(CodexRuntime):
                                 self.forget_probe()  # the next readiness check asks the CLI again
                         elif text_val:
                             record["result"] = text_val
+                        record["_result_at"] = time.time()
                 if refused:
                     stop_process_tree(process, timeout=5)
                     return

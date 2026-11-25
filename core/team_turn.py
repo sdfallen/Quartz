@@ -112,12 +112,15 @@ def persona_name(agent: str) -> str:
 class TeamTurnMixin:
     """Methods mixed into AgentChatService; relies on its executors and store."""
 
-    def _team_ready(self) -> bool:
+    def _team_ready(self, cid=None) -> bool:
         """Team mode needs a logged-in Claude lead; otherwise the classic pair runs.
 
         Checked fresh for every Birlikte turn (~1 s): a cached "ready" let a team
         turn start after the CLI login had dropped (live 13 Nov 10:08).
+        When the user made Fatum passive (21 Nov) the first active agent leads instead.
         """
+        if cid is not None and LEAD not in self._team_members(cid):
+            return True
         try:
             return self.agent_service.claude.probe(force=True).get("ready") is True
         except Exception:
@@ -180,12 +183,12 @@ class TeamTurnMixin:
 
     # -- prompts -------------------------------------------------------------
     @staticmethod
-    def _team_header(agent, space="work"):
+    def _team_header(agent, space="work", members=TEAM):
         from core.space_policy import voice
-        others = ", ".join(f"{persona_name(a)} ({a.capitalize() if a != 'antigravity' else 'Antigravity'})"
-                           for a in TEAM if a != agent)
+        others = "".join(f"{persona_name(a)} ({a.capitalize() if a != 'antigravity' else 'Antigravity'}), "
+                         for a in members if a != agent)
         # Every agent may search the web in conversation steps (core.web_policy).
-        return (f"SpeS ekibindesin; ekip: sen, {others} ve kullanıcı. Herkes sohbeti görüyor.\n"
+        return (f"SpeS ekibindesin; ekip: sen, {others}ve kullanıcı. Herkes sohbeti görüyor.\n"
                 + character_instruction(agent) + voice(agent, space) + "\n" + WEB_RULE)
 
     @staticmethod
@@ -215,8 +218,10 @@ class TeamTurnMixin:
         user_mid = (self._active_turn or {}).get("user_message_id")
         research = any(m.get("id") == user_mid and (m.get("metadata") or {}).get("research")
                        for m in self.store.get(cid).get("messages", []))
+        members = self._team_members(cid)
+        agents = [a for a in agents if a in members] or members[:1]
         if research:
-            agents = [LEAD]  # one researched answer with cards, not three opinions
+            agents = agents[:1] if LEAD not in agents else [LEAD]  # one researched answer with cards
         lead = LEAD if LEAD in agents else agents[0]
         # History first, then the chat rule: the rule closest to the message is the one followed.
         # Only the lead (Claude) may search the web; teammates stay tool-less.
@@ -228,7 +233,7 @@ class TeamTurnMixin:
             rule = ("ARAŞTIRMA: Gerekirse web'de ara. Metinde en fazla 2 kısa cümleyle ne bulduğunu özetle; "
                     "sonuçları yalnız spes-kartlar bloğunda ver. Bağlantıları metne yazma.\n")
         say = lambda agent, msg_id, extra="": self._team_say(
-            cid, msg_id, agent, self._team_header(agent, space) + history_block + rule + extra + user_block, project_id,
+            cid, msg_id, agent, self._team_header(agent, space, members) + history_block + rule + extra + user_block, project_id,
             step=0, limit=2, per_sentence=CHAT_CHARS_PER_SENTENCE)
         self._set_turn_progress(f"{persona_name(lead)} yazıyor…", current_msg_id=first_msg_id)
         # The opening bubble is reused even when the user addressed only Fides or Eos:
@@ -271,11 +276,20 @@ class TeamTurnMixin:
         # BRIEF.md ("bu turda dosya okuma imkânım yok"). In a work turn they read the selected
         # project read-only; writing still happens only in the build step.
         read_project = {} if chat_only else {"tool_less": False, "project_scope": True}
-        # 1. Plan and work split by the lead (first bubble already belongs to Claude).
-        self._set_turn_progress("Fatum planı ve iş bölümünü yazıyor…", current_msg_id=first_msg_id)
-        plan = self._team_say(cid, first_msg_id, LEAD, self._team_header(LEAD) + self._team_rules(3) + (
-            "Görevin: kullanıcının isteği için kısa bir plan ve iş bölümü öner (kim ne yapacak: "
-            "Fatum, Fides, Eos). Sohbet sorusuysa nasıl yanıtlayacağınızı söyle. İstek proje dosyalarına "
+        # The user may make any agent passive (limit, not fit for the job; 21 Nov): the first
+        # active agent leads and builds, the other active ones criticise and check.
+        members = self._team_members(cid)
+        lead, others = members[0], members[1:]
+        lead_name = persona_name(lead)
+        names = lambda agents: " ve ".join(persona_name(a) for a in agents)
+        header = lambda agent: self._team_header(agent, "work", members)
+        team_names = ", ".join(persona_name(a) for a in members)
+
+        # 1. Plan and work split by the lead (first bubble already belongs to the lead).
+        self._set_turn_progress(f"{lead_name} planı ve iş bölümünü yazıyor…", current_msg_id=first_msg_id)
+        plan = self._team_say(cid, first_msg_id, lead, header(lead) + self._team_rules(3) + (
+            f"Görevin: kullanıcının isteği için kısa bir plan ve iş bölümü öner (kim ne yapacak: "
+            f"{team_names}). Sohbet sorusuysa nasıl yanıtlayacağınızı söyle. İstek proje dosyalarına "
             "dayanıyorsa (ör. bir ilan, README, mevcut kod) önce onları oku; okumadığını okumuş gibi yazma.\n")
             + user_block, project_id, step=1, **read_project)
         if self._is_turn_cancelled(first_msg_id) or not plan:
@@ -283,14 +297,16 @@ class TeamTurnMixin:
                 self._finish_turn(first_msg_id, "failed")
             return
 
-        # 2. Fides and Eos criticise the plan at the same time.
-        self._set_turn_progress("Fides ve Eos planı eleştiriyor…", current_msg_id=first_msg_id)
-        critique_ids = {a: self._team_bubble(cid, a, 2, first_msg_id) for a in ("codex", "antigravity")}
+        # 2. The other active members criticise the plan at the same time.
+        critique_ids = {}
+        if others:
+            self._set_turn_progress(f"{names(others)} planı eleştiriyor…", current_msg_id=first_msg_id)
+            critique_ids = {a: self._team_bubble(cid, a, 2, first_msg_id) for a in others}
         transcript = self._team_transcript(cid, first_msg_id)
 
         def critique(agent):
-            return lambda: self._team_say(cid, critique_ids[agent], agent, self._team_header(agent) + self._team_rules(2) + (
-                "Görevin: Fatum'un planını eleştir. Katılıyorsan nedenini ve eklediğin şeyi, katılmıyorsan "
+            return lambda: self._team_say(cid, critique_ids[agent], agent, header(agent) + self._team_rules(2) + (
+                f"Görevin: liderin ({lead_name}) planını eleştir. Katılıyorsan nedenini ve eklediğin şeyi, katılmıyorsan "
                 "riski ve önerdiğin değişikliği söyle.\n") + user_block + f"\n--- EKİP SOHBETİ ---\n{transcript}\n",
                 project_id, step=2, limit=2)
         critiques = self._team_parallel({a: critique(a) for a in critique_ids})
@@ -298,61 +314,62 @@ class TeamTurnMixin:
             return
 
         # 3. The lead decides, taking the critiques into account.
-        self._set_turn_progress("Fatum kararı yazıyor…", current_msg_id=first_msg_id)
-        decision_id = self._team_bubble(cid, LEAD, 3, first_msg_id)
+        self._set_turn_progress(f"{lead_name} kararı yazıyor…", current_msg_id=first_msg_id)
+        decision_id = self._team_bubble(cid, lead, 3, first_msg_id)
         transcript = self._team_transcript(cid, first_msg_id)
         if chat_only:
-            final = self._team_say(cid, decision_id, LEAD, self._team_header(LEAD) + (
+            final = self._team_say(cid, decision_id, lead, header(lead) + (
                 "Görevin: eleştirileri tart ve kullanıcıya ekibin ortak yanıtını ver. Açık kalan anlaşmazlık "
                 "varsa bir cümleyle belirt. En fazla 5 cümle, sade.\n") + user_block
                 + f"\n--- EKİP SOHBETİ ---\n{transcript}\n", project_id, step=3, limit=5)
             with self._lock:
                 self._finish_turn(first_msg_id, "completed" if final else "partial")
             return
-        decision = self._team_say(cid, decision_id, LEAD, self._team_header(LEAD) + self._team_rules(3) + (
+        decision = self._team_say(cid, decision_id, lead, header(lead) + self._team_rules(3) + (
             "Görevin: eleştirileri tart ve son kararı yaz: ne yapılacak, kim yapacak. Haklı itirazı benimse, "
             "katılmadığını gerekçesiyle reddet.\n") + user_block + f"\n--- EKİP SOHBETİ ---\n{transcript}\n",
             project_id, step=3, **read_project)
         if self._is_turn_cancelled(first_msg_id):
             return
 
-        # 4. Build (lead, the only writer) while Fides and Eos prepare in parallel.
-        self._set_turn_progress("Fatum inşa ediyor; Fides kontrolleri, Eos riskleri hazırlıyor…",
+        # 4. Build (lead, the only writer) while the others prepare in parallel.
+        prep_tasks = dict(zip(others, (
+            f"Görevin: {lead_name} inşa ederken bu iş için kabul kontrollerini belirle: neyi nasıl doğrulayacağız.",
+            f"Görevin: {lead_name} inşa ederken en önemli riskleri ve gözden kaçabilecek noktaları belirt.")))
+        self._set_turn_progress(f"{lead_name} inşa ediyor" + (f"; {names(others)} hazırlanıyor…" if others else "…"),
                                 current_msg_id=first_msg_id)
-        build_id = self._team_bubble(cid, LEAD, 4, first_msg_id)
-        prep_ids = {a: self._team_bubble(cid, a, 4, first_msg_id) for a in ("codex", "antigravity")}
+        build_id = self._team_bubble(cid, lead, 4, first_msg_id)
+        prep_ids = {a: self._team_bubble(cid, a, 4, first_msg_id) for a in prep_tasks}
         transcript = self._team_transcript(cid, first_msg_id)
-        build_prompt = self._team_header(LEAD) + (
+        build_prompt = header(lead) + (
             "Görevin: ekibin kararına göre işi şimdi sen yap; tek yazıcı sensin. Gerekli testleri çalıştır. "
             "Bitince en fazla 5 cümleyle ne yaptığını ve kanıtını (test sonucu, dosyalar) yaz.\n"
             + user_block + f"\n--- EKİP KARARI ---\n{transcript}\n")
-        prep_tasks = {
-            "codex": "Görevin: Fatum inşa ederken bu iş için kabul kontrollerini belirle: neyi nasıl doğrulayacağız.",
-            "antigravity": "Görevin: Fatum inşa ederken en önemli riskleri ve gözden kaçabilecek noktaları belirt.",
-        }
-        jobs = {LEAD: lambda: self._team_say(cid, build_id, LEAD, build_prompt, project_id, step=4, limit=0,
+        jobs = {lead: lambda: self._team_say(cid, build_id, lead, build_prompt, project_id, step=4, limit=0,
                                              tool_less=False, write=write, confirm_write=confirm_write,
                                              full_access=full_access)}
         for agent, task in prep_tasks.items():
             jobs[agent] = (lambda a=agent, t=task: self._team_say(
-                cid, prep_ids[a], a, self._team_header(a) + self._team_rules(3) + t + "\n" + user_block
+                cid, prep_ids[a], a, header(a) + self._team_rules(3) + t + "\n" + user_block
                 + f"\n--- EKİP KARARI ---\n{transcript}\n", project_id, step=4))
         built = self._team_parallel(jobs)
         if self._is_turn_cancelled(first_msg_id):
             return
-        if not built.get(LEAD):
+        if not built.get(lead):
             with self._lock:
                 self._finish_turn(first_msg_id, "failed")
             return
 
-        # 5. Fides and Eos check the result in parallel, read-only.
-        self._set_turn_progress("Fides ve Eos sonucu kontrol ediyor…", current_msg_id=first_msg_id)
-        check_ids = {a: self._team_bubble(cid, a, 5, first_msg_id) for a in ("codex", "antigravity")}
+        # 5. The others check the result in parallel, read-only.
+        check_ids = {}
+        if others:
+            self._set_turn_progress(f"{names(others)} sonucu kontrol ediyor…", current_msg_id=first_msg_id)
+            check_ids = {a: self._team_bubble(cid, a, 5, first_msg_id) for a in others}
         transcript = self._team_transcript(cid, first_msg_id)
 
         def check(agent):
-            return lambda: self._team_say(cid, check_ids[agent], agent, self._team_header(agent) + self._team_rules(3) + (
-                "Görevin: Fatum'un yaptığı işi proje dosyalarını okuyarak kontrol et; dosya yazma, komut çalıştırma. "
+            return lambda: self._team_say(cid, check_ids[agent], agent, header(agent) + self._team_rules(3) + (
+                f"Görevin: liderin ({lead_name}) yaptığı işi proje dosyalarını okuyarak kontrol et; dosya yazma, komut çalıştırma. "
                 "Kabul kontrollerine "
                 "ve risklere göre ne gördüğünü, kanıtıyla söyle.\n") + user_block
                 + f"\n--- EKİP SOHBETİ ---\n{transcript}\n", project_id, step=5, tool_less=False,
@@ -362,9 +379,9 @@ class TeamTurnMixin:
             return
 
         # 6. The lead closes: what is done, what the checks found, what is open.
-        close_id = self._team_bubble(cid, LEAD, 6, first_msg_id)
+        close_id = self._team_bubble(cid, lead, 6, first_msg_id)
         transcript = self._team_transcript(cid, first_msg_id)
-        closing = self._team_say(cid, close_id, LEAD, self._team_header(LEAD) + self._team_rules(3) + (
+        closing = self._team_say(cid, close_id, lead, header(lead) + self._team_rules(3) + (
             "Görevin: kullanıcıya kapanışı yaz: ne bitti, kontroller ne buldu, açık kalan ne.\n")
             + user_block + f"\n--- EKİP SOHBETİ ---\n{transcript}\n", project_id, step=6)
         complete = bool(closing) and all(checks.get(a) for a in check_ids) and all(critiques.get(a) for a in critique_ids)

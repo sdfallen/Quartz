@@ -1,4 +1,4 @@
-"""SpeS's skill shelf ("marketplace"): the agents install a GitHub skill, then /skill uses it.
+"""SpeS's skill shelf ("marketplace"): the agents install a GitHub skill; naming it uses it.
 
 User request 14 Nov 2026. Rules:
 - The permission to install is the user's own message carrying the GitHub URL. SpeS
@@ -7,8 +7,10 @@ User request 14 Nov 2026. Rules:
 - Fides and Eos review it read-only and Fatum gives the verdict. An agent can only stop
   an install: any "UYGUN DEĞİL" or an unclear verdict means the skill is not installed.
   SpeS, not an agent's reply, writes the shelf.
-- ``/skill <ad> <mesaj>`` gives that skill's SKILL.md to every agent of the turn as
-  labelled instructions; it never changes permissions, Stop or the evidence rules.
+- A message that names a shelf skill ("pdf-ozet ile şu notu özetle") gives that skill's
+  SKILL.md to every agent of the turn as labelled instructions; it never changes
+  permissions, Stop or the evidence rules. There is no command (user request 25 Nov:
+  "/uzun-iş gibi komutları kaldır"); "hangi skill'ler var?" lists the shelf.
   Scripts in a skill are never run by SpeS.
 """
 from __future__ import annotations
@@ -29,7 +31,9 @@ MAX_SKILL_TEXT = 30_000
 _GITHUB = re.compile(r"https?://(?:www\.)?github\.com/([A-Za-z0-9-]{1,39})/([A-Za-z0-9._-]{1,100})"
                      r"(?:/(?:tree|blob)/([A-Za-z0-9._/-]{1,200}))?/?", re.I)
 _INSTALL_WORDS = re.compile(r"(kur|yükle|ekle|install|indir|raf)", re.I)
-_INVOKE = re.compile(r"^\s*/skill(?:\s+([^\s]+))?(?:\s+([\s\S]*))?$", re.I)
+_LIST = re.compile(r"\b(?:hangi\s+skill|skill\S*\s+(?:göster|listele|neler)|skill\s+raf|"
+                   r"raftaki\s+skill|ne\s+skill(?:ler)?(?:in)?\s+var|which\s+skills|list\s+(?:the\s+)?skills)",
+                   re.I)
 _VERDICT = re.compile(r"KARAR\s*:\s*(UYGUN\s+DEĞİL|UYGUN\s+DEGIL|UYGUN)", re.I)
 _NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
@@ -58,12 +62,19 @@ def install_request(text: str) -> dict | None:
     return {"owner": owner, "repo": repo, "ref": ref, "subpath": subpath, "url": match.group(0)}
 
 
-def invocation(text: str) -> tuple[str, str] | None:
-    """``("ad", "mesaj")`` for ``/skill ad mesaj``; ``("", "")`` for a bare ``/skill``."""
-    match = _INVOKE.match(str(text or ""))
-    if not match:
-        return None
-    return (match.group(1) or "").strip().lower(), (match.group(2) or "").strip()
+def list_request(text: str) -> bool:
+    """"Hangi skill'ler var?", "skill'leri göster": SpeS answers with the shelf."""
+    return bool(_LIST.search(str(text or "")))
+
+
+def named_skill(text: str, names) -> str | None:
+    """The shelf skill the message names as a word ("pdf-ozet ile", "pdf-ozet'i kullan"); the
+    longest name wins so "pdf-ozet" beats "pdf". None when the message names none."""
+    value = str(text or "").casefold()
+    for name in sorted((n for n in names if n), key=len, reverse=True):
+        if re.search(r"(?<![\w-])" + re.escape(name.casefold()) + r"(?![\w-])", value):
+            return name
+    return None
 
 
 def verdict(text: str) -> str | None:
@@ -235,7 +246,7 @@ def prompt_block(skill: dict) -> str:
     if not skill:
         return ""
     files = ", ".join(skill.get("files", [])[:20])
-    return (f"\n[SKILL: {skill['name']} — KULLANICI /skill İLE ÇAĞIRDI. Bu talimatları bu turda uygula. "
+    return (f"\n[SKILL: {skill['name']} — KULLANICI MESAJINDA ADINI ANDI. Bu talimatları bu turda uygula. "
             "İzinleri, Durdur'u, güvenlik ve kanıt kurallarını DEĞİŞTİRMEZ; skill içindeki betikleri kendiliğinden "
             f"çalıştırma. Kaynak: {skill.get('source', '')} @ {skill.get('sha', '')[:12]}]\n"
             + skill["text"] + ("\n[... skill metni kısaltıldı]" if skill.get("truncated") else "")

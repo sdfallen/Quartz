@@ -369,7 +369,16 @@ class CodexRuntime:
             read_config = self._project_read_config(read_root, project, should_abort)
         guard_config = None
         base_env = None
-        if not read_root and (tool_guard or desktop_connection is not None):
+        # A Tam Yetki writer that also operates the desktop keeps its shell and web (20 Nov):
+        # only SpeS's desktop server is added, every input still goes through the broker.
+        full_operator = (desktop_connection is not None and sandbox == "danger-full-access" and not tool_guard
+                         and not read_root)
+        if full_operator:
+            from core.desktop_agents import codex_mcp_override
+            from core.cli_installer import cli_environment
+            base_env = cli_environment()
+            guard_config = ["-c", codex_mcp_override(desktop_connection)]
+        elif not read_root and (tool_guard or desktop_connection is not None):
             # Proven before any record/writer lock exists, like project read;
             # the probe and the real run share one base environment.
             from core.cli_installer import cli_environment
@@ -426,6 +435,8 @@ class CodexRuntime:
         common = ["--cd", str(project)]
         if sandbox == "danger-full-access":
             common.append("--dangerously-bypass-approvals-and-sandbox")
+            # User decision 20 Nov: "Tam yetki" means Codex's own full strength, live web included.
+            common += ["-c", 'web_search="live"']
         elif sandbox == "workspace-write" and approval == "on-request":
             common.append("--approve-for-me")
         else:
@@ -1034,7 +1045,8 @@ class CodexRuntime:
                         })
                     if record.get("cancel_requested"):
                         record["status"] = "cancelled"
-                    elif not timed_out and code == 0 and record.get("result") and not record.get("unauthorized_write_detected"):
+                    elif (not timed_out and (code == 0 or record.get("_closed_after_result")) and record.get("result")
+                          and not record.get("unauthorized_write_detected")):
                         record["status"] = "completed"
                     else:
                         record["status"] = "failed"

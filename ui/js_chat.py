@@ -202,6 +202,37 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     antigravity: {col: 'laneColAgy', card: 'laneAgy', state: 'laneAgyState', trail: 'laneAgyTrail', status: 'laneAgyStatus'},
     claude: {col: 'laneColClaude', card: 'laneClaude', state: 'laneClaudeState', trail: 'laneClaudeTrail', status: 'laneClaudeStatus'},
   };
+  // Birlikte members of the current conversation; passive agents sit the team turn out (21 Nov).
+  const TEAM_ORDER = ['claude', 'codex', 'antigravity'];
+  let convTeam = TEAM_ORDER.slice();
+  function syncTeamMembers(passive) {
+    const off = new Set(Array.isArray(passive) ? passive : []);
+    convTeam = TEAM_ORDER.filter(a => !off.has(a));
+    if (!convTeam.length) convTeam = TEAM_ORDER.slice();
+    if (typeof renderCrew === 'function') renderCrew();
+  }
+  // Headless test documents have no querySelectorAll; the real page always does.
+  (typeof document.querySelectorAll === 'function' ? Array.from(document.querySelectorAll('.team-toggle')) : []).forEach(btn => btn.addEventListener('click', async () => {
+    const agent = btn.dataset.teamAgent;
+    const active = !convTeam.includes(agent);
+    if (!currentConvId || btn.disabled) return;
+    btn.disabled = true;
+    try {
+      const res = await window.pywebview.api.chat_set_team_member(currentConvId, agent, active);
+      if (res && res.status === 'ok' && res.data && Array.isArray(res.data.team)) {
+        convTeam = TEAM_ORDER.filter(a => res.data.team.includes(a));
+        logLine(`${CREW_NAMES[agent] || agent} ${active ? 'ekibe döndü' : 'pasif yapıldı'}.`);
+      } else {
+        logLine(`Ekip güncellenemedi: ${(res && res.data) || 'bilinmeyen hata'}`);
+      }
+    } catch (e) {
+      logLine(`Ekip güncellenemedi: ${e}`);
+    } finally {
+      btn.disabled = false;
+      renderCrew();
+    }
+  }));
+  const CREW_NAMES = {claude: 'Fatum', codex: 'Fides', antigravity: 'Eos'};
   let crewProgress = {};
   let crewTrail = {};  // Last run's steps per agent; kept after the run so the column is not blank.
   let crewDesktop = null;
@@ -319,13 +350,22 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       card.setAttribute('aria-pressed', focus === agent ? 'true' : 'false');
       // Birlikte is Codex + Antigravity; Claude joins only when selected on its own.
       // Birlikte is the team: Fatum leads when Claude is connected, else the Codex + Antigravity pair.
-      card.dataset.included = focus === agent || (focus === 'collaboration' && (agent !== 'claude' || !unavailable)) ? 'true' : 'false';
+      const inTeam = convTeam.includes(agent);
+      card.dataset.included = focus === agent || (focus === 'collaboration' && inTeam && (agent !== 'claude' || !unavailable)) ? 'true' : 'false';
+      const teamBtn = document.querySelector(`.team-toggle[data-team-agent="${agent}"]`);
+      if (teamBtn) {
+        teamBtn.setAttribute('aria-pressed', inTeam ? 'true' : 'false');
+        teamBtn.textContent = inTeam ? 'Ekipte' : 'Pasif';
+        const who = CREW_NAMES[agent] || agent;
+        teamBtn.title = inTeam ? `Birlikte modunda ${who} ekipte; tıklayınca pasif olur`
+          : `${who} pasif: Birlikte turlarına katılmaz; tıklayınca ekibe döner`;
+      }
       card.dataset.state = view.state;
       if (view.state !== 'idle') flow.push(agent);
       const stateEl = document.getElementById(lane.state);
       if (stateEl && stateEl.textContent !== view.text) stateEl.textContent = view.text;
       const col = document.getElementById(lane.col);
-      if (col) { col.dataset.state = view.state; col.dataset.included = card.dataset.included; }
+      if (col) { col.dataset.state = view.state; col.dataset.included = card.dataset.included; col.dataset.team = inTeam ? 'on' : 'off'; }
       renderCrewTrail(lane, crewTrail[agent] || [], crewProgress[agent]?.status === 'running');
       renderLaneStatus(agent, lane);
     }
@@ -349,7 +389,9 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     // The label is upper-cased by CSS; in Turkish "Antigravity" would become "ANTİGRAVİTY".
     if (label) label.lang = coreText.includes('Antigravity') ? 'en' : 'tr';
     if (core) {
-      const teamText = crewSeg('claude')?.disabled ? 'Fides ve Eos' : 'Fatum, Fides ve Eos';
+      const teamAgents = convTeam.filter(a => a !== 'claude' || !crewSeg('claude')?.disabled).map(a => CREW_NAMES[a]);
+      const teamText = teamAgents.length > 1 ? teamAgents.slice(0, -1).join(', ') + ' ve ' + teamAgents[teamAgents.length - 1]
+        : (teamAgents[0] || 'Fides ve Eos');
       const coreTitle = focus === 'collaboration' ? `Birlikte: ${teamText} planlayıp birlikte çalışıyor`
         : `Birlikte moduna geç: ${teamText} planlayıp birlikte çalışır`;
       if (core.getAttribute?.('title') !== coreTitle) core.setAttribute('title', coreTitle);
@@ -564,12 +606,14 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       currentConvId = conv.id;
       applySpace(conv.space);
       if (typeof refreshAttachChips === 'function') refreshAttachChips();
-      renderConversationNavigation(data.conversations || []);
       chatConvTitle.textContent = conv.title || 'Yeni Sohbet';
       if (conv.agent) syncAgentUI(conv.agent);
       syncModelCatalogAndSelection(data.models, conv.models);
+      syncTeamMembers(conv.team_passive);
       const activeProjectId = conv.project_id || 'squad-pilot';
-      mainProjectSelect.value = activeProjectId;
+      // A log (Eos · Güvenlik) has no project of its own: keep the project the user picked.
+      if (!conv.kind || !mainProjectSelect.value) mainProjectSelect.value = activeProjectId;
+      renderConversationNavigation(data.conversations || []);
       if (chatProjectTag) chatProjectTag.textContent = projects.find(p => p.id === activeProjectId)?.name || activeProjectId;
       const permSelect = document.getElementById('mainPermissionLevel');
       if (permSelect) {
@@ -751,6 +795,9 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     }
     const title = document.getElementById('conversationListTitle');
     if (title) title.textContent = currentSpace === 'chat' ? 'Sohbetler' : 'Görevler';
+    // Sohbet has no projects: its cleanup covers every Sohbet, Workspace's only the project's tasks.
+    const cleanup = document.getElementById('btnDeleteProjectChats');
+    if (cleanup) cleanup.textContent = currentSpace === 'chat' ? 'Bütün sohbetleri temizle' : 'Bu projenin görevlerini temizle';
     const input = document.getElementById('msgInput');
     if (input) input.placeholder = currentSpace === 'chat' ? 'Ekiple sohbet et…' : 'Bir görev ver veya ekibe sor…';
   }
@@ -850,21 +897,20 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       attachResult(await window.pywebview.api.chat_attach_data(currentConvId || '', file.name || 'yapistirilan.png', data));
     }
   }
-  // "/skill" in the composer lists the shelf; a click fills in the name (14 Nov).
+  // Typing the word "skill" lists the shelf; a click puts the skill's name in the sentence (no command, 25 Nov).
   let skillShelfCache = null;
   async function updateSkillHint() {
     const box = document.getElementById('skillHint');
     const input = document.getElementById('msgInput');
     if (!box || !input) return;
     const value = input.value;
-    const match = /^\/skill(?:\s+(\S*))?$/i.exec(value);
+    const match = /(^|\s)skill\S*$/i.exec(value);
     if (!match) { box.hidden = true; return; }
     if (!skillShelfCache) {
       try { const r = await window.pywebview.api.skills_list(); skillShelfCache = r.status === 'ok' ? r.data : []; }
       catch (_) { skillShelfCache = []; }
     }
-    const typed = (match[1] || '').toLowerCase();
-    const items = skillShelfCache.filter(s => s.name.startsWith(typed)).slice(0, 8);
+    const items = skillShelfCache.slice(0, 8);
     box.replaceChildren();
     if (!items.length) {
       const empty = document.createElement('span'); empty.className = 'skill-empty';
@@ -873,16 +919,16 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     }
     for (const skill of items) {
       const b = document.createElement('button'); b.type = 'button'; b.className = 'skill-option'; b.setAttribute('role', 'option');
-      const name = document.createElement('strong'); name.textContent = '/skill ' + skill.name;
+      const name = document.createElement('strong'); name.textContent = skill.name;
       const desc = document.createElement('span'); desc.textContent = skill.description || '';
       b.append(name, desc);
-      b.onclick = () => { input.value = `/skill ${skill.name} `; box.hidden = true; input.focus(); };
+      b.onclick = () => { input.value = input.value.replace(/(^|\s)skill\S*$/i, `$1${skill.name} ile `); box.hidden = true; input.focus(); };
       box.append(b);
     }
     box.hidden = false;
   }
   document.getElementById('msgInput')?.addEventListener('input', () => {
-    if (!/^\/skill/i.test(document.getElementById('msgInput').value)) skillShelfCache = null;
+    if (!/(^|\s)skill\S*$/i.test(document.getElementById('msgInput').value)) skillShelfCache = null;
     updateSkillHint();
   });
 
@@ -1009,10 +1055,9 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       routeModels.claude = {model:claudeModelSelect.value,effort:(claudeEffortSelect && claudeEffortSelect.value) || ''};
     // Sohbet never starts desktop, diagnostics or file work: the message goes straight to the chat.
     const chatSpace = typeof currentSpace !== 'undefined' && currentSpace === 'chat';
-    // '/uzun-iş' never reaches the desktop router (live 15 Nov: it started a desktop task).
-    const longJobText = /^\s*\/uzun[-_ ]?i[şs]/i.test(text);
+    // A big build request ("baştan sona bir oyun yap") is recognised by the host router,
+    // which keeps it away from the desktop path and lets the chat plan the job (25 Nov).
     try { coordinated = chatSpace ? {status:'ok',data:{handled:false,intent:'conversation'}}
-      : longJobText ? {status:'ok',data:{handled:false,intent:'task'}}
       : await window.pywebview.api.coordination_route(text, currentConvId, mainProjectSelect.value,
       routeModels,selectedPermissionLevel, submittedAgent); }
     catch(e) { appendMsg('err','SPES',String(e)); return; }
@@ -1056,9 +1101,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     }
 
     const writeSelect = document.getElementById('mainPermissionLevel');
-    // '/uzun-iş' is always work: live 15 Nov a goal containing "Durdurma" read as a conversation.
-    const longJobCommand = /^\s*\/uzun[-_ ]?i[şs]/i.test(text);
-    const conversationOnly = coordinated.data?.intent === 'conversation' && !longJobCommand;
+    const conversationOnly = coordinated.data?.intent === 'conversation';
     const permissionLevel = conversationOnly ? 'read-only' : selectedPermissionLevel;
     const isWrite = permissionLevel === 'full' || permissionLevel === 'project';
     const confirmWrite = isWrite;
@@ -1163,18 +1206,24 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
   async function requestChatDeletion(conversations, projectId = null) {
     if (deletionPending || thinking || !conversations.length) return;
     const projectName = mainProjectSelect.selectedOptions[0]?.textContent || 'Seçili proje';
-    const message = projectId
-      ? `“${projectName}” projesinin ${conversations.length} sohbeti silinsin mi?`
+    const allChats = projectId === '*chat';
+    const message = allChats
+      ? `Sohbet alanındaki ${conversations.length} sohbetin hepsi silinsin mi?`
+      : projectId
+      ? `“${projectName}” projesinin ${conversations.length} görevi silinsin mi?`
       : `“${conversations[0].title || 'Yeni sohbet'}” sohbeti silinsin mi?`;
     const confirmed = await requestUiConfirm(
-      message + '\nProje dosyaları silinmez. Sohbetlerin yerel kurtarma yedeği tutulur.',
+      message + (currentSpace === 'chat' ? '' : '\nProje dosyaları silinmez.') + '\nYerel kurtarma yedeği tutulur.',
       {title: 'Sohbet silme onayı', confirmLabel: 'Sil', danger: true}
     );
     if (!confirmed) return;
     deletionPending = true;
     try {
-      const result = projectId
-        ? await window.pywebview.api.chat_delete_project(projectId, conversations.map(c => c.id), true)
+      const ids = conversations.map(c => c.id);
+      const result = allChats
+        ? await window.pywebview.api.chat_delete_space('chat', ids, true)
+        : projectId
+        ? await window.pywebview.api.chat_delete_project(projectId, ids, true, currentSpace)
         : await window.pywebview.api.chat_delete(conversations[0].id, true);
       if (result.status !== 'ok') throw new Error(result.data || 'Sohbet silinemedi');
       if (chatPollInterval) { clearInterval(chatPollInterval); chatPollInterval = null; }
@@ -1186,21 +1235,47 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     } finally { deletionPending = false; }
   }
 
+  // Short time beside a list entry: today's hour, 'dün', or the day (24 Nov: six identical
+  // 'Yeni Görev' rows could not be told apart).
+  function conversationWhen(seconds) {
+    const at = new Date(Number(seconds || 0) * 1000);
+    if (!seconds || isNaN(at)) return '';
+    const now = new Date();
+    const day = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const days = Math.round((day(now) - day(at)) / 86400000);
+    if (days <= 0) return at.toLocaleTimeString('tr-TR', {hour: '2-digit', minute: '2-digit'});
+    if (days === 1) return 'dün';
+    return at.toLocaleDateString('tr-TR', {day: 'numeric', month: 'short'});
+  }
   function renderConversationNavigation(items) {
     const list=document.getElementById('conversationList'); if(!list)return;
-    // Each space lists only its own conversations.
+    // Each space lists only its own conversations. Workspace lists the selected project's tasks;
+    // SpeS's own logs (Eos · Güvenlik) stay pinned on top whatever the project (24 Nov).
     items = (items || []).filter(c => (c.space || 'work') === currentSpace);
+    const project = mainProjectSelect.value || 'squad-pilot';
+    const pinned = currentSpace === 'work' ? items.filter(c => c.kind) : [];
+    items = currentSpace === 'work'
+      ? items.filter(c => !c.kind && ((c.project_id || 'squad-pilot') === project || c.id === currentConvId))
+      : items;
     navigationConversations = items;
-    const key=JSON.stringify([currentSpace,currentConvId,(items||[]).map(c=>[c.id,c.title,c.project_id])]);
+    const key=JSON.stringify([currentSpace,currentConvId,project,[...pinned,...items].map(c=>[c.id,c.title,c.project_id,c.updated_at])]);
     if(list.dataset.key===key)return;list.dataset.key=key;
     const top=list.scrollTop;list.replaceChildren();
-    for(const conv of items||[]){
-      const row=document.createElement('div');row.className='conversation-row';
+    if (!pinned.length && !items.length) {
+      const empty=document.createElement('p');empty.className='conversation-empty';
+      empty.textContent=currentSpace==='chat'?'Henüz sohbet yok. + ile başla.':'Bu projede görev yok. + ile yeni görev aç.';
+      list.append(empty);
+    }
+    for(const conv of [...pinned, ...items]){
+      const row=document.createElement('div');row.className='conversation-row'+(conv.kind?' pinned':'');
+      if (conv.kind) row.dataset.kind = conv.kind;
       const button=document.createElement('button');button.className='conversation-entry'+(conv.id===currentConvId?' active':'');
-      button.textContent=conv.title||'Yeni sohbet';button.title=button.textContent;
+      const name=document.createElement('span');name.className='conversation-name';name.textContent=conv.title||'Yeni sohbet';
+      const when=document.createElement('span');when.className='conversation-when';when.textContent=conversationWhen(conv.updated_at);
+      button.append(name, when);button.title=name.textContent;
       button.onclick=async()=>{if(thinking||deletionPending)return;const result=await window.pywebview.api.chat_select(conv.id);if(result.status==='ok')await loadActiveConversation();};
       const remove=document.createElement('button');remove.className='conversation-delete';remove.textContent='×';
-      remove.title='Sohbeti sil';remove.setAttribute('aria-label',`${button.textContent} sohbetini sil`);
+      remove.title='Sohbeti sil';remove.setAttribute('aria-label',`${name.textContent} sohbetini sil`);
       remove.onclick=()=>requestChatDeletion([conv]);row.append(button,remove);list.append(row);
     }
     list.scrollTop=top;

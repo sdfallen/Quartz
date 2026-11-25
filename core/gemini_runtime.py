@@ -87,7 +87,10 @@ class GeminiRuntime(AntigravityRuntime):
         command += ["--approval-mode", "yolo" if "--dangerously-skip-permissions" in args or value("--mode") == "auto" else "plan"]
         return node_command(self.executable, command)
 
-    def _process_options(self, options, project, desktop_connection, tool_guard):
+    def operator_desktop_ready(self) -> bool:
+        return True  # the desktop server is given per run through system settings below
+
+    def _process_options(self, options, project, desktop_connection, tool_guard, full_access=False):
         env = dict(cli_environment())
         env.update(options.get("env") or {})
         metadata = _gemini_connection_meta()
@@ -106,6 +109,9 @@ class GeminiRuntime(AntigravityRuntime):
             # Gemini's core allowlist enforcement outranks trusted MCP rules.
             # Explicit names allow our capability without enabling shell/files.
             settings["tools"] = {"core": ["mcp_quartz-desktop_" + tool["name"] for tool in TOOLS]}
+            if full_access and not tool_guard:
+                # A Tam Yetki writer keeps its own shell, file and web tools and adds the desktop.
+                settings.pop("tools")
             settings["mcp"] = {"allowed": ["quartz-desktop"]}
             settings["mcpServers"] = {"quartz-desktop": {"command": cmd[0], "args": cmd[1:],
                 "env": {"QUARTZ_DESKTOP_URL": "$QUARTZ_DESKTOP_URL", "QUARTZ_DESKTOP_TOKEN": "$QUARTZ_DESKTOP_TOKEN"}, "trust": True}}

@@ -135,7 +135,9 @@ JAVASCRIPT = r"""
   window.addEventListener('resize', () => { syncWindowDimensions(); });
   document.getElementById('btnAddProject').title = 'Windows klasör seçicisiyle proje ekle';
   document.getElementById('btnDeleteProjectChats').addEventListener('click', () =>
-    requestChatDeletion(navigationConversations.filter(c=>(c.project_id||'squad-pilot')===mainProjectSelect.value), mainProjectSelect.value));
+    currentSpace === 'chat'
+      ? requestChatDeletion(navigationConversations.slice(), '*chat')
+      : requestChatDeletion(navigationConversations.filter(c=>(c.project_id||'squad-pilot')===mainProjectSelect.value), mainProjectSelect.value));
 
   // Remove a project from the list. Only SpeS's registration and the project's
   // chats go (chats keep a local recovery copy); the folder is never touched.
