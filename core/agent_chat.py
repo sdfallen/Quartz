@@ -913,6 +913,19 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
     def skills_list(self):
         return self.skills.list()
 
+    def _turn_is_review(self, cid) -> bool:
+        """The running turn is SpeS's own acceptance review of a long job's milestone."""
+        with self._lock:
+            turn = getattr(self, "_active_turn", None) or {}
+            if turn.get("conversation_id") != cid:
+                return False
+            mid = turn.get("user_message_id")
+        try:
+            message = next((m for m in self.store.get(cid).get("messages", []) if m.get("id") == mid), None)
+        except Exception:
+            return False
+        return bool(message and (message.get("metadata") or {}).get("job_internal") == "review")
+
     def _turn_job_read_root(self, cid):
         with self._lock:
             turn = getattr(self, "_active_turn", None) or {}
@@ -1022,10 +1035,25 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
         return ["codex", "antigravity"]
 
     @staticmethod
-    def _format_history_context(messages: list[dict], exclude_ids: set[str] | None = None, limit: int = 8) -> str:
+    def _without_reviews(messages: list[dict]) -> list[dict]:
+        """A long job's acceptance reviews (SpeS's review prompt and the replies to it) are
+        independent checks: no later turn reads them as conversation (Fides FC2, 26 Nov — a
+        second reviewer saw the first one's undecided reply through this history)."""
+        kept, in_review = [], False
+        for m in messages:
+            if m.get("role") == "user":
+                in_review = ((m.get("metadata") or {}).get("job_internal") == "review"
+                             or str(m.get("content") or "").startswith("UZUN İŞ — KABUL DENETİMİ"))
+            if not in_review:
+                kept.append(m)
+        return kept
+
+    @classmethod
+    def _format_history_context(cls, messages: list[dict], exclude_ids: set[str] | None = None,
+                                limit: int = 8) -> str:
         exclude_ids = exclude_ids or set()
         relevant = [
-            m for m in messages
+            m for m in cls._without_reviews(messages)
             if m.get("id") not in exclude_ids and (m.get("content") or "").strip()
             and (m.get("metadata") or {}).get("instruction_state") not in {"queued","cancelled","interrupted"}
         ][-limit:]
@@ -2048,6 +2076,8 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
         full_prompt = self._communication_prompt(cid, full_prompt)
         full_prompt += self._attachment_prompt(cid, "antigravity")
         conv = self.store.get(cid)
+        if self._turn_is_review(cid):
+            use_session = False  # Fides FC2: a review starts fresh, never from a CLI session's memory
         prev_session = conv.get("sessions", {}).get("antigravity") if use_session else None
         model_cfg = self.store.get_agent_model(cid, "antigravity")
         selected_model = model_cfg.get("model")
@@ -2246,6 +2276,8 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
         full_prompt = self._communication_prompt(cid, full_prompt)
         full_prompt += self._attachment_prompt(cid, agent)
         conv = self.store.get(cid)
+        if self._turn_is_review(cid):
+            use_session = False  # Fides FC2: a review starts fresh, never from a CLI session's memory
         prev_session = conv.get("sessions", {}).get(agent) if use_session else None
         model_cfg = self.store.get_agent_model(cid, agent)
         selected_model = model_cfg.get("model")

@@ -313,21 +313,32 @@ class LongJobChatMixin:
         "denetlenmedi" while Fatum was free. A review with no verdict now goes to the next
         teammate (at most two reviewers); a "no" or a "yes" ends it."""
         cid = ledger.data["conversation_id"]
-        now = time.time()
-        limited = {a for a, until in (ledger.data.get("limited") or {}).items() if float(until or 0) > now}
-        reviewers = [m for m in self._job_members(cid) if m != writer and m not in limited]
-        if not reviewers:
+
+        def available():
+            # Fides FC3: limits are read again before every reviewer, never frozen at the start.
+            now = time.time()
+            limited = {a for a, until in (ledger.data.get("limited") or {}).items() if float(until or 0) > now}
+            return [m for m in self._job_members(cid) if m != writer and m not in limited]
+        if not available():
             return {"ok": None, "summary": "Denetleyecek ikinci ajan yok."}
-        result = {"ok": None}
-        for reviewer in reviewers[:2]:
-            result = self._job_accept_by(ledger, milestone, writer, check, stop, reviewer)
-            if result.get("ok") is not None or stop.is_set():
+        result, asked = {"ok": None}, []
+        while len(asked) < 2:
+            if stop.is_set():  # Fides FC1: no reviewer turn after a Stop
+                return result
+            left = [m for m in available() if m not in asked]
+            if not left:
+                break
+            asked.append(left[0])
+            result = self._job_accept_by(ledger, milestone, writer, check, stop, left[0])
+            if result.get("ok") is not None:
                 return result
         return result
 
     def _job_accept_by(self, ledger, milestone, writer, check, stop, reviewer) -> dict:
         """One teammate's read-only acceptance review; ok is True, False or None (no verdict)."""
         cid = ledger.data["conversation_id"]
+        if stop.is_set():
+            return {"ok": None, "by": reviewer}
         while self._job_turn_busy():
             if stop.wait(POLL_SECONDS):
                 return {"ok": None, "by": reviewer}
@@ -371,6 +382,8 @@ class LongJobChatMixin:
                     prompt += "\nPencereyi SpeS gözledi; görüntü sana açılmadı, görsel incelendi deme."
             if view_note:
                 prompt += "\n" + view_note
+            if stop.is_set():  # Fides FC1: checked again right before the turn is admitted
+                return {"ok": None, "by": reviewer}
             sent = self.send_message(prompt, agent=reviewer, conversation_id=cid, write=False, origin="long_job",
                                      **({"read_root": read_root} if read_root else {}))
         except Exception as exc:
