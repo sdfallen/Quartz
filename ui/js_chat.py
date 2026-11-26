@@ -607,7 +607,9 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       applySpace(conv.space);
       if (typeof refreshAttachChips === 'function') refreshAttachChips();
       chatConvTitle.textContent = conv.title || 'Yeni Sohbet';
-      if (conv.agent) syncAgentUI(conv.agent);
+      // Ücretsiz sohbet (27 Nov): its speakers are the free channels, not an agent of the picker.
+      if (conv.agent && !conv.free) syncAgentUI(conv.agent);
+      if (typeof window.applyFreeChat === 'function') window.applyFreeChat(conv);
       syncModelCatalogAndSelection(data.models, conv.models);
       syncTeamMembers(conv.team_passive);
       const activeProjectId = conv.project_id || 'squad-pilot';

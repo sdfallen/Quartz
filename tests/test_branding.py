@@ -29,14 +29,21 @@ class BrandingTests(unittest.TestCase):
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertTrue(result.stdout.strip().endswith('text: unset'),result.stdout)
     def test_small_icon_frames_are_generated_not_downscaled(self):
-        from scripts.build_brand_assets import ICO_SIZES,SOLID_TONE
+        # 27 Nov mark: below 32 px a flat tile and the star only (no gradient, no horizon).
+        from scripts.build_brand_assets import ICO_SIZES,SOLID_TONE,STAR_TONE
         with Image.open(ROOT/'assets/branding/spes-mark.ico') as icon:
             self.assertEqual(sorted(icon.ico.sizes()),[(s,s) for s in ICO_SIZES])
             small=icon.ico.getimage((16,16)).convert('RGBA')
-        tone=[int(SOLID_TONE[i:i+2],16) for i in (1,3,5)]
+        tones=[[int(t[i:i+2],16) for i in (1,3,5)] for t in (SOLID_TONE,STAR_TONE)]
         opaque=[small.getpixel((x,y))[:3] for x in range(16) for y in range(16) if small.getpixel((x,y))[3]==255]
         self.assertTrue(opaque)
-        for pixel in opaque: self.assertLessEqual(max(abs(a-b) for a,b in zip(pixel,tone)),2)
+        # Every fully opaque pixel lies on the line between the two flat tones (edge blending only).
+        for pixel in opaque:
+            a,b=tones
+            span=sum((q-p)**2 for p,q in zip(a,b))
+            u=max(0,min(1,sum((c-p)*(q-p) for c,p,q in zip(pixel,a,b))/span))
+            nearest=[p+(q-p)*u for p,q in zip(a,b)]
+            self.assertLessEqual(max(abs(c-n) for c,n in zip(pixel,nearest)),6)
     def test_in_app_mark_uses_the_same_geometry(self):
         from scripts.build_brand_assets import facets,TAIL,_points
         from ui.shell import SHELL_MARKUP

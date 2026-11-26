@@ -9,8 +9,9 @@ where the syntax check can read it. Visual decisions:
 docs/CLAUDE_FRONTEND_REDESIGN_20261104.md.
 """
 
-# Same geometry as scripts/build_brand_assets.py; tests/test_branding.py keeps them equal.
-_MARK_FACETS = '<polygon class="f f1" points="72.00,164.00 72.21,159.12 72.85,154.28 73.91,149.51 75.38,144.85 77.25,140.33 79.50,136.00 82.13,131.88 85.10,128.00 88.40,124.40 92.00,121.10 95.88,118.13 100.00,115.50 104.33,113.25 108.85,111.38 113.51,109.91 118.28,108.85 123.12,108.21 128.00,108.00 132.88,108.21 137.72,108.85 142.49,109.91 147.15,111.38 151.67,113.25 156.00,115.50 160.12,118.13 164.00,121.10 167.60,124.40 170.90,128.00 173.87,131.88 176.50,136.00 178.75,140.33 180.62,144.85 182.09,149.51 183.15,154.28 183.79,159.12 184.00,164.00"/><polygon class="f f2" points="61.69,135.09 34.41,128.44 31.38,137.76 57.36,148.41"/><polygon class="f f3" points="91.34,101.64 73.19,80.22 65.26,85.98 80.02,109.87"/><polygon class="f f4" points="135.00,92.00 132.90,64.00 123.10,64.00 121.00,92.00"/><polygon class="f f5" points="175.98,109.87 190.74,85.98 182.81,80.22 164.66,101.64"/><polygon class="f f6" points="198.64,148.41 224.62,137.76 221.59,128.44 194.31,135.09"/><polygon class="f f7" points="20.00,178.00 236.00,178.00 236.00,194.00 20.00,194.00"/>'
+# Same geometry as scripts/build_brand_assets.py (the hope star at dawn, 27 Nov);
+# tests/test_branding.py keeps them equal. The tile's gradient is #spesDawn in the sprite.
+_MARK_FACETS = '<polygon class="f f-tile" points="180.00,12.00 188.35,12.55 196.56,14.18 204.49,16.87 212.00,20.57 218.96,25.23 225.25,30.75 230.77,37.04 235.43,44.00 239.13,51.51 241.82,59.44 243.45,67.65 244.00,76.00 244.00,180.00 243.45,188.35 241.82,196.56 239.13,204.49 235.43,212.00 230.77,218.96 225.25,225.25 218.96,230.77 212.00,235.43 204.49,239.13 196.56,241.82 188.35,243.45 180.00,244.00 76.00,244.00 67.65,243.45 59.44,241.82 51.51,239.13 44.00,235.43 37.04,230.77 30.75,225.25 25.23,218.96 20.57,212.00 16.87,204.49 14.18,196.56 12.55,188.35 12.00,180.00 12.00,76.00 12.55,67.65 14.18,59.44 16.87,51.51 20.57,44.00 25.23,37.04 30.75,30.75 37.04,25.23 44.00,20.57 51.51,16.87 59.44,14.18 67.65,12.55 76.00,12.00"/><polygon class="f f-horizon" points="209.45,226.81 203.15,223.62 196.72,220.69 190.18,218.02 183.53,215.63 176.79,213.50 169.97,211.65 163.08,210.08 156.14,208.80 149.14,207.79 142.12,207.08 135.06,206.64 128.00,206.50 120.94,206.64 113.88,207.08 106.86,207.79 99.86,208.80 92.92,210.08 86.03,211.65 79.21,213.50 72.47,215.63 65.82,218.02 59.28,220.69 52.85,223.62 46.55,226.81 51.71,236.52 57.62,233.53 63.64,230.79 69.77,228.29 75.99,226.05 82.30,224.06 88.69,222.33 95.14,220.86 101.65,219.65 108.20,218.71 114.78,218.04 121.38,217.63 128.00,217.50 134.62,217.63 141.22,218.04 147.80,218.71 154.35,219.65 160.86,220.86 167.31,222.33 173.70,224.06 180.01,226.05 186.23,228.29 192.36,230.79 198.38,233.53 204.29,236.52"/><polygon class="f f-star" points="188.00,112.00 187.02,111.94 184.15,111.52 179.58,110.36 173.64,108.13 166.71,104.62 159.24,99.71 151.71,93.46 144.54,86.05 138.10,77.79 132.67,69.11 128.41,60.52 125.36,52.54 123.43,45.69 122.42,40.44 122.05,37.13 122.00,36.00 121.95,37.13 121.58,40.44 120.57,45.69 118.64,52.54 115.59,60.52 111.33,69.11 105.90,77.79 99.46,86.05 92.29,93.46 84.76,99.71 77.29,104.62 70.36,108.13 64.42,110.36 59.85,111.52 56.98,111.94 56.00,112.00 56.98,112.06 59.85,112.48 64.42,113.64 70.36,115.87 77.29,119.38 84.76,124.29 92.29,130.54 99.46,137.95 105.90,146.21 111.33,154.89 115.59,163.48 118.64,171.46 120.57,178.31 121.58,183.56 121.95,186.87 122.00,188.00 122.05,186.87 122.42,183.56 123.43,178.31 125.36,171.46 128.41,163.48 132.67,154.89 138.10,146.21 144.54,137.95 151.71,130.54 159.24,124.29 166.71,119.38 173.64,115.87 179.58,113.64 184.15,112.48 187.02,112.06"/><polygon class="f f-companion" points="205.00,62.00 204.69,61.98 203.77,61.85 202.32,61.48 200.43,60.78 198.22,59.67 195.85,58.12 193.45,56.15 191.17,53.80 189.12,51.20 187.40,48.46 186.04,45.74 185.07,43.22 184.45,41.06 184.13,39.40 184.02,38.36 184.00,38.00 183.98,38.36 183.87,39.40 183.55,41.06 182.93,43.22 181.96,45.74 180.60,48.46 178.88,51.20 176.83,53.80 174.55,56.15 172.15,58.12 169.78,59.67 167.57,60.78 165.68,61.48 164.23,61.85 163.31,61.98 163.00,62.00 163.31,62.02 164.23,62.15 165.68,62.52 167.57,63.22 169.78,64.33 172.15,65.88 174.55,67.85 176.83,70.20 178.88,72.80 180.60,75.54 181.96,78.26 182.93,80.78 183.55,82.94 183.87,84.60 183.98,85.64 184.00,86.00 184.02,85.64 184.13,84.60 184.45,82.94 185.07,80.78 186.04,78.26 187.40,75.54 189.12,72.80 191.17,70.20 193.45,67.85 195.85,65.88 198.22,64.33 200.43,63.22 202.32,62.52 203.77,62.15 204.69,62.02"/>'
 
 _MARK = ('<svg class="q-mark" viewBox="0 0 256 256" aria-hidden="true" focusable="false">'
          + _MARK_FACETS + '</svg>')
@@ -23,6 +24,7 @@ def _icon(name, size="md"):
 
 
 _SPRITE = """<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs>
+<linearGradient id="spesDawn" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1B1650"/><stop offset="0.52" stop-color="#4B34C9"/><stop offset="1" stop-color="#FF7A59"/></linearGradient>
 <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
 <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
 <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></symbol>
@@ -235,21 +237,25 @@ SHELL_MARKUP = r"""
         <i class="rail rail-agy"><b class="rail-flow"></b></i>
       </div>
       <div class="chat" id="chat" role="log" aria-label="Sohbet"></div>
-      <section class="empty-state" id="emptyState" aria-label="Başlangıç">
-        @@MARK@@
+      <section class="empty-state face" id="emptyState" aria-label="Başlangıç">
+        <div class="face-mark" aria-hidden="true">@@MARK@@</div>
         <h1 id="emptyGreeting">Merhaba.</h1>
-        <p class="space-work-only">Workspace: Fatum işi böler ve yönetir, Fides ve Eos uygular ve doğrular. Bir görev ver.</p>
-        <p class="space-chat-only">Sohbet: Fatum, Fides ve Eos burada, sadece laflamak için. İş için Workspace'e geç.</p>
-        <div class="prompt-chips space-chat-only">
-          <button type="button" class="prompt-chip" data-prompt="Selam beyler, bugün nasılsınız?">Selam ver</button>
-          <button type="button" class="prompt-chip" data-prompt="Bana bugün için küçük bir fikir verin.">Fikir iste</button>
-          <button type="button" class="prompt-chip" data-prompt="Bugün dünyada ilginç ne oldu?">Gündem</button>
+        <p class="face-lede space-chat-only">Aklındakini yaz. Sohbet edelim, fikir verelim, birlikte çözelim.</p>
+        <p class="face-lede space-work-only">Ne yapılmasını istediğini kendi cümlelerinle söyle. SpeS planlar, yapar ve kontrol eder.</p>
+        <div class="prompt-chips face-cards space-chat-only">
+          <button type="button" class="prompt-chip face-card" data-prompt="Selam! Bugün nasılsın, biraz sohbet edelim mi?"><span class="face-card-icon" aria-hidden="true">@@i:wave@@</span><span class="face-card-text"><b>Sohbet et</b><small>Merhaba de, laflayalım</small></span></button>
+          <button type="button" class="prompt-chip face-card" data-prompt="Bana bugün için küçük, uygulanabilir bir fikir ver."><span class="face-card-icon" aria-hidden="true">@@i:spark@@</span><span class="face-card-text"><b>Fikir iste</b><small>Gün için küçük bir öneri</small></span></button>
+          <button type="button" class="prompt-chip face-card" data-prompt="Bunu bana basitçe açıklar mısın: "><span class="face-card-icon" aria-hidden="true">@@i:globe@@</span><span class="face-card-text"><b>Bir şeyi açıkla</b><small>Zor bir konuyu sade anlat</small></span></button>
         </div>
-        <div class="prompt-chips space-work-only">
-          <button type="button" class="prompt-chip" data-prompt="Bu projenin yapısını incele ve kısaca özetle.">Projeyi özetle</button>
-          <button type="button" class="prompt-chip" data-prompt="Testleri çalıştır, başarısız olanların nedenini açıkla.">Testleri çalıştır</button>
-          <button type="button" class="prompt-chip" data-prompt="Son değişiklikleri gözden geçir ve riskleri listele.">Değişiklikleri incele</button>
-          <button type="button" class="prompt-chip" data-prompt="Açık uygulamada şunu yap: ">Bilgisayarda görev ver</button>
+        <div class="face-free space-chat-only">
+          <button type="button" class="face-free-btn" id="btnFreeChatStart"><span class="face-free-title">Ücretsiz sohbet</span><span class="face-free-hint">Aboneliğin yoksa: kendi ücretsiz hesaplarınla konuş</span></button>
+          <button type="button" class="face-link" id="btnFreeChatManage">Bağlantıları yönet</button>
+        </div>
+        <div class="prompt-chips face-cards space-work-only">
+          <button type="button" class="prompt-chip face-card" data-prompt="Bana basit bir hesap makinesi programı yap."><span class="face-card-icon" aria-hidden="true">@@i:chip@@</span><span class="face-card-text"><b>Bir program yap</b><small>Baştan sona, kendisi dener</small></span></button>
+          <button type="button" class="prompt-chip face-card" data-prompt="Bu projenin yapısını incele ve kısaca özetle."><span class="face-card-icon" aria-hidden="true">@@i:search@@</span><span class="face-card-text"><b>Projeyi özetle</b><small>Ne var, ne eksik</small></span></button>
+          <button type="button" class="prompt-chip face-card" data-prompt="İndirilenler klasöründeki faturaları bir Excel tablosunda topla."><span class="face-card-icon" aria-hidden="true">@@i:clip@@</span><span class="face-card-text"><b>Dosyalarla çalış</b><small>Rapor, tablo, düzen</small></span></button>
+          <button type="button" class="prompt-chip face-card" data-prompt="Açık uygulamada şunu yap: "><span class="face-card-icon" aria-hidden="true">@@i:windows@@</span><span class="face-card-text"><b>Bilgisayarda iş yap</b><small>Pencereleri SpeS kullanır</small></span></button>
         </div>
       </section>
       <button type="button" class="jump-bottom-btn" id="btnJumpBottom" title="En son mesaja git">Yeni mesajlar ↓</button>
@@ -560,6 +566,22 @@ SHELL_MARKUP = r"""
   </div>
 </div>
 
+<div class="free-sheet-scrim" id="freeSheet" hidden>
+  <section class="free-sheet" role="dialog" aria-modal="true" aria-labelledby="freeSheetTitle">
+    <header class="free-sheet-head">
+      <div>
+        <h2 id="freeSheetTitle">Ücretsiz bağlantılar</h2>
+        <p>Abonelik gerekmez. Bu şirketlerin ücretsiz anahtarlarından birini al, buraya yapıştır. Anahtarın yalnız bu bilgisayarda, Windows kullanıcı şifrelemesiyle saklanır.</p>
+      </div>
+      <button type="button" class="free-sheet-close" id="freeSheetClose" aria-label="Kapat">@@i:close@@</button>
+    </header>
+    <div class="free-channels" id="freeChannels" aria-live="polite"></div>
+    <p class="free-sheet-note">Ücretsiz modda yalnız sohbet edilir: dosya, komut, internet ve bilgisayar kontrolü kapalıdır. Ücretsiz kotalar küçüktür; biri dolunca SpeS izin verdiğin bir sonrakine geçer. Claude'un ücretsiz hesabı başka uygulamalara bağlanamaz.</p>
+    <footer class="free-sheet-foot">
+      <button type="button" class="free-start" id="freeSheetStart">Ücretsiz sohbeti başlat</button>
+    </footer>
+  </section>
+</div>
 <div class="signature-intro" id="signatureIntro" aria-hidden="true">
   @@MARK@@
   <div class="intro-brand">SpeS</div>

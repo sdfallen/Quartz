@@ -116,7 +116,8 @@ class PackagingContractTests(unittest.TestCase):
         self.assertIn("ui.app_js", imported(ROOT / "gui.py"))
         self.assertIn("ui.styles", imported(ROOT / "ui" / "document.py"))
         self.assertEqual({"ui.js_setup", "ui.js_messages", "ui.js_chat", "ui.js_repair_plan", "ui.js_desktop",
-                          "ui.js_diagnostics", "ui.js_advanced", "ui.js_workspace", "ui.js_lifecycle", "ui.js_preview"},
+                          "ui.js_diagnostics", "ui.js_advanced", "ui.js_workspace", "ui.js_lifecycle", "ui.js_preview",
+                          "ui.js_free"},
                          imported(ROOT / "ui" / "app_js.py"))
 
     def test_document_loads_no_remote_resources(self):
@@ -148,7 +149,7 @@ class ScriptAndApiContractTests(unittest.TestCase):
         self.assertEqual(shipped, [APPLICATION_JS])
         self.assertEqual(SCRIPT_BLOCK.findall(SCRIPT_DOCUMENT), shipped)
         self.assertEqual(SCRIPT_BLOCK.findall(source), [])
-        self.assertEqual(len(SCRIPT_PARTS), 10)
+        self.assertEqual(len(SCRIPT_PARTS), 11)
         # One shared scope: a second top-level `function x` silently replaces the first.
         # Gemini review 10 Nov caught renderRepairPlan defined in two fragments.
         names = [n for part in SCRIPT_PARTS
