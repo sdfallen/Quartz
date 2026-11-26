@@ -137,6 +137,13 @@ if __name__ == "__main__":
         from core.screen_overlay import run_overlay_child
         run_overlay_child()
         sys.exit(0)
+    # Live 25 Nov: a second start ran a second backend on the same IPC port and the window
+    # showed no projects. The second start now brings the running SpeS forward and exits.
+    from core.single_instance import acquire, show_running_window
+    if not acquire():
+        log("SpeS is already running; its window was brought to the front.")
+        show_running_window()
+        sys.exit(0)
     log("=" * 40)
     log("SpeS Entry Point Started")
     log(f"BASE_DIR: {BASE_DIR}")

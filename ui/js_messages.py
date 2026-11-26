@@ -379,7 +379,34 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     return grid;
   }
 
+  function renderJobInternal(bubble, text, kind) {
+    // SpeS's own instruction to the team inside a long job: one folded line (25 Nov).
+    // The row is SpeS's, on every redraw: the update path resets the row's class.
+    const row = bubble.closest ? bubble.closest('.msg') : null;
+    if (row) {
+      row.classList.add('job-internal');
+      const tag = row.querySelector('.msg-sender-tag');
+      if (tag) tag.textContent = 'SPES';
+    }
+    const key = JSON.stringify(['job-internal', text, kind]);
+    if (bubble.dataset.renderKey === key) return false;
+    bubble.dataset.renderKey = key;
+    bubble.replaceChildren();
+    const step = /(?:ŞU ANKİ TAŞ|TAŞ):\s*([^\n]+)/.exec(String(text || ''));
+    const fold = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = (kind === 'review' ? 'Kabul denetimi istendi' : 'Kilometre taşı görevi verildi')
+      + (step ? ': ' + step[1].trim().slice(0, 120) : '');
+    const body = document.createElement('pre');
+    body.className = 'job-internal-text';
+    body.textContent = String(text || '');
+    fold.append(summary, body);
+    bubble.append(fold);
+    return true;
+  }
+
   function renderMessageBody(bubble, text, msg) {
+    if (msg?.metadata?.job_internal) return renderJobInternal(bubble, text, msg.metadata.job_internal);
     const level = document.getElementById('responseDetail')?.value || 'short';
     const view = agentMessageView(text, msg, level);
     const cards = Array.isArray(msg?.metadata?.cards) ? msg.metadata.cards : [];
@@ -887,13 +914,14 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
         wrap = appendMsg(kind, label, displayContent, m.id, cleanSender, m, true, false);
         hadNewOrUpdatedContent = true;
       } else {
-        const desiredClass = `msg ${kind} sender-${cleanSender}`;
+        const desiredClass = `msg ${kind} sender-${cleanSender}` + (m.metadata && m.metadata.job_internal ? ' job-internal' : '');
         if (wrap.className !== desiredClass) wrap.className = desiredClass;
         const tagEl = wrap.querySelector('.msg-sender-tag');
         if (tagEl) {
           const desiredTagClass = `msg-sender-tag tag-${cleanSender}`;
           if (tagEl.className !== desiredTagClass) tagEl.className = desiredTagClass;
-          if (tagEl.textContent !== label) tagEl.textContent = label;
+          const shownLabel = m.metadata && m.metadata.job_internal ? 'SPES' : label;
+          if (tagEl.textContent !== shownLabel) tagEl.textContent = shownLabel;
           // Team metadata can arrive after the bubble was first drawn.
           const stepText = teamStepLabel(m);
           let stepEl = wrap.querySelector('.msg-step-tag');

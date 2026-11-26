@@ -944,3 +944,10 @@ body.show-preview .preview-pane { display: flex; }
 /* Long job controls (15 Nov) */
 .long-job-actions { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
 .long-job-btn { font-size: 12px; padding: 3px 10px; }
+
+/* ── job internal prompts (25 Nov 2026) */
+.msg.job-internal .bubble { background: transparent; border: 1px dashed var(--line);
+  padding: 6px 10px; font-size: var(--text-sm); }
+.msg.job-internal summary { cursor: pointer; color: var(--text-3); }
+.msg.job-internal .job-internal-text { white-space: pre-wrap; max-height: 320px; overflow: auto; margin: 8px 0 0;
+  font-size: var(--text-xs); color: var(--text-2); }

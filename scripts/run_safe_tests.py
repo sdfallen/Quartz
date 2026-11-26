@@ -51,6 +51,8 @@ def main():
         values["QUARTZ_ATTACHMENTS_HOME"] = str(Path(squad_home) / "attachments")
         values["QUARTZ_SKILLS_HOME"] = str(Path(squad_home) / "skills")
         values["QUARTZ_JOBS_HOME"] = str(Path(squad_home) / "jobs")
+        # Team turns never depend on this computer's real agent usage limits.
+        values["QUARTZ_AGENT_LIMITS_OFF"] = "1"
         with patch.dict(os.environ, values), patch("dotenv.load_dotenv", return_value=False):
             return _run_suite()
 

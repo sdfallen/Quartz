@@ -102,6 +102,8 @@ MODELS = (
 )
 
 
+_LINGER_IDLE = threading.Event()  # never set; see ClaudeRuntime._close_after_answer
+
 class ClaudeRuntime(CodexRuntime):
     SUPPORTED_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
     _SHARED_PROBE_CACHE: dict[str, tuple[float, dict]] = {}
@@ -391,7 +393,9 @@ class ClaudeRuntime(CodexRuntime):
                         "Claude yanıtını verdi; açık bıraktığı programlar yüzünden kapanmayan süreç kapatıldı.")
                 stop_process_tree(process, timeout=5)
                 return
-            time.sleep(poll)
+            # Never time.sleep: a test that patches it for the whole process saw this loop spin
+            # (26 Nov, 293 calls). An event that is never set waits the same and is not patched.
+            _LINGER_IDLE.wait(poll)
 
     def resume(self, run_id, prompt, *, model: str | None = None, effort: str | None = None) -> dict:
         previous = self.get(run_id)

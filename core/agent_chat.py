@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 import time
@@ -414,6 +415,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
     def close(self):
         with self._lock:
             self._closed = True
+            self._plan_generation = self.__dict__.get("_plan_generation", 0) + 1
         for job in list(self.__dict__.get("_long_jobs", {}).values()):
             job.halt()  # resumable after restart; Stop is the user's only final word
         session = self.__dict__.get("_desktop_session")
@@ -688,6 +690,10 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
         cached = self.__dict__.get("_limit_cache")
         if cached and now - cached[0] < 30:
             return cached[1]
+        if os.getenv("QUARTZ_AGENT_LIMITS_OFF") == "1":
+            # The test runner never reads this computer's real usage records (26 Nov: a full
+            # agent on the build machine made eight unrelated team tests fail).
+            return set()
         try:
             from core.agent_limits import at_limit, snapshot
             full = {agent for agent, entry in (snapshot() or {}).items() if at_limit(entry, now)}
@@ -907,6 +913,11 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
     def skills_list(self):
         return self.skills.list()
 
+    def _turn_job_read_root(self, cid):
+        with self._lock:
+            turn = getattr(self, "_active_turn", None) or {}
+            return turn.get("job_read_root") if turn.get("conversation_id") == cid else None
+
     def _turn_attachments(self, cid):
         with self._lock:
             turn = getattr(self, "_active_turn", None) or {}
@@ -1078,7 +1089,8 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
     def send_message(self, text: str, agent: str | None = None,
                      conversation_id: str | None = None, write: bool = False,
                      confirm_write: bool = False, full_access: bool = False,
-                     requested_permission_level: str | None = None, origin: str | None = None) -> dict:
+                     requested_permission_level: str | None = None, origin: str | None = None,
+                     read_root: str | None = None) -> dict:
         """``origin="long_job"`` marks a milestone SpeS itself sends; it is never planned again
         and never read as the user talking to the job."""
         text = str(text or "").strip()
@@ -1095,6 +1107,10 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
             running_job = self._active_job_in(target["id"])
             if running_job is not None:
                 return self._job_conversation_message(target, text, running_job)
+            # "15 dakika daha çalış" after the job ran out of time (26 Nov).
+            extended = self._extend_expired_job(target, text)
+            if extended is not None:
+                return extended
         from core.skill_shelf import install_request, list_request, named_skill
         skill = None
         skill_install = install_request(text)
@@ -1121,6 +1137,41 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
         job_request = (origin != "long_job" and not chat_space and not research and not skill and not skill_install
                        and bool(write or full_access) and confirm_write is True and big_job_request(text))
         conversation_only = (chat_space or research or bool(skill_install) or not looks_like_task) and not job_request
+        if (not job_request and origin != "long_job" and not chat_space and not research and not skill
+                and not skill_install and not (write or full_access) and big_job_request(text)):
+            # 26 Nov: with the switch on "yalnız okuma" a whole build became a reading turn and
+            # the agent said it could not write. SpeS says what it needs instead.
+            from core.job_intent import requested_hours
+            from core.long_job_chat import _duration
+            return self._answer_without_agents(target["id"], text, (
+                "Bu büyük bir iş: SpeS planlayıp kilometre taşlarıyla en çok "
+                f"{_duration(requested_hours(text))} çalışır, her taşı başka bir ajan denetler. "
+                "Başlatmak için yetkiyi Proje (yalnız dosya) ya da Tam Yetki (komut da çalıştırır) yapıp "
+                "aynı mesajı yeniden gönder."))
+        new_project = None
+        kind = None
+        sources = []
+        if job_request:
+            from core.job_intent import job_kind, wants_new_project
+            kind = job_kind(text)
+            busy = bool(self._active_turn and self._active_turn.get("status") == "running")
+            # A data job always writes into a folder of its own; the sources stay where they are.
+            # Fides 26 Nov (D2): "bu klasördeki" means the conversation's project before the move.
+            if kind == "data":
+                from core.job_intent import named_sources, refers_here
+                sources = named_sources(text)
+                if not sources and refers_here(text) and target.get("project_id"):
+                    try:
+                        current = self.agent_service.projects.get(target["project_id"]) or {}
+                    except Exception:
+                        current = {}
+                    if current.get("path") and Path(current["path"]).is_dir():
+                        sources = [str(Path(current["path"]))]
+            if (wants_new_project(text) or kind == "data") and not busy:
+                try:
+                    new_project = self._new_project_for_job(target, text)
+                except Exception as exc:
+                    return self._answer_without_agents(target["id"], text, f"Yeni proje klasörü açılamadı: {exc}")
         if conversation_only:
             write = full_access = confirm_write = False
         write = bool(write or full_access)
@@ -1202,6 +1253,9 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
                     **({"skill": skill["name"]} if skill else {}),
                     **({"skill_install": skill_install["url"]} if skill_install else {}),
                     **({"job_request": True} if job_request else {}),
+                    # SpeS's own instruction to the team inside a long job, not the user's words.
+                    **({"job_internal": "review" if text.startswith("UZUN İŞ — KABUL DENETİMİ") else "milestone"}
+                       if origin == "long_job" else {}),
                 },
             )
 
@@ -1278,9 +1332,15 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
                 turn_state["skill"] = skill
             if skill_install:
                 turn_state["skill_install"] = skill_install
+            if origin == "long_job" and read_root and Path(read_root).is_dir():
+                # A data job's source folder, read-only, for SpeS's own review turn (26 Nov).
+                turn_state["job_read_root"] = str(Path(read_root).resolve())
             if job_request:
-                turn_state["job_plan"] = {"planner": first_sender, "text": text,
-                                          "full_access": bool(full_access)}
+                turn_state["job_plan"] = {"planner": first_sender, "text": text, "kind": kind, "sources": sources,
+                                          "full_access": bool(full_access),
+                                          **({"new_project": new_project.get("path"),
+                                              "new_project_no_git": not new_project.get("git_ready", True)}
+                                             if new_project else {})}
             # "Bitince haber ver": SpeS writes a short report when this turn ends (core.finish_report).
             from core.finish_report import wants_finish_report
             if wants_finish_report(text):
@@ -1379,6 +1439,8 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
 
     def cancel_active(self) -> dict:
         with self._lock:
+            # A planned job waiting to start belongs to the generation before this Stop (F5).
+            self._plan_generation = self.__dict__.get("_plan_generation", 0) + 1
             turn = self._active_turn
             if not turn:
                 return {"cancelled":False, "stop_receipt":{"status":"confirmed", "runs":{}, "worker_pending":False}}
@@ -2221,6 +2283,13 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
         elif agent == "claude" and self._turn_attachments(cid):
             # The builder (Fatum) reads the attachments while writing the project.
             dispatch_kwargs["read_root"] = self._turn_attachments(cid)["folder"]
+        if (agent == "claude" and not dispatch_kwargs.get("read_root") and not write and not full_access
+                and self._turn_job_read_root(cid)):
+            # A data job's reviewer (Fatum) reads the sources beside the project (26 Nov). Fides:
+            # the review prompt is a task, not a conversation, so this holds for either route;
+            # only SpeS's own read-only review turn ever carries the folder.
+            dispatch_kwargs["read_root"] = self._turn_job_read_root(cid)
+            dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
         from core.web_policy import web_allowed
         if web and not dispatch_kwargs.get("read_root") and web_allowed(agent, conversation_only=conversation_only,
                                project_read=bool(dispatch_kwargs.get("project_read")),

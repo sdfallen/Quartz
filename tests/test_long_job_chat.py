@@ -73,9 +73,9 @@ class FakeChat(LongJobChatMixin, JobPlannerMixin):
         return {"assistant_message": note}
 
     def send_message(self, text, agent=None, conversation_id=None, write=False, confirm_write=False, full_access=False,
-                     origin=None):
+                     origin=None, read_root=None):
         self.sent.append({"agent": agent, "write": write, "confirm": confirm_write, "text": text, "full": full_access,
-                          "origin": origin})
+                          "origin": origin, "read_root": read_root})
         state, reply, sender = self.replies.pop(0)
         user = self.store.append_message("c1", "user", text, sender="user",
                                          metadata={"task_id": f"t{len(self.sent)}", "instruction_state": state})
@@ -245,7 +245,7 @@ class PermissionLevelTests(LongJobChatTests):
         for full, level in ((True, "full"), (False, "project")):
             chat = FakeChat(self.project, replies=[("completed", "Tamam.", "claude")])
             with patch("core.long_job.keep_awake"):
-                chat._start_planned_job("c1", spec, {"full_access": full})
+                chat._start_planned_job("c1", spec, {"full_access": full, "generation": 0})
                 job_id = next(iter(chat._jobs()))
                 self.assertEqual(self.wait_done(chat, job_id), "done")
             self.assertEqual(chat._jobs()[job_id].ledger.data["permission_level"], level)
