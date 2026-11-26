@@ -54,13 +54,16 @@ _QUESTION = re.compile(r"\b(?:nasil\s+yapilir|nedir|ne\s+demek|nasil\s+(?:yapar|
 # tabloya aktar". A heavy verb, a document/data word and many of them; light verbs (özetle,
 # incele) only with an explicit sign of scale.
 _DATA_HEAVY = re.compile(r"\b(?:aktar\w*|donustur\w*|cevir\w*|birlestir\w*|ayikla\w*|derle\w*|"
-                         r"karsilastir\w*|tablo\w*\s+(?:yap|haline|olustur|hazirla|cikar)\w*|"
+                         r"karsilastir\w*|raporla\w*|tablo\w*\s+(?:yap|haline|olustur|hazirla|cikar)\w*|"
                          r"rapor\w*\s+(?:yap|hazirla|cikar|olustur)\w*)")
 _DATA_LIGHT = re.compile(r"\b(?:ozetle\w*|analiz\s+et\w*|incele\w*|listele\w*|topla\w*|cikar\w*)")
 _DATA_WORDS = r"(?:pdf|excel|xlsx|csv|tablo|fatura|belge|dokuman|evrak|word|docx|fis|makbuz|dekont|dosya|rapor|" \
-              r"kayit|e-?posta|mail|cv|ozgecmis|log|json|txt|metin|fotograf|resim|gorsel)"
+              r"kayit|kayd|e-?posta|mail|cv|ozgecmis|log|json|txt|metin|fotograf|resim|gorsel)"
 _DATA_OBJECT = re.compile(r"\b" + _DATA_WORDS + r"\w*")
 _DATA_MANY = re.compile(r"\b(?:tum|butun|hepsi\w*|her\s+bir\w*|\d+\s+(?:tane|adet)|"
+                        # Fides 26 Nov (D4): "12 faturayı", "iki PDF dosyasını" - Turkish keeps the noun singular.
+                        r"(?:\d+|iki|uc|dort|bes|alti|yedi|sekiz|dokuz|on|yirmi|elli|yuz|bin)\s+(?:\w+\s+)?"
+                        + _DATA_WORDS + r"|"
                         r"\w*klasor\w*(?:daki|deki|ndaki|ndeki)|[a-z]+(?:daki|deki)\s+(?:\w+\s+){0,2}"
                         + _DATA_WORDS + r")|\b" + _DATA_WORDS + r"'?(?:lar|ler)\w*")
 _HOURS = re.compile(r"(\d+(?:[.,]\d+)?)(?:\s*-\s*(\d+(?:[.,]\d+)?))?\s*(saat|sa\b|dakika|dk\b)(?!l[iu]k)")
@@ -70,6 +73,31 @@ _NUMBER_WORDS = {"yarim": 0.5, "bir bucuk": 1.5, "bir": 1, "iki": 2, "uc": 3, "d
                  "yedi": 7, "sekiz": 8, "dokuz": 9, "on": 10}
 _RESUME = re.compile(r"\b(?:coks(?:e|un)\s+(?:bile\s+)?devam|kapan(?:sa|irsa)\s+(?:bile\s+)?devam|"
                      r"yeniden\s+baslay(?:inca|tiginda)\s+devam|kendiligind(?:en)?\s+devam)")
+
+
+# Fides 26 Nov (D1): "Tüm faturaları tabloya aktarma", "karşılaştırmak istemiyorum", "birleştirmek
+# veri kaybına neden olur mu?", "nasıl birleştirebilirim?" started jobs. A question particle after
+# a third/first person ("olur mu", "miyim") or a question word is a question; "aktarır mısın" is a
+# polite request and stays one. A clause ending in a negative imperative or a refusal is a "no".
+_ASKING = re.compile(r"\b(?:nasil|neden|niye|nicin|hangi\w*|ne\s+zaman|ne\s+kadar)\b|"
+                     r"\bm[iu](?:yim|yiz|dur|dir)?\b|\w(?:ebilir|abilir)(?:im|iz)\b")
+_REFUSING = re.compile(r"\b(?:istemiyorum|istemiyoruz|istemem|gerek\s+yok|vazgec\w*|yapma(?:yin)?|etme(?:yin)?)\b|"
+                       r"\b\w+(?:ma|me)(?:yin|yiniz|yalim|yelim)?(?=\s*(?:[.!;,]|$))")
+
+
+def forbidden_or_asked(text: str) -> bool:
+    """The request is a question about the work or forbids it; it starts nothing."""
+    folded = turkish_fold(instruction_text(text)).strip()
+    if _ASKING.search(folded):
+        return True
+    for clause in re.split(r"[.;!?]+", folded):
+        clause = clause.strip()
+        if clause and _REFUSING.search(clause):
+            last = clause.split()[-1]
+            # "aktarma" at a clause's end is the negative imperative; "istemiyorum" anywhere is a no.
+            if _REFUSING.search(last) or re.search(r"istemiyor|istemem|gerek\s+yok|vazgec", clause):
+                return True
+    return False
 
 
 def data_job_request(text: str) -> bool:
@@ -82,6 +110,8 @@ def data_job_request(text: str) -> bool:
         return False
     folded = turkish_fold(value)
     if _QUESTION.search(folded) or _RUN_FILE.search(folded) or not _DATA_OBJECT.search(folded):
+        return False
+    if forbidden_or_asked(value):
         return False
     scale = bool(_SCALE.search(folded) or _HOURS.search(folded))
     if _DATA_HEAVY.search(folded):
@@ -106,6 +136,32 @@ def _code_job_request(text: str) -> bool:
     # A big engineering job with no product word: "projeyi baştan sona refactor et, 3 saat çalış".
     return bool((_MAKE.search(folded) or _FIX.search(folded)) and _SCOPE.search(folded) and scale
                 and not _RUN_FILE.search(folded))
+
+
+def source_paths(text: str, limit: int = 5) -> list[str]:
+    """Existing files and folders the request names by an absolute path, spaces included
+    ("C:\\Users\\...\\SpeS Projeleri\\faturalar klasöründeki" -> that folder)."""
+    words = str(text or "").split()
+    found, i = [], 0
+    while i < len(words) and len(found) < limit:
+        if re.match(r"^[\"'(]?[A-Za-z]:[\\/]", words[i]):
+            best, end = None, i
+            for j in range(i, min(len(words), i + 12)):
+                candidate = " ".join(words[i:j + 1]).strip("\"'().,;:")
+                for option in (candidate, re.sub(r"'\w*$", "", candidate)):
+                    try:
+                        if option and Path(option).exists():
+                            best, end = option, j
+                    except OSError:
+                        pass
+            if best:
+                path = str(Path(best))
+                if path not in found:
+                    found.append(path)
+                i = end + 1
+                continue
+        i += 1
+    return found
 
 
 def job_kind(text: str) -> str | None:
@@ -274,12 +330,16 @@ DATA_PLAN_RULE = (
     "(\"cikti/faturalar.csv var; 12 faturanın her biri bir satır; tarih, firma, tutar sütunları dolu\" gibi).\n")
 
 
-def plan_rule(kind: str | None = None) -> str:
-    return PLAN_RULE.format(max=MAX_MILESTONES, kind_rule=DATA_PLAN_RULE if kind == "data" else "")
+def plan_rule(kind: str | None = None, sources=()) -> str:
+    rule = DATA_PLAN_RULE if kind == "data" else ""
+    if rule and sources:
+        rule += ("KAYNAKLAR (yalnız okunur; isteğin \"bu klasör\" dediği yer dahil): "
+                 + "; ".join(str(s) for s in sources) + "\n")
+    return PLAN_RULE.format(max=MAX_MILESTONES, kind_rule=rule)
 
 
 def job_spec(text: str, milestones: list[dict], project_path, clock_text: str, full_access=False,
-             kind: str | None = None) -> dict:
+             kind: str | None = None, sources=()) -> dict:
     """The job as the user asked for it: their words, their duration, SpeS's own check.
 
     Fides 26 Nov (F1): the check runs the project's tests on the host, and the writer can
@@ -291,7 +351,8 @@ def job_spec(text: str, milestones: list[dict], project_path, clock_text: str, f
     return {"goal": goal[:4000], "milestones": milestones or fallback_plan(text),
             "hours": requested_hours(text), "auto_resume": wants_auto_resume(text),
             "verify": detected_check(project_path) if full else None, "auto_check": full, "review": True,
-            "git_branch": job_branch(project_path, goal, clock_text), "kind": "data" if kind == "data" else "code"}
+            "git_branch": job_branch(project_path, goal, clock_text), "kind": "data" if kind == "data" else "code",
+            **({"sources": [str(s) for s in sources][:5]} if kind == "data" and sources else {})}
 
 
 # -- talking to a running job in plain words ------------------------------------------

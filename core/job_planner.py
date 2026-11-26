@@ -68,7 +68,7 @@ class JobPlannerMixin:
         try:
             reply = self._team_say(
                 cid, msg_id, planner,
-                self._team_header(planner) + plan_rule(request.get("kind"))
+                self._team_header(planner) + plan_rule(request.get("kind"), request.get("sources") or ())
                 + "\n--- KULLANICININ İSTEĞİ ---\n" + request["text"],
                 project_id, step=1, limit=0, tool_less=False, project_scope=True, web=False)
         except Exception:
@@ -83,13 +83,19 @@ class JobPlannerMixin:
             project = None
         path = (project or {}).get("path") or ""
         spec = job_spec(request["text"], milestones, path, time.strftime("%m%d-%H%M"),
-                        full_access=bool(request.get("full_access")), kind=request.get("kind"))
+                        full_access=bool(request.get("full_access")), kind=request.get("kind"),
+                        sources=request.get("sources") or ())
         with self._lock:
             message = next((m for m in self.store.get(cid).get("messages", []) if m["id"] == msg_id), None)
             if message is not None:
                 note = (f"Yeni proje klasörü açıldı: {request['new_project']}\n" if request.get("new_project") else "") \
                     + ("Git kurulamadı; adımlar commit'lenmeyecek.\n" if request.get("new_project_no_git") else "") \
-                    + (("Dosya işi: kaynak dosyalar yalnız okunur; çıktılar bu klasöre yazılır."
+                    + (("Dosya işi: çıktılar bu klasöre yazılır. Kaynaklara dokunmama kuralı ajanlara verilir"
+                        + (" (Tam Yetki'de teknik bir engel değildir); SpeS kaynakların izini başta alır, iş "
+                           "bitince değişip değişmediğini söyler: " + "; ".join(request["sources"])
+                           if request.get("sources") else
+                           "; isteğin kaynak yolu bulunamadı, SpeS kaynakları denetleyemeyecek")
+                        + "."
                         + ("" if request.get("full_access") else
                            " Proje izninde komut çalışmaz; çıktılar metin (CSV/MD) olur, Excel CSV'yi açar.")
                         + "\n") if request.get("kind") == "data" else "") \

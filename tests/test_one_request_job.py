@@ -803,7 +803,8 @@ class DataJobTests(unittest.TestCase):
             self.assertEqual(conv["project_id"], "p-new")
             self.assertEqual(started[0]["kind"], "data")
             plan = next(m for m in conv["messages"] if (m.get("metadata") or {}).get("job_plan"))
-            self.assertIn("kaynak dosyalar yalnız okunur", plan["content"])
+            self.assertIn("Kaynaklara dokunmama kuralı ajanlara verilir", plan["content"])
+            self.assertNotIn("yalnız okunur", plan["content"], "Fides 26 Nov: no promised lock")
             self.assertIn("CSV", plan["content"], "Proje izni: metin çıktısı söylenir")
 
     def test_the_reviewer_of_a_data_job_reads_the_outputs(self):
@@ -832,3 +833,125 @@ class DataJobTests(unittest.TestCase):
         text = (r"C:\Users\LENAVO\Documents\SpeS Projeleri\fatura-kaynaklari-deneme klasöründeki tüm PDF "
                 "faturaları tek bir tabloya aktar; firma bazında toplamları da ekle. 20 dakika çalış.")
         self.assertEqual(new_project_folder(text, "1126-1016", base="x").name, "pdf-faturalari-tabloya-aktar-1126-1016")
+
+
+class FidesDataReviewTests(unittest.TestCase):
+    """Fides's data-job review 26 Nov (handoff 20261126-*-codex-data-job-review): D1-D4."""
+
+    NO = ["Tüm PDF faturalarını Excel tablosuna aktarma", "Tum PDF faturalarini Excel tablosuna aktarma",
+          "Tüm faturalarımı karşılaştırmak istemiyorum", "PDF dosyalarını birleştirmek veri kaybına neden olur mu?",
+          "Bu PDF raporlarını nasıl birleştirebilirim?", "Tüm faturaları tabloya aktarmana gerek yok",
+          "Hangi PDF dosyalarını birleştirmeliyim?"]
+    YES = ["Tüm faturaları tabloya aktarır mısın?", "İki PDF dosyasını tek PDF olarak birleştir",
+           "Şu 12 faturayı tek tabloda birleştir", "Bu CSV dosyasındaki 10000 kaydı raporla",
+           "İndirilenler'deki tüm PDF faturaları tek bir Excel çalışma kitabına aktar"]
+
+    def test_d1_a_no_or_a_question_starts_nothing_and_d4_counts_singular_many(self):
+        from core.job_intent import job_kind
+        for text in self.NO:
+            self.assertIsNone(job_kind(text), text)
+        for text in self.YES:
+            self.assertEqual(job_kind(text), "data", text)
+
+    def test_d2_a_named_folder_with_spaces_is_the_source(self):
+        from core.job_intent import source_paths
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory) / "SpeS Projeleri" / "faturalar"
+            folder.mkdir(parents=True)
+            text = f"{folder} klasöründeki tüm faturaları tabloya aktar"
+            self.assertEqual(source_paths(text), [str(folder)])
+            self.assertEqual(source_paths(f"{folder}'deki tüm PDF'leri birleştir"), [str(folder)])
+            self.assertEqual(source_paths("tüm faturaları aktar"), [])
+
+    def test_d2_this_folder_means_the_project_the_job_moved_away_from(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict("os.environ", {"SPES_PROJECTS_HOME": str(Path(directory) / "projeler")}):
+            chat = make_chat(directory)
+            old = Path(directory) / "Faturalar"
+            old.mkdir()
+            projects = {}
+            chat.agent_service.projects.add.side_effect = lambda path, name=None: projects.setdefault(
+                "p", {"id": "p-new", "path": path})
+            chat.agent_service.projects.get.side_effect = lambda pid: (
+                {"id": "p-old", "path": str(old)} if pid == "p-old" else projects.get("p"))
+            run = TeamRun(chat)
+            run.reply = PlanningTurnTests.PLAN
+            conv = chat.store.get_active()
+            chat.store.update_project(conv["id"], "p-old")
+            started = []
+            with patch.object(chat, "job_start", side_effect=lambda spec: started.append(spec) or {"id": "j"}):
+                run.run("Bu klasördeki tüm PDF'leri birleştir", write=True, confirm_write=True)
+                deadline = time.monotonic() + 5
+                while not started and time.monotonic() < deadline:
+                    time.sleep(0.02)
+            chat._diagnostics.close()
+        self.assertEqual(started[0]["sources"], [str(old)])
+        self.assertNotEqual(started[0].get("project_path"), str(old))
+
+    def test_d2_spes_fingerprints_the_sources_and_reports_a_change(self):
+        from core.long_job import JobLedger, finish_report, source_manifest
+        with tempfile.TemporaryDirectory() as directory:
+            src = Path(directory) / "kaynak"
+            src.mkdir()
+            (src / "a.pdf").write_bytes(b"%PDF a")
+            (src / "b.pdf").write_bytes(b"%PDF b")
+            (Path(directory) / "p").mkdir()
+            ledger = JobLedger.create({"goal": "Faturalar", "project_path": str(Path(directory) / "p"), "hours": 1,
+                                       "kind": "data", "sources": [str(src)],
+                                       "source_manifest": source_manifest([str(src)]),
+                                       "milestones": [{"title": "T", "acceptance": "csv"}]},
+                                      root=Path(directory) / "jobs")
+            self.assertIn("Kaynaklar değişmedi (2 dosya", finish_report(ledger))
+            (src / "a.pdf").write_bytes(b"%PDF changed")
+            (src / "b.pdf").unlink()
+            (src / "c.csv").write_text("x", encoding="utf-8")
+            report = finish_report(ledger)
+        self.assertIn("UYARI: kaynaklarda 3 değişiklik", report)
+        for word in ("değişti:", "silindi/taşındı:", "eklendi:"):
+            self.assertIn(word, report)
+
+    def test_d2_job_start_takes_the_fingerprint(self):
+        from tests.test_long_job_chat import FakeChat
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict("os.environ", {"QUARTZ_JOBS_HOME": str(Path(directory) / "jobs")}), \
+                patch("core.agent_limits.snapshot", return_value={}), patch("core.long_job.LongJob.start"):
+            project, src = Path(directory) / "p", Path(directory) / "src"
+            project.mkdir()
+            src.mkdir()
+            (src / "f.pdf").write_bytes(b"x")
+            chat = FakeChat(project, replies=[])
+            public = chat.job_start({"goal": "Faturalar", "hours": 1, "kind": "data", "sources": [str(src)],
+                                     "milestones": [{"title": "T", "acceptance": "ok"}]})
+            ledger = chat._jobs()[public["id"]].ledger
+        self.assertEqual(list(ledger.data["source_manifest"]), [str(src / "f.pdf")])
+
+    def test_d3_the_reviewer_gets_the_writers_whole_report_through_the_real_path(self):
+        from tests.test_long_job_chat import FakeChat
+        from core.long_job import report_excerpt
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict("os.environ", {"QUARTZ_JOBS_HOME": str(Path(directory) / "jobs")}):
+            project = Path(directory) / "p"
+            project.mkdir()
+            long_reply = "BAŞLANGIÇ: faturalar.csv yazıldı.\n" + ("ayrıntı " * 400) + "\nKANIT:\n5 satır"
+            chat = FakeChat(project, replies=[("completed", long_reply, "codex")])
+            chat.send_message("x", agent="codex", conversation_id="c1", write=True, confirm_write=True)
+            user_id = chat.store.conv["messages"][-2]["id"]
+            outcome = chat._job_turn_outcome("c1", user_id, "codex", "completed")
+        self.assertEqual(len(outcome["summary"]), 1500, "the short summary stays short")
+        excerpt = report_excerpt(outcome["report"])
+        self.assertTrue(excerpt.startswith("BAŞLANGIÇ"))
+        self.assertTrue(excerpt.endswith("5 satır"))
+
+    def test_d3_a_long_proof_keeps_its_end_and_says_what_was_cut(self):
+        from core.long_job import report_excerpt
+        report = "Yaptım.\nKANIT:\n" + ("satır\n" * 1000) + "HATA: 4 kaynak okunamadı"
+        excerpt = report_excerpt(report)
+        self.assertLessEqual(len(excerpt), 2400)
+        self.assertTrue(excerpt.startswith("KANIT:"))
+        self.assertTrue(excerpt.endswith("HATA: 4 kaynak okunamadı"))
+        self.assertIn("karakter kısaltıldı", excerpt)
+
+    def test_the_plan_bubble_does_not_promise_a_lock(self):
+        from core.job_intent import plan_rule
+        self.assertIn("KAYNAKLAR (yalnız okunur", plan_rule("data", ["kaynak-klasor"]))
+        self.assertNotIn("KAYNAKLAR", plan_rule("data"))

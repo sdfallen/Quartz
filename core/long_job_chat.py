@@ -49,6 +49,9 @@ class LongJobChatMixin:
                 or project.get("workflow") == "warband":
             raise JobError("Bu sohbete bağlı, yazılabilir bir proje yok.")
         generation = spec.pop("plan_generation", None)
+        if spec.get("kind") == "data" and spec.get("sources") and not spec.get("source_manifest"):
+            from core.long_job import source_manifest
+            spec["source_manifest"] = source_manifest(spec["sources"])
         spec["conversation_id"] = conv["id"]
         spec["project_path"] = project["path"]  # the conversation's project, never a free path
         # The models the user chose are recorded once; SpeS never switches them by itself.
@@ -255,6 +258,7 @@ class LongJobChatMixin:
                      if str(check.get("writer_report") or "").strip() else "")
                   + ("Bu bir dosya/veri işi: çıktı dosyalarını açıp oku; sayılar ve örnek satırlar KANIT ile ve "
                      "kaynaklarla tutarlı mı, eksik kayıt var mı bak. Açamadığın ikili dosyayı kabul gerekçesi sayma.\n"
+                     + ("KAYNAKLAR: " + "; ".join(ledger.data["sources"]) + "\n" if ledger.data.get("sources") else "")
                      if ledger.data.get("kind") == "data" else "")
                   + "Projedeki dosyaları okuyarak ölçütün gerçekten karşılandığını incele: istenen her şey var mı, "
                     "kod çalışacak gibi mi, yer tutucu/TODO/eksik kaldı mı. Yazıcının KANIT bölümündeki çıktılar "
@@ -328,4 +332,7 @@ class LongJobChatMixin:
             if any(w in own for w in UNREACHABLE_WORDS):
                 return {"status": status, "unavailable": writer}
         summary = str(replies[-1].get("content") or "")[-1500:] if replies else ""
-        return {"status": status, "summary": summary}
+        # Fides 26 Nov (D3): the reviewer reads the writer's own whole report, not a summary's tail.
+        own = [m for m in replies if m.get("sender") == writer]
+        report = str((own or replies or [{}])[-1].get("content") or "")[:20000]
+        return {"status": status, "summary": summary, "report": report}

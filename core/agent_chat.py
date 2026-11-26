@@ -1144,11 +1144,23 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
                 "aynı mesajı yeniden gönder."))
         new_project = None
         kind = None
+        sources = []
         if job_request:
             from core.job_intent import job_kind, wants_new_project
             kind = job_kind(text)
             busy = bool(self._active_turn and self._active_turn.get("status") == "running")
             # A data job always writes into a folder of its own; the sources stay where they are.
+            # Fides 26 Nov (D2): "bu klasördeki" means the conversation's project before the move.
+            if kind == "data":
+                from core.job_intent import source_paths
+                sources = source_paths(text)
+                if not sources and target.get("project_id"):
+                    try:
+                        current = self.agent_service.projects.get(target["project_id"]) or {}
+                    except Exception:
+                        current = {}
+                    if current.get("path") and Path(current["path"]).is_dir():
+                        sources = [str(Path(current["path"]))]
             if (wants_new_project(text) or kind == "data") and not busy:
                 try:
                     new_project = self._new_project_for_job(target, text)
@@ -1315,7 +1327,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
             if skill_install:
                 turn_state["skill_install"] = skill_install
             if job_request:
-                turn_state["job_plan"] = {"planner": first_sender, "text": text, "kind": kind,
+                turn_state["job_plan"] = {"planner": first_sender, "text": text, "kind": kind, "sources": sources,
                                           "full_access": bool(full_access),
                                           **({"new_project": new_project.get("path"),
                                               "new_project_no_git": not new_project.get("git_ready", True)}
