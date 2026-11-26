@@ -113,6 +113,16 @@ JAVASCRIPT = r"""
       return `${name}: ${label}${state.auth_message ? '\n' + state.auth_message : ''}`;
     }).join('\n');
     document.getElementById('cliMessage').textContent = data.job?.message || '';
+    // 27 Nov: SpeS sets up its own tools in the background; say what it is doing, in plain words.
+    const auto = data.auto_setup || {};
+    const autoLine = document.getElementById('autoSetupLine');
+    if (autoLine) {
+      const text = auto.state === 'running'
+        ? `SpeS araçlarını kuruyor${auto.current_label ? ': ' + auto.current_label : ''}… Bu birkaç dakika sürebilir; beklerken hesabınla giriş yapabilirsin.`
+        : auto.state === 'partial' ? 'Bazı araçlar kurulamadı; SpeS internet bağlantısı gelince yeniden dener.'
+        : auto.state === 'done' ? 'Araçlar kuruldu. Şimdi hesabınla giriş yap.' : '';
+      autoLine.textContent = text; autoLine.hidden = !text;
+    }
     const busy = data.job?.state === 'running';
     ['cliValidate','cliAccount','cliInstall'].forEach(id => document.getElementById(id).disabled = busy);
     document.getElementById('cliContinue').disabled = !Object.values(providers).some(p=>p.ready);
@@ -125,7 +135,7 @@ JAVASCRIPT = r"""
     });
     renderAgentConnections(providers);
     clearTimeout(cliPollTimer);
-    if ((busy || Object.values(providers).some(p=>p.login_pending)) && document.getElementById('cliSetup').classList.contains('show')) cliPollTimer = setTimeout(()=>refreshCliStatus(false), 1500);
+    if ((busy || auto.state === 'running' || Object.values(providers).some(p=>p.login_pending)) && document.getElementById('cliSetup').classList.contains('show')) cliPollTimer = setTimeout(()=>refreshCliStatus(false), 1500);
   }
   // Sidebar connection list. Readiness comes from authenticated backend checks.
   let agentConnectionView = {providers: null, active: ''};
@@ -188,6 +198,11 @@ JAVASCRIPT = r"""
   document.getElementById('cliCheck').onclick = ()=>refreshCliStatus(true);
   document.getElementById('btnCliConnections').onclick = async()=>{ openModalOverlay(document.getElementById('cliSetup'), 'cliProvider'); await refreshCliStatus(true); };
   document.getElementById('cliLater').onclick = ()=>{ clearTimeout(cliPollTimer); closeModalOverlay(document.getElementById('cliSetup')); };
+  // 27 Nov: no subscription? Talk for free with official free keys (Ücretsiz sohbet).
+  document.getElementById('cliFree').onclick = ()=>{
+    clearTimeout(cliPollTimer); closeModalOverlay(document.getElementById('cliSetup'));
+    document.getElementById('btnFreeChatManage')?.click();
+  };
   document.getElementById('cliContinue').onclick = async()=>{
     const result = await window.pywebview.api.onboarding_refresh();
     if (result.status !== 'ok') { document.getElementById('cliMessage').textContent=result.data; return; }

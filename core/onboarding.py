@@ -36,6 +36,7 @@ class OnboardingService:
         self.login_processes = {}
         self._cached = None
         self._cached_at = 0
+        self._auto = None
 
     def _load_connections(self) -> dict:
         result = {}
@@ -61,7 +62,27 @@ class OnboardingService:
             except OSError:
                 pass
 
+    def auto_setup(self) -> dict:
+        """27 Nov: SpeS sets up its agent tools by itself on the packaged app's first starts
+        (core.auto_setup); a source checkout or a test never installs anything unless asked."""
+        import os
+        import sys
+        if not (getattr(sys, "frozen", False) or os.getenv("QUARTZ_AUTO_SETUP") == "1"):
+            return {"state": "off"}
+        if self._auto is None:
+            from core.auto_setup import AutoSetup
+            self._auto = AutoSetup(self.installer)
+        status = self._auto.start()
+        if status.get("state") in {"done", "partial"}:
+            self._cached = None  # a tool just arrived: read the providers again
+        return status
+
     def status(self, force=False):
+        auto = self.auto_setup()
+        result = self._status(force)
+        return {**result, "auto_setup": auto}
+
+    def _status(self, force=False):
         pending = {provider: process.poll() is None for provider, process in self.login_processes.items()}
         with self.lock:
             was_pending = any(p.get("login_pending") for p in (self._cached or {}).get("providers", {}).values())
@@ -156,8 +177,8 @@ class OnboardingService:
             "auth_verified": claude_ready, "verification_status": "verified" if claude_ready else "unverified",
             "ready": claude_ready, "login_pending": False, "model_accessible": "unknown", "last_task_succeeded": None,
             "auth_message": "Claude hesabı bağlı" if claude_ready else (
-                "Claude CLI kurulu değil" if not claude.get("installed")
-                else "Bir terminalde `claude` açıp /login ile giriş yapın"),
+                "Claude Code henüz hazır değil; SpeS kendisi kuruyor" if not claude.get("installed")
+                else "Hesabımla bağlan'a bas; açılan pencerede Claude hesabınla giriş yap"),
         }
         with self.lock:
             result = {"providers": installed, "needs_setup": not any(p["ready"] for p in installed.values()),
@@ -235,7 +256,9 @@ class OnboardingService:
                 raise
 
     def begin(self, operation, provider, key=""):
-        if provider not in {"codex", "gemini"} or operation not in {"install", "install_agy", "key", "account", "account_agy"} or (operation in {"account_agy", "install_agy"} and provider != "gemini"):
+        if provider == "claude" and operation in {"install", "account"}:
+            pass  # 27 Nov: Claude Code is set up by SpeS too; its sign-in is the CLI's own
+        elif provider not in {"codex", "gemini"} or operation not in {"install", "install_agy", "key", "account", "account_agy"} or (operation in {"account_agy", "install_agy"} and provider != "gemini"):
             raise ValueError("Geçersiz bağlantı işlemi")
         if operation == "key" and (not isinstance(key, str) or not 10 <= len(key.strip()) <= 1024 or any(c in key for c in "\r\n\0")):
             raise ValueError("Geçerli API anahtarını girin")
@@ -312,6 +335,7 @@ class OnboardingService:
                         "selected_at": time.time(),
                     })
                 try:
+                    # Claude Code asks for its sign-in itself on first start (official flow).
                     process = subprocess.Popen(node_command(executable, ["login"] if provider == "codex" else []),
                                                env=env, cwd=str(self.base),
                                                creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))

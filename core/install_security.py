@@ -69,8 +69,11 @@ def verify_publisher(path, publisher):
         data = json.loads(result.stdout)
     except (ValueError, TypeError):
         data = {}
-    # Exact organization field, not an arbitrary substring of a certificate name.
-    fields = [field.strip() for field in str(data.get("subject", "")).split(",")]
-    if result.returncode or data.get("status") != "Valid" or "O=" + publisher not in fields:
+    # Exact organization field, not an arbitrary substring of a certificate name. A value with a
+    # comma is quoted by Windows (27 Nov: O="Anthropic, PBC"), so fields are parsed, not split.
+    import re
+    organizations = [quoted if quoted else plain.strip() for quoted, plain in
+                     re.findall(r'(?:^|,)\s*O=(?:"([^"]*)"|([^,]*))', str(data.get("subject", "")))]
+    if result.returncode or data.get("status") != "Valid" or publisher not in organizations:
         raise ValueError("İndirilen dosyanın yayıncı imzası doğrulanamadı")
     return {"status": "Valid", "publisher": publisher}

@@ -116,7 +116,9 @@ class ClaudeRuntime(CodexRuntime):
         for candidate in candidates:
             if candidate and Path(candidate).is_file():
                 return str(Path(candidate).resolve())
-        raise FileNotFoundError("Claude CLI was not found")
+        # 27 Nov: the copy SpeS set up itself in its private folder (core.auto_setup).
+        from core.cli_installer import resolve_cli
+        return resolve_cli("claude")
 
     # -- discovery ---------------------------------------------------------
     def list_models(self, force: bool = False) -> dict:

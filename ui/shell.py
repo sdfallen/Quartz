@@ -592,9 +592,10 @@ SHELL_MARKUP = r"""
   <div class="api-panel wide">
     <div class="panel-mark">@@MARK@@</div>
     <h2 id="cliWelcome">SpeS'e Hoş Geldiniz</h2>
-    <p>Tek bir hesapla başlayabilirsiniz. Codex veya Antigravity masaüstü uygulaması gerekmez. Hafif CLI araçlarını SpeS sizin için kurar.</p>
+    <p>Başka bir şey kurmana gerek yok: SpeS kendi araçlarını kendisi kurar. Sana kalan tek şey hesabınla giriş yapmak.</p>
+    <p class="auto-setup-line" id="autoSetupLine" role="status" aria-live="polite" hidden></p>
     <label for="cliProvider">Bağlantı</label>
-    <select id="cliProvider"><option value="codex">Codex / OpenAI</option><option value="gemini">Gemini / Google</option></select>
+    <select id="cliProvider"><option value="codex">Codex / OpenAI</option><option value="gemini">Gemini / Google</option><option value="claude">Claude / Anthropic</option></select>
     <div id="cliProviderState" class="log-box" aria-live="polite">Bağlantılar kontrol ediliyor…</div>
     <button type="button" class="api-submit" id="cliAccount">Hesabımla bağlan</button>
     <p class="help">Google hesabı bağımsız Antigravity CLI ile bağlanır; Desktop gerekmez. API anahtarı Gemini CLI ve ayrı API kotasını kullanır.</p>
@@ -607,6 +608,7 @@ SHELL_MARKUP = r"""
     </div>
     <div id="cliMessage" class="api-error" role="status" aria-live="polite"></div>
     <div class="panel-actions end">
+      <button type="button" class="control-btn" id="cliFree">Aboneliğim yok: ücretsiz sohbet</button>
       <button type="button" class="control-btn" id="cliLater">Şimdi değil</button>
       <button type="button" class="api-submit" id="cliContinue" disabled>Sohbete geç</button>
     </div>

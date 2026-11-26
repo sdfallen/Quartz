@@ -67,6 +67,10 @@ Name: "{group}\SpeS'i Kaldır"; Filename: "{uninstallexe}"
 Filename: "{app}\{#MyAppExeName}"; Description: "SpeS'i şimdi başlat"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
+; 27 Nov: the tools SpeS set up by itself (private Node.js, Codex, Claude Code, Antigravity CLIs)
+; leave with SpeS. Nothing outside SpeS's own folders is touched.
+Type: filesandordirs; Name: "{localappdata}\Quartz\bin"
+Type: files; Name: "{localappdata}\Quartz\desktop-operator.lock"
 Type: files; Name: "{app}\assistant.log"
 Type: files; Name: "{app}\quartz_entry.log"
 Type: files; Name: "{app}\*.log.*"
@@ -98,6 +102,8 @@ begin
       DeleteFile(ExpandConstant('{app}\quartz_workflows.json'));
       DeleteFile(ExpandConstant('{app}\local_search_index.json'));
       DeleteFile(ExpandConstant('{app}\.env'));
+      { 27 Nov: free chat keys (DPAPI) and settings }
+      DelTree(ExpandConstant('{localappdata}\Quartz\free_chat'), True, True, True);
     end;
   end;
 end;
