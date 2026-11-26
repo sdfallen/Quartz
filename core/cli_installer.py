@@ -123,11 +123,41 @@ def cli_environment():
     return env
 
 
+def owned_run(cmd, *, input=None, capture_output=False, text=False, timeout=None, env=None, cwd=None,
+              creationflags=0):
+    """subprocess.run for setup steps, owned (Fides FS6 lifecycle, 27 Nov): the process starts
+    suspended, is bound to a kill-on-close Job Object and only then runs; a timeout, closing SpeS or
+    the uninstaller closing SpeS ends the whole tree (npm, node and what they started). A process
+    that cannot be owned is never resumed."""
+    if os.name != "nt":
+        return subprocess.run(cmd, input=input, capture_output=capture_output, text=text, timeout=timeout,
+                              env=env, cwd=cwd)
+    from core.process_tree import CREATE_SUSPENDED, bind_kill_on_close_job, close_process_job, resume_process
+    pipe = subprocess.PIPE if capture_output else None
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
+                            stdout=pipe, stderr=pipe, text=text, env=env, cwd=cwd,
+                            creationflags=creationflags | CREATE_SUSPENDED)
+    try:
+        if not bind_kill_on_close_job(proc, resume=False) or not resume_process(proc):
+            proc.kill()
+            proc.wait(timeout=5)
+            raise RuntimeError("Kurulum süreci SpeS'e bağlanamadı; başlatılmadı")
+        try:
+            out, err = proc.communicate(input, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            close_process_job(proc)  # the whole tree ends with the job
+            proc.communicate()
+            raise
+        return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+    finally:
+        close_process_job(proc)
+
+
 class CliInstaller:
     def __init__(self, root=None, fetch=None, run=None):
         self.root = Path(root) if root else managed_root()
         self.fetch = fetch or self._fetch
-        self.run = run or subprocess.run
+        self.run = run or owned_run
 
     @staticmethod
     def _fetch(url, limit=150 * 1024 * 1024):

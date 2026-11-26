@@ -182,6 +182,7 @@ class ConversationStore:
                     "models": self._normalize_models(cdata.get("models")),
                     "space": space_of(cdata),
                     "kind": cdata.get("kind"),
+                    **({"free": True} if cdata.get("free") else {}),
                     "message_count": len(cdata.get("messages", [])),
                     "is_active": cid == self._active_id,
                 })

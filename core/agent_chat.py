@@ -531,6 +531,15 @@ class AgentChatService(FreeChatMixin, TeamTurnMixin, SkillTurnMixin, LongJobChat
                 turn["stop_receipt"].setdefault("runs", {})[run_id] = state
         return state
 
+    def _is_free_cid(self, conversation_id) -> bool:
+        """The stored flag or the id (Fides RFS1: free conversations from before the prefix)."""
+        if is_free_id(conversation_id):
+            return True
+        try:
+            return is_free(self.store.get(str(conversation_id)))
+        except Exception:
+            return False
+
     def _refuse_if_free(self, conversation_id):
         try:
             conversation = self.store.get(conversation_id) if conversation_id else self.store.get_active()
@@ -1490,7 +1499,7 @@ class AgentChatService(FreeChatMixin, TeamTurnMixin, SkillTurnMixin, LongJobChat
     def cancel_active(self, conversation_id=None) -> dict:
         # Ücretsiz sohbet (Fides FS2): Stop in a free conversation ends its round and nothing else;
         # a global Stop ends free rounds too.
-        if conversation_id and is_free({"id": str(conversation_id)}):
+        if conversation_id and self._is_free_cid(conversation_id):
             stopped = self.free_stop(str(conversation_id))
             return {"cancelled": bool(stopped), "free": True,
                     "stop_receipt": {"status": "confirmed", "runs": {}, "worker_pending": False}}
@@ -1567,11 +1576,12 @@ class AgentChatService(FreeChatMixin, TeamTurnMixin, SkillTurnMixin, LongJobChat
         """Poll the state, current message, and full conversation message list of the active chat turn."""
         with self._lock:
             self._refresh_stop_receipt()
-            no_turn = not self._active_turn
-        if no_turn:
-            # A free round is not an agent turn but the page follows it the same way (27 Nov).
-            free = self.free_poll()
-            return free if free is not None else {"active": False}
+        # A free round is not an agent turn but the page follows it the same way (27 Nov). Fides
+        # RFS2: it is chosen by the selected conversation, so a finished Workspace turn left in
+        # _active_turn never hides it (a free conversation never has an agent turn of its own).
+        free = self.free_poll()
+        if free is not None:
+            return free
         with self._lock:
             if not self._active_turn:
                 return {"active": False}

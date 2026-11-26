@@ -88,7 +88,7 @@ class OnboardingService:
             status = auto.stop()
         elif action == "free_only":
             auto.forget_choice()
-            status = auto.status()
+            status = auto.status()  # "stopping" while the tool being installed finishes
         else:
             status = auto.status()
         if status.get("state") in {"done", "partial", "ready", "stopped"}:

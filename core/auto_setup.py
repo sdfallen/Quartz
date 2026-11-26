@@ -102,13 +102,18 @@ class AutoSetup:
             return self._status_locked()
 
     def forget_choice(self):
+        """Fides RFS3: also stops the tools still waiting; the one being installed may finish."""
+        self.stop_event.set()
         state = self._state()
         state.pop("consent", None)
         self._save(state)
+        with self.lock:
+            if self.thread is not None and self.thread.is_alive():
+                self.live["state"] = "stopping"
 
     def _run(self, todo):
         for tool in todo:
-            if self.stop_event.is_set():
+            if self.stop_event.is_set() or not self.consented():
                 break
             with self.lock:
                 self.live["current"] = tool

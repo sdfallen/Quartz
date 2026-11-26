@@ -124,7 +124,7 @@ JAVASCRIPT = r"""
         ? `Abonelikli hesaplarla (ChatGPT, Claude, Google) çalışmak için SpeS geliştirme araçlarını kendisi kurar: ${auto.download || 'birkaç yüz MB indirir'}. Yalnız ücretsiz sohbet için hiçbir şey indirilmez.`
         : auto.state === 'running'
         ? `SpeS araçlarını kuruyor${auto.current_label ? ': ' + auto.current_label : ''}… Bu birkaç dakika sürebilir; beklerken hesabınla giriş yapabilirsin.`
-        : auto.state === 'stopping' ? 'Kurulum, şu an kurulan araç bitince duracak.'
+        : auto.state === 'stopping' ? 'Kurulum duruyor: şu an kurulan araç bitince başka bir şey indirilmeyecek.'
         : auto.state === 'stopped' ? 'Kurulum durduruldu. İstediğin zaman "Araçları hazırla" ile devam edebilirsin.'
         : auto.state === 'partial' ? 'Bazı araçlar kurulamadı; SpeS birkaç saat sonra yeniden dener ya da "Araçları hazırla" ile hemen yeniden deneyebilirsin.'
         : auto.state === 'done' ? 'Araçlar kuruldu. Şimdi hesabınla giriş yap.' : '';

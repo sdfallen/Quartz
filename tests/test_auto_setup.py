@@ -92,6 +92,20 @@ class AutoSetupTests(unittest.TestCase):
         self.assertEqual(status["state"], "stopped")
         self.assertEqual(installer.calls, ["codex"])
 
+    def test_rfs3_free_only_during_setup_stops_the_tools_still_waiting(self):
+        release = threading.Event()
+        installer = FakeInstaller()
+        original = installer.install
+        installer.install = lambda tool: (release.wait(5), original(tool))[1]
+        setup = self.make(installer)
+        setup.start(consent=True)
+        setup.forget_choice()  # "Yalnız ücretsiz sohbet" while Codex is being installed
+        self.assertEqual(setup.status()["state"], "stopping")
+        release.set()
+        self.finish(setup)
+        self.assertEqual(installer.calls, ["codex"])
+        self.assertEqual(setup.start()["state"], "needs_choice")  # no choice, no new download
+
     def test_free_only_forgets_the_choice(self):
         setup = self.make(FakeInstaller())
         setup.start(consent=True)
@@ -161,6 +175,30 @@ class InstallerTests(unittest.TestCase):
             with patch.object(install_security.subprocess, "run", return_value=fake(subject)):
                 with self.assertRaises(ValueError):
                     install_security.verify_publisher(path, "Google LLC")
+
+    @unittest.skipUnless(os.name == "nt", "Windows Job Object")
+    def test_setup_processes_are_owned_and_a_timeout_ends_the_whole_tree(self):
+        import subprocess
+        import sys
+        import time
+        from core.cli_installer import owned_run
+        done = owned_run([sys.executable, "-c", "print('hazir')"], capture_output=True, text=True, timeout=30)
+        self.assertEqual((done.returncode, done.stdout.strip()), (0, "hazir"))
+        with tempfile.TemporaryDirectory() as folder:
+            marker = Path(folder) / "child.txt"
+            child = ("import time,pathlib\n"
+                     f"p=pathlib.Path(r'{marker}')\n"
+                     "while True:\n    p.write_text(str(time.time()))\n    time.sleep(0.1)\n")
+            parent = ("import subprocess,sys,time\n"
+                      f"subprocess.Popen([sys.executable,'-c',{child!r}])\n"
+                      "time.sleep(60)\n")
+            with self.assertRaises(subprocess.TimeoutExpired):
+                owned_run([sys.executable, "-c", parent], timeout=2)
+            time.sleep(0.6)
+            before = marker.read_text() if marker.exists() else ""
+            time.sleep(0.6)
+            after = marker.read_text() if marker.exists() else ""
+            self.assertEqual(before, after, "the grandchild still runs after the timeout")
 
     def test_the_uninstaller_removes_what_spes_set_up(self):
         iss = (ROOT / "installer" / "Quartz.iss").read_text(encoding="utf-8")

@@ -378,6 +378,44 @@ class ChatServiceTests(Base):
             time.sleep(0.02)
         self.assertEqual(chat.poll_active(), {"active": False})
 
+    def test_rfs1_an_older_free_conversation_without_the_prefix_is_still_free(self):
+        chat = self.make_chat()
+        legacy = chat.store.create(title="Ücretsiz Sohbet", agent="free", space="chat")
+        chat.store.mark_free(legacy["id"])  # how the 27 Nov first slice made it
+        self.assertFalse(legacy["id"].startswith("free-"))
+        self.assertTrue(chat._is_free_cid(legacy["id"]))
+        self.assertTrue(chat.free_chat_action("is_free", {"conversation_id": legacy["id"]})["free"])
+        import gui
+        listed = {"status": "ok", "data": {"conversations": chat.store.list()}}
+        gui._learn_free(listed)
+        self.addCleanup(gui._KNOWN_FREE.discard, legacy["id"])
+        self.assertTrue(gui._free_conversation(legacy["id"]))
+        api = gui.Api()
+        with patch.object(api, "diagnostics_select_application", side_effect=AssertionError("diagnostics")), \
+                patch("gui.ipc_send", side_effect=AssertionError("ipc")):
+            result = api.coordination_route("Aseprite uygulamasını incele", legacy["id"], "p", {}, "full", "codex")
+        self.assertEqual(result["data"]["intent"], "conversation")
+        # Scoped Stop recognises it too: nothing of the Workspace is touched.
+        chat._active_turn = {"status": "running", "conversation_id": "workspace"}
+        self.assertTrue(chat.cancel_active(conversation_id=legacy["id"])["free"])
+        self.assertEqual(chat._active_turn["status"], "running")
+
+    def test_rfs2_a_finished_workspace_turn_never_hides_a_running_free_round(self):
+        self.free.connect("gemini", "k", send=True)
+        chat = self.make_chat()
+        chat._refresh_stop_receipt = lambda: None
+        chat._active_turn = {"status": "completed", "conversation_id": "workspace", "message_id": "m",
+                             "turn_id": "t", "agent": "codex"}
+        cid = chat.new_free_conversation()["id"]
+        release = threading.Event()
+        original = self.free.ask
+        self.free.ask = lambda channel, messages, cancel: (release.wait(5), original(channel, messages, cancel))[1]
+        chat.send_message("selam", conversation_id=cid)
+        polled = chat.poll_active()
+        self.assertEqual((polled["active"], polled["agent"], polled["conversation_id"]), (True, "free", cid))
+        release.set()
+        self.wait_done(chat, cid, 1)
+
     def test_no_connection_answers_with_how_to_connect(self):
         chat = self.make_chat()
         cid = chat.new_free_conversation()["id"]

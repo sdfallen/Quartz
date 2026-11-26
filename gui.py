@@ -36,10 +36,35 @@ IPC_PORT = 55_123
 _FREE_REFUSAL = {"status": "error", "data": "Ücretsiz sohbette yalnız sohbet edilir; bu işlem Workspace'te yapılır."}
 
 
+_KNOWN_FREE: set = set()
+
+
+def _learn_free(result):
+    """Fides RFS1: free conversations made before ids carried "free-" (the 27 Nov first slice) keep
+    their stored flag; every conversation list the backend sends teaches the page layer which ids
+    are free, so the check needs no extra IPC on a message."""
+    try:
+        data = (result or {}).get("data") or {}
+        items = list(data.get("conversations") or [])
+        for key in ("active_conversation", "conversation"):
+            if isinstance(data.get(key), dict):
+                items.append(data[key])
+        if isinstance(data, dict) and data.get("id"):
+            items.append(data)
+        for item in items:
+            if isinstance(item, dict) and item.get("free") and item.get("id"):
+                _KNOWN_FREE.add(str(item["id"]))
+    except Exception:
+        pass
+    return result
+
+
 def _free_conversation(conversation_id) -> bool:
-    """Ücretsiz sohbet (Fides FS1): SpeS gives such a conversation an id starting with "free-" at
-    creation; the page layer refuses every tool path for it from the id alone, with no IPC."""
-    return str(conversation_id or "").startswith("free-")
+    """Ücretsiz sohbet (Fides FS1/RFS1): SpeS gives such a conversation an id starting with "free-"
+    at creation; older free conversations are known from their stored flag (_learn_free). The page
+    layer refuses every tool path for it before any side effect, with no IPC on the message."""
+    value = str(conversation_id or "")
+    return value.startswith("free-") or value in _KNOWN_FREE
 
 
 def ipc_send(action: str, data=None) -> dict:
@@ -826,7 +851,7 @@ class Api:
 
     # ── Agent Chat API ──────────────────────────────────────
     def chat_status(self) -> dict:
-        return ipc_send("chat_status")
+        return _learn_free(ipc_send("chat_status"))
 
     def memory_list(self) -> dict:
         return ipc_send("memory_list")
@@ -992,7 +1017,7 @@ class Api:
 
     def free_chat(self, action: str, data: dict | None = None) -> dict:
         """Ücretsiz sohbet: status, connect, disconnect, consent, order, new."""
-        return ipc_send("free_chat", {"action": str(action or ""), "data": dict(data or {})})
+        return _learn_free(ipc_send("free_chat", {"action": str(action or ""), "data": dict(data or {})}))
 
     def security_act(self, alert_id: str, action: str) -> dict:
         """One of a security alert's own actions (stop, quarantine, remove autorun, undo, ignore)."""
@@ -1066,7 +1091,7 @@ class Api:
         return ipc_send("chat_open_space", {"space": space})
 
     def chat_select(self, conversation_id: str) -> dict:
-        return ipc_send("chat_select", {"conversation_id": conversation_id})
+        return _learn_free(ipc_send("chat_select", {"conversation_id": conversation_id}))
 
     def _chat_delete_guard(self):
         for service in (self._natural, self._coordination):

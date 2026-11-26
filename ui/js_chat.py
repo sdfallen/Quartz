@@ -1005,7 +1005,7 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     try {
       const [chatResult] = await Promise.allSettled([
         // Ücretsiz sohbet: Stop ends that conversation's free round only (27 Nov).
-        Promise.resolve().then(() => window.pywebview.api.chat_cancel(document.body.classList.contains('free-chat') ? currentConvId : '')),
+        Promise.resolve().then(() => window.pywebview.api.chat_cancel(document.body?.classList?.contains?.('free-chat') ? currentConvId : '')),
         Promise.resolve().then(() => window.pywebview.api.cancel_request())
       ]);
       if (chatResult.status === 'fulfilled' && chatResult.value?.status === 'ok') {
