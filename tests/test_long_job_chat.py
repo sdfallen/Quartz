@@ -245,7 +245,7 @@ class PermissionLevelTests(LongJobChatTests):
         for full, level in ((True, "full"), (False, "project")):
             chat = FakeChat(self.project, replies=[("completed", "Tamam.", "claude")])
             with patch("core.long_job.keep_awake"):
-                chat._start_planned_job("c1", spec, {"full_access": full})
+                chat._start_planned_job("c1", spec, {"full_access": full, "generation": 0})
                 job_id = next(iter(chat._jobs()))
                 self.assertEqual(self.wait_done(chat, job_id), "done")
             self.assertEqual(chat._jobs()[job_id].ledger.data["permission_level"], level)

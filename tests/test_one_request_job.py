@@ -111,7 +111,7 @@ class PlanTests(unittest.TestCase):
             root.mkdir()
             spec = job_spec("Baştan sona bir oyun yap", [], root, "1125-1200", full_access=True)
             self.assertIsNone(spec["verify"])
-            ledger = JobLedger.create({**spec, "project_path": str(root)})
+            ledger = JobLedger.create({**spec, "project_path": str(root), "permission_level": "full"})
             self.assertIn("tanımlanmadı", run_verify(ledger, threading.Event())["summary"])
             (root / "tests").mkdir()
             (root / "tests" / "__init__.py").write_text("", encoding="utf-8")
@@ -578,7 +578,14 @@ class FidesReviewRegressionTests(unittest.TestCase):
             chat._active_turn = {"turn_id": "t-plan", "status": "cancelled"}
             chat._start_planned_job("c1", {"goal": "x"}, {"plan_turn": "t-plan"}, settle=0, tries=1)
             chat._active_turn = {"turn_id": "other", "status": "running"}
-            chat._start_planned_job("c1", {"goal": "x"}, {"plan_turn": "t-plan"}, settle=0, tries=2)
+            chat._start_planned_job("c1", {"goal": "x"}, {"plan_turn": "t-plan", "generation": 0},
+                                    settle=0, tries=2)
+            # Re-review: a Stop after the plan, then another turn that finished, still ends it.
+            chat._active_turn = {"turn_id": "newer-turn", "status": "completed"}
+            chat._plan_generation = 1
+            chat._start_planned_job("c1", {"goal": "x"}, {"plan_turn": "old-plan", "generation": 0},
+                                    settle=0, tries=1)
+            chat._start_planned_job("c1", {"goal": "x"}, {"plan_turn": "old-plan"}, settle=0, tries=1)
         self.assertEqual(started, [])
         notes = [m["content"] for m in chat.store.conv["messages"]]
         self.assertTrue(any("durduruldu" in n for n in notes))
@@ -615,3 +622,52 @@ class FidesReviewRegressionTests(unittest.TestCase):
         source = (Path(__file__).resolve().parents[1] / "core" / "single_instance.py").read_text(encoding="utf-8")
         self.assertIn("CreateMutexW.restype = wintypes.HANDLE", source)
         self.assertIn("FindWindowW.restype = wintypes.HWND", source)
+
+
+class FidesReReviewTests(unittest.TestCase):
+    """Fides's re-review 26 Nov (handoff 20261126-0314)."""
+
+    def test_f1_an_old_project_ledger_with_a_check_runs_no_command(self):
+        import threading
+        from core.long_job import JobLedger, run_verify
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "p").mkdir()
+            ledger = JobLedger.create({"goal": "x", "project_path": str(Path(directory) / "p"), "hours": 1,
+                                       "verify": ["npm.cmd", "test"], "auto_check": True,
+                                       "permission_level": "project",
+                                       "milestones": [{"title": "T", "acceptance": "ok"}]},
+                                      root=Path(directory) / "jobs")
+            with patch("subprocess.Popen", side_effect=AssertionError("a command ran")) as popen:
+                result = run_verify(ledger, threading.Event())
+            self.assertEqual(popen.call_count, 0)
+        self.assertTrue(result["ok"])
+
+    def review(self, state, reply):
+        import threading
+        from tests.test_long_job_chat import FakeChat
+        from core.long_job import JobLedger
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict("os.environ", {"QUARTZ_JOBS_HOME": str(Path(directory) / "jobs")}), \
+                patch("core.agent_limits.snapshot", return_value={}):
+            project = Path(directory) / "p"
+            project.mkdir()
+            chat = FakeChat(project, replies=[(state, reply, "codex")])
+            ledger = JobLedger.create({"goal": "x", "project_path": str(project), "hours": 1,
+                                       "conversation_id": "c1", "milestones": [{"title": "T", "acceptance": "ok"}]})
+            return chat._job_accept(ledger, ledger.data["milestones"][0], "claude", {"ok": True},
+                                    threading.Event())["ok"]
+
+    def test_f3_only_the_verdict_alone_on_the_last_line_of_a_completed_turn(self):
+        self.assertIsNone(self.review("completed", "Denedim.\nKABUL: EVET diyemem; uygulamayı denemedim."))
+        self.assertIsNone(self.review("completed", "KABUL: EVET — testler yapılmadı"))
+        self.assertIsNone(self.review(None, "KABUL: EVET"))
+        self.assertTrue(self.review("completed", "Hepsi yerinde.\n**KABUL: EVET**"))
+        self.assertFalse(self.review("completed", "Skor yok.\nKABUL: HAYIR — skor tablosu eksik"))
+
+    def test_f4_a_trailing_stop_stops_the_job(self):
+        self.assertEqual(job_message_kind("15 dakika daha çalışma, dur"), "stop")
+        self.assertEqual(job_message_kind("tamam, durdur"), "stop")
+        # "iptal etme" stops nothing and skips nothing; it stays a note for the team.
+        self.assertNotIn(job_message_kind("3. adımı iptal etme, devam et"), {"stop", "pause", "skip"})
+        self.assertEqual(job_message_kind("dur"), "stop")
+        self.assertEqual(job_message_kind("ne durumda?"), "status")

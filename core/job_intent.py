@@ -297,6 +297,10 @@ def job_message_kind(text: str) -> str:
     Polite fillers around the words count too (Eos, 25 Nov: "Peki şu an ne durumda?",
     "Şimdilik durdur lütfen")."""
     folded = _FILLER.sub("", turkish_fold(str(text or "")).strip()).strip()
+    # Fides re-review 26 Nov (F4): "15 dakika daha çalışma, dur" is a Stop; its last clause decides.
+    last_clause = re.split(r"[,;.!?]+", folded.rstrip(" .!?"))[-1].strip()
+    if last_clause != folded and _STOP.match(last_clause):
+        return "stop"
     if _STATUS.match(folded):
         return "status"
     if _STOP.match(folded):

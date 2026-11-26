@@ -415,6 +415,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
     def close(self):
         with self._lock:
             self._closed = True
+            self._plan_generation = self.__dict__.get("_plan_generation", 0) + 1
         for job in list(self.__dict__.get("_long_jobs", {}).values()):
             job.halt()  # resumable after restart; Stop is the user's only final word
         session = self.__dict__.get("_desktop_session")
@@ -1412,6 +1413,8 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
 
     def cancel_active(self) -> dict:
         with self._lock:
+            # A planned job waiting to start belongs to the generation before this Stop (F5).
+            self._plan_generation = self.__dict__.get("_plan_generation", 0) + 1
             turn = self._active_turn
             if not turn:
                 return {"cancelled":False, "stop_receipt":{"status":"confirmed", "runs":{}, "worker_pending":False}}

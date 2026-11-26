@@ -35,7 +35,11 @@ def create_project_folder(folder) -> None:
     # Identity for this repository only; the user's own Git settings are never touched.
     git("config", "user.name", "SpeS")
     git("config", "user.email", "spes@localhost")
-    git("commit", "-q", "--allow-empty", "-m", "SpeS: yeni proje")
+    for _ in range(3):
+        if git("commit", "-q", "--allow-empty", "-m", "SpeS: yeni proje").returncode == 0:
+            return
+        time.sleep(0.5)
+    raise RuntimeError("Yeni projenin ilk Git kaydı oluşturulamadı.")
 
 
 class JobPlannerMixin:
@@ -83,8 +87,10 @@ class JobPlannerMixin:
                     **(message.get("metadata") or {}), "job_plan": True, "status": "completed"})
             self._finish_turn(msg_id, "completed")
             plan_turn = (self._active_turn or {}).get("turn_id")
+            generation = self.__dict__.get("_plan_generation", 0)
         threading.Thread(target=self._start_planned_job, name="spes-job-plan",
-                         args=(cid, spec, {**request, "plan_turn": plan_turn}), daemon=True).start()
+                         args=(cid, spec, {**request, "plan_turn": plan_turn, "generation": generation}),
+                         daemon=True).start()
 
     def _start_planned_job(self, cid, spec, request, settle=0.5, tries=60):
         """The job starts once the planning turn has let go; it never runs beside a turn.
@@ -99,12 +105,16 @@ class JobPlannerMixin:
             if self.__dict__.get("_closed") or not self._job_turn_busy():
                 break
             time.sleep(settle)
-        if self.__dict__.get("_closed"):
-            return
         with self._lock:
+            if self.__dict__.get("_closed"):
+                return
             turn = self._active_turn or {}
-            stopped = bool(request.get("plan_turn") and turn.get("turn_id") == request.get("plan_turn")
-                           and turn.get("status") in {"cancelled", "cancelling"})
+            # Fides re-review 26 Nov (F5): any Stop or close since the plan finished ends it,
+            # even after another turn replaced the plan's; a missing generation is a refusal.
+            stopped = (request.get("generation") is None
+                       or request.get("generation") != self.__dict__.get("_plan_generation", 0)
+                       or (request.get("plan_turn") and turn.get("turn_id") == request.get("plan_turn")
+                           and turn.get("status") in {"cancelled", "cancelling"}))
         if stopped:
             return refuse("plan turu durduruldu.")
         if self._job_turn_busy():

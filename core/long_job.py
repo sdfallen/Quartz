@@ -218,7 +218,13 @@ def keep_awake():
 
 
 def run_verify(ledger: JobLedger, stop: threading.Event) -> dict:
-    """The job's own check, defined by the user when the job started (never by an agent)."""
+    """The job's own check, defined by the user when the job started (never by an agent).
+
+    Fides re-review 26 Nov (F1): ledgers written by an earlier build may carry a check under
+    Proje permission ("yalnız dosya yazar, komut çalıştıramaz"). The check is a command on the
+    host, so it runs only under Tam Yetki, decided here and not by the stored spec."""
+    if ledger.data.get("permission_level") != "full":
+        return {"ok": True, "summary": "Kontrol komutu tanımlanmadı (Proje izninde SpeS komut çalıştırmaz)."}
     argv = ledger.data.get("verify")
     if not argv and ledger.data.get("auto_check"):
         from core.job_intent import detected_check
