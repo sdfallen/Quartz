@@ -115,6 +115,10 @@ def unconfirmed() -> list:
     reasons = []
     with _UNCONFIRMED_LOCK:
         for token, record in list(_UNCONFIRMED.items()):
+            # Fides's acceptance review: a look still running is never pruned, whatever its root does.
+            if record.get("active"):
+                reasons.append("başka bir program gözlemi sürüyor")
+                continue
             shot = record.get("capture")
             if shot is not None and not shot.finished(0):
                 reasons.append("ekran yakalama işlemi sürüyor")
@@ -366,7 +370,7 @@ def observe(entry, project, evidence_dir, stop, interpreter, *, watch=WATCH_SECO
         token = f"{proc.pid}-{time.monotonic_ns()}"
         with _UNCONFIRMED_LOCK:
             _UNCONFIRMED[token] = {"members": {proc.pid: _create_time(proc.pid) or 0.0}, "capture": None,
-                                   "unknown": False}
+                                   "unknown": False, "active": True}
         started = time.time()
         if stop.is_set():
             receipt["termination_reason"] = "cancelled"
@@ -414,6 +418,8 @@ def observe(entry, project, evidence_dir, stop, interpreter, *, watch=WATCH_SECO
                 return (owner == pid and created is not None and _create_time(pid) == created
                         and pid in _tree_pids(proc, started))
             shot = CaptureJob(hwnd, review / "window.png", same_window, capture=capture)
+            with _UNCONFIRMED_LOCK:  # the capture is owned on record from the moment it exists
+                _UNCONFIRMED.setdefault(token, {"members": {}, "unknown": True, "active": True})["capture"] = shot
             result = shot.wait(stop)
             receipt["capture_state"] = result["state"]
             if result["state"] in {"captured", "blank"}:
@@ -445,13 +451,14 @@ def observe(entry, project, evidence_dir, stop, interpreter, *, watch=WATCH_SECO
                     except Exception as exc:
                         receipt["cleanup_error"] = type(exc).__name__
                 with _UNCONFIRMED_LOCK:
-                    record = _UNCONFIRMED.get(token)
-                    if record is not None:
-                        if members is None:
-                            record["unknown"] = True
-                        else:
-                            record["members"] = {**record["members"], **members}
-                        record["capture"] = shot
+                    # Never skipped: a missing record is made again rather than dropped.
+                    record = _UNCONFIRMED.setdefault(token, {"members": {}, "capture": None, "unknown": False,
+                                                             "active": True})
+                    if members is None:
+                        record["unknown"] = True
+                    else:
+                        record["members"] = {**record.get("members", {}), **members}
+                    record["capture"] = shot
                 try:
                     proc.wait(timeout=3)
                 except subprocess.TimeoutExpired:
@@ -469,10 +476,12 @@ def observe(entry, project, evidence_dir, stop, interpreter, *, watch=WATCH_SECO
                 confirmed = (proc.poll() is not None and left is not None and not left and capture_done
                              and "cleanup_error" not in receipt)
                 receipt["cleanup_state"] = "confirmed" if confirmed else "pending"
-                if confirmed:
-                    with _UNCONFIRMED_LOCK:
+                with _UNCONFIRMED_LOCK:
+                    if confirmed:
                         _UNCONFIRMED.pop(token, None)
-                else:
+                    elif token in _UNCONFIRMED:
+                        _UNCONFIRMED[token]["active"] = False  # finished, still pending
+                if not confirmed:
                     receipt["cleanup_left"] = sorted(left)[:20] if left else []
                     if not capture_done:
                         receipt["cleanup_left_capture"] = True
@@ -480,6 +489,9 @@ def observe(entry, project, evidence_dir, stop, interpreter, *, watch=WATCH_SECO
             # The record taken at the start stays: a failed cleanup never drops ownership.
             receipt["cleanup_state"] = "pending"
             receipt["cleanup_error"] = type(exc).__name__
+            with _UNCONFIRMED_LOCK:
+                if token is not None:
+                    _UNCONFIRMED.setdefault(token, {"members": {}, "capture": shot, "unknown": True})["active"] = False
         finally:
             if log is not None:
                 log.close()

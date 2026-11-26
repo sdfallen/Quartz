@@ -383,6 +383,31 @@ class PendingOwnershipTests(unittest.TestCase):
                              for p in __import__("psutil").process_iter(["cmdline"])
                              if p.info.get("cmdline")), "the job was still closed: nothing of it runs")
 
+    def test_rr1_a_query_during_the_look_never_prunes_it(self):
+        # Fides's acceptance review: the root ends by itself while the capture still waits, and
+        # another request asks the gate meanwhile.
+        (self.project / "main.py").write_text("import time\ntime.sleep(0.8)\n", encoding="utf-8")
+        release, during = threading.Event(), {}
+
+        def capture(hwnd, result, verify):
+            time.sleep(1.0)  # the root is gone by now
+            during["guard"] = lc.unconfirmed()
+            during["records"] = len(lc._UNCONFIRMED)
+            release.wait(30)
+        try:
+            with patch.object(lc, "CAPTURE_SECONDS", 2.5):
+                receipt = self.look(windows=lambda pids: [(1, min(pids), "T")], settle=0.1, capture=capture)
+            self.assertEqual(during["records"], 1, "the running look stayed on record")
+            self.assertIn("başka bir program gözlemi sürüyor", during["guard"])
+            self.assertEqual(receipt["cleanup_state"], "pending")
+            self.assertIn("ekran yakalama işlemi sürüyor", lc.unconfirmed())
+        finally:
+            release.set()
+        deadline = time.monotonic() + 5
+        while lc.unconfirmed() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(lc.unconfirmed(), [])
+
 
 if __name__ == "__main__":
     unittest.main()
