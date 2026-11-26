@@ -1319,3 +1319,22 @@ class OpenFolderTests(unittest.TestCase):
                     chat.job_control("yok-boyle-bir-is", "open_folder")
         self.assertEqual(opened, [str(project.resolve())])
         self.assertEqual(result["status"], "opened")
+
+    def test_an_empty_or_relative_ledger_path_opens_nothing(self):
+        # Fides 26 Nov (P3): an empty path became Path('.') and opened SpeS's working folder.
+        from tests.test_long_job_chat import FakeChat
+        from core.long_job import JobError, JobLedger
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict("os.environ", {"QUARTZ_JOBS_HOME": str(Path(directory) / "jobs")}):
+            project = Path(directory) / "p"
+            project.mkdir()
+            chat = FakeChat(project, replies=[])
+            ledger = JobLedger.create({"goal": "Sayaç", "project_path": str(project), "hours": 1,
+                                       "conversation_id": "c1", "milestones": [{"title": "T", "acceptance": "ok"}]})
+            opened = []
+            for broken in ("", "goreli\klasor"):
+                ledger.data["project_path"] = broken
+                ledger.save()
+                with patch("os.startfile", side_effect=opened.append, create=True), self.assertRaises(JobError):
+                    chat.job_control(ledger.data["id"], "open_folder")
+        self.assertEqual(opened, [])

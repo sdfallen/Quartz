@@ -158,13 +158,18 @@ class LongJobChatMixin:
             (l for l in JobLedger.all() if l.data["id"] == str(job_id or "")), None)
         if ledger is None:
             raise JobError("Bu iş bulunamadı.")
-        folder = Path(str(ledger.data.get("project_path") or ""))
+        # Fides 26 Nov (P3): an empty or relative path in an old or broken ledger is refused, never
+        # read as SpeS's own working folder.
+        raw = str(ledger.data.get("project_path") or "").strip()
+        if not raw or not Path(raw).is_absolute():
+            raise JobError("İşin klasör kaydı geçersiz.")
+        folder = Path(raw).resolve()
         if not folder.is_dir():
             raise JobError("İşin klasörü artık yok.")
         opener = getattr(os, "startfile", None)
         if opener is None:
             raise JobError("Klasör yalnız Windows'ta açılır.")
-        opener(str(folder.resolve()))
+        opener(str(folder))
         return {"status": "opened", "path": str(folder)}
 
     def _job_launch(self, ledger, milestone, stop):
