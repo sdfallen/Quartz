@@ -1132,7 +1132,8 @@ class OutputsReportTests(unittest.TestCase):
         from tests.test_long_job import Clock, nullctx
         from core.long_job import JobLedger, LongJob, finish_report
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "p"
+            # The ledger keeps the resolved path; Windows CI's temp folder is an 8.3 short name.
+            root = Path(directory).resolve() / "p"
             (root / "tmp").mkdir(parents=True)
             for name in ("faturalar.xlsx", "rapor.md", "tmp/build.mjs", ".gitignore"):
                 (root / name).write_text("x", encoding="utf-8")
