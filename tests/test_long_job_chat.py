@@ -73,9 +73,9 @@ class FakeChat(LongJobChatMixin, JobPlannerMixin):
         return {"assistant_message": note}
 
     def send_message(self, text, agent=None, conversation_id=None, write=False, confirm_write=False, full_access=False,
-                     origin=None):
+                     origin=None, read_root=None):
         self.sent.append({"agent": agent, "write": write, "confirm": confirm_write, "text": text, "full": full_access,
-                          "origin": origin})
+                          "origin": origin, "read_root": read_root})
         state, reply, sender = self.replies.pop(0)
         user = self.store.append_message("c1", "user", text, sender="user",
                                          metadata={"task_id": f"t{len(self.sent)}", "instruction_state": state})

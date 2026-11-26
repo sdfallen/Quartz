@@ -10,7 +10,8 @@ import re
 import threading
 import time
 
-from core.long_job import (JobError, JobLedger, LongJob, PERSONA, milestone_prompt, report_excerpt, resumable)
+from core.long_job import (JobError, JobLedger, LongJob, PERSONA, milestone_prompt, report_excerpt, resumable,
+                           source_evidence, source_read_root)
 
 LIMIT_WORDS = ("kota hatası", "rate limit", "usage limit", "quota", "429", "kullanım sınırı")
 # Not the work failing but the agent not being reachable (live 15 Nov).
@@ -259,13 +260,23 @@ class LongJobChatMixin:
                   + ("Bu bir dosya/veri işi: çıktı dosyalarını açıp oku; sayılar ve örnek satırlar KANIT ile ve "
                      "kaynaklarla tutarlı mı, eksik kayıt var mı bak. Açamadığın ikili dosyayı kabul gerekçesi sayma.\n"
                      + ("KAYNAKLAR: " + "; ".join(ledger.data["sources"]) + "\n" if ledger.data.get("sources") else "")
+                     # Live 26 Nov: the reviewer could not open the source folder and refused the
+                     # milestone three times. SpeS reads the sources itself and says what it saw.
+                     + (source_evidence(ledger.data) + "\nKaynak klasörünü okuyamazsan dosya sayısı, adlar ve "
+                        "özetler için bu SpeS denetimini kanıt say; içeriği çıktılar ve yazıcının KANIT'ındaki "
+                        "kaynak alıntılarıyla karşılaştır.\n" if ledger.data.get("sources") else "")
                      if ledger.data.get("kind") == "data" else "")
                   + "Projedeki dosyaları okuyarak ölçütün gerçekten karşılandığını incele: istenen her şey var mı, "
                     "kod çalışacak gibi mi, yer tutucu/TODO/eksik kaldı mı. Yazıcının KANIT bölümündeki çıktılar "
                     "dosyalarla tutarlıysa kanıt sayılır; tutarsızsa ya da yoksa söyle. En fazla 5 kısa cümle yaz ve SON "
                     "SATIRA tam olarak 'KABUL: EVET' ya da 'KABUL: HAYIR — <eksik olan>' yaz. Emin değilsen HAYIR de.")
         try:
-            sent = self.send_message(prompt, agent=reviewer, conversation_id=cid, write=False, origin="long_job")
+            # Fatum (Claude) can also be given the source folder to read; the others read the
+            # project only (for them an extra folder would replace it).
+            read_root = (source_read_root(ledger.data)
+                         if ledger.data.get("kind") == "data" and reviewer == "claude" else None)
+            sent = self.send_message(prompt, agent=reviewer, conversation_id=cid, write=False, origin="long_job",
+                                     **({"read_root": read_root} if read_root else {}))
         except Exception as exc:
             return {"ok": None, "by": reviewer, "summary": str(exc)[:300]}
         user_id = sent["user_message"]["id"]

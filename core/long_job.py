@@ -188,6 +188,42 @@ def source_fingerprint(paths) -> tuple[dict, dict]:
     return manifest, scope
 
 
+def source_evidence(ledger_data, limit: int = 40) -> str:
+    """SpeS's own look at the sources for a reviewer who may not read them: how many files,
+    each one's name, size and fingerprint, and whether anything changed since the start."""
+    if not ledger_data.get("sources"):
+        return ""
+    files, total = source_files(ledger_data["sources"])
+    manifest = ledger_data.get("source_manifest") or {}
+    lines = [f"SPES KAYNAK DENETİMİ (SpeS'in kendi okuması, güvenilir): {total} dosya."]
+    for path in files[:limit]:
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = "?"
+        mark = manifest.get(str(path), "")
+        lines.append(f"- {path} · {size} bayt" + (f" · sha256 {mark[:16]}" if len(mark) == 64 else ""))
+    if total > limit:
+        lines.append(f"- … ve {total - limit} dosya daha")
+    changes, unverified = source_check(ledger_data)
+    if changes:
+        lines.append("Başlangıçtan beri kaynaklarda DEĞİŞİKLİK: " + "; ".join(changes[:5]))
+    elif changes is not None:
+        lines.append("Başlangıçtan beri kaynaklarda fark yok" + (" (doğrulanamayan: " + "; ".join(unverified) + ")"
+                                                               if unverified else "") + ".")
+    return "\n".join(lines)
+
+
+def source_read_root(ledger_data):
+    """The one source folder a reviewer may be given to read (a file's own folder), or None."""
+    for raw in ledger_data.get("sources") or ():
+        path = Path(str(raw))
+        folder = path if path.is_dir() else path.parent
+        if folder.is_dir():
+            return str(folder)
+    return None
+
+
 def source_changes(ledger_data) -> list[str] | None:
     """What changed in the sources since the job began; None when SpeS took no fingerprint."""
     return source_check(ledger_data)[0]

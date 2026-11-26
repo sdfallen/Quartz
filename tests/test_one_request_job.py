@@ -1047,3 +1047,79 @@ class FidesDataReReviewTests(unittest.TestCase):
         for text in ("Tüm faturalarımı tabloya aktar; kaynak dosyalara dokunma",
                      "Tüm faturaları tabloya aktar, kaynakları silmeni istemiyorum"):
             self.assertEqual(job_kind(text), "data", text)
+
+
+class SourceReviewTests(unittest.TestCase):
+    """Live 26 Nov 12:36: Fatum could not open the source folder and refused m1 three times."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.src, self.project = root / "kaynak", root / "p"
+        self.src.mkdir()
+        self.project.mkdir()
+        for index in range(3):
+            (self.src / f"FTR-{index}.pdf").write_bytes(f"%PDF {index}".encode())
+
+    def ledger(self):
+        from core.long_job import JobLedger, source_fingerprint
+        manifest, scope = source_fingerprint([str(self.src)])
+        return JobLedger.create({"goal": "F", "project_path": str(self.project), "hours": 1, "kind": "data",
+                                 "conversation_id": "c1", "sources": [str(self.src)], "source_manifest": manifest,
+                                 "source_scope": scope, "milestones": [{"title": "T", "acceptance": "csv"}]},
+                                root=Path(self.tmp.name) / "jobs")
+
+    def test_spes_tells_the_reviewer_what_it_saw_in_the_sources(self):
+        from core.long_job import source_evidence
+        evidence = source_evidence(self.ledger().data)
+        self.assertIn("SPES KAYNAK DENETİMİ", evidence)
+        self.assertIn("3 dosya", evidence)
+        self.assertIn("FTR-2.pdf", evidence)
+        self.assertIn("sha256", evidence)
+        self.assertIn("fark yok", evidence)
+
+    def review(self, reviewer_first):
+        from tests.test_long_job_chat import FakeChat
+        import threading
+        with patch.dict("os.environ", {"QUARTZ_JOBS_HOME": str(Path(self.tmp.name) / "jobs2")}), \
+                patch("core.agent_limits.snapshot", return_value={}):
+            chat = FakeChat(self.project, replies=[("completed", "KABUL: EVET", reviewer_first)])
+            ledger = self.ledger()
+            writer = "codex" if reviewer_first == "claude" else "claude"
+            with patch.object(chat, "_job_members", return_value=[writer, reviewer_first]):
+                chat._job_accept(ledger, ledger.data["milestones"][0], writer, {"ok": True, "writer_report": "KANIT"},
+                                 threading.Event())
+        return chat.sent[-1]
+
+    def test_fatum_reviewing_gets_the_source_folder_and_everyone_gets_spes_evidence(self):
+        claude = self.review("claude")
+        self.assertEqual(claude["read_root"], str(self.src))
+        self.assertIn("SPES KAYNAK DENETİMİ", claude["text"])
+        codex = self.review("codex")
+        self.assertIsNone(codex["read_root"], "for Codex an extra folder would replace the project")
+        self.assertIn("SPES KAYNAK DENETİMİ", codex["text"])
+
+    def test_the_source_folder_reaches_only_spes_own_review_turn(self):
+        with tempfile.TemporaryDirectory() as directory:
+            chat = make_chat(directory)
+            run = TeamRun(chat)
+            with patch.object(chat, "_execute_codex_bubble", side_effect=run.codex):
+                chat.send_message("KABUL DENETİMİ", agent="claude", write=False, origin="long_job",
+                                  read_root=str(self.src))
+                cid = chat._active_turn["conversation_id"]
+                self.assertEqual(chat._turn_job_read_root(cid), str(self.src.resolve()))
+                deadline = time.monotonic() + 5
+                while chat._active_turn.get("status") == "running" and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                chat.send_message("bak", agent="claude", write=False, read_root=str(self.src))
+                self.assertIsNone(chat._turn_job_read_root(chat._active_turn["conversation_id"]),
+                                  "a user's own message never opens a folder this way")
+            chat._diagnostics.close()
+
+    def test_a_path_never_names_the_jobs_branch(self):
+        from core.job_intent import job_branch
+        (self.project / ".git").mkdir()
+        goal = str(self.src) + " klasöründeki tüm faturaları tarih sırasıyla tek bir rapora dönüştür"
+        branch = job_branch(self.project, goal, "1126-1232")
+        self.assertTrue(branch.startswith("spes/1126-1232-klasorundeki-tum-faturalari"), branch)

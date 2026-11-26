@@ -913,6 +913,11 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
     def skills_list(self):
         return self.skills.list()
 
+    def _turn_job_read_root(self, cid):
+        with self._lock:
+            turn = getattr(self, "_active_turn", None) or {}
+            return turn.get("job_read_root") if turn.get("conversation_id") == cid else None
+
     def _turn_attachments(self, cid):
         with self._lock:
             turn = getattr(self, "_active_turn", None) or {}
@@ -1084,7 +1089,8 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
     def send_message(self, text: str, agent: str | None = None,
                      conversation_id: str | None = None, write: bool = False,
                      confirm_write: bool = False, full_access: bool = False,
-                     requested_permission_level: str | None = None, origin: str | None = None) -> dict:
+                     requested_permission_level: str | None = None, origin: str | None = None,
+                     read_root: str | None = None) -> dict:
         """``origin="long_job"`` marks a milestone SpeS itself sends; it is never planned again
         and never read as the user talking to the job."""
         text = str(text or "").strip()
@@ -1326,6 +1332,9 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
                 turn_state["skill"] = skill
             if skill_install:
                 turn_state["skill_install"] = skill_install
+            if origin == "long_job" and read_root and Path(read_root).is_dir():
+                # A data job's source folder, read-only, for SpeS's own review turn (26 Nov).
+                turn_state["job_read_root"] = str(Path(read_root).resolve())
             if job_request:
                 turn_state["job_plan"] = {"planner": first_sender, "text": text, "kind": kind, "sources": sources,
                                           "full_access": bool(full_access),
@@ -2270,6 +2279,10 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
             if attached:
                 # The user's files for this turn, read-only (core.attachments).
                 dispatch_kwargs["read_root"] = attached["folder"]
+                dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
+            elif agent == "claude" and self._turn_job_read_root(cid):
+                # A data job's reviewer (Fatum) reads the sources beside the project (26 Nov).
+                dispatch_kwargs["read_root"] = self._turn_job_read_root(cid)
                 dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
         elif agent == "claude" and self._turn_attachments(cid):
             # The builder (Fatum) reads the attachments while writing the project.

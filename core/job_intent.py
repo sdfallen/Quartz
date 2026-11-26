@@ -330,7 +330,9 @@ def job_branch(project_path, goal: str, clock_text: str) -> str | None:
     root = Path(str(project_path or ""))
     if not (root / ".git").exists():
         return None
-    slug = re.sub(r"[^a-z0-9]+", "-", turkish_fold(goal))[:32].strip("-") or "is"
+    # Live 26 Nov: "spes/1126-1232-c-users-lenavo-documents-spes-pr"; a path never names the branch.
+    words = " ".join(w for w in str(goal or "").split() if "\\" not in w and "/" not in w)
+    slug = re.sub(r"[^a-z0-9]+", "-", turkish_fold(words))[:32].strip("-") or "is"
     return f"spes/{clock_text}-{slug}"
 
 
