@@ -1314,7 +1314,9 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
             if job_request:
                 turn_state["job_plan"] = {"planner": first_sender, "text": text,
                                           "full_access": bool(full_access),
-                                          **({"new_project": new_project.get("path")} if new_project else {})}
+                                          **({"new_project": new_project.get("path"),
+                                              "new_project_no_git": not new_project.get("git_ready", True)}
+                                             if new_project else {})}
             # "Bitince haber ver": SpeS writes a short report when this turn ends (core.finish_report).
             from core.finish_report import wants_finish_report
             if wants_finish_report(text):

@@ -19,25 +19,32 @@ def plan_text(milestones) -> str:
     return "İş planı:\n" + "\n".join(lines)
 
 
-def create_project_folder(folder) -> None:
-    """The folder, a Git repository and one empty commit, so the job's branch has a base."""
+def create_project_folder(folder) -> bool:
+    """The folder, a Git repository and one empty commit, so the job's branch has a base.
+
+    True when the repository is ready; False when Git could not set it up (the folder stays
+    and the job runs without commits, which the plan says)."""
+    import os
     import subprocess
     from pathlib import Path
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=False)
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    # Fides 26 Nov: GIT_CONFIG_COUNT/KEY/VALUE handed down by a parent process made "git init"
+    # fail ("missing config value"). The new repository gets Git without them.
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_CONFIG")}
 
     def git(*args):
         return subprocess.run(["git", "-C", str(folder), *args], capture_output=True, text=True,
-                              timeout=60, check=False, creationflags=flags)
+                              timeout=60, check=False, creationflags=flags, env=env)
     if git("init", "-q").returncode != 0:
-        return  # still a folder; the job simply runs without commits
+        return False
     # Identity for this repository only; the user's own Git settings are never touched.
     git("config", "user.name", "SpeS")
     git("config", "user.email", "spes@localhost")
     for _ in range(3):
         if git("commit", "-q", "--allow-empty", "-m", "SpeS: yeni proje").returncode == 0:
-            return
+            return True
         time.sleep(0.5)
     raise RuntimeError("Yeni projenin ilk Git kaydı oluşturulamadı.")
 
@@ -48,10 +55,10 @@ class JobPlannerMixin:
         conversation's project before the plan is written."""
         from core.job_intent import new_project_folder
         folder = new_project_folder(text, time.strftime("%m%d-%H%M"))
-        create_project_folder(folder)
+        git_ready = create_project_folder(folder)
         project = self.agent_service.projects.add(str(folder))
         self.store.update_project(conv["id"], project["id"])
-        return project
+        return {**project, "git_ready": git_ready}
 
     def _run_job_plan(self, cid, msg_id, request, project_id):
         planner = (self._active_turn or {}).get("job_plan", {}).get("planner") or "claude"
@@ -81,6 +88,7 @@ class JobPlannerMixin:
             message = next((m for m in self.store.get(cid).get("messages", []) if m["id"] == msg_id), None)
             if message is not None:
                 note = (f"Yeni proje klasörü açıldı: {request['new_project']}\n" if request.get("new_project") else "") \
+                    + ("Git kurulamadı; adımlar commit'lenmeyecek.\n" if request.get("new_project_no_git") else "") \
                     + plan_text(spec["milestones"]) + ("" if milestones else
                                                        "\n(Plan okunamadı; istek tek kilometre taşı olarak yapılacak.)")
                 self.store.update_message_content(cid, msg_id, note, metadata={
@@ -120,7 +128,7 @@ class JobPlannerMixin:
         if self._job_turn_busy():
             return refuse("sohbet hâlâ meşgul; isteği yeniden gönder.")
         try:
-            self.job_start({**spec, "conversation_id": cid,
+            self.job_start({**spec, "conversation_id": cid, "plan_generation": request.get("generation"),
                             "permission_level": "full" if request.get("full_access") else "project"})
         except (JobError, ValueError) as exc:
             self.store.append_message(cid, "assistant", f"İş başlatılamadı: {exc}", sender="quartz", metadata={

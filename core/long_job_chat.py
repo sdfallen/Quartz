@@ -48,22 +48,31 @@ class LongJobChatMixin:
         if not isinstance(project, dict) or not project.get("path") or project.get("protected") \
                 or project.get("workflow") == "warband":
             raise JobError("Bu sohbete bağlı, yazılabilir bir proje yok.")
-        if any(job.ledger.data["status"] in {"running", "waiting_limit", "paused"} for job in self._jobs().values()):
-            raise JobError("Zaten sürmekte olan bir uzun iş var; önce onu bitir ya da durdur.")
+        generation = spec.pop("plan_generation", None)
         spec["conversation_id"] = conv["id"]
         spec["project_path"] = project["path"]  # the conversation's project, never a free path
         # The models the user chose are recorded once; SpeS never switches them by itself.
         spec["models"] = {agent: self.store.get_agent_model(conv["id"], agent)
                           for agent in ("claude", "codex", "antigravity")}
-        ledger = JobLedger.create(spec)
-        job = self._make_job(ledger)
-        self._jobs()[ledger.data["id"]] = job
+        # Fides acceptance review 26 Nov (F5): the plan's generation, the close flag, the
+        # one-job rule, the ledger and the job's registration and start are one step under the
+        # lock Stop (cancel_active) and close() take, so a Stop can no longer slip in between.
+        with self._lock:
+            if generation is not None and (self.__dict__.get("_closed")
+                                           or generation != self.__dict__.get("_plan_generation", 0)):
+                raise JobError("Plan durduruldu; iş başlatılmadı.")
+            if any(job.ledger.data["status"] in {"running", "waiting_limit", "paused"}
+                   for job in self._jobs().values()):
+                raise JobError("Zaten sürmekte olan bir uzun iş var; önce onu bitir ya da durdur.")
+            ledger = JobLedger.create(spec)
+            job = self._make_job(ledger)
+            self._jobs()[ledger.data["id"]] = job
+            job.start()
         self._job_note(ledger, "Uzun iş başladı: " + ledger.data["goal"][:200] + " · "
                        + f"{len(ledger.data['milestones'])} kilometre taşı, en çok {_duration(ledger.data['hours'])}"
                        + (" · çökünce kendiliğinden devam eder" if ledger.data["auto_resume"] else "")
                        + (" · Tam Yetki: yazıcı komut çalıştırabilir" if ledger.data.get("permission_level") == "full"
                           else " · Proje izni: yazıcı yalnız dosya yazar, komut çalıştıramaz") + ".")
-        job.start()
         return ledger.public()
 
     def job_control(self, job_id: str, action: str) -> dict:

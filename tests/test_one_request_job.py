@@ -671,3 +671,52 @@ class FidesReReviewTests(unittest.TestCase):
         self.assertNotIn(job_message_kind("3. adımı iptal etme, devam et"), {"stop", "pause", "skip"})
         self.assertEqual(job_message_kind("dur"), "stop")
         self.assertEqual(job_message_kind("ne durumda?"), "status")
+
+
+class FidesAcceptanceTests(unittest.TestCase):
+    """Fides's acceptance review 26 Nov (handoff 20261126-0346)."""
+
+    def test_f5_a_stop_between_the_checks_and_the_start_wins(self):
+        # Fides's barrier: the delayed start passed its own checks, then Stop ran, then it went on.
+        import threading
+        from tests.test_long_job_chat import FakeChat
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict("os.environ", {"QUARTZ_JOBS_HOME": str(Path(directory) / "jobs")}), \
+                patch("core.agent_limits.snapshot", return_value={}):
+            project = Path(directory) / "p"
+            project.mkdir()
+            chat = FakeChat(project, replies=[])
+            chat._plan_generation = 0
+            reached, release = threading.Event(), threading.Event()
+            calls = {"n": 0}
+
+            def busy():
+                calls["n"] += 1
+                if calls["n"] == 2:  # the second check, after the generation test
+                    reached.set()
+                    release.wait(5)
+                return False
+            chat._job_turn_busy = busy
+            spec = {"goal": "x", "hours": 1, "milestones": [{"title": "T", "acceptance": "ok"}]}
+            worker = threading.Thread(target=chat._start_planned_job,
+                                      args=("c1", spec, {"generation": 0}), kwargs={"settle": 0, "tries": 1})
+            worker.start()
+            self.assertTrue(reached.wait(5))
+            with chat._lock:  # what cancel_active does
+                chat._plan_generation += 1
+            release.set()
+            worker.join(5)
+        self.assertEqual(chat._jobs(), {})
+        self.assertTrue(any("durduruldu" in m["content"] for m in chat.store.conv["messages"]))
+
+    def test_git_ignores_config_handed_down_by_a_parent(self):
+        import subprocess
+        from core.job_planner import create_project_folder
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict("os.environ", {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.x"}):
+            folder = Path(directory) / "yeni"
+            self.assertTrue(create_project_folder(folder))
+            log = subprocess.run(["git", "-C", str(folder), "log", "--oneline"], capture_output=True, text=True,
+                                 env={k: v for k, v in __import__("os").environ.items()
+                                      if not k.startswith("GIT_CONFIG")})
+        self.assertIn("SpeS: yeni proje", log.stdout)
