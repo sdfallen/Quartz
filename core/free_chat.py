@@ -245,6 +245,7 @@ EXPLAIN = {
     "cancelled": "durduruldu",
     "other": "beklenmeyen bir hata verdi",
     "no_model": "ücretsiz bir model bulunamadı",
+    "not_allowed": "iznin kapalı olduğu için gönderilmedi",
 }
 FALLS_THROUGH = {"quota", "key", "unreachable", "no_model"}
 
@@ -269,7 +270,7 @@ class FreeChat:
             {"id": c, **{k: CHANNELS[c][k] for k in ("label", "persona", "key_page", "privacy")},
              "connected": self.store.has(c), **data["channels"][c]} for c in data["order"]]}
 
-    def connect(self, channel: str, key: str, send=True, backup=True) -> dict:
+    def connect(self, channel: str, key: str, send=False, backup=False) -> dict:
         """Check the key with one small request (the model list), then store it."""
         if channel not in CHANNELS:
             raise FreeChatError("Bilinmeyen kanal.")
@@ -301,9 +302,15 @@ class FreeChat:
         return [c for c in data["order"] if data["channels"][c]["send"] and self.store.has(c)]
 
     def backups(self, exclude=()) -> list:
+        """Fides FS3: a backup needs the send consent too; "backup" only adds the fallback role."""
         data = self.settings.read()
-        return [c for c in data["order"] if c not in exclude and data["channels"][c]["backup"]
-                and self.store.has(c)]
+        return [c for c in data["order"] if c not in exclude and data["channels"][c]["send"]
+                and data["channels"][c]["backup"] and self.store.has(c)]
+
+    def allowed(self, channel: str, as_backup: bool) -> bool:
+        """Read at the moment of sending, so a consent withdrawn during a round holds at once."""
+        consent = self.settings.read()["channels"].get(channel) or {}
+        return bool(consent.get("send") and (consent.get("backup") or not as_backup) and self.store.has(channel))
 
     def ask(self, channel: str, messages: list, cancel: threading.Event) -> str:
         if cancel.is_set():
@@ -330,6 +337,9 @@ class FreeChat:
             if cancel.is_set():
                 attempts.append({"channel": name, "result": "cancelled"})
                 return {"text": "", "channel": None, "attempts": attempts, "outcome": "cancelled"}
+            if not self.allowed(name, as_backup=name != channel):
+                attempts.append({"channel": name, "result": "not_allowed"})
+                continue
             started = time.time()
             try:
                 text = self.ask(name, messages, cancel)

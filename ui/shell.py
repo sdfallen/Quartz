@@ -576,7 +576,7 @@ SHELL_MARKUP = r"""
       <button type="button" class="free-sheet-close" id="freeSheetClose" aria-label="Kapat">@@i:close@@</button>
     </header>
     <div class="free-channels" id="freeChannels" aria-live="polite"></div>
-    <p class="free-sheet-note">Ücretsiz modda yalnız sohbet edilir: dosya, komut, internet ve bilgisayar kontrolü kapalıdır. Ücretsiz kotalar küçüktür; biri dolunca SpeS izin verdiğin bir sonrakine geçer. Claude'un ücretsiz hesabı başka uygulamalara bağlanamaz.</p>
+    <p class="free-sheet-note">Ücretsiz modda yalnız sohbet edilir: dosya, komut, internet ve bilgisayar kontrolü kapalıdır. Gönderme izni verdiğin her kanal bir sohbet ekibi gibi sırayla konuşur ve birbirinin yanıtını görür. Ücretsiz kotalar küçüktür; birinin kotası dolarsa yalnız yedek izni de verdiğin kanal onun yerine geçer. Bir model bir soruyu yanıtlamayı reddederse o tur biter; SpeS soruyu başka bir modele sormaz. Claude'un ücretsiz hesabı başka uygulamalara bağlanamaz.</p>
     <footer class="free-sheet-foot">
       <button type="button" class="free-start" id="freeSheetStart">Ücretsiz sohbeti başlat</button>
     </footer>
@@ -594,6 +594,10 @@ SHELL_MARKUP = r"""
     <h2 id="cliWelcome">SpeS'e Hoş Geldiniz</h2>
     <p>Başka bir şey kurmana gerek yok: SpeS kendi araçlarını kendisi kurar. Sana kalan tek şey hesabınla giriş yapmak.</p>
     <p class="auto-setup-line" id="autoSetupLine" role="status" aria-live="polite" hidden></p>
+    <div class="panel-actions" id="autoSetupActions" hidden>
+      <button type="button" class="api-submit" id="cliPrepare">Araçları hazırla</button>
+      <button type="button" class="control-btn" id="cliAutoStop" hidden>Kurulumu durdur</button>
+    </div>
     <label for="cliProvider">Bağlantı</label>
     <select id="cliProvider"><option value="codex">Codex / OpenAI</option><option value="gemini">Gemini / Google</option><option value="claude">Claude / Anthropic</option></select>
     <div id="cliProviderState" class="log-box" aria-live="polite">Bağlantılar kontrol ediliyor…</div>

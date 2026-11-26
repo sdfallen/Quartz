@@ -11,6 +11,8 @@ JAVASCRIPT = r"""
   const freeChannelsEl = document.getElementById('freeChannels');
   let freeStatus = null;
   let freeSheetOpener = null;
+  const FREE_CONSENTS = [['send', 'Sohbetlerimi bu kanala gönder (bu sohbetteki her mesaj)'],
+                         ['backup', 'Başka bir kanalın kotası dolarsa bunu yedek olarak da kullan']];
 
   async function freeCall(action, data) {
     if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.free_chat)
@@ -47,6 +49,17 @@ JAVASCRIPT = r"""
         input.type = 'password'; input.autocomplete = 'off'; input.spellcheck = false;
         input.id = `freeKey-${ch.id}`; label.htmlFor = input.id;
         input.setAttribute('aria-describedby', error.id);
+        // Fides FS3: both consents are chosen before connecting; none is on by default.
+        const before = freeEl('div', 'free-consents');
+        const pre = {};
+        for (const [field, text] of FREE_CONSENTS) {
+          const label = freeEl('label');
+          const box = freeEl('input');
+          box.type = 'checkbox'; box.checked = false;
+          pre[field] = box;
+          label.append(box, document.createTextNode(text));
+          before.append(label);
+        }
         const connect = freeEl('button', 'free-btn', 'Bağla');
         connect.type = 'button';
         connect.addEventListener('click', async () => {
@@ -54,7 +67,7 @@ JAVASCRIPT = r"""
           input.value = '';
           if (!key) { error.textContent = 'Önce anahtarı yapıştır.'; input.focus(); return; }
           connect.disabled = true; connect.textContent = 'Kontrol ediliyor…'; error.textContent = '';
-          const result = await freeCall('connect', {channel: ch.id, key, send: true, backup: true});
+          const result = await freeCall('connect', {channel: ch.id, key, send: pre.send.checked, backup: pre.backup.checked});
           connect.disabled = false; connect.textContent = 'Bağla';
           if (result.status !== 'ok') { error.textContent = result.message || result.data || 'Bağlanamadı.'; input.focus(); return; }
           renderFreeChannels(result.data);
@@ -65,10 +78,10 @@ JAVASCRIPT = r"""
         get.type = 'button';
         get.addEventListener('click', () => window.pywebview?.api?.open_external?.(ch.key_page));
         row.append(label, input, connect, get);
-        card.append(row);
+        card.append(row, before);
       } else {
         const consents = freeEl('div', 'free-consents');
-        for (const [field, text] of [['send', 'Mesajlarımı bu kanala gönder'], ['backup', 'Diğerinin kotası dolarsa yedek olarak kullan']]) {
+        for (const [field, text] of FREE_CONSENTS) {
           const label = freeEl('label');
           const box = freeEl('input');
           box.type = 'checkbox'; box.checked = !!ch[field];

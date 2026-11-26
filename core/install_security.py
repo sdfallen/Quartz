@@ -53,6 +53,45 @@ def download(url, destination, *, allowed, limit):
     return path
 
 
+def distinguished_name(text: str) -> list:
+    """(KEY, value) pairs of a Windows certificate subject, read character by character.
+
+    A comma separates fields only outside quotes and when not escaped; quoted values may hold
+    commas and escaped quotes (""). A field without a KEY= part makes the whole subject invalid,
+    so nothing half-parsed can grant a publisher."""
+    fields, current, quoted, i = [], [], False, 0
+    while i < len(text):
+        ch = text[i]
+        if quoted:
+            if ch == '"' and i + 1 < len(text) and text[i + 1] == '"':
+                current.append('"'); i += 2; continue
+            if ch == '"':
+                quoted = False
+            else:
+                current.append(ch)
+        elif ch == "\\" and i + 1 < len(text):
+            current.append(text[i + 1]); i += 2; continue
+        elif ch == '"':
+            quoted = True
+        elif ch in ",;":
+            fields.append("".join(current)); current = []
+        else:
+            current.append(ch)
+        i += 1
+    if quoted:
+        return []
+    fields.append("".join(current))
+    pairs = []
+    for field in fields:
+        if not field.strip():
+            continue
+        key, sep, value = field.partition("=")
+        if not sep or not key.strip().replace(".", "").isalnum():
+            return []
+        pairs.append((key.strip().upper(), value.strip()))
+    return pairs
+
+
 def verify_publisher(path, publisher):
     """Authenticode is required; never unblock files or alter execution policy."""
     shell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
@@ -70,10 +109,9 @@ def verify_publisher(path, publisher):
     except (ValueError, TypeError):
         data = {}
     # Exact organization field, not an arbitrary substring of a certificate name. A value with a
-    # comma is quoted by Windows (27 Nov: O="Anthropic, PBC"), so fields are parsed, not split.
-    import re
-    organizations = [quoted if quoted else plain.strip() for quoted, plain in
-                     re.findall(r'(?:^|,)\s*O=(?:"([^"]*)"|([^,]*))', str(data.get("subject", "")))]
+    # comma is quoted by Windows (27 Nov: O="Anthropic, PBC"); text inside another field's quotes
+    # (CN="x, O=Google LLC") is never a field (Fides FS5).
+    organizations = [value for key, value in distinguished_name(str(data.get("subject", ""))) if key == "O"]
     if result.returncode or data.get("status") != "Valid" or publisher not in organizations:
         raise ValueError("İndirilen dosyanın yayıncı imzası doğrulanamadı")
     return {"status": "Valid", "publisher": publisher}

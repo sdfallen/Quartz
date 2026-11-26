@@ -2,18 +2,19 @@
 
 The user asked that nobody installing SpeS should have to install or open anything else: every
 resource is set up with SpeS and removed with SpeS; what is left to the person is signing in to
-their accounts and using the app. On the first start (and on later starts while something is
-still missing) SpeS installs, by itself and in the background, the official command-line tools
-its agents use into its own private folder (``%LOCALAPPDATA%\\Quartz\\bin``):
+their accounts and using the app. SpeS installs, by itself and in the background, the official
+command-line tools its agents use into its own private folder (``%LOCALAPPDATA%\\Quartz\\bin``):
 
 - Codex CLI (``@openai/codex``) and Claude Code (``@anthropic-ai/claude-code``) from the npm
   registry with a private Node.js runtime from nodejs.org (core.cli_installer: pinned hosts,
-  ``--ignore-scripts``, a ``--version`` gate);
+  ``--ignore-scripts``, a ``--version`` gate; Claude's signed native program);
 - Antigravity CLI from Google's manifest (SHA-512 + Google Authenticode + ``--version``).
 
-Nothing is added to PATH, the registry or another app; an existing working install is reused.
-The uninstaller removes the private folder (installer/Quartz.iss). Signing in stays the user's:
-SpeS opens each tool's own official sign-in when they choose, never enters a password.
+Fides 27 Nov (FS6): one clear first choice. "Geliştirme araçlarını hazırla" (with the download
+size said beforehand) authorises the setup, and SpeS then finishes it by itself on later starts
+too; "Yalnız ücretsiz sohbet" downloads nothing. Reading the status never starts anything. A stop
+request ends the setup after the tool being installed (a running npm/download is not torn
+midway); the uninstaller removes the private folder (installer/Quartz.iss).
 """
 from __future__ import annotations
 
@@ -26,6 +27,8 @@ from core.atomic_json import atomic_write_json, load_json
 
 TOOLS = (("codex", "Codex (Fides)"), ("agy", "Antigravity (Eos)"), ("claude", "Claude Code (Fatum)"))
 RETRY_SECONDS = 6 * 3600
+# Measured 27 Nov: Claude Code's native program alone is ~400 MB; Antigravity ~200 MB.
+DOWNLOAD_TEXT = "yaklaşık 800 MB indirir, diskte yaklaşık 1,5 GB yer kaplar"
 
 
 class AutoSetup:
@@ -37,7 +40,22 @@ class AutoSetup:
         self.resolve = resolve or resolve_cli
         self.lock = threading.Lock()
         self.thread = None
+        self.stop_event = threading.Event()
         self.live = {"state": "idle", "current": None, "done": [], "failed": {}}
+
+    def _state(self) -> dict:
+        state = load_json(self.state_path, {})
+        return state if isinstance(state, dict) else {}
+
+    def _save(self, state):
+        try:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(self.state_path, state)
+        except OSError:
+            pass
+
+    def consented(self) -> bool:
+        return bool(self._state().get("consent"))
 
     def missing(self) -> list:
         result = []
@@ -49,52 +67,88 @@ class AutoSetup:
         return result
 
     def _recently_failed(self, tool) -> bool:
-        state = load_json(self.state_path, {})
-        failed = (state.get("failed") or {}).get(tool) or {}
+        failed = (self._state().get("failed") or {}).get(tool) or {}
         return bool(failed.get("at")) and self.clock() - float(failed["at"]) < RETRY_SECONDS
 
-    def start(self) -> dict:
-        """Start the background setup once per run when something is missing; never twice."""
+    def start(self, consent: bool = False) -> dict:
+        """Start (or continue) the setup: with the user's choice now, or with the one recorded
+        earlier. Never twice at once; never without a choice."""
         with self.lock:
             if self.thread is not None and self.thread.is_alive():
-                return self.status()
-            todo = [t for t in self.missing() if not self._recently_failed(t)]
+                return self._status_locked()
+            state = self._state()
+            if consent and not state.get("consent"):
+                state["consent"] = {"at": self.clock()}
+                self._save(state)
+            if not state.get("consent"):
+                self.live["state"] = "needs_choice" if self.missing() else "ready"
+                return self._status_locked()
+            todo = [t for t in self.missing() if consent or not self._recently_failed(t)]
             if not todo:
                 self.live.update(state="ready" if not self.missing() else "waiting", current=None)
-                return self.status()
+                return self._status_locked()
+            self.stop_event.clear()
             self.live = {"state": "running", "current": None, "done": [], "failed": {}, "todo": todo}
             self.thread = threading.Thread(target=self._run, args=(todo,), daemon=True, name="spes-auto-setup")
             self.thread.start()
-            return self.status()
+            return self._status_locked()
+
+    def stop(self) -> dict:
+        """Ends the setup after the tool being installed now; its staging stays unpublished."""
+        self.stop_event.set()
+        with self.lock:
+            if self.thread is not None and self.thread.is_alive():
+                self.live["state"] = "stopping"
+            return self._status_locked()
+
+    def forget_choice(self):
+        state = self._state()
+        state.pop("consent", None)
+        self._save(state)
 
     def _run(self, todo):
-        state = load_json(self.state_path, {})
-        state.setdefault("failed", {})
         for tool in todo:
+            if self.stop_event.is_set():
+                break
             with self.lock:
                 self.live["current"] = tool
             try:
                 self.installer.install(tool)
-                state["failed"].pop(tool, None)
-                with self.lock:
-                    self.live["done"].append(tool)
+                outcome = None
             except Exception as exc:  # recorded and retried later; never blocks the app
-                message = str(exc)[:200]
-                state["failed"][tool] = {"at": self.clock(), "message": message}
-                with self.lock:
-                    self.live["failed"][tool] = message
-            try:
-                self.state_path.parent.mkdir(parents=True, exist_ok=True)
-                atomic_write_json(self.state_path, state)
-            except OSError:
-                pass
+                outcome = str(exc)[:200]
+            state = self._state()
+            failed = state.setdefault("failed", {})
+            if outcome is None:
+                failed.pop(tool, None)
+            else:
+                failed[tool] = {"at": self.clock(), "message": outcome}
+            self._save(state)
+            with self.lock:
+                if outcome is None:
+                    self.live["done"].append(tool)
+                else:
+                    self.live["failed"][tool] = outcome
         with self.lock:
-            self.live.update(state="done" if not self.live["failed"] else "partial", current=None)
+            stopped = self.stop_event.is_set() and len(self.live["done"]) + len(self.live["failed"]) < len(todo)
+            self.live.update(state="stopped" if stopped else "done" if not self.live["failed"] else "partial",
+                             current=None)
 
-    def status(self) -> dict:
+    def _status_locked(self) -> dict:
         labels = dict(TOOLS)
         live = json.loads(json.dumps(self.live))
         live["current_label"] = labels.get(live.get("current"))
         live["total"] = len(live.get("todo") or [])
         live["labels"] = labels
+        live["download"] = DOWNLOAD_TEXT
         return live
+
+    def status(self) -> dict:
+        """Read only: never starts or stops anything (Fides FS6)."""
+        with self.lock:
+            if self.live["state"] == "idle":
+                if not self.consented():
+                    self.live["state"] = "needs_choice" if self.missing() else "ready"
+                elif not self.missing():
+                    self.live["state"] = "ready"
+            return self._status_locked()

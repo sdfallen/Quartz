@@ -62,23 +62,41 @@ class OnboardingService:
             except OSError:
                 pass
 
-    def auto_setup(self) -> dict:
-        """27 Nov: SpeS sets up its agent tools by itself on the packaged app's first starts
-        (core.auto_setup); a source checkout or a test never installs anything unless asked."""
+    def _auto_setup(self):
+        """27 Nov: the packaged app's own tool setup (core.auto_setup); a source checkout or a test
+        never installs anything unless asked (QUARTZ_AUTO_SETUP=1)."""
         import os
         import sys
         if not (getattr(sys, "frozen", False) or os.getenv("QUARTZ_AUTO_SETUP") == "1"):
-            return {"state": "off"}
+            return None
         if self._auto is None:
             from core.auto_setup import AutoSetup
             self._auto = AutoSetup(self.installer)
-        status = self._auto.start()
-        if status.get("state") in {"done", "partial"}:
-            self._cached = None  # a tool just arrived: read the providers again
+        return self._auto
+
+    def auto_setup(self, action: str = "status") -> dict:
+        """status reads only (Fides FS6); start needs the user's choice now ("prepare") or the one
+        recorded earlier ("continue"); stop ends it after the current tool."""
+        auto = self._auto_setup()
+        if auto is None:
+            return {"state": "off"}
+        if action == "prepare":
+            status = auto.start(consent=True)
+        elif action == "continue":
+            status = auto.start()
+        elif action == "stop":
+            status = auto.stop()
+        elif action == "free_only":
+            auto.forget_choice()
+            status = auto.status()
+        else:
+            status = auto.status()
+        if status.get("state") in {"done", "partial", "ready", "stopped"}:
+            self._cached = None  # a tool may have arrived: read the providers again
         return status
 
     def status(self, force=False):
-        auto = self.auto_setup()
+        auto = self.auto_setup("status")  # reading never starts a download (Fides FS6)
         result = self._status(force)
         return {**result, "auto_setup": auto}
 

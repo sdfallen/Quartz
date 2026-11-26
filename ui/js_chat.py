@@ -1004,7 +1004,8 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     renderChatStopReceipt({status:'pending'});
     try {
       const [chatResult] = await Promise.allSettled([
-        Promise.resolve().then(() => window.pywebview.api.chat_cancel()),
+        // Ücretsiz sohbet: Stop ends that conversation's free round only (27 Nov).
+        Promise.resolve().then(() => window.pywebview.api.chat_cancel(document.body.classList.contains('free-chat') ? currentConvId : '')),
         Promise.resolve().then(() => window.pywebview.api.cancel_request())
       ]);
       if (chatResult.status === 'fulfilled' && chatResult.value?.status === 'ok') {

@@ -666,7 +666,9 @@ class IPCServer:
             return {"status": "ok", "data": self._get_agent_chat().poll_active()}
 
         if action == "chat_cancel":
-            return {"status": "ok", "data": self._get_agent_chat().cancel_active()}
+            data = req.get("data") or {}
+            cid = str(data.get("conversation_id") or "").strip() or None
+            return {"status": "ok", "data": self._get_agent_chat().cancel_active(conversation_id=cid)}
 
         if action == "notion_tool_decide":
             data = req.get("data") or {}

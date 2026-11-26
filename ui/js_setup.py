@@ -102,6 +102,7 @@ JAVASCRIPT = r"""
   }
 
   let cliPollTimer = null;
+  let autoContinueAsked = false;
   let cliState = null;
   function renderCliStatus(data) {
     cliState = data;
@@ -116,12 +117,29 @@ JAVASCRIPT = r"""
     // 27 Nov: SpeS sets up its own tools in the background; say what it is doing, in plain words.
     const auto = data.auto_setup || {};
     const autoLine = document.getElementById('autoSetupLine');
+    const autoActions = document.getElementById('autoSetupActions');
     if (autoLine) {
-      const text = auto.state === 'running'
+      // Fides FS6: one clear choice with the download said first; nothing starts by itself.
+      const text = auto.state === 'needs_choice'
+        ? `Abonelikli hesaplarla (ChatGPT, Claude, Google) çalışmak için SpeS geliştirme araçlarını kendisi kurar: ${auto.download || 'birkaç yüz MB indirir'}. Yalnız ücretsiz sohbet için hiçbir şey indirilmez.`
+        : auto.state === 'running'
         ? `SpeS araçlarını kuruyor${auto.current_label ? ': ' + auto.current_label : ''}… Bu birkaç dakika sürebilir; beklerken hesabınla giriş yapabilirsin.`
-        : auto.state === 'partial' ? 'Bazı araçlar kurulamadı; SpeS internet bağlantısı gelince yeniden dener.'
+        : auto.state === 'stopping' ? 'Kurulum, şu an kurulan araç bitince duracak.'
+        : auto.state === 'stopped' ? 'Kurulum durduruldu. İstediğin zaman "Araçları hazırla" ile devam edebilirsin.'
+        : auto.state === 'partial' ? 'Bazı araçlar kurulamadı; SpeS birkaç saat sonra yeniden dener ya da "Araçları hazırla" ile hemen yeniden deneyebilirsin.'
         : auto.state === 'done' ? 'Araçlar kuruldu. Şimdi hesabınla giriş yap.' : '';
       autoLine.textContent = text; autoLine.hidden = !text;
+    }
+    if (autoActions) {
+      const choose = ['needs_choice', 'stopped', 'partial'].includes(auto.state);
+      autoActions.hidden = !(choose || auto.state === 'running' || auto.state === 'stopping');
+      document.getElementById('cliPrepare').hidden = !choose;
+      document.getElementById('cliAutoStop').hidden = auto.state !== 'running';
+    }
+    // A choice made on an earlier start: SpeS finishes the missing tools by itself.
+    if (auto.state === 'idle' && !autoContinueAsked) {
+      autoContinueAsked = true;
+      window.pywebview.api.onboarding_auto('continue').then(() => refreshCliStatus(false)).catch(() => {});
     }
     const busy = data.job?.state === 'running';
     ['cliValidate','cliAccount','cliInstall'].forEach(id => document.getElementById(id).disabled = busy);
@@ -135,7 +153,7 @@ JAVASCRIPT = r"""
     });
     renderAgentConnections(providers);
     clearTimeout(cliPollTimer);
-    if ((busy || auto.state === 'running' || Object.values(providers).some(p=>p.login_pending)) && document.getElementById('cliSetup').classList.contains('show')) cliPollTimer = setTimeout(()=>refreshCliStatus(false), 1500);
+    if ((busy || ['running','stopping'].includes(auto.state) || Object.values(providers).some(p=>p.login_pending)) && document.getElementById('cliSetup').classList.contains('show')) cliPollTimer = setTimeout(()=>refreshCliStatus(false), 1500);
   }
   // Sidebar connection list. Readiness comes from authenticated backend checks.
   let agentConnectionView = {providers: null, active: ''};
@@ -198,8 +216,15 @@ JAVASCRIPT = r"""
   document.getElementById('cliCheck').onclick = ()=>refreshCliStatus(true);
   document.getElementById('btnCliConnections').onclick = async()=>{ openModalOverlay(document.getElementById('cliSetup'), 'cliProvider'); await refreshCliStatus(true); };
   document.getElementById('cliLater').onclick = ()=>{ clearTimeout(cliPollTimer); closeModalOverlay(document.getElementById('cliSetup')); };
+  document.getElementById('cliPrepare').onclick = async ()=>{
+    await window.pywebview.api.onboarding_auto('prepare'); await refreshCliStatus(false);
+  };
+  document.getElementById('cliAutoStop').onclick = async ()=>{
+    await window.pywebview.api.onboarding_auto('stop'); await refreshCliStatus(false);
+  };
   // 27 Nov: no subscription? Talk for free with official free keys (Ücretsiz sohbet).
   document.getElementById('cliFree').onclick = ()=>{
+    window.pywebview.api.onboarding_auto('free_only').catch(() => {});
     clearTimeout(cliPollTimer); closeModalOverlay(document.getElementById('cliSetup'));
     document.getElementById('btnFreeChatManage')?.click();
   };

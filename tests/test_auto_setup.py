@@ -44,21 +44,30 @@ class AutoSetupTests(unittest.TestCase):
         setup.thread.join(5)
         return setup.status()
 
-    def test_every_missing_tool_is_installed_in_the_background_once(self):
+    def test_fs6_nothing_starts_without_the_users_choice_and_status_only_reads(self):
+        installer = FakeInstaller()
+        setup = self.make(installer)
+        self.assertEqual(setup.status()["state"], "needs_choice")
+        self.assertEqual(setup.start()["state"], "needs_choice")
+        self.assertIsNone(setup.thread)
+        self.assertEqual(installer.calls, [])
+        self.assertIn("MB", setup.status()["download"])
+
+    def test_every_missing_tool_is_installed_once_after_the_choice(self):
         installer = FakeInstaller()
         setup = self.make(installer, present={"codex"})
-        started = setup.start()
-        self.assertEqual(started["state"], "running")
+        self.assertEqual(setup.start(consent=True)["state"], "running")
         self.assertIn(setup.start()["state"], {"running", "done"})  # a second start never runs it twice
         status = self.finish(setup)
         self.assertEqual(status["state"], "done")
         self.assertEqual(installer.calls, ["agy", "claude"])
-        self.assertEqual(setup.start()["state"], "ready")
+        later = self.make(installer, present={"codex"})
+        self.assertEqual(later.start()["state"], "ready")  # the recorded choice carries over
 
     def test_a_failed_tool_is_recorded_and_retried_only_later(self):
         installer = FakeInstaller(fail={"claude"})
         setup = self.make(installer)
-        setup.start()
+        setup.start(consent=True)
         status = self.finish(setup)
         self.assertEqual(status["state"], "partial")
         self.assertIn("claude", status["failed"])
@@ -69,6 +78,26 @@ class AutoSetupTests(unittest.TestCase):
         again.start()
         self.assertEqual(self.finish(again)["state"], "done")
         self.assertEqual(installer.calls.count("claude"), 2)
+
+    def test_fs6_stop_ends_after_the_current_tool(self):
+        release = threading.Event()
+        installer = FakeInstaller()
+        original = installer.install
+        installer.install = lambda tool: (release.wait(5), original(tool))[1]
+        setup = self.make(installer)
+        setup.start(consent=True)
+        self.assertEqual(setup.stop()["state"], "stopping")
+        release.set()
+        status = self.finish(setup)
+        self.assertEqual(status["state"], "stopped")
+        self.assertEqual(installer.calls, ["codex"])
+
+    def test_free_only_forgets_the_choice(self):
+        setup = self.make(FakeInstaller())
+        setup.start(consent=True)
+        self.finish(setup)
+        setup.forget_choice()
+        self.assertFalse(setup.consented())
 
     def test_the_three_agent_tools_are_the_set(self):
         self.assertEqual([t for t, _ in TOOLS], ["codex", "agy", "claude"])
@@ -120,12 +149,18 @@ class InstallerTests(unittest.TestCase):
         good = 'CN="Anthropic, PBC", O="Anthropic, PBC", L=San Francisco, C=US'
         with patch.object(install_security.subprocess, "run", return_value=fake(good)):
             self.assertEqual(install_security.verify_publisher(path, "Anthropic, PBC")["status"], "Valid")
-        for subject in ('CN=x, O="Anthropic, PBC Evil", C=US', 'CN="O=Anthropic, PBC", O=Evil', "O=Google LLC"):
+        for subject in ('CN=x, O="Anthropic, PBC Evil", C=US', 'CN="O=Anthropic, PBC", O=Evil'):
             with patch.object(install_security.subprocess, "run", return_value=fake(subject)):
                 with self.assertRaises(ValueError):
                     install_security.verify_publisher(path, "Anthropic, PBC")
         with patch.object(install_security.subprocess, "run", return_value=fake("CN=Google LLC, O=Google LLC, C=US")):
             self.assertEqual(install_security.verify_publisher(path, "Google LLC")["status"], "Valid")
+        # Fides FS5: text inside another field's quotes is never a field; a broken subject grants nothing.
+        for subject in ('CN="Unrelated, O=Google LLC, trailing", O=Evil Corp, C=US', 'CN="x, O=Google LLC',
+                        'garbage, O=Google LLC'):
+            with patch.object(install_security.subprocess, "run", return_value=fake(subject)):
+                with self.assertRaises(ValueError):
+                    install_security.verify_publisher(path, "Google LLC")
 
     def test_the_uninstaller_removes_what_spes_set_up(self):
         iss = (ROOT / "installer" / "Quartz.iss").read_text(encoding="utf-8")

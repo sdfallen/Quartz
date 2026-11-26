@@ -189,9 +189,11 @@ class ConversationStore:
             return result
 
     def create(self, title: str = "Yeni Sohbet", agent: str = "antigravity",
-               project_id: str | None = None, models: dict | None = None, space: str | None = None) -> dict:
+               project_id: str | None = None, models: dict | None = None, space: str | None = None,
+               free: bool = False) -> dict:
         with self._lock:
-            cid = uuid.uuid4().hex
+            # Ücretsiz sohbet (27 Nov, Fides FS1): the id itself says "free", given here once.
+            cid = ("free-" if free else "") + uuid.uuid4().hex
             now = time.time()
             record = {
                 "id": cid,
@@ -199,7 +201,8 @@ class ConversationStore:
                 "agent": agent,
                 "space": normalize_space(space),
                 "project_id": project_id,
-                "permission_level": "full",
+                "permission_level": "full",  # a free conversation never reaches a tool path anyway
+                **({"free": True} if free else {}),
                 "created_at": now,
                 "updated_at": now,
                 "models": self._normalize_models(models),
