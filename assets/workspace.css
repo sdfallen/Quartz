@@ -951,3 +951,16 @@ body.show-preview .preview-pane { display: flex; }
 .msg.job-internal summary { cursor: pointer; color: var(--text-3); }
 .msg.job-internal .job-internal-text { white-space: pre-wrap; max-height: 320px; overflow: auto; margin: 8px 0 0;
   font-size: var(--text-xs); color: var(--text-2); }
+
+/* 26 Nov: the compact chat (390 px) overflowed — the window controls and Send fell off its right
+   edge. Compact keeps what a quick chat needs: narrower tabs and window buttons, no Maximize, a
+   title that may shrink, and the repair/continue text buttons only in the full view. */
+body.compact #btnWinMaximize, body.compact #btnRepairPlan, body.compact #btnContinueCollab { display: none !important; }
+body.compact .win-btn { width: 32px; }
+body.compact .space-tab { min-width: 64px; padding: 0 8px; }
+body.compact .chat-title-group { min-width: 0; flex: 1 1 auto; overflow: hidden; }
+body.compact .titlebar-spacer { min-width: 0; }
+body.compact .composer-row { min-width: 0; }
+body.compact .agent-seg-group { flex: 0 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+body.compact .agent-seg-group::-webkit-scrollbar { display: none; }
+body.compact .agent-seg-btn { padding: 0 7px; }

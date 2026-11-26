@@ -409,5 +409,115 @@ class PendingOwnershipTests(unittest.TestCase):
         self.assertEqual(lc.unconfirmed(), [])
 
 
+class ReviewerFallbackTests(unittest.TestCase):
+    """Live 26 Nov 17:13: Eos's review ended with no verdict and the milestone went "denetlenmedi"."""
+
+    def review(self, replies, members):
+        from tests.test_long_job_chat import FakeChat
+        from core.long_job import JobLedger
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict("os.environ", {"QUARTZ_JOBS_HOME": str(Path(directory) / "jobs")}), \
+                patch("core.agent_limits.snapshot", return_value={}):
+            project = Path(directory) / "p"
+            project.mkdir()
+            chat = FakeChat(project, replies=replies)
+            ledger = JobLedger.create({"goal": "Oyun", "project_path": str(project), "hours": 1, "kind": "code",
+                                       "conversation_id": "c1", "milestones": [{"title": "T", "acceptance": "ok"}]})
+            with patch.object(chat, "_job_members", return_value=members):
+                result = chat._job_accept(ledger, ledger.data["milestones"][0], members[0], {"ok": True},
+                                          threading.Event())
+        return result, [s["agent"] for s in chat.sent]
+
+    def test_no_verdict_goes_to_the_next_teammate(self):
+        result, asked = self.review([("completed", "İnceledim ama karar yazmadım.", "antigravity"),
+                                     ("completed", "Baktım.\nKABUL: EVET", "claude")],
+                                    ["codex", "antigravity", "claude"])
+        self.assertEqual(asked, ["antigravity", "claude"])
+        self.assertEqual((result["ok"], result["by"]), (True, "claude"))
+
+    def test_a_no_ends_the_review_without_a_second_opinion(self):
+        result, asked = self.review([("completed", "Eksik.\nKABUL: HAYIR — skor yok", "antigravity")],
+                                    ["codex", "antigravity", "claude"])
+        self.assertEqual(asked, ["antigravity"])
+        self.assertIs(result["ok"], False)
+
+    def test_at_most_two_reviewers_are_asked(self):
+        result, asked = self.review([("completed", "karar yok", "antigravity"), ("completed", "yine yok", "claude")],
+                                    ["codex", "antigravity", "claude", "claude"])
+        self.assertEqual(len(asked), 2)
+        self.assertIsNone(result["ok"])
+
+    def test_a_program_without_a_window_is_not_reported_as_a_problem(self):
+        from tests.test_long_job import Clock
+        from core.long_job import JobLedger, finish_report
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "p").mkdir()
+            ledger = JobLedger.create({"goal": "CLI", "project_path": str(Path(directory) / "p"), "hours": 1,
+                                       "milestones": [{"title": "T", "acceptance": "ok"}]},
+                                      root=Path(directory) / "jobs", clock=Clock())
+            ledger.data["milestones"][0].update(status="done", launch={
+                "verdict": "skipped", "reason": "pencere açan bir Python programı bulunamadı"})
+            report = finish_report(ledger)
+        self.assertIn("Pencereli bir program yok", report)
+        self.assertNotIn("çalıştırılıp görülmedi", report)
+
+
+class ReviewerBoundaryTests(unittest.TestCase):
+    """Fides's review 26 Nov 18:12: FC1 Stop, FC2 isolated context, FC3 fresh limits."""
+
+    def setUp(self):
+        from tests.test_long_job_chat import FakeChat
+        from core.long_job import JobLedger
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        env = patch.dict("os.environ", {"QUARTZ_JOBS_HOME": str(Path(self.tmp.name) / "jobs")})
+        env.start()
+        self.addCleanup(env.stop)
+        project = Path(self.tmp.name) / "p"
+        project.mkdir()
+        self.make_chat = lambda replies: FakeChat(project, replies=replies)
+        self.ledger = JobLedger.create({"goal": "Oyun", "project_path": str(project), "hours": 1, "kind": "code",
+                                        "conversation_id": "c1", "milestones": [{"title": "T", "acceptance": "ok"}]})
+
+    def accept(self, chat, stop):
+        with patch.object(chat, "_job_members", return_value=["codex", "antigravity", "claude"]),                 patch("core.agent_limits.snapshot", return_value={}):
+            return chat._job_accept(self.ledger, self.ledger.data["milestones"][0], "codex", {"ok": True}, stop)
+
+    def test_fc1_a_stop_already_given_opens_no_review(self):
+        chat = self.make_chat([("completed", "KABUL: EVET", "antigravity")])
+        stop = threading.Event()
+        stop.set()
+        self.assertIsNone(self.accept(chat, stop)["ok"])
+        self.assertEqual(chat.sent, [])
+
+    def test_fc3_a_limit_reached_during_the_first_review_is_seen(self):
+        chat = self.make_chat([("completed", "karar yok", "antigravity"), ("completed", "KABUL: EVET", "claude")])
+        original = chat.send_message
+
+        def send(*args, **kwargs):
+            reply = original(*args, **kwargs)
+            self.ledger.data.setdefault("limited", {})["claude"] = time.time() + 600
+            return reply
+        chat.send_message = send
+        self.assertIsNone(self.accept(chat, threading.Event())["ok"])
+        self.assertEqual([s["agent"] for s in chat.sent], ["antigravity"])
+
+    def test_fc2_reviews_never_reach_a_later_turns_history(self):
+        from core.agent_chat import AgentChatService
+        messages = [
+            {"id": "1", "role": "user", "content": "Sayaç yap", "metadata": {}},
+            {"id": "2", "role": "assistant", "sender": "codex", "content": "Yaptım.", "metadata": {}},
+            {"id": "3", "role": "user", "content": "UZUN İŞ — KABUL DENETİMİ. Yalnız incele.",
+             "metadata": {"job_internal": "review"}},
+            {"id": "4", "role": "assistant", "sender": "antigravity", "content": "YARIM_DENETIM_IZI", "metadata": {}},
+            {"id": "5", "role": "user", "content": "ne durumda?", "metadata": {}},
+        ]
+        history = AgentChatService._format_history_context(messages)
+        self.assertNotIn("YARIM_DENETIM_IZI", history)
+        self.assertNotIn("KABUL DENETİMİ", history)
+        self.assertIn("Yaptım.", history)
+        self.assertIn("ne durumda?", history)
+
+
 if __name__ == "__main__":
     unittest.main()
