@@ -1036,3 +1036,14 @@ class FidesDataReReviewTests(unittest.TestCase):
         excerpt = report_excerpt(outcome["report"])
         self.assertTrue(excerpt.startswith("OPENING"))
         self.assertTrue(excerpt.endswith("KANIT: HATA: source not read"))
+
+    def test_d1_a_withdrawal_in_its_own_sentence_cancels_and_a_limit_does_not(self):
+        # Fides's 2nd re-review 26 Nov: the same regression holds the withdrawals and the limits.
+        from core.job_intent import job_kind
+        for text in ("Tum faturalarimi tabloya aktar. Bunu yapma.", "Tum faturalarimi tabloya aktar. Istemiyorum.",
+                     "Tum faturalarimi tabloya aktar. Gerek yok.", "Tum faturalarimi tabloya aktar. Vazgectim.",
+                     "Tüm faturalarımı tabloya aktar. Hayır, bunu yapma lütfen."):
+            self.assertIsNone(job_kind(text), text)
+        for text in ("Tüm faturalarımı tabloya aktar; kaynak dosyalara dokunma",
+                     "Tüm faturaları tabloya aktar, kaynakları silmeni istemiyorum"):
+            self.assertEqual(job_kind(text), "data", text)

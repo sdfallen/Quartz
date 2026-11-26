@@ -83,6 +83,11 @@ _ASKING = re.compile(r"\b(?:nasil|neden|niye|nicin|hangi\w*|ne\s+zaman|ne\s+kada
                      r"\bm[iu](?:yim|yiz|dur|dir)?\b|\w(?:ebilir|abilir)(?:im|iz)\b")
 _POLITE_TAIL = re.compile(r"(?:\s+(?:lutfen|simdilik|artik|hemen|ya|be|bari|tamam\w*|olur\s*mu|sakin))+$")
 _NEG_IMPERATIVE = re.compile(r"\w+(?:ma|me)(?:yin|yiniz|yalim|yelim)?$")
+# Fides 2nd re-review 26 Nov: "Bunu yapma.", "İstemiyorum.", "Gerek yok." withdraw the request in a
+# sentence of their own; only a pronoun ("bunu") or nothing at all stands for the work there.
+_STANDALONE_NO = re.compile(r"(?:(?:bunu|bunlari|onu|onlari|sunu|bu|o|hic|ama|aslinda|yok|hayir)\s+)*"
+                            r"(?:istemiyor\w*|istemem|gerek\s+yok|yapma(?:yin)?|etme(?:yin)?|yapmayalim|"
+                            r"hayir|bosver\w*|iptal(?:\s+et)?|dur|durdur|birak)")
 
 
 def forbidden_or_asked(text: str) -> bool:
@@ -97,7 +102,7 @@ def forbidden_or_asked(text: str) -> bool:
         if not clause:
             continue
         about_the_work = bool(_DATA_HEAVY.search(clause) or _DATA_LIGHT.search(clause))
-        if re.search(r"\bvazgec\w*", clause):
+        if re.search(r"\bvazgec\w*", clause) or _STANDALONE_NO.fullmatch(clause):
             return True
         if about_the_work and re.search(r"\b(?:istemiyor\w*|istemem|gerek\s+yok)\b", clause):
             return True
