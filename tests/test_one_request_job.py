@@ -1200,9 +1200,27 @@ class FidesSourceAccessTests(unittest.TestCase):
         view = self.root / "job" / "source-view"
         root, note = source_read_root({"sources": [str(folder / "secilen.pdf")]}, view)
         self.assertEqual(root, str(view))
-        self.assertEqual(sorted(p.name for p in view.iterdir()), ["secilen.pdf"])
+        self.assertEqual(sorted(p.name for p in view.iterdir()), ["01-secilen.pdf"])
         self.assertIn("kopyaları açıldı (1 dosya)", note)
         self.assertEqual(source_read_root({"sources": [str(folder)]}, view), (str(folder), ""))
         both, note = source_read_root({"sources": [str(folder), str(self.root)]}, view)
         self.assertIsNone(both)
         self.assertIn("birden çok", note)
+
+
+    def test_r2_files_with_one_name_keep_a_copy_each(self):
+        # Fides's re-review 26 Nov: c/2-a.pdf, a/a.pdf, b/a.pdf left two copies and claimed three.
+        from core.long_job import source_read_root
+        made = []
+        for folder, name, payload in (("c", "2-a.pdf", b"FIRST"), ("a", "a.pdf", b"SECOND"), ("b", "a.pdf", b"THIRD")):
+            (self.root / folder).mkdir()
+            (self.root / folder / name).write_bytes(payload)
+            made.append(str(self.root / folder / name))
+        view = self.root / "job" / "source-view"
+        root, note = source_read_root({"sources": made}, view)
+        copies = sorted(view.iterdir())
+        self.assertEqual(len(copies), 3)
+        self.assertEqual(sorted(c.read_bytes() for c in copies), [b"FIRST", b"SECOND", b"THIRD"])
+        self.assertIn("(3 dosya)", note)
+        for original in made:
+            self.assertIn(original, note, "the reviewer is told which copy is which")

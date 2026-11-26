@@ -238,23 +238,26 @@ def source_read_root(ledger_data, view_dir=None):
     if view.exists():
         shutil.rmtree(view, ignore_errors=True)
     view.mkdir(parents=True, exist_ok=True)
-    copied, total = 0, 0
-    for path in files[:SOURCE_VIEW_FILES]:
+    # Fides re-review 26 Nov: "a/a.pdf" and "b/a.pdf" overwrote each other's copy. Every copy has
+    # a name of its own (its place in the list), and the reviewer is told which copy is which.
+    copied, total, mapping = 0, 0, []
+    for index, path in enumerate(files[:SOURCE_VIEW_FILES], 1):
         try:
             size = path.stat().st_size
             if total + size > SOURCE_VIEW_BYTES:
                 break
-            target = view / path.name
-            if target.exists():
-                target = view / f"{copied}-{path.name}"
+            target = view / f"{index:02d}-{path.name}"
             shutil.copy2(path, target)
             copied, total = copied + 1, total + size
+            mapping.append(f"{target.name} = {path}")
         except OSError:
             continue
     left = len(files) - copied
     note = ((f"Seçilen kaynak dosyaların kopyaları açıldı ({copied} dosya)"
-             + (f"; {left} dosya sığmadı" if left else "")
-             + ("; seçilen klasörler açılmadı" if folders else "") + ".") if copied else "")
+             + (f"; {left} dosya açılamadı ya da sığmadı" if left else "")
+             + ("; seçilen klasörler açılmadı" if folders else "") + ". Kopya → özgün: "
+             + "; ".join(mapping[:20]) + (f"; … {len(mapping) - 20} kopya daha" if len(mapping) > 20 else ""))
+            if copied else "")
     return (str(view) if copied else None), note
 
 
