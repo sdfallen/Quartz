@@ -101,9 +101,13 @@ def verify_publisher(path, publisher):
     script = ("$ErrorActionPreference='Stop'; "
               "$s=Get-AuthenticodeSignature -LiteralPath $env:QUARTZ_VERIFY_FILE; "
               "@{status=[string]$s.Status; subject=[string]$s.SignerCertificate.Subject} | ConvertTo-Json -Compress")
-    result = subprocess.run([str(shell), "-NoProfile", "-NonInteractive", "-Command", script],
-                            env=env, capture_output=True, text=True, timeout=45,
-                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    # Fides RFS4 (27 Nov): the signature check is a setup step too, so it runs owned (suspended,
+    # kill-on-close Job Object): a timeout or SpeS closing ends it. Imported here: cli_installer
+    # imports this module only inside its functions, so there is no import cycle.
+    from core.cli_installer import owned_run
+    result = owned_run([str(shell), "-NoProfile", "-NonInteractive", "-Command", script],
+                       env=env, capture_output=True, text=True, timeout=45,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     try:
         data = json.loads(result.stdout)
     except (ValueError, TypeError):

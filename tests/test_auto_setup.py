@@ -161,18 +161,18 @@ class InstallerTests(unittest.TestCase):
             path = handle.name
         self.addCleanup(os.unlink, path)
         good = 'CN="Anthropic, PBC", O="Anthropic, PBC", L=San Francisco, C=US'
-        with patch.object(install_security.subprocess, "run", return_value=fake(good)):
+        with patch("core.cli_installer.owned_run", return_value=fake(good)):
             self.assertEqual(install_security.verify_publisher(path, "Anthropic, PBC")["status"], "Valid")
         for subject in ('CN=x, O="Anthropic, PBC Evil", C=US', 'CN="O=Anthropic, PBC", O=Evil'):
-            with patch.object(install_security.subprocess, "run", return_value=fake(subject)):
+            with patch("core.cli_installer.owned_run", return_value=fake(subject)):
                 with self.assertRaises(ValueError):
                     install_security.verify_publisher(path, "Anthropic, PBC")
-        with patch.object(install_security.subprocess, "run", return_value=fake("CN=Google LLC, O=Google LLC, C=US")):
+        with patch("core.cli_installer.owned_run", return_value=fake("CN=Google LLC, O=Google LLC, C=US")):
             self.assertEqual(install_security.verify_publisher(path, "Google LLC")["status"], "Valid")
         # Fides FS5: text inside another field's quotes is never a field; a broken subject grants nothing.
         for subject in ('CN="Unrelated, O=Google LLC, trailing", O=Evil Corp, C=US', 'CN="x, O=Google LLC',
                         'garbage, O=Google LLC'):
-            with patch.object(install_security.subprocess, "run", return_value=fake(subject)):
+            with patch("core.cli_installer.owned_run", return_value=fake(subject)):
                 with self.assertRaises(ValueError):
                     install_security.verify_publisher(path, "Google LLC")
 
@@ -199,6 +199,23 @@ class InstallerTests(unittest.TestCase):
             time.sleep(0.6)
             after = marker.read_text() if marker.exists() else ""
             self.assertEqual(before, after, "the grandchild still runs after the timeout")
+
+    def test_rfs4_the_signature_check_runs_owned_too(self):
+        import json
+        import subprocess
+        from core import install_security
+        calls = []
+
+        def owned(cmd, **kwargs):
+            calls.append(cmd[0])
+            return subprocess.CompletedProcess(cmd, 0, json.dumps({"status": "Valid", "subject": "O=Google LLC"}), "")
+        with tempfile.NamedTemporaryFile(delete=False) as handle:
+            path = handle.name
+        self.addCleanup(os.unlink, path)
+        with patch("core.cli_installer.owned_run", side_effect=owned),                 patch.object(install_security.subprocess, "run", side_effect=AssertionError("unowned run")):
+            self.assertEqual(install_security.verify_publisher(path, "Google LLC")["status"], "Valid")
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0].lower().endswith("powershell.exe"))
 
     def test_the_uninstaller_removes_what_spes_set_up(self):
         iss = (ROOT / "installer" / "Quartz.iss").read_text(encoding="utf-8")

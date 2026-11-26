@@ -102,7 +102,7 @@ class NewMachineTests(unittest.TestCase):
         for status,subject,ok in [('Valid','CN=Google LLC, O=Google LLC, C=US',True),
                                   ('NotSigned','O=Google LLC',False),('Valid','O=Evil Google LLC',False)]:
             result=SimpleNamespace(returncode=0,stdout=json.dumps({'status':status,'subject':subject}))
-            with self.subTest(status=status,subject=subject),patch('core.install_security.subprocess.run',return_value=result):
+            with self.subTest(status=status,subject=subject),patch('core.cli_installer.owned_run',return_value=result):
                 if ok:self.assertEqual(verify_publisher(exe,'Google LLC')['status'],'Valid')
                 else:
                     with self.assertRaises(ValueError):verify_publisher(exe,'Google LLC')
