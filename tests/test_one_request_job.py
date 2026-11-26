@@ -1123,3 +1123,86 @@ class SourceReviewTests(unittest.TestCase):
         goal = str(self.src) + " klasöründeki tüm faturaları tarih sırasıyla tek bir rapora dönüştür"
         branch = job_branch(self.project, goal, "1126-1232")
         self.assertTrue(branch.startswith("spes/1126-1232-klasorundeki-tum-faturalari"), branch)
+
+
+class OutputsReportTests(unittest.TestCase):
+    """26 Nov: the finish report says what the job made and where it is."""
+
+    def test_the_report_names_the_outputs_and_their_folder(self):
+        from tests.test_long_job import Clock, nullctx
+        from core.long_job import JobLedger, LongJob, finish_report
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "p"
+            (root / "tmp").mkdir(parents=True)
+            for name in ("faturalar.xlsx", "rapor.md", "tmp/build.mjs", ".gitignore"):
+                (root / name).write_text("x", encoding="utf-8")
+            ledger = JobLedger.create({"goal": "F", "project_path": str(root), "hours": 1,
+                                       "milestones": [{"title": "T", "acceptance": "ok"}]},
+                                      root=Path(directory) / "jobs", clock=Clock())
+            made = [str(root / n) for n in ("faturalar.xlsx", "rapor.md", "tmp/build.mjs", ".gitignore")]
+            job = LongJob(ledger, run_milestone=lambda l, m, w, s: {"status": "completed"},
+                          verify=lambda stop: {"ok": True, "summary": "ok"},
+                          checkpoint=lambda: {"status": "snapshot", "ref": "cp"},
+                          baseline=lambda: {"status": "snapshot", "ref": "b"}, snapshot=lambda: {},
+                          changed=lambda a, b: made, commit=lambda f, m: "abc12345",
+                          notify=lambda *a, **k: None, clock=Clock(), awake=nullctx)
+            job.run()
+            report = finish_report(ledger)
+        self.assertEqual(ledger.data["milestones"][0]["files"], ["faturalar.xlsx", "rapor.md"])
+        self.assertIn(f"Çıktılar ({root}): faturalar.xlsx, rapor.md", report)
+        self.assertNotIn("build.mjs", report)
+
+
+class FidesSourceAccessTests(unittest.TestCase):
+    """Fides's source-access review 26 Nov: R1 real dispatch, R2 no silent parent folder."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def dispatched(self, text, **send):
+        home = Path(tempfile.mkdtemp(dir=self.root))
+        chat = make_chat(str(home))
+        seen = []
+
+        def boundary(dispatch, cid, msg_id, *args, **kwargs):
+            seen.append(kwargs)
+            raise RuntimeError("test boundary: no CLI")
+        with patch.object(chat, "_dispatch_chat_run", side_effect=boundary):
+            chat.send_message(text, agent="claude", write=False, **send)
+            deadline = time.monotonic() + 5
+            while not seen and time.monotonic() < deadline:
+                time.sleep(0.02)
+        chat._diagnostics.close()
+        return seen
+
+    def test_r1_the_real_review_prompt_reaches_the_dispatch_with_the_source_folder(self):
+        from core.message_intent import message_intent
+        src = self.root / "kaynak"
+        src.mkdir()
+        prompt = ("UZUN İŞ — KABUL DENETİMİ. Yalnız incele; hiçbir dosyayı değiştirme.\nTAŞ: Kaynakları listele\n"
+                  "Projedeki dosyaları okuyarak ölçütün gerçekten karşılandığını incele. KABUL: EVET ya da HAYIR yaz.")
+        self.assertEqual(message_intent(prompt), "task", "the review is a task, not a conversation")
+        seen = self.dispatched(prompt, origin="long_job", read_root=str(src))
+        self.assertTrue(seen, "the real _execute_codex_bubble reached the dispatch")
+        self.assertEqual(seen[-1].get("read_root"), str(src.resolve()))
+        plain = self.dispatched("Projedeki faturalar.csv dosyasını oku ve kısaca anlat", read_root=str(src))
+        self.assertTrue(plain, "the user's own message reached the dispatch too")
+        self.assertIsNone(plain[-1].get("read_root"), "a user's message opens nothing")
+
+    def test_r2_a_chosen_file_opens_a_copy_of_itself_never_its_folder(self):
+        from core.long_job import source_read_root
+        folder = self.root / "faturalar"
+        folder.mkdir()
+        (folder / "secilen.pdf").write_bytes(b"%PDF secilen")
+        (folder / "baska.pdf").write_bytes(b"%PDF baska")
+        view = self.root / "job" / "source-view"
+        root, note = source_read_root({"sources": [str(folder / "secilen.pdf")]}, view)
+        self.assertEqual(root, str(view))
+        self.assertEqual(sorted(p.name for p in view.iterdir()), ["secilen.pdf"])
+        self.assertIn("kopyaları açıldı (1 dosya)", note)
+        self.assertEqual(source_read_root({"sources": [str(folder)]}, view), (str(folder), ""))
+        both, note = source_read_root({"sources": [str(folder), str(self.root)]}, view)
+        self.assertIsNone(both)
+        self.assertIn("birden çok", note)

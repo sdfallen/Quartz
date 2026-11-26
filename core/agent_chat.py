@@ -2280,13 +2280,16 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
                 # The user's files for this turn, read-only (core.attachments).
                 dispatch_kwargs["read_root"] = attached["folder"]
                 dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
-            elif agent == "claude" and self._turn_job_read_root(cid):
-                # A data job's reviewer (Fatum) reads the sources beside the project (26 Nov).
-                dispatch_kwargs["read_root"] = self._turn_job_read_root(cid)
-                dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
         elif agent == "claude" and self._turn_attachments(cid):
             # The builder (Fatum) reads the attachments while writing the project.
             dispatch_kwargs["read_root"] = self._turn_attachments(cid)["folder"]
+        if (agent == "claude" and not dispatch_kwargs.get("read_root") and not write and not full_access
+                and self._turn_job_read_root(cid)):
+            # A data job's reviewer (Fatum) reads the sources beside the project (26 Nov). Fides:
+            # the review prompt is a task, not a conversation, so this holds for either route;
+            # only SpeS's own read-only review turn ever carries the folder.
+            dispatch_kwargs["read_root"] = self._turn_job_read_root(cid)
+            dispatch_kwargs["should_abort"] = lambda: self._is_turn_cancelled(msg_id)
         from core.web_policy import web_allowed
         if web and not dispatch_kwargs.get("read_root") and web_allowed(agent, conversation_only=conversation_only,
                                project_read=bool(dispatch_kwargs.get("project_read")),

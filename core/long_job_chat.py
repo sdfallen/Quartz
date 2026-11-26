@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 import threading
 import time
+from pathlib import Path
 
 from core.long_job import (JobError, JobLedger, LongJob, PERSONA, milestone_prompt, report_excerpt, resumable,
                            source_evidence, source_read_root)
@@ -273,8 +274,10 @@ class LongJobChatMixin:
         try:
             # Fatum (Claude) can also be given the source folder to read; the others read the
             # project only (for them an extra folder would replace it).
-            read_root = (source_read_root(ledger.data)
-                         if ledger.data.get("kind") == "data" and reviewer == "claude" else None)
+            read_root, view_note = (source_read_root(ledger.data, Path(ledger.path).parent / "source-view")
+                                    if ledger.data.get("kind") == "data" and reviewer == "claude" else (None, ""))
+            if view_note:
+                prompt += "\n" + view_note
             sent = self.send_message(prompt, agent=reviewer, conversation_id=cid, write=False, origin="long_job",
                                      **({"read_root": read_root} if read_root else {}))
         except Exception as exc:
