@@ -307,14 +307,27 @@ class LongJobChatMixin:
 
     def _job_accept(self, ledger, milestone, writer, check, stop: threading.Event) -> dict:
         """A teammate who did not write the milestone reads the project against its acceptance
-        criterion in a read-only turn of the job's conversation (Fides/Eos 25 Nov)."""
+        criterion in a read-only turn of the job's conversation (Fides/Eos 25 Nov).
+
+        Live 26 Nov 17:13: Eos's review turn ended with no verdict and the milestone went through
+        "denetlenmedi" while Fatum was free. A review with no verdict now goes to the next
+        teammate (at most two reviewers); a "no" or a "yes" ends it."""
         cid = ledger.data["conversation_id"]
         now = time.time()
         limited = {a for a, until in (ledger.data.get("limited") or {}).items() if float(until or 0) > now}
         reviewers = [m for m in self._job_members(cid) if m != writer and m not in limited]
         if not reviewers:
             return {"ok": None, "summary": "Denetleyecek ikinci ajan yok."}
-        reviewer = reviewers[0]
+        result = {"ok": None}
+        for reviewer in reviewers[:2]:
+            result = self._job_accept_by(ledger, milestone, writer, check, stop, reviewer)
+            if result.get("ok") is not None or stop.is_set():
+                return result
+        return result
+
+    def _job_accept_by(self, ledger, milestone, writer, check, stop, reviewer) -> dict:
+        """One teammate's read-only acceptance review; ok is True, False or None (no verdict)."""
+        cid = ledger.data["conversation_id"]
         while self._job_turn_busy():
             if stop.wait(POLL_SECONDS):
                 return {"ok": None, "by": reviewer}

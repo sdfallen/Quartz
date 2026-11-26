@@ -1053,6 +1053,9 @@ def finish_report(ledger: JobLedger) -> str:
         if last.get("verdict") == "window_seen":
             lines.append(f"Program açıldı: SpeS {last.get('entry')} dosyasını çalıştırdı, pencereyi gördü "
                          f"(\"{last.get('window_title') or 'başlıksız'}\") ve kapattı. Etkileşim denenmedi.")
+        elif last.get("reason") == "pencere açan bir Python programı bulunamadı":
+            # Live 26 Nov 17:30: a command-line program read as a problem; it is not one.
+            lines.append("Pencereli bir program yok; SpeS açıp bakma adımını uygulamadı.")
         else:
             lines.append(f"Program çalıştırılıp görülmedi: {last.get('reason') or last.get('verdict')}.")
     changes, unverified = source_check(d) if d.get("kind") == "data" else (None, [])
