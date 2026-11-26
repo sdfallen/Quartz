@@ -384,6 +384,26 @@ class RunTests(unittest.TestCase):
         self.assertIsInstance(workers[-1].error, PermissionError)
         self.assertEqual((backend.acts, seen), ([], []))
 
+    def test_ir1_a_stop_during_the_original_checks_sends_no_late_input(self):
+        backend = FakeBackend()
+        release, pressed = threading.Event(), []
+
+        def original_before(target):
+            self.stop.set()  # Stop arrives after the fence's entry check, inside Native's own checks
+            release.wait(2)
+        backend._before_input = original_before
+
+        def act(target, observation, args):
+            backend._before_input(target)  # Native calls it right before pressing
+            pressed.append(args)
+        backend.act = act
+        workers = []
+        result = self.run_steps([{"tus": "a"}], backend, workers=workers, call_seconds=0.3)
+        self.assertEqual(result["state"], "cancelled")
+        release.set()
+        self.assertTrue(all(w.finished(2) for w in workers))
+        self.assertEqual(pressed, [])
+
     def test_i6_no_input_after_the_deadline_passed_during_observation(self):
         backend = FakeBackend()
         original = backend.observe

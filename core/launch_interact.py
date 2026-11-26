@@ -437,12 +437,21 @@ def run(backend, hwnd, steps, stop, *, report_path, review_dir, alive, pid=None,
     # Fides I5: an input a given-up call would still try is refused at Native's own last guard.
     original_before = backend._before_input
 
-    def fenced(target):
+    def fence(target):
         if abandoned.is_set() or stop.is_set():
             raise PermissionError("SpeS denemeyi bıraktı; geç girdi gönderilmedi")
         if not same_owner(target):
             raise PermissionError("Pencere sahibi değişti; girdi gönderilmedi")
-        return original_before(target)
+        if over():
+            raise PermissionError("Süre doldu; girdi gönderilmedi")
+
+    def fenced(target):
+        fence(target)
+        result = original_before(target)
+        # Fides IR1: the original checks can block; a Stop or give-up that came meanwhile is read
+        # again here, right before Native presses or clicks.
+        fence(target)
+        return result
     backend._before_input = fenced
     backend.input_cancelled = lambda: abandoned.is_set() or stop.is_set()
 
