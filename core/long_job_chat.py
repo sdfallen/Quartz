@@ -81,6 +81,8 @@ class LongJobChatMixin:
         return ledger.public()
 
     def job_control(self, job_id: str, action: str) -> dict:
+        if action == "open_folder":
+            return self._job_open_folder(job_id)
         job = self._jobs().get(str(job_id or ""))
         if job is None:
             # Live 15 Nov: a job paused before a restart is on disk only; "Devam" must find it.
@@ -146,6 +148,24 @@ class LongJobChatMixin:
                        writers=lambda: self._job_members(cid),
                        notify=lambda text, urgent=False, report=False: self._job_note(ledger, text, urgent=urgent,
                                                                                       report=report))
+
+    def _job_open_folder(self, job_id) -> dict:
+        """"Klasörü aç" on a finish report (26 Nov): Explorer at the job's own project folder. The
+        path comes from SpeS's ledger only, never from the page."""
+        import os
+        job = self._jobs().get(str(job_id or ""))
+        ledger = job.ledger if job is not None else next(
+            (l for l in JobLedger.all() if l.data["id"] == str(job_id or "")), None)
+        if ledger is None:
+            raise JobError("Bu iş bulunamadı.")
+        folder = Path(str(ledger.data.get("project_path") or ""))
+        if not folder.is_dir():
+            raise JobError("İşin klasörü artık yok.")
+        opener = getattr(os, "startfile", None)
+        if opener is None:
+            raise JobError("Klasör yalnız Windows'ta açılır.")
+        opener(str(folder.resolve()))
+        return {"status": "opened", "path": str(folder)}
 
     def _job_launch(self, ledger, milestone, stop):
         """SpeS opens what a code milestone built and looks (core.launch_check); None when it does

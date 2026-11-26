@@ -514,6 +514,19 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
         };
         row.append(b);
       });
+      if (msg?.metadata?.report) {
+        // 26 Nov: the finish report opens the job's own folder (path from SpeS's ledger only).
+        const open = document.createElement('button'); open.type = 'button';
+        open.className = 'control-btn long-job-btn'; open.textContent = 'Klasörü aç';
+        open.title = 'İşin yaptığı dosyaların klasörünü Dosya Gezgini\'nde açar.';
+        open.onclick = async () => {
+          open.disabled = true;
+          const r = await window.pywebview.api.job_control(String(longJob), 'open_folder');
+          open.disabled = false;
+          if (!(r && r.status === 'ok')) logLine('Uzun iş: ' + String((r && r.message) || 'klasör açılamadı'));
+        };
+        row.append(open);
+      }
       bubble.append(row);
     }
     const result = msg?.metadata?.security_result;
