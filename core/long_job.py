@@ -116,6 +116,9 @@ def validate_spec(spec: dict) -> dict:
             # Fides 26 Nov (D2): what the job reads, and SpeS's own fingerprint of it at the start.
             "sources": [str(s)[:500] for s in (spec.get("sources") or [])
                         if isinstance(s, str) and s.strip()][:5],
+            "source_scope": {k: int(v) for k, v in (spec.get("source_scope") or {}).items()
+                             if k in {"total", "scanned", "unreadable", "metadata_only"}
+                             and isinstance(v, int)} if isinstance(spec.get("source_scope"), dict) else {},
             "source_manifest": {str(k)[:600]: str(v)[:80] for k, v in
                                 list((spec.get("source_manifest") or {}).items())[:MANIFEST_FILES]}
             if isinstance(spec.get("source_manifest"), dict) else {},
@@ -127,48 +130,94 @@ MANIFEST_FILES = 2000
 MANIFEST_HASH_BYTES = 64 * 1024 * 1024
 
 
+MANIFEST_COUNT_LIMIT = 50000
+
+
+def source_files(paths) -> tuple[list, int]:
+    """The source files in a stable order (at most MANIFEST_COUNT_LIMIT listed) and their count."""
+    files, total = [], 0
+    for raw in paths or ():
+        root = Path(str(raw))
+        try:
+            if root.is_file():
+                files.append(root)
+                total += 1
+                continue
+            for path in root.rglob("*"):
+                if total >= MANIFEST_COUNT_LIMIT:
+                    break
+                if path.is_file():
+                    files.append(path)
+                    total += 1
+        except OSError:
+            continue
+    return sorted(files, key=lambda p: str(p)), total
+
+
 def source_manifest(paths) -> dict:
     """Fides 26 Nov: "kaynaklar yalnız okunur" was a rule told to the agent, nothing more. SpeS
     fingerprints the sources itself (sha256; size and time for very large files) so the job's
     end can say whether anything there changed, was added or went missing."""
+    return source_fingerprint(paths)[0]
+
+
+def source_fingerprint(paths) -> tuple[dict, dict]:
+    """The manifest and what it covers: how many files there were, how many were fingerprinted,
+    how many could not be read and how many only by size and time (Fides re-review 26 Nov)."""
     import hashlib
     manifest = {}
-    for raw in paths or ():
-        root = Path(str(raw))
+    files, total = source_files(paths)
+    for path in files:
+        if len(manifest) >= MANIFEST_FILES:
+            break
         try:
-            files = [root] if root.is_file() else sorted(p for p in root.rglob("*") if p.is_file())
+            stat = path.stat()
+            if stat.st_size > MANIFEST_HASH_BYTES:
+                manifest[str(path)] = f"size:{stat.st_size}:mtime:{int(stat.st_mtime)}"
+                continue
+            digest = hashlib.sha256()
+            with path.open("rb") as handle:
+                for block in iter(lambda: handle.read(1 << 20), b""):
+                    digest.update(block)
+            manifest[str(path)] = digest.hexdigest()
         except OSError:
-            continue
-        for path in files:
-            if len(manifest) >= MANIFEST_FILES:
-                return manifest
-            try:
-                stat = path.stat()
-                if stat.st_size > MANIFEST_HASH_BYTES:
-                    manifest[str(path)] = f"size:{stat.st_size}:mtime:{int(stat.st_mtime)}"
-                    continue
-                digest = hashlib.sha256()
-                with path.open("rb") as handle:
-                    for block in iter(lambda: handle.read(1 << 20), b""):
-                        digest.update(block)
-                manifest[str(path)] = digest.hexdigest()
-            except OSError:
-                manifest[str(path)] = "okunamadi"
-    return manifest
+            manifest[str(path)] = "okunamadi"
+    scope = {"total": total, "scanned": len(manifest),
+             "unreadable": sum(1 for v in manifest.values() if v == "okunamadi"),
+             "metadata_only": sum(1 for v in manifest.values() if v.startswith("size:"))}
+    return manifest, scope
 
 
 def source_changes(ledger_data) -> list[str] | None:
     """What changed in the sources since the job began; None when SpeS took no fingerprint."""
+    return source_check(ledger_data)[0]
+
+
+def source_check(ledger_data):
+    """(changes, unverified): the differences found, and what the comparison could not prove."""
     before = ledger_data.get("source_manifest") or {}
     if not before:
-        return None
-    after = source_manifest(ledger_data.get("sources") or [])
-    if len(before) >= MANIFEST_FILES:  # a capped fingerprint compares only the files it holds
+        return None, []
+    after, scope_now = source_fingerprint(ledger_data.get("sources") or [])
+    scope = ledger_data.get("source_scope") or {}
+    capped = scope.get("scanned", len(before)) < scope.get("total", len(before)) or len(before) >= MANIFEST_FILES
+    if capped:  # a capped fingerprint compares only the files it holds
         after = {k: v for k, v in after.items() if k in before}
-    changes = [f"değişti: {p}" for p, v in before.items() if p in after and after[p] != v]
+    changes = [f"değişti: {p}" for p, v in before.items()
+               if p in after and after[p] != v and "okunamadi" not in (v, after[p])]
     changes += [f"silindi/taşındı: {p}" for p in before if p not in after]
     changes += [f"eklendi: {p}" for p in after if p not in before]
-    return changes
+    unverified = []
+    if capped:
+        unverified.append(f"{max(scope.get('total', 0), scope_now.get('total', 0)) - len(before)} dosya "
+                          f"izin dışında kaldı (SpeS ilk {len(before)} dosyanın izini aldı)")
+    unreadable = sum(1 for p, v in before.items() if v == "okunamadi" or after.get(p) == "okunamadi")
+    if unreadable:
+        unverified.append(f"{unreadable} dosya okunamadı")
+    metadata = sum(1 for v in before.values() if v.startswith("size:"))
+    if metadata:
+        unverified.append(f"{metadata} büyük dosya yalnız boyut ve zamanla karşılaştırıldı")
+    return changes, unverified
 
 
 class JobLedger:
@@ -830,10 +879,13 @@ def finish_report(ledger: JobLedger) -> str:
               for m in waiting]
     lines += [f"· {m['title']}: yapılmadı" for m in left]
     lines += [f"– {m['title']}: senin isteğinle atlandı" for m in skipped]
-    changes = source_changes(d) if d.get("kind") == "data" else None
+    changes, unverified = source_check(d) if d.get("kind") == "data" else (None, [])
     if changes is not None:
         if changes:
             lines.append(f"UYARI: kaynaklarda {len(changes)} değişiklik var: " + "; ".join(changes[:5]))
+        elif unverified:
+            lines.append(f"SpeS'in karşılaştırdığı {len(d['source_manifest'])} kaynak dosyada fark bulunmadı; "
+                         "doğrulanamayan: " + "; ".join(unverified) + ".")
         else:
             lines.append(f"Kaynaklar değişmedi ({len(d['source_manifest'])} dosya, SpeS başta ve sonda karşılaştırdı).")
     if d.get("git_branch"):

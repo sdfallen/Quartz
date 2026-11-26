@@ -81,8 +81,8 @@ _RESUME = re.compile(r"\b(?:coks(?:e|un)\s+(?:bile\s+)?devam|kapan(?:sa|irsa)\s+
 # polite request and stays one. A clause ending in a negative imperative or a refusal is a "no".
 _ASKING = re.compile(r"\b(?:nasil|neden|niye|nicin|hangi\w*|ne\s+zaman|ne\s+kadar)\b|"
                      r"\bm[iu](?:yim|yiz|dur|dir)?\b|\w(?:ebilir|abilir)(?:im|iz)\b")
-_REFUSING = re.compile(r"\b(?:istemiyorum|istemiyoruz|istemem|gerek\s+yok|vazgec\w*|yapma(?:yin)?|etme(?:yin)?)\b|"
-                       r"\b\w+(?:ma|me)(?:yin|yiniz|yalim|yelim)?(?=\s*(?:[.!;,]|$))")
+_POLITE_TAIL = re.compile(r"(?:\s+(?:lutfen|simdilik|artik|hemen|ya|be|bari|tamam\w*|olur\s*mu|sakin))+$")
+_NEG_IMPERATIVE = re.compile(r"\w+(?:ma|me)(?:yin|yiniz|yalim|yelim)?$")
 
 
 def forbidden_or_asked(text: str) -> bool:
@@ -90,13 +90,19 @@ def forbidden_or_asked(text: str) -> bool:
     folded = turkish_fold(instruction_text(text)).strip()
     if _ASKING.search(folded):
         return True
-    for clause in re.split(r"[.;!?]+", folded):
-        clause = clause.strip()
-        if clause and _REFUSING.search(clause):
-            last = clause.split()[-1]
-            # "aktarma" at a clause's end is the negative imperative; "istemiyorum" anywhere is a no.
-            if _REFUSING.search(last) or re.search(r"istemiyor|istemem|gerek\s+yok|vazgec", clause):
-                return True
+    # Fides re-review 26 Nov: "aktarma lütfen" is still a no; "aktar; kaynak dosyalara dokunma" is
+    # a job with a limit. A clause refuses the work only when what it negates is the work itself.
+    for clause in re.split(r"[.;!?,]+", folded):
+        clause = _POLITE_TAIL.sub("", " " + clause.strip()).strip()
+        if not clause:
+            continue
+        about_the_work = bool(_DATA_HEAVY.search(clause) or _DATA_LIGHT.search(clause))
+        if re.search(r"\bvazgec\w*", clause):
+            return True
+        if about_the_work and re.search(r"\b(?:istemiyor\w*|istemem|gerek\s+yok)\b", clause):
+            return True
+        if about_the_work and _NEG_IMPERATIVE.search(clause.split()[-1]):
+            return True
     return False
 
 

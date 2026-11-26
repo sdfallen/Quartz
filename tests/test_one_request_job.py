@@ -955,3 +955,84 @@ class FidesDataReviewTests(unittest.TestCase):
         from core.job_intent import plan_rule
         self.assertIn("KAYNAKLAR (yalnız okunur", plan_rule("data", ["kaynak-klasor"]))
         self.assertNotIn("KAYNAKLAR", plan_rule("data"))
+
+
+class FidesDataReReviewTests(unittest.TestCase):
+    """Fides's data-job re-review 26 Nov: D1 clause scope, manifest coverage, D3 first cut."""
+
+    def test_d1_politeness_keeps_a_no_and_a_limit_keeps_the_job(self):
+        from core.job_intent import job_kind
+        for text in ("Tüm faturalarımı tabloya aktarma lütfen", "Tum faturalarimi tabloya aktarma lutfen",
+                     "Vazgeçtim, tüm faturaları aktarma", "Tüm PDF faturalarını Excel tablosuna aktarma, gerek yok"):
+            self.assertIsNone(job_kind(text), text)
+        for text in ("Tüm faturalarımı tabloya aktar; kaynak dosyalara dokunma",
+                     "Tüm faturaları tabloya aktar, kaynakları silmeni istemiyorum",
+                     "Tüm faturaları tabloya aktar lütfen"):
+            self.assertEqual(job_kind(text), "data", text)
+
+    def make_sources(self, directory, count):
+        src = Path(directory) / "kaynak"
+        src.mkdir()
+        for index in range(count):
+            (src / f"f{index}.pdf").write_bytes(f"%PDF {index}".encode())
+        return src
+
+    def ledger(self, directory, src):
+        from core.long_job import JobLedger, source_fingerprint
+        (Path(directory) / "p").mkdir()
+        manifest, scope = source_fingerprint([str(src)])
+        return JobLedger.create({"goal": "F", "project_path": str(Path(directory) / "p"), "hours": 1, "kind": "data",
+                                 "sources": [str(src)], "source_manifest": manifest, "source_scope": scope,
+                                 "milestones": [{"title": "T", "acceptance": "csv"}]}, root=Path(directory) / "jobs")
+
+    def test_a_capped_fingerprint_never_says_unchanged(self):
+        from core.long_job import finish_report
+        with tempfile.TemporaryDirectory() as directory, patch("core.long_job.MANIFEST_FILES", 2):
+            src = self.make_sources(directory, 3)
+            ledger = self.ledger(directory, src)
+            (src / "f2.pdf").write_bytes(b"changed outside the fingerprint")
+            report = finish_report(ledger)
+        self.assertNotIn("Kaynaklar değişmedi", report)
+        self.assertIn("1 dosya izin dışında kaldı", report)
+
+    def test_an_unreadable_source_is_not_proven_unchanged(self):
+        from core.long_job import finish_report
+        with tempfile.TemporaryDirectory() as directory:
+            src = self.make_sources(directory, 1)
+            with patch("pathlib.Path.open", side_effect=PermissionError("kilitli")):
+                ledger = self.ledger(directory, src)
+                report = finish_report(ledger)
+        self.assertNotIn("Kaynaklar değişmedi", report)
+        self.assertIn("1 dosya okunamadı", report)
+
+    def test_a_large_file_is_said_to_be_compared_by_size_only(self):
+        from core.long_job import finish_report
+        with tempfile.TemporaryDirectory() as directory, patch("core.long_job.MANIFEST_HASH_BYTES", 3):
+            src = self.make_sources(directory, 1)
+            report = finish_report(self.ledger(directory, src))
+        self.assertIn("1 büyük dosya yalnız boyut ve zamanla", report)
+
+    def test_a_whole_fingerprint_says_unchanged(self):
+        from core.long_job import finish_report
+        with tempfile.TemporaryDirectory() as directory:
+            src = self.make_sources(directory, 2)
+            self.assertIn("Kaynaklar değişmedi (2 dosya", finish_report(self.ledger(directory, src)))
+
+    def test_d3_a_report_over_20000_keeps_its_proof_from_the_first_cut(self):
+        from tests.test_long_job_chat import FakeChat
+        from core.long_job import report_excerpt
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict("os.environ", {"QUARTZ_JOBS_HOME": str(Path(directory) / "jobs")}):
+            project = Path(directory) / "p"
+            project.mkdir()
+            reply = "OPENING\n" + ("ayrıntı " * 2700) + "\nKANIT: HATA: source not read"
+            chat = FakeChat(project, replies=[("completed", reply, "codex")])
+            chat.send_message("x", agent="codex", conversation_id="c1", write=True, confirm_write=True)
+            user_id = chat.store.conv["messages"][-2]["id"]
+            outcome = chat._job_turn_outcome("c1", user_id, "codex", "completed")
+        self.assertGreater(len(reply), 20000)
+        self.assertLessEqual(len(outcome["report"]), 20000)
+        self.assertTrue(outcome["report"].startswith("OPENING"))
+        excerpt = report_excerpt(outcome["report"])
+        self.assertTrue(excerpt.startswith("OPENING"))
+        self.assertTrue(excerpt.endswith("KANIT: HATA: source not read"))

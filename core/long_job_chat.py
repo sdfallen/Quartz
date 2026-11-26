@@ -50,8 +50,8 @@ class LongJobChatMixin:
             raise JobError("Bu sohbete bağlı, yazılabilir bir proje yok.")
         generation = spec.pop("plan_generation", None)
         if spec.get("kind") == "data" and spec.get("sources") and not spec.get("source_manifest"):
-            from core.long_job import source_manifest
-            spec["source_manifest"] = source_manifest(spec["sources"])
+            from core.long_job import source_fingerprint
+            spec["source_manifest"], spec["source_scope"] = source_fingerprint(spec["sources"])
         spec["conversation_id"] = conv["id"]
         spec["project_path"] = project["path"]  # the conversation's project, never a free path
         # The models the user chose are recorded once; SpeS never switches them by itself.
@@ -334,5 +334,6 @@ class LongJobChatMixin:
         summary = str(replies[-1].get("content") or "")[-1500:] if replies else ""
         # Fides 26 Nov (D3): the reviewer reads the writer's own whole report, not a summary's tail.
         own = [m for m in replies if m.get("sender") == writer]
-        report = str((own or replies or [{}])[-1].get("content") or "")[:20000]
+        # Fides re-review 26 Nov: the first cut keeps the opening and the KANIT at the end too.
+        report = report_excerpt(str((own or replies or [{}])[-1].get("content") or ""), limit=20000)
         return {"status": status, "summary": summary, "report": report}
