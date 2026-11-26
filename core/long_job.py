@@ -573,8 +573,10 @@ class LongJob:
     def __init__(self, ledger: JobLedger, *, run_milestone, verify=None, checkpoint=None, baseline=None, dirty=None,
                  snapshot=None,
                  changed=None, commit=None, limits=None, notify=None, clock=time.time, awake=keep_awake,
-                 writers=None, accept=None):
+                 writers=None, accept=None, launch=None):
         self.ledger = ledger
+        # launch(ledger, milestone, stop) -> receipt or None: SpeS opens what was built (26 Nov).
+        self.launch = launch
         # The agents the user keeps active in this conversation (passive ones never write, 21 Nov).
         self.writers = writers or (lambda: WRITER_ORDER)
         self.run_milestone = run_milestone
@@ -880,6 +882,23 @@ class LongJob:
             {"ok": False, "summary": result.get("summary") or "Tur tamamlanmadı."}
         if self.stop_event.is_set():
             return
+        look = None
+        if built and check.get("ok") and self.launch is not None:
+            # 26 Nov: SpeS starts the program it detects, looks for its window and closes it.
+            # Only a program that ends itself with an error fails the check; a busy desktop, an
+            # unclear entry or a window that never came are "not proven", never a code defect.
+            look = self.launch(ledger, milestone, self.stop_event)
+            if self.stop_event.is_set():
+                return
+            if look:
+                with ledger._lock:
+                    milestone["launch"] = {k: look.get(k) for k in ("verdict", "entry", "window_title",
+                                                                    "capture_state", "reason", "evidence_dir")}
+                    ledger.save()
+                if look.get("verdict") in {"crashed", "no_window"}:
+                    check = {"ok": False, "summary": "SpeS programı çalıştırdı: "
+                             + ("hata verip kapandı." if look["verdict"] == "crashed" else "pencere açmadan bitti.")
+                             + ("\n" + str(look.get("output_tail") or "")[-1200:] if look.get("output_tail") else "")}
         review = None
         if built and check.get("ok") and self.accept is not None and ledger.data.get("review"):
             # Fides 25 Nov: with no test, "done" was the writer's word alone. A teammate reads
@@ -887,7 +906,8 @@ class LongJob:
             # Live 26 Nov: Fides refused a milestone for "no command output shown" while the
             # writer's own report with that output never reached it. The reviewer reads it now.
             review = self.accept(ledger, milestone, writer,
-                                 {**check, "writer_report": str(result.get("report") or result.get("summary") or "")},
+                                 {**check, "writer_report": str(result.get("report") or result.get("summary") or ""),
+                                  **({"launch": look} if look else {})},
                                  self.stop_event) or {}
             if self.stop_event.is_set():
                 return
@@ -1021,6 +1041,14 @@ def finish_report(ledger: JobLedger) -> str:
     outputs = outputs_line(d)
     if outputs:
         lines.append(outputs)
+    looks = [m.get("launch") for m in d["milestones"] if m.get("status") == "done" and m.get("launch")]
+    if looks:
+        last = looks[-1]
+        if last.get("verdict") == "window_seen":
+            lines.append(f"Program açıldı: SpeS {last.get('entry')} dosyasını çalıştırdı, pencereyi gördü "
+                         f"(\"{last.get('window_title') or 'başlıksız'}\") ve kapattı. Etkileşim denenmedi.")
+        else:
+            lines.append(f"Program çalıştırılıp görülmedi: {last.get('reason') or last.get('verdict')}.")
     changes, unverified = source_check(d) if d.get("kind") == "data" else (None, [])
     if changes is not None:
         if changes:

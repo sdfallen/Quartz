@@ -142,9 +142,51 @@ class LongJobChatMixin:
         from core.agent_limits import snapshot
         cid = ledger.data.get("conversation_id")
         return LongJob(ledger, run_milestone=self._job_run_milestone, limits=snapshot, accept=self._job_accept,
+                       launch=self._job_launch,
                        writers=lambda: self._job_members(cid),
                        notify=lambda text, urgent=False, report=False: self._job_note(ledger, text, urgent=urgent,
                                                                                       report=report))
+
+    def _job_launch(self, ledger, milestone, stop):
+        """SpeS opens what a code milestone built and looks (core.launch_check); None when it does
+        not apply. Fides 26 Nov: Tam Yetki and code jobs only; only when the milestone asks for a
+        running program; host-wide desktop lease for the whole look."""
+        import uuid
+        from core import launch_check as lc
+        if ledger.data.get("kind") == "data" or ledger.data.get("permission_level") != "full":
+            return None
+        if not lc.wants_look(milestone):
+            return None
+
+        def skipped(reason):
+            return {"verdict": "skipped", "reason": reason}
+        entry, why = lc.detected_entry(ledger.data["project_path"])
+        if entry is None:
+            return skipped(why)
+        interpreter = lc.python_interpreter()
+        if not interpreter:
+            return skipped("python bulunamadı")
+        lease = None
+        try:
+            from core.desktop_native import NativeDesktopBackend
+            NativeDesktopBackend.validate_input_session()
+            lease = NativeDesktopBackend.acquire_lease()
+        except Exception:
+            return skipped("masaüstü başka bir görevde ya da ekran kilitli")
+        try:
+            evidence = (Path(ledger.path).parent / "launch"
+                        / f"{milestone['id']}-deneme{milestone.get('attempts', 0)}-{uuid.uuid4().hex[:6]}")
+            receipt = lc.observe(entry, ledger.data["project_path"], evidence, stop, interpreter)
+        except Exception as exc:
+            return skipped(f"başlatılamadı ({type(exc).__name__})")
+        finally:
+            try:
+                lease.close()
+            except Exception:
+                pass
+        receipt["verdict"] = lc.verdict(receipt)
+        receipt["evidence_text"] = lc.evidence_text(receipt)
+        return receipt
 
     def _job_note(self, ledger, text, urgent=False, report=False):
         cid = ledger.data.get("conversation_id")
@@ -276,6 +318,16 @@ class LongJobChatMixin:
             # project only (for them an extra folder would replace it).
             read_root, view_note = (source_read_root(ledger.data, Path(ledger.path).parent / "source-view")
                                     if ledger.data.get("kind") == "data" and reviewer == "claude" else (None, ""))
+            look = check.get("launch") or {}
+            if look.get("evidence_text"):
+                prompt += "\n" + look["evidence_text"]
+                if reviewer == "claude" and look.get("screenshot") and not read_root:
+                    # Fatum sees the window SpeS captured (only that attempt's own folder).
+                    read_root = look.get("evidence_dir")
+                    prompt += ("\nPencere görüntüsü: window.png (bu klasörde). Görüntüyü açıp baktıysan bunu söyle; "
+                               "açmadıysan 'görsel incelendi' deme.")
+                elif look.get("verdict") == "window_seen":
+                    prompt += "\nPencereyi SpeS gözledi; görüntü sana açılmadı, görsel incelendi deme."
             if view_note:
                 prompt += "\n" + view_note
             sent = self.send_message(prompt, agent=reviewer, conversation_id=cid, write=False, origin="long_job",
