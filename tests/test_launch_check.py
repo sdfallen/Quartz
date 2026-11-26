@@ -64,11 +64,16 @@ class ObserveTests(unittest.TestCase):
         self.project = self.root / "p"
         self.project.mkdir()
 
-    def run_script(self, text, stop=None, **kwargs):
+    def run_script(self, text, stop=None, attempt="m1-deneme1", **kwargs):
         entry = self.project / "main.py"
         entry.write_text(text, encoding="utf-8")
-        return lc.observe(entry, self.project, self.root / "kanit" / "m1-deneme1", stop or threading.Event(),
+        return lc.observe(entry, self.project, self.root / "kanit" / attempt, stop or threading.Event(),
                           sys.executable, **kwargs)
+
+    @staticmethod
+    def png(hwnd, result, verify):
+        # A fake window: its owner is the test's own decision, so the real verify is not asked.
+        result.update(state="captured", png=b"png")
 
     def test_a_program_that_fails_by_itself_is_a_crash(self):
         receipt = self.run_script("import sys\nprint('token=abc123')\nraise SystemExit('kirik')\n",
@@ -91,30 +96,75 @@ class ObserveTests(unittest.TestCase):
         self.assertFalse(marker.exists(), "the program is really gone")
 
     def test_a_seen_window_is_captured_and_closed_by_spes(self):
-        def capture(hwnd, out, result):
-            out.write_bytes(b"png")
-            result.update(state="captured")
         receipt = self.run_script("import time\ntime.sleep(30)\n",
                                   windows=lambda pids: [(1234, min(pids), "Yılan Oyunu")],
-                                  settle=0.2, capture=capture)
+                                  settle=0.2, capture=self.png)
         self.assertEqual(lc.verdict(receipt), "window_seen")
-        self.assertEqual((receipt["window_title"], receipt["capture_state"]), ("Yılan Oyunu", "captured"))
+        self.assertEqual(receipt["capture_state"], "captured")
         self.assertTrue(Path(receipt["screenshot"]).is_file())
         self.assertEqual(receipt["termination_reason"], "closed_by_spes")
         self.assertEqual(receipt["cleanup_state"], "confirmed")
         self.assertIn("etkileşim denenmedi", lc.evidence_text(receipt))
 
-    def test_a_hung_capture_does_not_hold_the_look(self):
-        def capture(hwnd, out, result):
-            time.sleep(5)
+    def test_l4_a_window_no_longer_ours_is_never_captured(self):
+        calls = []
+
+        def capture(hwnd, result, verify):
+            calls.append(verify())
+            result["state"] = "owner_changed" if not calls[-1] else "captured"
+        with patch.object(lc, "_owner_pid", return_value=999999):  # the HWND now belongs to someone else
+            receipt = self.run_script("import time\ntime.sleep(30)\n",
+                                      windows=lambda pids: [(1234, min(pids), "T")], settle=0.2, capture=capture)
+        self.assertEqual(calls, [False])
+        self.assertEqual(receipt["capture_state"], "owner_changed")
+        self.assertEqual(receipt["screenshot"], "")
+
+    def test_l3_a_late_capture_never_writes_evidence(self):
+        release = threading.Event()
+
+        def capture(hwnd, result, verify):
+            release.wait(30)
+            result.update(state="captured", png=b"late")
         began = time.monotonic()
         with patch.object(lc, "CAPTURE_SECONDS", 0.3):
             receipt = self.run_script("import time\ntime.sleep(30)\n",
-                                      windows=lambda pids: [(1, min(pids), "T")], settle=0.1,
-                                      capture=lambda h, o, r: capture(h, o, r))
-        self.assertLess(time.monotonic() - began, 10, "well under the 5 s hang plus the 30 s program")
+                                      windows=lambda pids: [(1, min(pids), "T")], settle=0.1, capture=capture)
         self.assertEqual(receipt["capture_state"], "timeout")
+        self.assertEqual(receipt["cleanup_state"], "pending", "the capture worker had not ended")
+        release.set()
+        time.sleep(0.3)
+        self.assertFalse((Path(receipt["review_dir"]) / "window.png").exists(), "no evidence after the deadline")
+        self.assertLess(time.monotonic() - began, 15)
+        lc._UNCONFIRMED.clear()
+
+    def test_l2_a_stop_given_before_starts_nothing(self):
+        stop = threading.Event()
+        stop.set()
+        marker = self.root / "calisti.txt"
+        with patch("subprocess.Popen") as popen, patch("core.process_tree.resume_process") as resume:
+            receipt = self.run_script(f"open(r'{marker}', 'w').write('x')\n", stop=stop, windows=lambda pids: [])
+        self.assertEqual((popen.call_count, resume.call_count), (0, 0))
+        self.assertEqual(lc.verdict(receipt), "cancelled")
+        self.assertTrue((self.root / "kanit" / "m1-deneme1" / "receipt.json").is_file())
+
+    def test_l2_a_stop_during_binding_never_resumes(self):
+        stop = threading.Event()
+        marker = self.root / "calisti.txt"
+        from core import process_tree
+
+        real_bind = process_tree.bind_kill_on_close_job
+
+        def bind(proc, resume=False):
+            stop.set()  # Stop arrives while the program is being bound
+            return real_bind(proc, resume=resume)
+        with patch("core.process_tree.bind_kill_on_close_job", side_effect=bind), \
+                patch("core.process_tree.resume_process") as resume:
+            receipt = self.run_script(f"open(r'{marker}', 'w').write('x')\n", stop=stop, windows=lambda pids: [])
+        self.assertEqual(resume.call_count, 0)
+        self.assertEqual(lc.verdict(receipt), "cancelled")
         self.assertEqual(receipt["cleanup_state"], "confirmed")
+        time.sleep(0.3)
+        self.assertFalse(marker.exists())
 
     def test_stop_cancels_the_look_and_closes_the_program(self):
         stop = threading.Event()
@@ -123,22 +173,37 @@ class ObserveTests(unittest.TestCase):
         self.assertEqual(lc.verdict(receipt), "cancelled")
         self.assertEqual(receipt["cleanup_state"], "confirmed")
 
-    def test_a_program_that_cannot_be_owned_never_runs(self):
+    def test_l6_a_program_that_cannot_be_owned_never_runs_and_still_has_a_receipt(self):
         marker = self.root / "calisti.txt"
         with patch("core.process_tree.bind_kill_on_close_job", return_value=False):
             receipt = self.run_script(f"open(r'{marker}', 'w').write('x')\n", windows=lambda pids: [])
         self.assertEqual(lc.verdict(receipt), "blocked")
         self.assertEqual(receipt["termination_reason"], "job_object_unavailable")
+        self.assertTrue((self.root / "kanit" / "m1-deneme1" / "receipt.json").is_file())
         time.sleep(0.5)
         self.assertFalse(marker.exists(), "the suspended program was never resumed")
 
+    def test_l5_the_reviewers_folder_holds_no_raw_output(self):
+        receipt = self.run_script("import time\nprint('password=gizli-deneme-123', flush=True)\ntime.sleep(30)\n",
+                                  windows=lambda pids: [(1234, min(pids), "T")], settle=0.3, capture=self.png)
+        review = Path(receipt["review_dir"])
+        self.assertEqual([p.name for p in review.iterdir()], ["window.png"])
+        for path in review.rglob("*"):
+            self.assertNotIn(b"gizli-deneme-123", path.read_bytes())
+        self.assertNotIn("gizli-deneme-123", receipt["output_tail"])
+
     def test_two_attempts_keep_their_own_evidence(self):
         first = self.run_script("raise SystemExit(2)\n", windows=lambda pids: [])
-        entry = self.project / "main.py"
-        second = lc.observe(entry, self.project, self.root / "kanit" / "m1-deneme2", threading.Event(),
-                            sys.executable, windows=lambda pids: [])
+        second = self.run_script("raise SystemExit(2)\n", attempt="m1-deneme2", windows=lambda pids: [])
         self.assertNotEqual(first["evidence_dir"], second["evidence_dir"])
         self.assertTrue((Path(first["evidence_dir"]) / "receipt.json").is_file())
+
+    def test_l1_an_unreadable_tree_is_never_called_clean(self):
+        with patch.object(lc, "_members", return_value=None):
+            receipt = self.run_script("raise SystemExit(0)\n", windows=lambda pids: [])
+        self.assertEqual(receipt["cleanup_state"], "pending")
+        self.assertEqual(lc.verdict(receipt), "cleanup_pending")
+        lc._UNCONFIRMED.clear()
 
 
 class JobWiringTests(unittest.TestCase):
@@ -180,6 +245,15 @@ class JobWiringTests(unittest.TestCase):
         self.assertEqual(seen[0]["launch"]["verdict"], "window_seen")
         self.assertIn("Program açıldı", finish_report(ledger))
 
+    def test_l1_an_unconfirmed_cleanup_holds_the_milestone_without_review(self):
+        seen = []
+        job, ledger = self.make({"verdict": "cleanup_pending", "cleanup_state": "pending"}, seen)
+        job.run()
+        milestone = ledger.data["milestones"][0]
+        self.assertFalse(seen, "no review over an unconfirmed cleanup")
+        self.assertEqual(milestone["status"], "needs_user")
+        self.assertNotIn("commit", {k for k, v in milestone.items() if v})
+
     def test_a_busy_desktop_is_not_a_defect(self):
         from core.long_job import finish_report
         seen = []
@@ -210,9 +284,6 @@ class ChatLaunchGateTests(unittest.TestCase):
         self.assertEqual(look["verdict"], "skipped")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class ReviewPromptTests(unittest.TestCase):
     def review(self, reviewer, look):
@@ -235,7 +306,7 @@ class ReviewPromptTests(unittest.TestCase):
     def test_fatum_gets_the_attempts_folder_and_others_are_told_they_did_not_see_it(self):
         with tempfile.TemporaryDirectory() as evidence:
             look = {"verdict": "window_seen", "evidence_text": "SPES ÇALIŞTIRMA DENETİMİ x",
-                    "screenshot": str(Path(evidence) / "window.png"), "evidence_dir": evidence}
+                    "screenshot": str(Path(evidence) / "window.png"), "review_dir": evidence}
             fatum = self.review("claude", look)
             fides = self.review("codex", look)
         self.assertEqual(fatum["read_root"], evidence)
@@ -243,3 +314,23 @@ class ReviewPromptTests(unittest.TestCase):
         self.assertIsNone(fides["read_root"])
         self.assertIn("görsel incelendi deme", fides["text"])
         self.assertIn("SPES ÇALIŞTIRMA DENETİMİ", fides["text"])
+
+
+class GateRegistryTests(unittest.TestCase):
+    def test_l1_no_new_look_while_an_earlier_tree_is_unconfirmed(self):
+        from core.long_job_chat import LongJobChatMixin
+
+        class Ledger:
+            data = {"project_path": tempfile.gettempdir(), "kind": "code", "permission_level": "full"}
+            path = Path(tempfile.gettempdir()) / "ledger.json"
+        lc._UNCONFIRMED[os.getpid()] = lc._create_time(os.getpid())  # a process that is surely alive
+        try:
+            look = LongJobChatMixin()._job_launch(Ledger(), {"id": "m1", "title": "Pencere",
+                                                             "acceptance": "pencere açılıyor"}, threading.Event())
+        finally:
+            lc._UNCONFIRMED.clear()
+        self.assertEqual(look, {"verdict": "skipped", "reason": "önceki programın kapandığı henüz doğrulanmadı"})
+
+
+if __name__ == "__main__":
+    unittest.main()

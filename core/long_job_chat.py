@@ -160,6 +160,8 @@ class LongJobChatMixin:
 
         def skipped(reason):
             return {"verdict": "skipped", "reason": reason}
+        if lc.unconfirmed():
+            return skipped("önceki programın kapandığı henüz doğrulanmadı")
         entry, why = lc.detected_entry(ledger.data["project_path"])
         if entry is None:
             return skipped(why)
@@ -322,8 +324,9 @@ class LongJobChatMixin:
             if look.get("evidence_text"):
                 prompt += "\n" + look["evidence_text"]
                 if reviewer == "claude" and look.get("screenshot") and not read_root:
-                    # Fatum sees the window SpeS captured (only that attempt's own folder).
-                    read_root = look.get("evidence_dir")
+                    # Fatum sees the window SpeS captured: that attempt's reviewer folder, which
+                    # holds the image only (Fides L5: never the raw output).
+                    read_root = look.get("review_dir")
                     prompt += ("\nPencere görüntüsü: window.png (bu klasörde). Görüntüyü açıp baktıysan bunu söyle; "
                                "açmadıysan 'görsel incelendi' deme.")
                 elif look.get("verdict") == "window_seen":

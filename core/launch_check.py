@@ -98,6 +98,26 @@ def _redact(text: str) -> str:
     return text
 
 
+# Fides's implementation review 26 Nov (L1): a look whose cleanup was not read back as confirmed
+# keeps its process tree here; no new program starts while any of it is still running.
+_UNCONFIRMED: dict = {}
+_UNCONFIRMED_LOCK = threading.Lock()
+
+
+def unconfirmed() -> set:
+    """Processes of earlier looks not yet read back as gone (pruned as they end)."""
+    with _UNCONFIRMED_LOCK:
+        if not _UNCONFIRMED:
+            return set()
+        left = _still_running(dict(_UNCONFIRMED))
+        if left is None:
+            return set(_UNCONFIRMED)
+        for pid in list(_UNCONFIRMED):
+            if pid not in left:
+                _UNCONFIRMED.pop(pid, None)
+        return set(_UNCONFIRMED)
+
+
 def _tree_pids(proc, started_after: float) -> set:
     """The program's own process tree: the root and descendants created after the launch."""
     pids = {proc.pid}
@@ -114,37 +134,69 @@ def _tree_pids(proc, started_after: float) -> set:
     return pids
 
 
-def _members(proc) -> dict:
-    """pid -> creation time of the program's tree at this moment (root included when alive)."""
-    members = {}
+def _create_time(pid):
     try:
         import psutil
-        root = psutil.Process(proc.pid)
-        for member in [root, *root.children(recursive=True)]:
-            try:
-                members[member.pid] = member.create_time()
-            except psutil.Error:
-                continue
+        return psutil.Process(pid).create_time()
     except Exception:
-        pass
+        return None
+
+
+def _members(proc):
+    """pid -> creation time of the program's tree now; None when it cannot be read (Fides L1:
+    an unreadable tree is unknown, never an empty, clean one)."""
+    try:
+        import psutil
+    except Exception:
+        return None
+    members = {}
+    try:
+        root = psutil.Process(proc.pid)
+        family = [root, *root.children(recursive=True)]
+    except psutil.NoSuchProcess:
+        return {}
+    except Exception:
+        return None
+    for member in family:
+        try:
+            members[member.pid] = member.create_time()
+        except psutil.NoSuchProcess:
+            continue
+        except Exception:
+            return None
     return members
 
 
-def _still_running(members: dict) -> set:
-    """The members that are still the same live process (a reused pid is not ours)."""
-    left = set()
+def _still_running(members: dict):
+    """The members that are still the same live process (a reused pid is not ours); None when
+    that cannot be read."""
     try:
         import psutil
     except Exception:
-        return left
+        return None
+    left = set()
     for pid, created in members.items():
         try:
             proc = psutil.Process(pid)
             if abs(proc.create_time() - created) < 0.01 and proc.status() != psutil.STATUS_ZOMBIE:
                 left.add(pid)
-        except psutil.Error:
+        except psutil.NoSuchProcess:
             continue
+        except Exception:
+            return None
     return left
+
+
+def _owner_pid(hwnd: int):
+    """The process that owns this window right now (None when the window is gone)."""
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    if not user32.IsWindow(hwnd):
+        return None
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return int(pid.value) or None
 
 
 def _visible_windows(pids: set) -> list:
@@ -169,11 +221,17 @@ def _visible_windows(pids: set) -> list:
     return found
 
 
-def _capture(hwnd: int, out: Path, result: dict) -> None:
-    """Only this window's own render (PrintWindow); the rest of the screen is never read."""
+def _capture(hwnd: int, result: dict, verify) -> None:
+    """Only this window's own render (PrintWindow); the rest of the screen is never read. The
+    window's owner is checked right at the boundary (Fides L4); the image stays in memory and
+    only the owning CaptureJob may publish it."""
     import ctypes
+    import io
     from ctypes import wintypes
     from PIL import Image
+    if not verify():
+        result["state"] = "owner_changed"
+        return
     user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32
     rect = wintypes.RECT()
     if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
@@ -188,6 +246,9 @@ def _capture(hwnd: int, out: Path, result: dict) -> None:
     hbm = gdi32.CreateCompatibleBitmap(hdc_screen, w, h)
     try:
         gdi32.SelectObject(hdc_mem, hbm)
+        if not verify():
+            result["state"] = "owner_changed"
+            return
         if not user32.PrintWindow(hwnd, hdc_mem, 2):
             result["state"] = "failed"
             return
@@ -206,99 +267,152 @@ def _capture(hwnd: int, out: Path, result: dict) -> None:
             result["state"] = "failed"
             return
         image = Image.frombuffer("RGBA", (w, h), buf, "raw", "BGRA", 0, 1).convert("RGB")
-        extrema = image.getextrema()
-        blank = all(lo == hi for lo, hi in extrema)
-        image.save(out)
-        result.update(state="blank" if blank else "captured", size=[w, h])
+        blank = all(lo == hi for lo, hi in image.getextrema())
+        data = io.BytesIO()
+        image.save(data, format="PNG")
+        result.update(state="blank" if blank else "captured", png=data.getvalue(), size=[w, h])
     finally:
         gdi32.DeleteObject(hbm)
         gdi32.DeleteDC(hdc_mem)
         user32.ReleaseDC(0, hdc_screen)
 
 
-def capture_window(hwnd: int, out: Path, timeout: float = CAPTURE_SECONDS, capture=None) -> dict:
-    """Capture with a deadline. PrintWindow waits on the target's message loop; if it hangs, the
-    look goes on without an image and the target's closing (its Job Object) releases the call."""
-    result = {"state": "timeout"}
-    worker = threading.Thread(target=lambda: (capture or _capture)(hwnd, out, result), daemon=True,
-                              name="spes-launch-capture")
-    worker.start()
-    worker.join(timeout)
-    if worker.is_alive():
-        result["state"] = "timeout"
-    return result
+class CaptureJob:
+    """A capture worker SpeS owns (Fides L3). At its deadline (or a Stop) the result is copied and
+    the job is closed: a late worker can never write evidence. finished() tells whether the worker
+    itself has ended, which the look's cleanup must read back before it says "confirmed"."""
+
+    def __init__(self, hwnd, out: Path, verify, capture=None):
+        self.out, self._lock, self._closed = Path(out), threading.Lock(), False
+        self._result = {"state": "timeout"}
+        self._worker = threading.Thread(target=self._run, args=(hwnd, verify, capture or _capture), daemon=True,
+                                        name="spes-launch-capture")
+        self._worker.start()
+
+    def _run(self, hwnd, verify, capture):
+        local = {}
+        try:
+            capture(hwnd, local, verify)
+        except Exception as exc:
+            local = {"state": f"failed: {type(exc).__name__}"}
+        with self._lock:
+            if self._closed:
+                return  # too late: the look already went on without this image
+            png = local.pop("png", None)
+            if png is not None:
+                self.out.parent.mkdir(parents=True, exist_ok=True)
+                self.out.write_bytes(png)
+            self._result = {**local, "state": local.get("state", "failed")}
+
+    def wait(self, stop, timeout=None) -> dict:
+        deadline = time.monotonic() + (CAPTURE_SECONDS if timeout is None else timeout)
+        while self._worker.is_alive() and time.monotonic() < deadline and not stop.is_set():
+            self._worker.join(0.05)
+        with self._lock:
+            self._closed = True
+            result = dict(self._result)
+            if self._worker.is_alive():
+                result["state"] = "cancelled" if stop.is_set() else "timeout"
+        return result
+
+    def finished(self, timeout: float) -> bool:
+        self._worker.join(timeout)
+        return not self._worker.is_alive()
 
 
 def observe(entry, project, evidence_dir, stop, interpreter, *, watch=WATCH_SECONDS, settle=SETTLE_SECONDS,
             windows=None, capture=None) -> dict:
-    """Start the program owned, watch for its window, capture it, close the tree; a receipt."""
+    """Start the program owned, watch for its window, capture it, close the tree; always a receipt."""
     from core.process_tree import (CREATE_SUSPENDED, bind_kill_on_close_job, close_process_job,
                                    resume_process, stop_process_tree)
     windows = windows or _visible_windows
     entry, project, evidence = Path(entry), Path(project), Path(evidence_dir)
     evidence.mkdir(parents=True, exist_ok=True)
+    # Fides L5: the reviewer's folder holds the window image only; the raw output stays outside it.
+    review = evidence / "denetci"
     receipt = {"entry": entry.name, "interpreter": interpreter, "cwd": str(project),
                "entry_sha256": hashlib.sha256(entry.read_bytes()).hexdigest(),
                "launch_state": "not_started", "capture_state": "none", "termination_reason": "",
-               "cleanup_state": "", "window_title": "", "exit_code": None, "alive_after_s": None,
-               "output_tail": "", "screenshot": "", "evidence_dir": str(evidence)}
+               "cleanup_state": "not_needed", "window_title": "", "exit_code": None, "alive_after_s": None,
+               "output_tail": "", "screenshot": "", "evidence_dir": str(evidence), "review_dir": str(review)}
     log_path = evidence / "output.log"
     flags = CREATE_SUSPENDED | getattr(subprocess, "CREATE_NO_WINDOW", 0) \
         | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    proc = None
-    with log_path.open("wb") as log:
+    proc, shot, log = None, None, None
+    try:
+        # Fides L2: a Stop given before the start starts nothing.
+        if stop.is_set():
+            receipt["termination_reason"] = "cancelled"
+            return receipt
+        log = log_path.open("wb")
+        proc = subprocess.Popen([interpreter, "-B", str(entry)], cwd=str(project), stdin=subprocess.DEVNULL,
+                                stdout=log, stderr=subprocess.STDOUT, creationflags=flags)
+        started = time.time()
+        if stop.is_set():
+            receipt["termination_reason"] = "cancelled"
+            return receipt
+        # Fides 26 Nov: never resume a program that is not owned.
+        if not bind_kill_on_close_job(proc, resume=False):
+            receipt.update(launch_state="blocked", termination_reason="job_object_unavailable")
+            return receipt
+        if stop.is_set():  # bound but never resumed
+            receipt["termination_reason"] = "cancelled"
+            return receipt
+        if not resume_process(proc):
+            receipt.update(launch_state="blocked", termination_reason="resume_failed")
+            return receipt
+        receipt["launch_state"] = "started"
+        began, seen_at, window = time.monotonic(), None, None
+        while time.monotonic() - began < watch:
+            if stop.is_set():
+                receipt["termination_reason"] = "cancelled"
+                break
+            if log_path.stat().st_size > OUTPUT_LIMIT:
+                receipt["termination_reason"] = "output_limit"
+                break
+            pids = _tree_pids(proc, started)
+            found = windows(pids)
+            if found:
+                if window is None:
+                    hwnd, pid, title = found[0]
+                    window = (hwnd, pid, title, _create_time(pid))
+                    seen_at = time.monotonic()
+                elif time.monotonic() - seen_at >= settle:
+                    break
+            elif proc.poll() is not None and len(pids) <= 1:
+                receipt.update(termination_reason="exited", exit_code=proc.returncode)
+                break
+            stop.wait(0.25)
+        receipt["alive_after_s"] = round(time.monotonic() - began, 1) if proc.poll() is None else None
+        if window and not receipt["termination_reason"]:
+            hwnd, pid, title, created = window
+            receipt["window_title"] = _redact(title)[:200]
+
+            def same_window():
+                # Fides L4: this HWND belongs, right now, to the very process we saw, still in our tree.
+                owner = _owner_pid(hwnd)
+                return (owner == pid and created is not None and _create_time(pid) == created
+                        and pid in _tree_pids(proc, started))
+            shot = CaptureJob(hwnd, review / "window.png", same_window, capture=capture)
+            result = shot.wait(stop)
+            receipt["capture_state"] = result["state"]
+            if result["state"] in {"captured", "blank"}:
+                receipt["screenshot"] = str(review / "window.png")
+            if stop.is_set():
+                receipt["termination_reason"] = "cancelled"
+        if not receipt["termination_reason"]:
+            receipt["termination_reason"] = ("closed_by_spes" if window else
+                                             "startup_timeout" if proc.poll() is None else "exited")
+            if receipt["termination_reason"] == "exited":
+                receipt["exit_code"] = proc.returncode
+        return receipt
+    except OSError as exc:
+        receipt.update(launch_state="blocked", termination_reason=f"start_failed: {type(exc).__name__}")
+        return receipt
+    finally:
+        # Fides L1/L6: every ending goes through one cleanup with a read-back and one receipt.
         try:
-            proc = subprocess.Popen([interpreter, "-B", str(entry)], cwd=str(project), stdin=subprocess.DEVNULL,
-                                    stdout=log, stderr=subprocess.STDOUT, creationflags=flags)
-            started = time.time()
-            # Fides 26 Nov: never resume a program that is not owned.
-            if not bind_kill_on_close_job(proc, resume=False):
-                receipt.update(launch_state="blocked", termination_reason="job_object_unavailable")
-                return receipt
-            if not resume_process(proc):
-                receipt.update(launch_state="blocked", termination_reason="resume_failed")
-                return receipt
-            receipt["launch_state"] = "started"
-            began, seen_at, window = time.monotonic(), None, None
-            while time.monotonic() - began < watch:
-                if stop.is_set():
-                    receipt["termination_reason"] = "cancelled"
-                    break
-                if log_path.stat().st_size > OUTPUT_LIMIT:
-                    receipt["termination_reason"] = "output_limit"
-                    break
-                pids = _tree_pids(proc, started)
-                found = windows(pids)
-                if found:
-                    window = window or found[0]
-                    seen_at = seen_at or time.monotonic()
-                    if time.monotonic() - seen_at >= settle:
-                        break
-                elif proc.poll() is not None and len(pids) <= 1:
-                    receipt.update(termination_reason="exited", exit_code=proc.returncode)
-                    break
-                stop.wait(0.25)
-            receipt["alive_after_s"] = round(time.monotonic() - began, 1) if proc.poll() is None else None
-            if window and not stop.is_set():
-                hwnd, pid, title = window
-                receipt["window_title"] = _redact(title)[:200]
-                if pid in _tree_pids(proc, started):  # still the program's own window
-                    shot = evidence / "window.png"
-                    result = capture_window(hwnd, shot, capture=capture)
-                    receipt["capture_state"] = result["state"]
-                    if result["state"] in {"captured", "blank"}:
-                        receipt["screenshot"] = str(shot)
-            if not receipt["termination_reason"]:
-                receipt["termination_reason"] = ("closed_by_spes" if window else
-                                                 "startup_timeout" if proc.poll() is None else "exited")
-                if receipt["termination_reason"] == "exited":
-                    receipt["exit_code"] = proc.returncode
-        except OSError as exc:
-            receipt.update(launch_state="blocked", termination_reason=f"start_failed: {type(exc).__name__}")
-        finally:
             if proc is not None:
-                # Fides: cleanup is "confirmed" only by reading back that every member of the tree,
-                # taken before the close (pid + creation time), is gone.
                 members = _members(proc)
                 close_process_job(proc)  # kill-on-close: the whole tree ends with the job
                 try:
@@ -309,32 +423,49 @@ def observe(entry, project, evidence_dir, stop, interpreter, *, watch=WATCH_SECO
                         proc.wait(timeout=2)
                     except subprocess.TimeoutExpired:
                         pass
-                # The console host and other members end a moment after the root; under load that
-                # moment is longer. Read back for a bounded while before calling it pending.
+                left = None if members is None else _still_running(members)
                 deadline = time.monotonic() + 5
-                left = _still_running(members)
                 while left and time.monotonic() < deadline:
                     time.sleep(0.1)
                     left = _still_running(members)
-                receipt["cleanup_state"] = "confirmed" if proc.poll() is not None and not left else "pending"
-                if left:
-                    receipt["cleanup_left"] = sorted(left)[:20]
-    try:
-        data = log_path.read_bytes()[-4000:].decode("utf-8", errors="replace")
-    except OSError:
-        data = ""
-    receipt["output_tail"] = _redact(data)[-1500:]
-    (evidence / "receipt.json").write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
-    return receipt
+                capture_done = shot.finished(5) if shot is not None else True
+                confirmed = proc.poll() is not None and left is not None and not left and capture_done
+                receipt["cleanup_state"] = "confirmed" if confirmed else "pending"
+                if not confirmed:
+                    receipt["cleanup_left"] = sorted(left)[:20] if left else []
+                    if not capture_done:
+                        receipt["cleanup_left_capture"] = True
+                    with _UNCONFIRMED_LOCK:
+                        for pid, created in (members or {proc.pid: _create_time(proc.pid) or 0}).items():
+                            _UNCONFIRMED[pid] = created
+        except Exception as exc:
+            receipt["cleanup_state"] = "pending"
+            receipt["cleanup_error"] = type(exc).__name__
+        finally:
+            if log is not None:
+                log.close()
+            try:
+                data = log_path.read_bytes()[-4000:].decode("utf-8", errors="replace")
+            except OSError:
+                data = ""
+            receipt["output_tail"] = _redact(data)[-1500:]
+            try:
+                (evidence / "receipt.json").write_text(json.dumps(receipt, ensure_ascii=False, indent=2),
+                                                       encoding="utf-8")
+            except OSError:
+                receipt["receipt_error"] = True
 
 
 def verdict(receipt: dict) -> str:
-    """What the look means: window_seen, crashed, no_window, startup_timeout, cancelled or blocked."""
-    if receipt.get("launch_state") != "started":
-        return "blocked"
+    """What the look means: window_seen, crashed, no_window, startup_timeout, cancelled, blocked or
+    cleanup_pending (Fides L1: an unconfirmed cleanup outranks everything else)."""
+    if receipt.get("cleanup_state") == "pending":
+        return "cleanup_pending"
     reason = receipt.get("termination_reason")
     if reason == "cancelled":
         return "cancelled"
+    if receipt.get("launch_state") != "started":
+        return "blocked"
     if reason == "closed_by_spes":
         return "window_seen"
     if reason == "exited":
@@ -358,6 +489,8 @@ def evidence_text(receipt: dict) -> str:
         lines.append("Program pencere açmadan bitti.")
     elif look == "startup_timeout":
         lines.append("Süre içinde görünür pencere çıkmadı (doğrulanamadı).")
+    elif look == "cleanup_pending":
+        lines.append("SpeS programın kapandığını doğrulayamadı.")
     if receipt.get("output_tail") and look in {"crashed", "no_window", "startup_timeout"}:
         lines.append("Çıktının sonu:\n" + receipt["output_tail"][-800:])
     lines.append(f"Temizlik: {receipt.get('cleanup_state')}.")

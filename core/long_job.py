@@ -882,7 +882,7 @@ class LongJob:
             {"ok": False, "summary": result.get("summary") or "Tur tamamlanmadı."}
         if self.stop_event.is_set():
             return
-        look = None
+        look, hold = None, False
         if built and check.get("ok") and self.launch is not None:
             # 26 Nov: SpeS starts the program it detects, looks for its window and closes it.
             # Only a program that ends itself with an error fails the check; a busy desktop, an
@@ -895,7 +895,13 @@ class LongJob:
                     milestone["launch"] = {k: look.get(k) for k in ("verdict", "entry", "window_title",
                                                                     "capture_state", "reason", "evidence_dir")}
                     ledger.save()
-                if look.get("verdict") in {"crashed", "no_window"}:
+                if look.get("verdict") == "cleanup_pending":
+                    # Fides L1: no review, no commit and no next milestone over a program whose
+                    # closing SpeS could not read back; the user decides.
+                    check = {"ok": False, "summary": "SpeS açtığı programın kapandığını doğrulayamadı; "
+                                                     "taş senin kararını bekliyor."}
+                    hold = True
+                elif look.get("verdict") in {"crashed", "no_window"}:
                     check = {"ok": False, "summary": "SpeS programı çalıştırdı: "
                              + ("hata verip kapandı." if look["verdict"] == "crashed" else "pencere açmadan bitti.")
                              + ("\n" + str(look.get("output_tail") or "")[-1200:] if look.get("output_tail") else "")}
@@ -942,7 +948,7 @@ class LongJob:
         with ledger._lock:
             milestone["history"].append(entry)
             milestone["last_failure"] = failure
-            milestone["status"] = "needs_user" if milestone["attempts"] >= MAX_ATTEMPTS else "pending"
+            milestone["status"] = "needs_user" if milestone["attempts"] >= MAX_ATTEMPTS or hold else "pending"
             ledger.save()
         if milestone["status"] == "needs_user":
             ledger.event(f"{milestone['id']} {MAX_ATTEMPTS} denemede geçmedi; senin kararın gerekiyor.")
