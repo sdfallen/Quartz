@@ -104,18 +104,33 @@ _UNCONFIRMED: dict = {}
 _UNCONFIRMED_LOCK = threading.Lock()
 
 
-def unconfirmed() -> set:
-    """Processes of earlier looks not yet read back as gone (pruned as they end)."""
+def unconfirmed() -> list:
+    """Why earlier looks are not yet closed: one reason per look still on record.
+
+    Fides re-review 26 Nov (RR1): a record is the look's own ownership — the processes it knew
+    (pid + creation time), its capture worker, and whether its tree could be read at all. It
+    goes away only when every part is read back as ended: a live capture worker or an unknown
+    tree keeps it (an unknown tree is never "clean" because its root is gone; restarting SpeS or
+    the user's decision clears it)."""
+    reasons = []
     with _UNCONFIRMED_LOCK:
-        if not _UNCONFIRMED:
-            return set()
-        left = _still_running(dict(_UNCONFIRMED))
-        if left is None:
-            return set(_UNCONFIRMED)
-        for pid in list(_UNCONFIRMED):
-            if pid not in left:
-                _UNCONFIRMED.pop(pid, None)
-        return set(_UNCONFIRMED)
+        for token, record in list(_UNCONFIRMED.items()):
+            shot = record.get("capture")
+            if shot is not None and not shot.finished(0):
+                reasons.append("ekran yakalama işlemi sürüyor")
+                continue
+            if record.get("unknown"):
+                reasons.append("süreç ağacı okunamadı")
+                continue
+            left = _still_running(record.get("members") or {})
+            if left is None:
+                reasons.append("süreçler okunamadı")
+                continue
+            if left:
+                reasons.append(f"{len(left)} süreç hâlâ açık")
+                continue
+            _UNCONFIRMED.pop(token, None)
+    return reasons
 
 
 def _tree_pids(proc, started_after: float) -> set:
@@ -338,7 +353,7 @@ def observe(entry, project, evidence_dir, stop, interpreter, *, watch=WATCH_SECO
     log_path = evidence / "output.log"
     flags = CREATE_SUSPENDED | getattr(subprocess, "CREATE_NO_WINDOW", 0) \
         | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    proc, shot, log = None, None, None
+    proc, shot, log, token = None, None, None, None
     try:
         # Fides L2: a Stop given before the start starts nothing.
         if stop.is_set():
@@ -347,6 +362,11 @@ def observe(entry, project, evidence_dir, stop, interpreter, *, watch=WATCH_SECO
         log = log_path.open("wb")
         proc = subprocess.Popen([interpreter, "-B", str(entry)], cwd=str(project), stdin=subprocess.DEVNULL,
                                 stdout=log, stderr=subprocess.STDOUT, creationflags=flags)
+        # Fides RR2: ownership is on record from the first moment; only a confirmed cleanup removes it.
+        token = f"{proc.pid}-{time.monotonic_ns()}"
+        with _UNCONFIRMED_LOCK:
+            _UNCONFIRMED[token] = {"members": {proc.pid: _create_time(proc.pid) or 0.0}, "capture": None,
+                                   "unknown": False}
         started = time.time()
         if stop.is_set():
             receipt["termination_reason"] = "cancelled"
@@ -413,8 +433,25 @@ def observe(entry, project, evidence_dir, stop, interpreter, *, watch=WATCH_SECO
         # Fides L1/L6: every ending goes through one cleanup with a read-back and one receipt.
         try:
             if proc is not None:
-                members = _members(proc)
-                close_process_job(proc)  # kill-on-close: the whole tree ends with the job
+                members = None
+                try:
+                    members = _members(proc)
+                except Exception as exc:
+                    receipt["cleanup_error"] = type(exc).__name__
+                finally:
+                    # Fides RR2: the Job Object is closed even when reading the tree failed.
+                    try:
+                        close_process_job(proc)  # kill-on-close: the whole tree ends with the job
+                    except Exception as exc:
+                        receipt["cleanup_error"] = type(exc).__name__
+                with _UNCONFIRMED_LOCK:
+                    record = _UNCONFIRMED.get(token)
+                    if record is not None:
+                        if members is None:
+                            record["unknown"] = True
+                        else:
+                            record["members"] = {**record["members"], **members}
+                        record["capture"] = shot
                 try:
                     proc.wait(timeout=3)
                 except subprocess.TimeoutExpired:
@@ -429,16 +466,18 @@ def observe(entry, project, evidence_dir, stop, interpreter, *, watch=WATCH_SECO
                     time.sleep(0.1)
                     left = _still_running(members)
                 capture_done = shot.finished(5) if shot is not None else True
-                confirmed = proc.poll() is not None and left is not None and not left and capture_done
+                confirmed = (proc.poll() is not None and left is not None and not left and capture_done
+                             and "cleanup_error" not in receipt)
                 receipt["cleanup_state"] = "confirmed" if confirmed else "pending"
-                if not confirmed:
+                if confirmed:
+                    with _UNCONFIRMED_LOCK:
+                        _UNCONFIRMED.pop(token, None)
+                else:
                     receipt["cleanup_left"] = sorted(left)[:20] if left else []
                     if not capture_done:
                         receipt["cleanup_left_capture"] = True
-                    with _UNCONFIRMED_LOCK:
-                        for pid, created in (members or {proc.pid: _create_time(proc.pid) or 0}).items():
-                            _UNCONFIRMED[pid] = created
         except Exception as exc:
+            # The record taken at the start stays: a failed cleanup never drops ownership.
             receipt["cleanup_state"] = "pending"
             receipt["cleanup_error"] = type(exc).__name__
         finally:

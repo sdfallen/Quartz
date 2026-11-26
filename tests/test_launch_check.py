@@ -323,13 +323,65 @@ class GateRegistryTests(unittest.TestCase):
         class Ledger:
             data = {"project_path": tempfile.gettempdir(), "kind": "code", "permission_level": "full"}
             path = Path(tempfile.gettempdir()) / "ledger.json"
-        lc._UNCONFIRMED[os.getpid()] = lc._create_time(os.getpid())  # a process that is surely alive
+        lc._UNCONFIRMED["test"] = {"members": {os.getpid(): lc._create_time(os.getpid())},  # surely alive
+                                   "capture": None, "unknown": False}
         try:
             look = LongJobChatMixin()._job_launch(Ledger(), {"id": "m1", "title": "Pencere",
                                                              "acceptance": "pencere açılıyor"}, threading.Event())
         finally:
             lc._UNCONFIRMED.clear()
-        self.assertEqual(look, {"verdict": "skipped", "reason": "önceki programın kapandığı henüz doğrulanmadı"})
+        self.assertEqual(look["verdict"], "skipped")
+        self.assertIn("önceki programın kapandığı henüz doğrulanmadı", look["reason"])
+
+
+@unittest.skipUnless(WINDOWS, "Windows Job Object")
+class PendingOwnershipTests(unittest.TestCase):
+    """Fides's launch re-review 26 Nov: RR1 and RR2."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(lc._UNCONFIRMED.clear)
+        self.root = Path(self.tmp.name)
+        self.project = self.root / "p"
+        self.project.mkdir()
+        (self.project / "main.py").write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
+
+    def look(self, **kwargs):
+        return lc.observe(self.project / "main.py", self.project, self.root / "kanit", threading.Event(),
+                          sys.executable, **kwargs)
+
+    def test_rr1_a_live_capture_worker_keeps_the_gate_closed_until_it_ends(self):
+        release = threading.Event()
+
+        def capture(hwnd, result, verify):
+            release.wait(30)
+        with patch.object(lc, "CAPTURE_SECONDS", 0.2):
+            receipt = self.look(windows=lambda pids: [(1, min(pids), "T")], settle=0.1, capture=capture)
+        self.assertEqual(receipt["cleanup_state"], "pending")
+        self.assertIn("ekran yakalama işlemi sürüyor", lc.unconfirmed())
+        release.set()
+        deadline = time.monotonic() + 5
+        while lc.unconfirmed() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(lc.unconfirmed(), [], "released and read back: the gate opens")
+
+    def test_rr1_an_unknown_tree_stays_unknown_after_its_root_is_gone(self):
+        with patch.object(lc, "_members", return_value=None):
+            receipt = self.look(windows=lambda pids: [], watch=0.5)
+        self.assertEqual(receipt["cleanup_state"], "pending")
+        time.sleep(0.3)
+        self.assertIn("süreç ağacı okunamadı", lc.unconfirmed())
+
+    def test_rr2_a_failing_cleanup_step_keeps_ownership_and_still_closes_the_job(self):
+        with patch.object(lc, "_members", side_effect=RuntimeError("okuma hatası")):
+            receipt = self.look(windows=lambda pids: [], watch=0.5)
+        self.assertEqual((receipt["cleanup_state"], receipt["cleanup_error"]), ("pending", "RuntimeError"))
+        self.assertTrue(lc.unconfirmed(), "ownership stays on record")
+        time.sleep(1)
+        self.assertFalse(any((p.info.get("cmdline") or [])[-1:] == [str(self.project / "main.py")]
+                             for p in __import__("psutil").process_iter(["cmdline"])
+                             if p.info.get("cmdline")), "the job was still closed: nothing of it runs")
 
 
 if __name__ == "__main__":
