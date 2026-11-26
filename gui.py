@@ -394,6 +394,11 @@ class Api:
             from core.message_intent import message_intent, tools_disallowed
             from core.desktop_task_ui import desktop_intent, desktop_help
             if permission_level not in {'read-only','project','full'}: raise ValueError('Geçersiz dosya yetkisi seçimi')
+            # Ücretsiz sohbet (27 Nov): no diagnostics, desktop, REA or job path; it only talks.
+            # The page sends agent "free" for such a conversation (its stored flag); the backend also
+            # routes a free conversation first, before any tool path, whatever the page sent.
+            if agent == 'free':
+                return {'status':'ok','data':{'handled':False,'intent':'conversation'}}
             if agent == 'notion' or re.match(r'^\s*@notion\b', text, re.I):
                 # A cloud-agent message cannot start REA, desktop control or
                 # become an instruction to a running local operator.
@@ -959,6 +964,10 @@ class Api:
                  space: str = "") -> dict:
         return ipc_send("chat_new", {"title": title, "agent": agent, "project_id": project_id or None,
                                      "space": space or None})
+
+    def free_chat(self, action: str, data: dict | None = None) -> dict:
+        """Ücretsiz sohbet: status, connect, disconnect, consent, order, new."""
+        return ipc_send("free_chat", {"action": str(action or ""), "data": dict(data or {})})
 
     def security_act(self, alert_id: str, action: str) -> dict:
         """One of a security alert's own actions (stop, quarantine, remove autorun, undo, ignore)."""

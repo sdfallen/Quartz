@@ -485,6 +485,17 @@ class IPCServer:
             )
             return {"status": "ok", "data": res}
 
+        if action == "free_chat":
+            # Ücretsiz sohbet (27 Nov): connections and new free conversations. A key passes through
+            # here once, to the DPAPI store; it is never logged or returned.
+            data = req.get("data", {}) or {}
+            from core.free_chat import FreeChatError
+            try:
+                return {"status": "ok", "data": self._get_agent_chat().free_chat_action(
+                    str(data.get("action") or ""), data.get("data") or {})}
+            except FreeChatError as exc:
+                return {"status": "error", "message": str(exc)}
+
         if action in ("security_alerts", "security_act"):
             data = req.get("data", {}) or {}
             chat = self._get_agent_chat()

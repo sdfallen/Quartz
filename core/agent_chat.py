@@ -42,6 +42,7 @@ def _writer_failed(message, run, run_id):
 from core.skill_turn import SkillTurnMixin
 from core.long_job_chat import LongJobChatMixin
 from core.job_planner import JobPlannerMixin
+from core.free_chat_chat import FreeChatMixin, is_free
 
 
 
@@ -56,7 +57,7 @@ def desktop_evidence(folder) -> dict:
         count = 0
     return {"observations": count, "folder": str(folder)} if count else {}
 
-class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlannerMixin):
+class AgentChatService(FreeChatMixin, TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlannerMixin):
     MAX_GROUP_ROUNDS = 2
 
     def __init__(self, agent_service: MultiAgentService, store_path: str | Path):
@@ -529,8 +530,17 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
                 turn["stop_receipt"].setdefault("runs", {})[run_id] = state
         return state
 
+    def _refuse_if_free(self, conversation_id):
+        try:
+            conversation = self.store.get(conversation_id) if conversation_id else self.store.get_active()
+        except Exception:
+            return
+        if is_free(conversation):
+            raise PermissionError("Ücretsiz sohbette bu işlem yok; yalnız sohbet edilir.")
+
     def prepare_resume(self, conversation_id, message_id):
         """Return an editable draft only. No dispatch, permission or session reuse."""
+        self._refuse_if_free(conversation_id)
         with self._lock:
             self._refresh_stop_receipt()
             if self._closed or (self._active_turn or {}).get("stop_receipt", {}).get("status") in {"pending", "failed"}:
@@ -739,6 +749,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
                 "evidence": lambda: desktop_evidence(folder)}
 
     def coordination_message(self, cid, sender, content, metadata=None):
+        self._refuse_if_free(cid)
         if sender not in {"user", "quartz", "codex", "antigravity", "claude"}:
             raise ValueError("Geçersiz koordinasyon katılımcısı")
         if not isinstance(content, str) or len(content) > 64000: raise ValueError("Geçersiz mesaj")
@@ -829,6 +840,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
 
     def panel_read(self, cid, scope, path, batch=None):
         """One file for the panel, only from the lists panel_files returns."""
+        self._refuse_if_free(cid)
         from core.local_preview import read_for_panel
         files = self.panel_files(cid)
         rel = str(path or "")
@@ -1007,6 +1019,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
             return bool(turn and turn.get("conversation_id") == cid and turn.get("conversation_only"))
 
     def set_project(self, conversation_id: str, project_id: str | None) -> None:
+        self._refuse_if_free(conversation_id)
         with self._lock:
             if project_id is not None:
                 self.agent_service.projects.get(project_id)
@@ -1129,6 +1142,11 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
         if requested_permission_level not in {'read-only','project','full'}: raise ValueError('Invalid requested permission level')
         from core.space_policy import is_chat
         target = self.store.get(conversation_id) if conversation_id else self.store.get_active()
+        if is_free(target):
+            # Ücretsiz sohbet (27 Nov): routed before every other branch; it only ever talks.
+            if origin == "long_job":
+                raise PermissionError("Ücretsiz sohbette uzun iş yok.")
+            return self._free_chat_turn(target, text)
         if origin != "long_job" and target is not None and not is_chat(target):
             # A conversation with a running job: the user talks to it in plain words
             # ("ne durumda?", "dur", "devam", anything else is a note) - no commands (25 Nov).
@@ -1389,6 +1407,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
 
     def continue_discussion(self, conversation_id: str | None = None) -> dict:
         """Trigger 1 additional mutual evaluation round between Codex and Antigravity in Birlikte mode."""
+        self._refuse_if_free(conversation_id)
         with self._lock:
             if self._closed:
                 raise RuntimeError("SpeS kapanıyor; yeni görev başlatılamaz.")

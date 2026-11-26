@@ -305,6 +305,16 @@ class ConversationStore:
             return {"deleted_count": len(ids), "active_conversation": deepcopy(remaining[active]),
                     "backup": str(backup)}
 
+    def mark_free(self, conversation_id: str) -> None:
+        """Ücretsiz sohbet (27 Nov): a stored, one-way property; such a conversation only talks."""
+        with self._lock:
+            conv = self._conversations.get(conversation_id)
+            if conv is None:
+                raise KeyError(f"Conversation not found: {conversation_id}")
+            conv["free"] = True
+            conv["space"] = "chat"
+            self._save()
+
     def latest_in_space(self, space: str) -> dict | None:
         """Most recently updated conversation of a space (for the space switch)."""
         wanted = normalize_space(space)

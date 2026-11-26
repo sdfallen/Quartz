@@ -40,6 +40,13 @@ class LongJobChatMixin:
 
     # -- public API (IPC) -----------------------------------------------------------
     def job_start(self, spec: dict) -> dict:
+        from core.free_chat_chat import is_free
+        try:
+            current = self.store.get(spec.get("conversation_id")) if (spec or {}).get("conversation_id")                 else self.store.get_active()
+        except Exception:
+            current = None
+        if is_free(current):
+            raise JobError("Ücretsiz sohbette uzun iş başlatılamaz; Workspace'te başlat.")
         """Start a job the user approved in this conversation's project."""
         from core.space_policy import is_chat
         spec = dict(spec or {})
