@@ -209,7 +209,7 @@ class RunTests(unittest.TestCase):
 
     def test_d4_no_fresh_report_blocks_a_text_click_and_leaves_expectations_unmeasured(self):
         result = self.run_steps([{"beklenen": "1"}])
-        self.assertEqual(result["state"], "smoke")
+        self.assertEqual(result["state"], "unproven")
         self.assertEqual(result["unmeasured"], 1)
         result = self.run_steps([{"tikla": "Artır"}])
         self.assertEqual(result["state"], "blocked")
@@ -270,15 +270,126 @@ class RunTests(unittest.TestCase):
         result = self.run_steps([{"tus": "a"}, {"tus": "b"}], alive=lambda: next(alive, False))
         self.assertEqual(result["state"], "crashed")
 
-    def test_d2_a_hold_releases_its_key_on_stop(self):
+    def native(self, focused="Sayaç"):
+        """The real NativeDesktopBackend.act with the window and keyboard faked (Fides's probe shape)."""
+        from contextlib import nullcontext
+        from types import SimpleNamespace
+        from core.desktop_native import NativeDesktopBackend
+        backend = NativeDesktopBackend.__new__(NativeDesktopBackend)
+        backend.is_foreground = lambda target: True
+        backend._safe_controls = lambda target: None
+        backend._before_input = lambda target: None
+        backend.controller = SimpleNamespace(_desktop=lambda: nullcontext(object()), _window=lambda d, h: object(),
+                                             focused_control=lambda w: object(),
+                                             _describe=lambda c: {"name": focused})
+        return backend
+
+    def test_d2_i4_a_hold_goes_through_native_act_and_stop_releases_the_key(self):
         downs, ups = [], []
         fake = type("P", (), {"FAILSAFE": True, "keyDown": staticmethod(downs.append),
                               "keyUp": staticmethod(ups.append)})
         threading.Timer(0.1, self.stop.set).start()
         with patch.dict("sys.modules", {"pyautogui": fake}):
-            result = self.run_steps([{"bas": "right", "sure": 1}])
-        self.assertEqual(result["state"], "cancelled")
+            with self.assertRaises(PermissionError):
+                li._hold(self.native(), {"handle": 42}, "right", 1, self.stop)
         self.assertEqual((downs, ups), (["right"], ["right"]))
+
+    def test_i4_a_hold_on_a_consequential_focused_control_presses_nothing(self):
+        downs = []
+        fake = type("P", (), {"FAILSAFE": True, "keyDown": staticmethod(downs.append),
+                              "keyUp": staticmethod(lambda key: None)})
+        with patch.dict("sys.modules", {"pyautogui": fake}):
+            with self.assertRaises(PermissionError):
+                li._hold(self.native(focused="Kaydet"), {"handle": 42}, "enter", 0.2, self.stop)
+        self.assertEqual(downs, [])
+
+    def test_i1_one_unmeasured_expectation_is_never_a_pass(self):
+        self.probe.write([widget("1", cls="Label")])
+        reports = iter([li.read_report(self.probe.path, pid=7)] * 2 + [None])
+        with patch.object(li, "read_report", side_effect=lambda *a, **k: next(reports)):
+            result = self.run_steps([{"beklenen": "1"}, {"beklenen": "2"}])
+        self.assertEqual(result["state"], "unproven")
+        self.assertIn("kanıtlanamadı", li.summary(result))
+
+    def test_i2_an_error_in_the_same_sample_as_a_match_fails(self):
+        self.probe.write([widget("1", cls="Label")])
+        self.assertEqual(self.run_steps([{"beklenen": "1"}])["state"], "passed")
+        self.probe.write([widget("1", cls="Label")], errors=["ValueError"])
+        self.assertEqual(self.run_steps([{"bekle": 0.1}])["state"], "failed")
+
+    def test_i3_a_window_whose_owner_changed_gets_no_input(self):
+        backend = FakeBackend()
+        original, calls = backend.identity, [0]
+
+        def identity(hwnd):
+            calls[0] += 1
+            found = original(hwnd)
+            if calls[0] > 1:
+                found.update(pid=8, started=99.0, exe=r"C:\other.exe")
+            return found
+        backend.identity = identity
+        result = self.run_steps([{"tus": "a"}], backend)
+        self.assertEqual((result["state"], backend.acts), ("blocked", []))
+
+    def test_i3_a_window_not_of_the_launched_process_is_never_focused(self):
+        backend = FakeBackend()
+        result = li.run(backend, 42, li.validate([{"tus": "a"}]), self.stop, report_path=self.probe.path,
+                        review_dir=self.review, alive=lambda: True, pid=8, settle=0,
+                        client_area=lambda h: self.CLIENT, cursor=lambda: (5, 5))
+        self.assertEqual((result["state"], backend.focused, backend.acts), ("blocked", 0, []))
+
+    def test_i5_a_blocked_observation_returns_at_stop_and_stays_owned(self):
+        entered, release = threading.Event(), threading.Event()
+        backend = FakeBackend()
+        original = backend.observe
+
+        def observe(target):
+            entered.set()
+            release.wait(5)
+            return original(target)
+        backend.observe = observe
+        workers, result = [], {}
+        runner = threading.Thread(target=lambda: result.update(self.run_steps([{"tus": "a"}], backend,
+                                                                                workers=workers)))
+        try:
+            runner.start()
+            self.assertTrue(entered.wait(2))
+            self.stop.set()
+            runner.join(0.5)
+            self.assertFalse(runner.is_alive(), "Stop is not held by a blocked call")
+            self.assertEqual(result["state"], "cancelled")
+            self.assertEqual(len(workers), 1)
+            self.assertFalse(workers[0].finished(0), "the given-up call is still on record")
+        finally:
+            release.set()
+        self.assertTrue(workers[0].finished(2))
+        self.assertEqual(backend.acts, [])
+
+    def test_i5_a_given_up_call_cannot_send_late_input(self):
+        backend = FakeBackend()
+        seen = []
+        backend._before_input = lambda target: seen.append("original")
+        release = threading.Event()
+
+        def act(target, observation, args):
+            release.wait(5)
+            backend._before_input(target)  # what Native does right before pressing
+            backend.acts.append(args)
+        backend.act = act
+        workers = []
+        result = self.run_steps([{"tus": "a"}], backend, workers=workers, call_seconds=0.1)
+        self.assertEqual(result["state"], "blocked")
+        release.set()
+        self.assertTrue(workers[-1].finished(2))
+        self.assertIsInstance(workers[-1].error, PermissionError)
+        self.assertEqual((backend.acts, seen), ([], []))
+
+    def test_i6_no_input_after_the_deadline_passed_during_observation(self):
+        backend = FakeBackend()
+        original = backend.observe
+        backend.observe = lambda target: time.sleep(0.08) or original(target)
+        result = self.run_steps([{"tus": "a"}], backend, max_seconds=0.02)
+        self.assertEqual((result["state"], backend.acts), ("blocked", []))
 
     def test_the_time_budget_ends_the_run(self):
         result = self.run_steps([{"bekle": 0.2}, {"tus": "a"}], max_seconds=0.05)

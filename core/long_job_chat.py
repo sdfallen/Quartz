@@ -206,12 +206,13 @@ class LongJobChatMixin:
         except Exception:
             return skipped("masaüstü başka bir görevde ya da ekran kilitli")
         interact = None
-        if steps:
-            backend = NativeDesktopBackend()
-
-            def interact(hwnd, stop_event, **kwargs):
-                return li.run(backend, hwnd, steps, stop_event, **kwargs)
         try:
+            if steps:
+                # Fides: built inside the lease's try, so a failing constructor still releases it.
+                backend = NativeDesktopBackend()
+
+                def interact(hwnd, stop_event, **kwargs):
+                    return li.run(backend, hwnd, steps, stop_event, **kwargs)
             evidence = (Path(ledger.path).parent / "launch"
                         / f"{milestone['id']}-deneme{milestone.get('attempts', 0)}-{uuid.uuid4().hex[:6]}")
             receipt = lc.observe(entry, ledger.data["project_path"], evidence, stop, interpreter,

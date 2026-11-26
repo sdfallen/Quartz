@@ -683,10 +683,16 @@ class NativeDesktopBackend:
                 duration = args.get("seconds", 0.1)
                 if type(duration) not in {int, float} or not 0 < duration <= 1:
                     raise ValueError("Hold duration must be 0..1 seconds")
+                cancelled = getattr(self, "input_cancelled", None)
+                if callable(cancelled) and cancelled():
+                    raise PermissionError("Stopped before the key hold; no key sent")
                 pyautogui.keyDown(key)
                 try:
                     deadline = time.monotonic() + duration
                     while time.monotonic() < deadline:
+                        # Fides 27 Nov (I4): Stop ends a hold as it ends a key sequence; the key is released.
+                        if callable(cancelled) and cancelled():
+                            raise PermissionError("Stopped during key hold; key released")
                         if not self.is_foreground(target): raise PermissionError("Foreground changed during key hold")
                         time.sleep(.02)
                 finally: pyautogui.keyUp(key)

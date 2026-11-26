@@ -123,6 +123,9 @@ def unconfirmed() -> list:
             if shot is not None and not shot.finished(0):
                 reasons.append("ekran yakalama işlemi sürüyor")
                 continue
+            if any(not w.finished(0) for w in record.get("workers") or ()):
+                reasons.append("deneme çağrısı sürüyor")
+                continue
             if record.get("unknown"):
                 reasons.append("süreç ağacı okunamadı")
                 continue
@@ -356,7 +359,10 @@ def observe(entry, project, evidence_dir, stop, interpreter, *, watch=WATCH_SECO
                "output_tail": "", "screenshot": "", "evidence_dir": str(evidence), "review_dir": str(review)}
     log_path = evidence / "output.log"
     command, env = [interpreter, "-B", str(entry)], None
+    workers = []  # Fides I5: interaction calls SpeS gave up on stay owned until they end
+    receipt["launch_mode"] = "direct"
     if interact is not None:
+        receipt["launch_mode"] = "instrumented"  # Fides D4/Q1: started through SpeS's probe
         # 26 Nov v2: the program starts through SpeS's probe so a scenario can name what it shows.
         from core.launch_interact import write_probe
         command = [interpreter, "-B", str(write_probe(evidence)), str(entry)]
@@ -377,7 +383,7 @@ def observe(entry, project, evidence_dir, stop, interpreter, *, watch=WATCH_SECO
         token = f"{proc.pid}-{time.monotonic_ns()}"
         with _UNCONFIRMED_LOCK:
             _UNCONFIRMED[token] = {"members": {proc.pid: _create_time(proc.pid) or 0.0}, "capture": None,
-                                   "unknown": False, "active": True}
+                                   "unknown": False, "active": True, "workers": workers}
         started = time.time()
         if stop.is_set():
             receipt["termination_reason"] = "cancelled"
@@ -441,7 +447,7 @@ def observe(entry, project, evidence_dir, stop, interpreter, *, watch=WATCH_SECO
                     try:
                         receipt["interaction"] = interact(
                             hwnd, stop, report_path=evidence / "probe.json", review_dir=review, pid=pid,
-                            alive=lambda: proc.poll() is None and same_window())
+                            alive=lambda: proc.poll() is None and same_window(), workers=workers)
                     except Exception as exc:
                         receipt["interaction"] = {"state": "blocked", "steps": [],
                                                   "reason": f"deneme başlatılamadı ({type(exc).__name__})"}
@@ -455,8 +461,9 @@ def observe(entry, project, evidence_dir, stop, interpreter, *, watch=WATCH_SECO
                         # Fides: a program that ends itself normally has not crashed. After the last step
                         # it is what the scenario did; before that, the scenario could not finish.
                         if ended.get("reason") == "program son adımdan sonra kapandı":
-                            ended.update(state="passed" if ended.get("asserted") else "smoke",
-                                         reason="program son adımda kendini kapattı (çıkış 0)")
+                            from core.launch_interact import finish
+                            finish(ended)  # Fides I1: the same pass/unproven/smoke rule
+                            ended["closed_itself"] = True
                         else:
                             ended.update(state="failed", reason="program senaryo bitmeden kendini kapattı (çıkış 0)")
             if stop.is_set():
@@ -494,6 +501,7 @@ def observe(entry, project, evidence_dir, stop, interpreter, *, watch=WATCH_SECO
                     else:
                         record["members"] = {**record.get("members", {}), **members}
                     record["capture"] = shot
+                    record["workers"] = workers
                 try:
                     proc.wait(timeout=3)
                 except subprocess.TimeoutExpired:
@@ -508,8 +516,10 @@ def observe(entry, project, evidence_dir, stop, interpreter, *, watch=WATCH_SECO
                     time.sleep(0.1)
                     left = _still_running(members)
                 capture_done = shot.finished(5) if shot is not None else True
+                deadline = time.monotonic() + 5
+                workers_done = all(w.finished(max(0.0, deadline - time.monotonic())) for w in workers)
                 confirmed = (proc.poll() is not None and left is not None and not left and capture_done
-                             and "cleanup_error" not in receipt)
+                             and workers_done and "cleanup_error" not in receipt)
                 receipt["cleanup_state"] = "confirmed" if confirmed else "pending"
                 with _UNCONFIRMED_LOCK:
                     if confirmed:
@@ -520,6 +530,8 @@ def observe(entry, project, evidence_dir, stop, interpreter, *, watch=WATCH_SECO
                     receipt["cleanup_left"] = sorted(left)[:20] if left else []
                     if not capture_done:
                         receipt["cleanup_left_capture"] = True
+                    if not workers_done:
+                        receipt["cleanup_left_interaction"] = True
         except Exception as exc:
             # The record taken at the start stays: a failed cleanup never drops ownership.
             receipt["cleanup_state"] = "pending"

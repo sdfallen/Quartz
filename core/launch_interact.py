@@ -39,6 +39,7 @@ EXPECT_SECONDS = 2.0
 SETTLE_SECONDS = 0.4
 SCALE_TOLERANCE = 0.03
 PROBE_FRESH_SECONDS = 3.0
+CALL_SECONDS = 10.0
 POINTER_SLACK = 3
 # Fides D1: the scenario's keys are a small subset of the desktop profile — no modifiers, no
 # Windows/function/media/browser keys.
@@ -306,7 +307,8 @@ def read_report(path, pid=None, since=None) -> dict | None:
     if pid is not None and data.get("pid") != pid:
         return None
     at = data.get("at")
-    if not _number(at) or (since is not None and at < since) or time.time() - at > PROBE_FRESH_SECONDS:
+    now = time.time()
+    if not _number(at) or (since is not None and at < since) or now - at > PROBE_FRESH_SECONDS or at > now + 1:
         return None
     return data
 
@@ -350,33 +352,99 @@ def _cursor():
 
 
 def _hold(backend, target, key, seconds, stop):
-    """Fides D2: a hold that Stop and a lost foreground end at once; the key is always released."""
-    import pyautogui
-    pyautogui.FAILSAFE = False
-    backend._before_input(target)
-    pyautogui.keyDown(key)
-    try:
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            if stop.is_set():
-                raise PermissionError("Durduruldu; tuş bırakıldı")
-            if not backend.is_foreground(target):
-                raise PermissionError("Pencere öndeki yerini kaybetti; tuş bırakıldı")
-            time.sleep(.02)
-    finally:
-        pyautogui.keyUp(key)
+    """Fides I4: a hold goes through the same Native act path as a key — its focused-control
+    (CRITICAL), identity, integrity and foreground guards — and Native ends it on Stop
+    (input_cancelled) with the key released. A refusal raises before any key is pressed."""
+    previous = getattr(backend, "input_cancelled", None)
+    backend.input_cancelled = previous if callable(previous) else stop.is_set
+    backend.act(target, {"ui": {"elements": []}}, {"action": "hold", "key": key, "seconds": seconds})
+
+
+class _Call:
+    """One backend call on its own thread, owned until it ends (Fides I5).
+
+    The runner waits for it only while Stop is clear and the deadline holds; when it gives up the
+    call stays on the run's worker list (launch_check keeps the look unconfirmed and blocks the
+    next launch until it ends) and the fence makes any input it would still try refused."""
+
+    def __init__(self, fn, *args):
+        import threading
+        self.result, self.error, self.done = None, None, threading.Event()
+        self.thread = threading.Thread(target=self._run, args=(fn, args), daemon=True, name="spes-interact-call")
+        self.thread.start()
+
+    def _run(self, fn, args):
+        try:
+            self.result = fn(*args)
+        except BaseException as exc:  # handed back to the runner, never lost
+            self.error = exc
+        finally:
+            self.done.set()
+
+    def finished(self, timeout: float) -> bool:
+        return self.done.wait(max(0.0, timeout))
+
+
+class _GaveUp(Exception):
+    def __init__(self, state, reason):
+        super().__init__(reason)
+        self.state, self.reason = state, reason
 
 
 def run(backend, hwnd, steps, stop, *, report_path, review_dir, alive, pid=None, max_seconds=MAX_SECONDS,
-        settle=SETTLE_SECONDS, client_area=None, cursor=None) -> dict:
+        settle=SETTLE_SECONDS, client_area=None, cursor=None, workers=None, call_seconds=CALL_SECONDS) -> dict:
     """Run validated steps in the proved window; always returns a receipt, never raises."""
+    import threading
     client_area = client_area or _client_area
     cursor = cursor or _cursor
+    workers = workers if workers is not None else []
     review = Path(review_dir)
     review.mkdir(parents=True, exist_ok=True)
     results, began = [], time.monotonic()
     out = {"state": "passed", "steps": results, "reason": "", "instrumented": True,
            "actions": 0, "asserted": 0, "unmeasured": 0}
+    abandoned = threading.Event()
+    pinned = {}
+
+    def over():
+        return time.monotonic() - began > max_seconds
+
+    def call(fn, *args, budget=None):
+        # Fides I5: Stop and the deadline are honoured while a call is inside UIA/COM or a capture.
+        job = _Call(fn, *args)
+        limit = time.monotonic() + (call_seconds if budget is None else budget)
+        while not job.finished(0.02):
+            if stop.is_set() or over() or time.monotonic() > limit:
+                abandoned.set()
+                workers.append(job)
+                if stop.is_set():
+                    raise _GaveUp("cancelled", "durduruldu")
+                raise _GaveUp("blocked", "masaüstü çağrısı süresinde bitmedi; SpeS bekletmeden bıraktı")
+        if job.error is not None:
+            raise job.error
+        return job.result
+
+    def same_owner(current):
+        # Fides I3: a fresh identity is compared with the one launch proved; never re-authorised.
+        return all(current.get(k) == pinned.get(k) for k in ("handle", "pid", "started", "exe", "rect"))
+
+    def fresh_target():
+        current = call(backend.identity, hwnd)
+        if not same_owner(current):
+            raise _GaveUp("blocked", "pencerenin sahibi ya da yeri değişti; girdi gönderilmedi")
+        return current
+
+    # Fides I5: an input a given-up call would still try is refused at Native's own last guard.
+    original_before = backend._before_input
+
+    def fenced(target):
+        if abandoned.is_set() or stop.is_set():
+            raise PermissionError("SpeS denemeyi bıraktı; geç girdi gönderilmedi")
+        if not same_owner(target):
+            raise PermissionError("Pencere sahibi değişti; girdi gönderilmedi")
+        return original_before(target)
+    backend._before_input = fenced
+    backend.input_cancelled = lambda: abandoned.is_set() or stop.is_set()
 
     def report():
         return read_report(report_path, pid=pid)
@@ -393,23 +461,40 @@ def run(backend, hwnd, steps, stop, *, report_path, review_dir, alive, pid=None,
         if step is not None:
             step.update(ok=False, note=reason)
         return out
+
+    def program_error(current):
+        # Fides I2: any callback error in a report fails the run, in the same snapshot as a match.
+        if current and int(current.get("error_count") or 0) > 0:
+            out["error"] = str((current.get("errors") or [""])[-1])[-1200:]
+            return True
+        return False
+
+    if stop.is_set():
+        return end("cancelled", "durduruldu")
     try:
-        target = backend.identity(hwnd)
+        target = call(backend.identity, hwnd)
+        if pid is not None and target.get("pid") != pid:
+            return end("blocked", "pencere SpeS'in başlattığı programın değil")
+        pinned.update(target)
         backend.validate_target(target)
-        backend.focus(target)
+        call(backend.focus, target)
         if not backend.is_foreground(target):
             return end("blocked", "pencere öne getirilemedi")
-        baseline = report()
-        known_errors = int((baseline or {}).get("error_count") or 0)
+        if program_error(report()):
+            # A program that raised while starting has no clean baseline (Fides I2).
+            return end("failed", "program açılırken hata verdi")
+    except _GaveUp as gave:
+        return end(gave.state, gave.reason)
     except Exception as exc:
         return end("blocked", f"pencere hazırlanamadı ({type(exc).__name__})")
     pointer = cursor()
+    action_seq = None
     for number, step in enumerate(steps, 1):
         item = {"n": number, "do": step["do"], "ok": None, "note": ""}
         results.append(item)
         if stop.is_set():
             return end("cancelled", "durduruldu", item)
-        if time.monotonic() - began > max_seconds:
+        if over():
             return end("blocked", "süre doldu", item)
         if not alive():
             return end("crashed", "program kapandı", item)
@@ -419,21 +504,34 @@ def run(backend, hwnd, steps, stop, *, report_path, review_dir, alive, pid=None,
             return end("blocked", "fare SpeS dışında hareket etti; deneme durdu", item)
         try:
             if step["do"] == "wait":
-                if stop.wait(step["seconds"]):
+                remaining = max_seconds - (time.monotonic() - began)
+                if stop.wait(min(step["seconds"], max(0.0, remaining))):
                     return end("cancelled", "durduruldu", item)
+                if over():
+                    return end("blocked", "süre doldu", item)
+                if program_error(report()):
+                    return end("failed", "program beklerken hata verdi", item)
                 item["ok"] = True
                 continue
             if step["do"] == "expect":
-                deadline = time.monotonic() + EXPECT_SECONDS
+                deadline = min(time.monotonic() + EXPECT_SECONDS, began + max_seconds)
                 while True:
                     current = report()
+                    if current is not None and action_seq is not None and int(current.get("seq") or 0) <= action_seq:
+                        # Fides: an expectation after an input is read from a sample taken after it.
+                        if time.monotonic() <= deadline:
+                            if stop.wait(0.1):
+                                return end("cancelled", "durduruldu", item)
+                            continue
+                        current = None
                     if current is None or current.get("kind") != "tk":
                         item.update(ok=None, note="ölçülemedi (yalnız tkinter, taze sonda raporu yok)")
                         out["unmeasured"] += 1
                         break
+                    if program_error(current):
+                        return end("failed", "program hata verdi", item)
                     texts = [" ".join(str(w.get("text", "")).split()) for w in current.get("widgets", [])]
-                    hit = any((step["text"] in t) if step["contains"] else (t == step["text"]) for t in texts)
-                    if hit:
+                    if any((step["text"] in t) if step["contains"] else (t == step["text"]) for t in texts):
                         item["ok"] = True
                         out["asserted"] += 1
                         break
@@ -444,21 +542,23 @@ def run(backend, hwnd, steps, stop, *, report_path, review_dir, alive, pid=None,
                     if stop.wait(0.2):
                         return end("cancelled", "durduruldu", item)
                 continue
-            # D1: the broker's fences, here — input session, identity, foreground, a fresh
-            # observation taken right before this one action and used once.
-            backend.validate_input_session()
-            current = backend.identity(hwnd)
+            # D1: the broker's fences, here — input session, the launch-proved owner, foreground, a
+            # fresh observation taken right before this one action and used once.
+            call(backend.validate_input_session)
+            current = fresh_target()
             if not backend.is_foreground(current):
                 return end("blocked", "pencere öndeki yerini kaybetti", item)
-            before = backend.observe(current)
+            before = call(backend.observe, current)
             if not before.get("image_base64"):
                 return end("blocked", "pencere görüntüsü alınamadı", item)
             item["before"] = shot(before, f"adim-{number:02d}-once.png")
+            # Fides I6: nothing is sent once Stop or the deadline came during the observation.
             if stop.is_set():
                 return end("cancelled", "durduruldu", item)
-            backend.input_cancelled = stop.is_set
+            if over():
+                return end("blocked", "süre doldu", item)
             if step["do"] == "click_text":
-                current_report = read_report(report_path, pid=pid)
+                current_report = report()
                 if current_report is None or current_report.get("kind") != "tk":
                     return end("blocked", "metinle tıklama yalnız tkinter'da ve taze sonda raporuyla", item)
                 found = [w for w in current_report.get("widgets", [])
@@ -470,25 +570,39 @@ def run(backend, hwnd, steps, stop, *, report_path, review_dir, alive, pid=None,
                 w = found[0]
                 x, y = to_window_pixels(current, current_report, w["x"] + w["w"] / 2, w["y"] + w["h"] / 2,
                                         client_area(hwnd))
-                backend.act(current, before, {"action": "click", "x": x, "y": y})
+                args = {"action": "click", "x": x, "y": y}
             elif step["do"] == "click_at":
-                x, y = to_window_pixels(current, read_report(report_path, pid=pid),
-                                        step["x"], step["y"], client_area(hwnd))
-                backend.act(current, before, {"action": "click", "x": x, "y": y})
+                x, y = to_window_pixels(current, report(), step["x"], step["y"], client_area(hwnd))
+                args = {"action": "click", "x": x, "y": y}
             elif step["do"] == "key":
-                backend.act(current, before, {"action": "key", "key": step["keys"]})
-            elif step["do"] == "hold":
-                _hold(backend, current, step["key"], step["seconds"], stop)
+                args = {"action": "key", "key": step["keys"]}
+            else:
+                args = {"action": "hold", "key": step["key"], "seconds": step["seconds"]}
+            if stop.is_set() or over():
+                return end("cancelled" if stop.is_set() else "blocked", "durduruldu" if stop.is_set() else "süre doldu",
+                           item)
+            sample = report()
+            action_seq = int((sample or {}).get("seq") or 0)
+            if step["do"] == "hold":
+                call(_hold, backend, current, step["key"], step["seconds"], stop, budget=call_seconds + step["seconds"])
+            else:
+                call(backend.act, current, before, args)
             out["actions"] += 1
             pointer = cursor()
             if stop.wait(settle):
                 return end("cancelled", "durduruldu", item)
             if alive():
                 try:
-                    item["after"] = shot(backend.observe(backend.identity(hwnd)), f"adim-{number:02d}-sonra.png")
+                    item["after"] = shot(call(backend.observe, fresh_target()), f"adim-{number:02d}-sonra.png")
+                except _GaveUp:
+                    raise
                 except Exception:
                     item["after"] = ""
+            if program_error(report()):
+                return end("failed", "program bu adımda hata verdi", item)
             item["ok"] = True
+        except _GaveUp as gave:
+            return end(gave.state, gave.reason, item)
         except PermissionError as exc:
             if stop.is_set():
                 return end("cancelled", "durduruldu", item)
@@ -499,15 +613,20 @@ def run(backend, hwnd, steps, stop, *, report_path, review_dir, alive, pid=None,
             if not alive():
                 return end("crashed", "program kapandı", item)
             return end("blocked", f"girdi verilemedi ({type(exc).__name__})", item)
-        latest = report() or {}
-        if int(latest.get("error_count") or 0) > known_errors:
-            out["error"] = str((latest.get("errors") or [""])[-1])[-1200:]
-            return end("failed", "program bu adımda hata verdi", item)
     if not alive():
         return end("crashed", "program son adımdan sonra kapandı")
-    if not out["asserted"]:
-        # Fides Q2: input without one measured expectation is a smoke test, not acceptance.
+    return finish(out)
+
+
+def finish(out: dict) -> dict:
+    """Fides I1: every asked expectation must be measured for a pass; an unmeasured one makes the
+    whole run "unproven", and input without any expectation is only "smoke"."""
+    if out.get("unmeasured"):
+        out.update(state="unproven", reason=f"{out['unmeasured']} beklenen ölçülemedi")
+    elif not out.get("asserted"):
         out.update(state="smoke", reason="hiçbir beklenen ölçülmedi")
+    else:
+        out["state"] = "passed"
     return out
 
 
@@ -542,6 +661,8 @@ def summary(result: dict | None) -> str:
         return f"Etkileşim: SpeS programı içinde denedi — {counts}, hepsi tuttu (sonda ölçümü)."
     if state == "smoke":
         return f"Etkileşim: SpeS programı içinde denedi — {counts}; yalnız duman testi, işlev ölçülmedi."
+    if state == "unproven":
+        return f"Etkileşim kanıtlanamadı: SpeS programı içinde denedi — {counts}; ölçülemeyen beklenen var."
     last = steps[-1]["n"] if steps else 0
     label = {"failed": "geçmedi", "crashed": "program kapandı", "blocked": "denenemedi",
              "cancelled": "durduruldu"}.get(state, state)
