@@ -161,27 +161,49 @@ def source_manifest(paths) -> dict:
     return source_fingerprint(paths)[0]
 
 
+MANIFEST_BUDGET_BYTES = 512 * 1024 * 1024
+MANIFEST_BUDGET_SECONDS = 60.0
+
+
+def file_mark(path, how="hash") -> str:
+    """One file's mark: its sha256, or its size and time when it is compared by metadata only."""
+    import hashlib
+    try:
+        stat = path.stat()
+        if how != "hash":
+            return f"size:{stat.st_size}:mtime:{int(stat.st_mtime)}"
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(block)
+        return digest.hexdigest()
+    except OSError:
+        return "okunamadi"
+
+
 def source_fingerprint(paths) -> tuple[dict, dict]:
     """The manifest and what it covers: how many files there were, how many were fingerprinted,
-    how many could not be read and how many only by size and time (Fides re-review 26 Nov)."""
-    import hashlib
+    how many could not be read and how many only by size and time (Fides re-review 26 Nov).
+
+    26 Nov: a Documents folder must not stall the job. Hashing stops after
+    MANIFEST_BUDGET_BYTES or MANIFEST_BUDGET_SECONDS; later files are marked by size and time,
+    which the finish report names as not proven."""
     manifest = {}
     files, total = source_files(paths)
+    hashed, started = 0, time.monotonic()
     for path in files:
         if len(manifest) >= MANIFEST_FILES:
             break
         try:
-            stat = path.stat()
-            if stat.st_size > MANIFEST_HASH_BYTES:
-                manifest[str(path)] = f"size:{stat.st_size}:mtime:{int(stat.st_mtime)}"
-                continue
-            digest = hashlib.sha256()
-            with path.open("rb") as handle:
-                for block in iter(lambda: handle.read(1 << 20), b""):
-                    digest.update(block)
-            manifest[str(path)] = digest.hexdigest()
+            size = path.stat().st_size
         except OSError:
             manifest[str(path)] = "okunamadi"
+            continue
+        over = (size > MANIFEST_HASH_BYTES or hashed + size > MANIFEST_BUDGET_BYTES
+                or time.monotonic() - started > MANIFEST_BUDGET_SECONDS)
+        manifest[str(path)] = file_mark(path, "meta" if over else "hash")
+        if not over:
+            hashed += size
     scope = {"total": total, "scanned": len(manifest),
              "unreadable": sum(1 for v in manifest.values() if v == "okunamadi"),
              "metadata_only": sum(1 for v in manifest.values() if v.startswith("size:"))}
@@ -207,12 +229,8 @@ def source_evidence(ledger_data, limit: int = 40) -> str:
         lines.append(f"- {path} · {size} bayt" + (f" · sha256 {mark[:16]}" if len(mark) == 64 else ""))
     if total > limit:
         lines.append(f"- … ve {total - limit} dosya daha")
-    changes, unverified = source_check(ledger_data)
-    if changes:
-        lines.append("Başlangıçtan beri kaynaklarda DEĞİŞİKLİK: " + "; ".join(changes[:5]))
-    elif changes is not None:
-        lines.append("Başlangıçtan beri kaynaklarda fark yok" + (" (doğrulanamayan: " + "; ".join(unverified) + ")"
-                                                               if unverified else "") + ".")
+    # 26 Nov: no re-hash for every review; the full comparison runs once, at the job's end.
+    lines.append("Kaynakların başlangıçtan beri değişip değişmediğini SpeS iş sonunda karşılaştırır.")
     return "\n".join(lines)
 
 
@@ -271,7 +289,17 @@ def source_check(ledger_data):
     before = ledger_data.get("source_manifest") or {}
     if not before:
         return None, []
-    after, scope_now = source_fingerprint(ledger_data.get("sources") or [])
+    # Each file is compared the way it was marked at the start (hash or size and time), so the
+    # end costs no more than the start and a budget never reads as a change.
+    files, total_now = source_files(ledger_data.get("sources") or [])
+    after = {}
+    for path in files:
+        start = before.get(str(path))
+        if start is None and len(before) >= MANIFEST_FILES:
+            continue
+        how = "meta" if (start is None or str(start).startswith("size:")) else "hash"
+        after[str(path)] = file_mark(path, how) if start != "okunamadi" else file_mark(path, "hash")
+    scope_now = {"total": total_now}
     scope = ledger_data.get("source_scope") or {}
     capped = scope.get("scanned", len(before)) < scope.get("total", len(before)) or len(before) >= MANIFEST_FILES
     if capped:  # a capped fingerprint compares only the files it holds
@@ -289,7 +317,8 @@ def source_check(ledger_data):
         unverified.append(f"{unreadable} dosya okunamadı")
     metadata = sum(1 for v in before.values() if v.startswith("size:"))
     if metadata:
-        unverified.append(f"{metadata} büyük dosya yalnız boyut ve zamanla karşılaştırıldı")
+        unverified.append(f"{metadata} dosya (büyük ya da süre/boyut sınırını aşan) yalnız boyut ve zamanla "
+                          "karşılaştırıldı")
     return changes, unverified
 
 

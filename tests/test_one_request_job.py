@@ -1010,7 +1010,7 @@ class FidesDataReReviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, patch("core.long_job.MANIFEST_HASH_BYTES", 3):
             src = self.make_sources(directory, 1)
             report = finish_report(self.ledger(directory, src))
-        self.assertIn("1 büyük dosya yalnız boyut ve zamanla", report)
+        self.assertIn("1 dosya (büyük ya da süre/boyut sınırını aşan) yalnız boyut ve zamanla", report)
 
     def test_a_whole_fingerprint_says_unchanged(self):
         from core.long_job import finish_report
@@ -1077,7 +1077,7 @@ class SourceReviewTests(unittest.TestCase):
         self.assertIn("3 dosya", evidence)
         self.assertIn("FTR-2.pdf", evidence)
         self.assertIn("sha256", evidence)
-        self.assertIn("fark yok", evidence)
+        self.assertIn("SpeS iş sonunda karşılaştırır", evidence, "no re-hash for every review (26 Nov)")
 
     def review(self, reviewer_first):
         from tests.test_long_job_chat import FakeChat
@@ -1224,3 +1224,76 @@ class FidesSourceAccessTests(unittest.TestCase):
         self.assertIn("(3 dosya)", note)
         for original in made:
             self.assertIn(original, note, "the reviewer is told which copy is which")
+
+
+
+class SourceChoiceTests(unittest.TestCase):
+    """26 Nov: no wrong source by fallback; a bounded fingerprint compared the same way at the end."""
+
+    def test_only_here_words_mean_the_conversations_project(self):
+        from core.job_intent import refers_here
+        for text in ("Bu klasördeki tüm PDF'leri birleştir", "Buradaki tüm faturaları tabloya aktar",
+                     "Projedeki tüm CSV dosyalarını birleştir"):
+            self.assertTrue(refers_here(text), text)
+        for text in ("İndirilenler'deki tüm PDF faturaları tabloya aktar", "Tüm faturaları tabloya aktar"):
+            self.assertFalse(refers_here(text), text)
+
+    def test_a_well_known_folder_is_found_by_its_turkish_name(self):
+        from core.job_intent import named_sources
+        with tempfile.TemporaryDirectory() as home:
+            (Path(home) / "Downloads").mkdir()
+            with patch("pathlib.Path.home", return_value=Path(home)):
+                self.assertEqual(named_sources("İndirilenler'deki tüm PDF faturaları tabloya aktar"),
+                                 [str(Path(home) / "Downloads")])
+                self.assertEqual(named_sources("Masaüstündeki tüm faturaları aktar"), [], "no Desktop there")
+
+    def test_no_path_and_no_here_word_takes_no_project_as_source(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict("os.environ", {"SPES_PROJECTS_HOME": str(Path(directory) / "projeler")}), \
+                patch("pathlib.Path.home", return_value=Path(directory) / "evim"):
+            chat = make_chat(directory)
+            old = Path(directory) / "onceki-cikti"
+            old.mkdir()
+            projects = {}
+            chat.agent_service.projects.add.side_effect = lambda path, name=None: projects.setdefault(
+                "p", {"id": "p-new", "path": path})
+            chat.agent_service.projects.get.side_effect = lambda pid: (
+                {"id": "p-old", "path": str(old)} if pid == "p-old" else projects.get("p"))
+            run = TeamRun(chat)
+            run.reply = PlanningTurnTests.PLAN
+            conv = chat.store.get_active()
+            chat.store.update_project(conv["id"], "p-old")
+            started = []
+            with patch.object(chat, "job_start", side_effect=lambda spec: started.append(spec) or {"id": "j"}):
+                run.run("Tüm PDF faturalarını tek bir tabloya aktar", write=True, confirm_write=True)
+                deadline = time.monotonic() + 5
+                while not started and time.monotonic() < deadline:
+                    time.sleep(0.02)
+            chat._diagnostics.close()
+        self.assertNotIn("sources", started[0], "the previous output folder is never the source")
+
+    def test_the_budget_marks_the_rest_by_metadata_and_the_end_agrees(self):
+        from core.long_job import JobLedger, finish_report, source_fingerprint
+        with tempfile.TemporaryDirectory() as directory, patch("core.long_job.MANIFEST_BUDGET_BYTES", 12):
+            src = Path(directory) / "kaynak"
+            src.mkdir()
+            for index in range(3):
+                (src / f"f{index}.pdf").write_bytes(b"%PDF-12345")  # 10 bytes each: one fits the budget
+            manifest, scope = source_fingerprint([str(src)])
+            self.assertEqual(scope["metadata_only"], 2)
+            (Path(directory) / "p").mkdir()
+            ledger = JobLedger.create({"goal": "F", "project_path": str(Path(directory) / "p"), "hours": 1,
+                                       "kind": "data", "sources": [str(src)], "source_manifest": manifest,
+                                       "source_scope": scope, "milestones": [{"title": "T", "acceptance": "c"}]},
+                                      root=Path(directory) / "jobs")
+            report = finish_report(ledger)
+        self.assertNotIn("UYARI", report, "the same files compared the same way: no false change")
+        self.assertIn("2 dosya (büyük ya da süre/boyut sınırını aşan)", report)
+
+    def test_a_paths_words_never_decide_the_kind(self):
+        # Live 26 Nov 14:22: "...\SpeS Projeleri\... karşılaştır ve rapor hazırla, 20 dakika" became a code job.
+        from core.job_intent import job_kind
+        path = "C:" + chr(92) + "Users" + chr(92) + "x" + chr(92) + "SpeS Projeleri" + chr(92) + "faturalar"
+        text = path + " klasöründeki tüm faturaları firmalara göre karşılaştır ve rapor hazırla. 20 dakika çalış."
+        self.assertEqual(job_kind(text), "data")
+        self.assertEqual(job_kind("Projeyi baştan sona refactor et, tüm testleri yaz ve 2 saat çalış"), "code")

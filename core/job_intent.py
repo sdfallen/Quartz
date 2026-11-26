@@ -175,8 +175,50 @@ def source_paths(text: str, limit: int = 5) -> list[str]:
     return found
 
 
+_HERE = re.compile(r"\b(?:bu|su|o)\s+(?:klasor|proje|dizin|dosyalar)\w*|\bburada\w*|\bburadaki\b|"
+                   r"\bmevcut\s+(?:klasor|proje)\w*|\bprojedeki\b|\bprojemdeki\b")
+# The user's well-known folders by their Turkish names ("İndirilenler'deki", "Masaüstündeki").
+_KNOWN_FOLDERS = (("indirilenler", "Downloads"), ("masaustu", "Desktop"), ("belgeler", "Documents"),
+                  ("resimler", "Pictures"), ("muzik", "Music"), ("videolar", "Videos"))
+
+
+def named_sources(text: str) -> list[str]:
+    """Sources a data request names: absolute paths, then the user's well-known folders.
+
+    26 Nov: a request without a path took the conversation's project as its source, which after
+    one job is that job's output folder. "Bu klasör" still means it (refers_here); a named folder
+    is resolved only when it exists; anything else gets no source rather than a wrong one."""
+    found = source_paths(text)
+    if found:
+        return found
+    folded = turkish_fold(instruction_text(text))
+    home = Path.home()
+    for word, name in _KNOWN_FOLDERS:
+        if re.search(r"\b" + word + r"\w*", folded):
+            for folder in (home / name, home / "OneDrive" / name):
+                if folder.is_dir():
+                    found.append(str(folder))
+                    break
+    return found[:5]
+
+
+def refers_here(text: str) -> bool:
+    """"Bu klasördeki", "buradaki", "projedeki": the request means the conversation's project."""
+    return bool(_HERE.search(turkish_fold(instruction_text(text))))
+
+
+def without_paths(text: str) -> str:
+    """The request with its file paths left out: the words of a path never decide what the job is.
+
+    Live 26 Nov 14:22: "C:\\...\\SpeS Projeleri\\faturalar klasöründeki tüm faturaları firmalara göre
+    karşılaştır ve rapor hazırla, 20 dakika çalış" became a code job ("Projeleri" + "hazırla" + "20
+    dakika"), so it got no folder of its own and no source check."""
+    return " ".join(w for w in str(text or "").split() if "\\" not in w and "/" not in w)
+
+
 def job_kind(text: str) -> str | None:
     """"code" for a build or engineering job, "data" for work on documents, else None."""
+    text = without_paths(text)
     if _code_job_request(text):
         return "code"
     return "data" if data_job_request(text) else None

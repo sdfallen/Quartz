@@ -1158,9 +1158,9 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
             # A data job always writes into a folder of its own; the sources stay where they are.
             # Fides 26 Nov (D2): "bu klasördeki" means the conversation's project before the move.
             if kind == "data":
-                from core.job_intent import source_paths
-                sources = source_paths(text)
-                if not sources and target.get("project_id"):
+                from core.job_intent import named_sources, refers_here
+                sources = named_sources(text)
+                if not sources and refers_here(text) and target.get("project_id"):
                     try:
                         current = self.agent_service.projects.get(target["project_id"]) or {}
                     except Exception:
