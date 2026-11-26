@@ -893,7 +893,12 @@ class LongJob:
             if look:
                 with ledger._lock:
                     milestone["launch"] = {k: look.get(k) for k in ("verdict", "entry", "window_title",
-                                                                    "capture_state", "reason", "evidence_dir")}
+                                                                    "capture_state", "reason", "evidence_dir",
+                                                                    "scenario", "scenario_sha256")}
+                    if look.get("interaction"):
+                        from core.launch_interact import summary
+                        milestone["launch"]["interaction"] = {
+                            "state": look["interaction"].get("state"), "summary": summary(look["interaction"])}
                     ledger.save()
                 if look.get("verdict") == "cleanup_pending":
                     # Fides L1: no review, no commit and no next milestone over a program whose
@@ -901,6 +906,20 @@ class LongJob:
                     check = {"ok": False, "summary": "SpeS açtığı programın kapandığını doğrulayamadı; "
                                                      "taş senin kararını bekliyor."}
                     hold = True
+                elif look.get("verdict") == "window_seen" and str(look.get("scenario") or "").startswith(
+                        "senaryo geçersiz"):
+                    # The writer was asked for a valid scenario; SpeS ran no step of an invalid one.
+                    check = {"ok": False, "summary": "SpeS spes_deneme.json'u çalıştırmadı: " + look["scenario"]}
+                elif look.get("verdict") == "window_seen" and (look.get("interaction") or {}).get("state") in {
+                        "failed", "crashed"}:
+                    # 26 Nov v2: the scenario's own expectation failed or the program ended under it:
+                    # a defect the writer fixes (a busy desktop or Stop never lands here).
+                    from core.launch_interact import step_lines, summary
+                    played = look["interaction"]
+                    check = {"ok": False, "summary": "SpeS programı denedi: " + summary(played) + "\n"
+                             + "\n".join(step_lines(played))[-1500:]
+                             + ("\n" + str(look.get("output_tail") or "")[-800:]
+                                if played.get("state") == "crashed" and look.get("output_tail") else "")}
                 elif look.get("verdict") in {"crashed", "no_window"}:
                     check = {"ok": False, "summary": "SpeS programı çalıştırdı: "
                              + ("hata verip kapandı." if look["verdict"] == "crashed" else "pencere açmadan bitti.")
@@ -1051,8 +1070,10 @@ def finish_report(ledger: JobLedger) -> str:
     if looks:
         last = looks[-1]
         if last.get("verdict") == "window_seen":
+            played = (last.get("interaction") or {}).get("summary")
             lines.append(f"Program açıldı: SpeS {last.get('entry')} dosyasını çalıştırdı, pencereyi gördü "
-                         f"(\"{last.get('window_title') or 'başlıksız'}\") ve kapattı. Etkileşim denenmedi.")
+                         f"(\"{last.get('window_title') or 'başlıksız'}\") ve kapattı. "
+                         + (played or "Etkileşim denenmedi (senaryo yoktu)."))
         elif last.get("reason") == "pencere açan bir Python programı bulunamadı":
             # Live 26 Nov 17:30: a command-line program read as a problem; it is not one.
             lines.append("Pencereli bir program yok; SpeS açıp bakma adımını uygulamadı.")
@@ -1070,6 +1091,21 @@ def finish_report(ledger: JobLedger) -> str:
     if d.get("git_branch"):
         lines.append(f"Dal: {d['git_branch']}")
     return chr(10).join(lines)
+
+
+# 26 Nov v2: SpeS opens a windowed program and tries it like a user, from the writer's scenario.
+INTERACTION_RULE = (
+    "Bu taş pencereli bir program istiyor: SpeS programı açıp içinde deneyecek. Proje köküne "
+    "spes_deneme.json yaz (her taşta güncelle) ve bu taşın kabul ölçütünü bir kullanıcı gibi deneyen "
+    "adımları koy: {\"adimlar\": [...]}. Adımlar (en çok 20): {\"tikla\": \"Düğme metni\"} (tkinter, "
+    "ekrandaki metni tam eşleşen tek öğe), {\"tikla\": [x, y]} (programın kendi çizim koordinatı, ör. "
+    "pygame ekranı), {\"tus\": \"left left space\"} (harf, rakam, ok, enter, space, esc…), "
+    "{\"bas\": \"right\", \"sure\": 0.5} (basılı tut, 1 sn'ye kadar), {\"bekle\": 1} (3 sn'ye kadar), "
+    "{\"beklenen\": \"Puan: 1\"} (tkinter: bir öğenin metni tam olarak bu), {\"beklenen_icerir\": \"Puan\"} "
+    "(metnin içinde geçer). Beklenen olmayan senaryo yalnız duman testi sayılır. Kaydet/Sil/Gönder gibi "
+    "düğmelere SpeS basmaz; Ctrl/Alt/Win/F tuşları yoktur. Senaryo geçersizse, beklenen tutmazsa ya da "
+    "program hata verirse taş geçmez."
+)
 
 
 DATA_MILESTONE_RULE = (
@@ -1128,6 +1164,10 @@ def milestone_prompt(ledger: JobLedger, milestone: dict, writer: str) -> str:
             "" if d.get("permission_level") == "full" else
             " Bu işte komut çalıştıramazsın (Proje izni): çıktıları metin dosyası olarak (CSV, MD, JSON) "
             "kendin yaz; Excel CSV'yi açar."))
+    if d.get("kind") != "data" and d.get("permission_level") == "full":
+        from core.launch_check import wants_look
+        if wants_look(milestone):
+            parts.append(INTERACTION_RULE)
     if d.get("writer") and writer != "claude":
         # 26 Nov: the user may select Fides or Eos; the writer is not always standing in for Fatum.
         parts.append(f"Bu taşta yazıcı sensin ({PERSONA.get(writer, writer)}).")

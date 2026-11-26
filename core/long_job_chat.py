@@ -178,9 +178,14 @@ class LongJobChatMixin:
         running program; host-wide desktop lease for the whole look."""
         import uuid
         from core import launch_check as lc
+        from core import launch_interact as li
         if ledger.data.get("kind") == "data" or ledger.data.get("permission_level") != "full":
             return None
-        if not lc.wants_look(milestone):
+        # Fides Q3: read once; the run keeps this snapshot and its SHA even if the file changes.
+        loaded, scenario = li.load_scenario(ledger.data["project_path"])
+        steps = (loaded or {}).get("steps")
+        # 26 Nov v2: a project with a scenario is an interactive program; it is tried every milestone.
+        if not lc.wants_look(milestone) and scenario == "senaryo yok":
             return None
 
         def skipped(reason):
@@ -200,10 +205,20 @@ class LongJobChatMixin:
             lease = NativeDesktopBackend.acquire_lease()
         except Exception:
             return skipped("masaüstü başka bir görevde ya da ekran kilitli")
+        interact = None
+        if steps:
+            backend = NativeDesktopBackend()
+
+            def interact(hwnd, stop_event, **kwargs):
+                return li.run(backend, hwnd, steps, stop_event, **kwargs)
         try:
             evidence = (Path(ledger.path).parent / "launch"
                         / f"{milestone['id']}-deneme{milestone.get('attempts', 0)}-{uuid.uuid4().hex[:6]}")
-            receipt = lc.observe(entry, ledger.data["project_path"], evidence, stop, interpreter)
+            receipt = lc.observe(entry, ledger.data["project_path"], evidence, stop, interpreter,
+                                 interact=interact)
+            receipt["scenario"] = f"{len(steps)} adım" if steps else scenario
+            if loaded:
+                receipt["scenario_sha256"] = loaded["sha256"]
         except Exception as exc:
             return skipped(f"başlatılamadı ({type(exc).__name__})")
         finally:
