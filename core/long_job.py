@@ -111,6 +111,8 @@ def validate_spec(spec: dict) -> dict:
             "auto_check": bool(spec.get("auto_check")),
             # A teammate who did not write the milestone accepts it (one-request jobs, Fides 25 Nov).
             "review": bool(spec.get("review")),
+            # 26 Nov: a job on documents and data; its writer never touches the sources.
+            "kind": "data" if spec.get("kind") == "data" else "code",
             "permission_level": "full" if spec.get("permission_level") == "full" else "project",
             "permissions": dict(spec.get("permissions") or {})}
 
@@ -779,6 +781,30 @@ def finish_report(ledger: JobLedger) -> str:
     return chr(10).join(lines)
 
 
+DATA_MILESTONE_RULE = (
+    "BU BİR DOSYA/VERİ İŞİ. Kaynak dosyaları yalnız oku: hiçbirini değiştirme, taşıma, yeniden adlandırma "
+    "ya da silme. Bütün çıktıları projenin klasörüne yaz. Paket/kütüphane KURMA; gereken bir kütüphane "
+    "yoksa standart araçlarla yap ya da CSV gibi metin çıktısı üret ve bunu raporunda söyle. KANIT "
+    "bölümünde her çıktı dosyasının yolunu, satır/kayıt sayısını ve ilk birkaç satırını yaz; denetleyen "
+    "arkadaşın ikili dosyaları (xlsx, docx) açamaz, metinden doğrular.")
+
+
+def report_excerpt(text, limit: int = 2400) -> str:
+    """The writer's report for the reviewer: whole when short; otherwise its opening and its
+    whole KANIT section (Fides 26 Nov: the last 2000 characters alone could drop either)."""
+    report = str(text or "").strip()
+    if len(report) <= limit:
+        return report
+    at = report.rfind("KANIT:")
+    if at < 0:
+        return "…" + report[-(limit - 1):]
+    proof = report[at:]
+    if len(proof) >= limit - 200:
+        return "…" + proof[:limit - 1]
+    head = report[:limit - len(proof) - 3].rstrip()
+    return head + "\n…\n" + proof
+
+
 def milestone_prompt(ledger: JobLedger, milestone: dict, writer: str) -> str:
     """The writer's instruction for one milestone: ledger first, chat history never."""
     d = ledger.data
@@ -799,6 +825,11 @@ def milestone_prompt(ledger: JobLedger, milestone: dict, writer: str) -> str:
     if milestone.get("crashes"):
         parts.append("Önceki deneme SpeS yeniden başladığı için yarıda kaldı; projede yarım değişiklikler "
                      "olabilir. Önce mevcut durumu incele.")
+    if d.get("kind") == "data":
+        parts.append(DATA_MILESTONE_RULE + (
+            "" if d.get("permission_level") == "full" else
+            " Bu işte komut çalıştıramazsın (Proje izni): çıktıları metin dosyası olarak (CSV, MD, JSON) "
+            "kendin yaz; Excel CSV'yi açar."))
     if d.get("writer") and writer != "claude":
         # 26 Nov: the user may select Fides or Eos; the writer is not always standing in for Fatum.
         parts.append(f"Bu taşta yazıcı sensin ({PERSONA.get(writer, writer)}).")

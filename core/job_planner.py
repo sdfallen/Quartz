@@ -10,7 +10,7 @@ from __future__ import annotations
 import threading
 import time
 
-from core.job_intent import MAX_MILESTONES, PLAN_RULE, job_spec, parse_plan
+from core.job_intent import job_spec, parse_plan, plan_rule
 from core.long_job import JobError
 
 
@@ -68,7 +68,7 @@ class JobPlannerMixin:
         try:
             reply = self._team_say(
                 cid, msg_id, planner,
-                self._team_header(planner) + PLAN_RULE.format(max=MAX_MILESTONES)
+                self._team_header(planner) + plan_rule(request.get("kind"))
                 + "\n--- KULLANICININ İSTEĞİ ---\n" + request["text"],
                 project_id, step=1, limit=0, tool_less=False, project_scope=True, web=False)
         except Exception:
@@ -83,12 +83,16 @@ class JobPlannerMixin:
             project = None
         path = (project or {}).get("path") or ""
         spec = job_spec(request["text"], milestones, path, time.strftime("%m%d-%H%M"),
-                        full_access=bool(request.get("full_access")))
+                        full_access=bool(request.get("full_access")), kind=request.get("kind"))
         with self._lock:
             message = next((m for m in self.store.get(cid).get("messages", []) if m["id"] == msg_id), None)
             if message is not None:
                 note = (f"Yeni proje klasörü açıldı: {request['new_project']}\n" if request.get("new_project") else "") \
                     + ("Git kurulamadı; adımlar commit'lenmeyecek.\n" if request.get("new_project_no_git") else "") \
+                    + (("Dosya işi: kaynak dosyalar yalnız okunur; çıktılar bu klasöre yazılır."
+                        + ("" if request.get("full_access") else
+                           " Proje izninde komut çalışmaz; çıktılar metin (CSV/MD) olur, Excel CSV'yi açar.")
+                        + "\n") if request.get("kind") == "data" else "") \
                     + plan_text(spec["milestones"]) + ("" if milestones else
                                                        "\n(Plan okunamadı; istek tek kilometre taşı olarak yapılacak.)")
                 self.store.update_message_content(cid, msg_id, note, metadata={

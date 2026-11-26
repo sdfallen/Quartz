@@ -346,9 +346,14 @@ class NewProjectTests(unittest.TestCase):
             create_project_folder(first)
             second = new_project_folder("Yeni bir klasörde stok takip uygulaması yap", "1125-2300", base=directory)
             self.assertEqual(second.name, "stok-takip-uygulamasi-1125-2300-2", "never an existing folder")
-            head = subprocess.run(["git", "-C", str(first), "log", "--oneline"], capture_output=True, text=True)
+            # Fides 26 Nov: the check itself runs Git without config a parent process handed down.
+            import os
+            env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_CONFIG")}
+            head = subprocess.run(["git", "-C", str(first), "log", "--oneline"], capture_output=True, text=True,
+                                  env=env)
             self.assertIn("SpeS: yeni proje", head.stdout)
-            name = subprocess.run(["git", "-C", str(first), "config", "user.name"], capture_output=True, text=True)
+            name = subprocess.run(["git", "-C", str(first), "config", "user.name"], capture_output=True, text=True,
+                                  env=env)
             self.assertEqual(name.stdout.strip(), "SpeS", "identity of this repository only")
 
     def test_the_conversation_gets_the_new_project_before_planning(self):
@@ -720,3 +725,104 @@ class FidesAcceptanceTests(unittest.TestCase):
                                  env={k: v for k, v in __import__("os").environ.items()
                                       if not k.startswith("GIT_CONFIG")})
         self.assertIn("SpeS: yeni proje", log.stdout)
+
+
+class DataJobTests(unittest.TestCase):
+    """26 Nov: one request does work on documents too ("tüm PDF faturaları tabloya aktar")."""
+
+    DATA = ["İndirilenler'deki tüm PDF faturaları tek bir Excel tablosuna aktar",
+            "Masaüstündeki faturaları tabloya aktar",
+            "Bu klasördeki CV'leri karşılaştır ve rapor hazırla",
+            "Belgeler klasöründeki tüm Word dosyalarını PDF'e dönüştür",
+            "tüm mailleri özetle, 1 saat çalış"]
+    SINGLE = ["bu PDF'i özetle", "faturayı Excel'e aktar", "PDF'ten Excel'e nasıl aktarılır",
+              "tüm mailleri özetle", "bu metni İngilizceye çevir", "logları incele", "zor_test.py'yi çalıştır"]
+
+    def test_many_documents_are_a_data_job_and_one_is_a_turn(self):
+        from core.job_intent import job_kind
+        for text in self.DATA:
+            self.assertEqual(job_kind(text), "data", text)
+            self.assertTrue(big_job_request(text), text)
+        for text in self.SINGLE:
+            self.assertIsNone(job_kind(text), text)
+        self.assertEqual(job_kind("Baştan sona bir yılan oyunu yap"), "code")
+
+    def test_the_plan_and_the_spec_carry_the_kind(self):
+        from core.job_intent import plan_rule
+        self.assertIn("Kaynak dosyalar yalnız okunur", plan_rule("data"))
+        self.assertNotIn("Kaynak dosyalar", plan_rule("code"))
+        self.assertNotIn("{", plan_rule("data"))
+        with tempfile.TemporaryDirectory() as directory:
+            spec = job_spec(self.DATA[0], [{"title": "A", "acceptance": "b"}], directory, "1126-1000", kind="data")
+            self.assertEqual(validate_spec(spec)["kind"], "data")
+            self.assertEqual(validate_spec(job_spec("x", [], directory, "1"))["kind"], "code")
+
+    def test_the_writer_is_told_to_leave_sources_alone_and_install_nothing(self):
+        from core.long_job import JobLedger, milestone_prompt
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "p").mkdir()
+            ledger = JobLedger.create({"goal": "Faturalar", "project_path": str(Path(directory) / "p"), "hours": 1,
+                                       "kind": "data", "milestones": [{"title": "T", "acceptance": "csv var"}]},
+                                      root=Path(directory) / "jobs")
+            prompt = milestone_prompt(ledger, ledger.data["milestones"][0], "claude")
+            self.assertIn("hiçbirini değiştirme", prompt)
+            self.assertIn("KURMA", prompt)
+            self.assertIn("komut çalıştıramazsın", prompt, "Proje izninde metin çıktısı")
+            ledger.data["permission_level"] = "full"
+            self.assertNotIn("komut çalıştıramazsın", milestone_prompt(ledger, ledger.data["milestones"][0], "claude"))
+            ledger.data["kind"] = "code"
+            self.assertNotIn("DOSYA/VERİ", milestone_prompt(ledger, ledger.data["milestones"][0], "claude"))
+
+    def test_a_long_report_keeps_its_opening_and_its_proof(self):
+        from core.long_job import report_excerpt
+        report = "Yaptım: faturalar.csv yazıldı.\n" + ("ayrıntı " * 600) + "\nKANIT:\ncikti/faturalar.csv 12 satır"
+        excerpt = report_excerpt(report)
+        self.assertLessEqual(len(excerpt), 2400)
+        self.assertTrue(excerpt.startswith("Yaptım: faturalar.csv"))
+        self.assertTrue(excerpt.endswith("12 satır"))
+        self.assertEqual(report_excerpt("kısa"), "kısa")
+        self.assertTrue(report_excerpt("x" * 5000).startswith("…"))
+
+    def test_a_data_job_gets_a_folder_of_its_own(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict("os.environ", {"SPES_PROJECTS_HOME": str(Path(directory) / "projeler")}):
+            chat = make_chat(directory)
+            projects = {}
+            chat.agent_service.projects.add.side_effect = lambda path, name=None: projects.setdefault(
+                "p", {"id": "p-new", "path": path})
+            run = TeamRun(chat)
+            run.reply = PlanningTurnTests.PLAN
+            started = []
+            with patch.object(chat, "job_start", side_effect=lambda spec: started.append(spec) or {"id": "j"}):
+                turn = run.run(self.DATA[0], write=True, confirm_write=True)
+                deadline = time.monotonic() + 5
+                while not started and time.monotonic() < deadline:
+                    time.sleep(0.02)
+            chat._diagnostics.close()
+            conv = chat.store.get(turn["conversation_id"])
+            self.assertEqual(conv["project_id"], "p-new")
+            self.assertEqual(started[0]["kind"], "data")
+            plan = next(m for m in conv["messages"] if (m.get("metadata") or {}).get("job_plan"))
+            self.assertIn("kaynak dosyalar yalnız okunur", plan["content"])
+            self.assertIn("CSV", plan["content"], "Proje izni: metin çıktısı söylenir")
+
+    def test_the_reviewer_of_a_data_job_reads_the_outputs(self):
+        from tests.test_long_job_chat import FakeChat
+        from core.long_job import JobLedger
+        import threading
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict("os.environ", {"QUARTZ_JOBS_HOME": str(Path(directory) / "jobs")}), \
+                patch("core.agent_limits.snapshot", return_value={}):
+            project = Path(directory) / "p"
+            project.mkdir()
+            chat = FakeChat(project, replies=[("completed", "KABUL: EVET", "codex")] * 2)
+            texts = []
+            for kind in ("data", "code"):
+                ledger = JobLedger.create({"goal": "Faturalar", "project_path": str(project), "hours": 1,
+                                           "kind": kind, "conversation_id": "c1",
+                                           "milestones": [{"title": "T1", "acceptance": "csv var"}]})
+                chat._job_accept(ledger, ledger.data["milestones"][0], "claude",
+                                 {"ok": True, "writer_report": "KANIT: faturalar.csv 12 satır"}, threading.Event())
+                texts.append(chat.sent[-1]["text"])
+        self.assertIn("çıktı dosyalarını açıp oku", texts[0])
+        self.assertNotIn("çıktı dosyalarını açıp oku", texts[1])

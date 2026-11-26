@@ -1143,10 +1143,13 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
                 "Başlatmak için yetkiyi Proje (yalnız dosya) ya da Tam Yetki (komut da çalıştırır) yapıp "
                 "aynı mesajı yeniden gönder."))
         new_project = None
+        kind = None
         if job_request:
-            from core.job_intent import wants_new_project
+            from core.job_intent import job_kind, wants_new_project
+            kind = job_kind(text)
             busy = bool(self._active_turn and self._active_turn.get("status") == "running")
-            if wants_new_project(text) and not busy:
+            # A data job always writes into a folder of its own; the sources stay where they are.
+            if (wants_new_project(text) or kind == "data") and not busy:
                 try:
                     new_project = self._new_project_for_job(target, text)
                 except Exception as exc:
@@ -1312,7 +1315,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
             if skill_install:
                 turn_state["skill_install"] = skill_install
             if job_request:
-                turn_state["job_plan"] = {"planner": first_sender, "text": text,
+                turn_state["job_plan"] = {"planner": first_sender, "text": text, "kind": kind,
                                           "full_access": bool(full_access),
                                           **({"new_project": new_project.get("path"),
                                               "new_project_no_git": not new_project.get("git_ready", True)}

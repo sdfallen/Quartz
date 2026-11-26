@@ -48,7 +48,21 @@ _SCALE = re.compile(
     r"(?:bir|iki|uc|dort|bes|alti|yarim|bir\s+bucuk)\s+(?:saat|dakika)(?!l[iu]k))")
 # Questions and explanations about such things stay ordinary turns.
 _QUESTION = re.compile(r"\b(?:nasil\s+yapilir|nedir|ne\s+demek|nasil\s+(?:yapar|yapabilirim)|"
+                       r"nasil\s+\w+(?:il|ul|in|un)ir|"
                        r"onerir\s*mi?sin|fikir\s+ver|ne\s+dusunuyorsun|mumkun\s+mu)\b")
+# Work on documents and data, not code (26 Nov): "İndirilenler'deki tüm PDF faturaları tek bir
+# tabloya aktar". A heavy verb, a document/data word and many of them; light verbs (özetle,
+# incele) only with an explicit sign of scale.
+_DATA_HEAVY = re.compile(r"\b(?:aktar\w*|donustur\w*|cevir\w*|birlestir\w*|ayikla\w*|derle\w*|"
+                         r"karsilastir\w*|tablo\w*\s+(?:yap|haline|olustur|hazirla|cikar)\w*|"
+                         r"rapor\w*\s+(?:yap|hazirla|cikar|olustur)\w*)")
+_DATA_LIGHT = re.compile(r"\b(?:ozetle\w*|analiz\s+et\w*|incele\w*|listele\w*|topla\w*|cikar\w*)")
+_DATA_WORDS = r"(?:pdf|excel|xlsx|csv|tablo|fatura|belge|dokuman|evrak|word|docx|fis|makbuz|dekont|dosya|rapor|" \
+              r"kayit|e-?posta|mail|cv|ozgecmis|log|json|txt|metin|fotograf|resim|gorsel)"
+_DATA_OBJECT = re.compile(r"\b" + _DATA_WORDS + r"\w*")
+_DATA_MANY = re.compile(r"\b(?:tum|butun|hepsi\w*|her\s+bir\w*|\d+\s+(?:tane|adet)|"
+                        r"\w*klasor\w*(?:daki|deki|ndaki|ndeki)|[a-z]+(?:daki|deki)\s+(?:\w+\s+){0,2}"
+                        + _DATA_WORDS + r")|\b" + _DATA_WORDS + r"'?(?:lar|ler)\w*")
 _HOURS = re.compile(r"(\d+(?:[.,]\d+)?)(?:\s*-\s*(\d+(?:[.,]\d+)?))?\s*(saat|sa\b|dakika|dk\b)(?!l[iu]k)")
 _WORD_HOURS = re.compile(r"\b(bir\s+bucuk|yarim|bir|iki|uc|dort|bes|alti|yedi|sekiz|dokuz|on)\s+(saat|dakika)"
                          r"(?!l[iu]k)")
@@ -58,13 +72,27 @@ _RESUME = re.compile(r"\b(?:coks(?:e|un)\s+(?:bile\s+)?devam|kapan(?:sa|irsa)\s+
                      r"yeniden\s+baslay(?:inca|tiginda)\s+devam|kendiligind(?:en)?\s+devam)")
 
 
-def big_job_request(text: str) -> bool:
-    """A plain-words request for work too large for one turn.
+def data_job_request(text: str) -> bool:
+    """Many documents or records turned into something new ("tüm faturaları tabloya aktar").
 
-    Conservative: a build verb AND (a whole product with a sign of scale, or an explicit
-    duration/"from start to finish"). Questions, withdrawn requests and "no tools" stay
-    ordinary turns; a short "notepad'i aç" never matches.
-    """
+    A single file ("bu PDF'i özetle", "faturayı Excel'e aktar") stays an ordinary turn, and so
+    does a question ("PDF'ten Excel'e nasıl aktarılır")."""
+    value = instruction_text(text).strip()
+    if not value or tools_disallowed(value) or request_withdrawn(value):
+        return False
+    folded = turkish_fold(value)
+    if _QUESTION.search(folded) or _RUN_FILE.search(folded) or not _DATA_OBJECT.search(folded):
+        return False
+    scale = bool(_SCALE.search(folded) or _HOURS.search(folded))
+    if _DATA_HEAVY.search(folded):
+        return bool(_DATA_MANY.search(folded) or scale)
+    # "tüm mailleri özetle" is one answer; only a stated duration makes it a job.
+    timed = bool(_HOURS.search(folded) or _WORD_HOURS.search(folded))
+    return bool(_DATA_LIGHT.search(folded) and _DATA_MANY.search(folded) and timed)
+
+
+def _code_job_request(text: str) -> bool:
+    """A build or engineering job (see big_job_request)."""
     value = instruction_text(text).strip()
     if not value or tools_disallowed(value) or request_withdrawn(value):
         return False
@@ -78,6 +106,23 @@ def big_job_request(text: str) -> bool:
     # A big engineering job with no product word: "projeyi baştan sona refactor et, 3 saat çalış".
     return bool((_MAKE.search(folded) or _FIX.search(folded)) and _SCOPE.search(folded) and scale
                 and not _RUN_FILE.search(folded))
+
+
+def job_kind(text: str) -> str | None:
+    """"code" for a build or engineering job, "data" for work on documents, else None."""
+    if _code_job_request(text):
+        return "code"
+    return "data" if data_job_request(text) else None
+
+
+def big_job_request(text: str) -> bool:
+    """A plain-words request for work too large for one turn: a code job or a data job.
+
+    Conservative: a build verb AND (a whole product with a sign of scale, or an explicit
+    duration/"from start to finish"); or many documents turned into something new.
+    Questions, withdrawn requests and "no tools" stay ordinary turns; a short "notepad'i aç"
+    never matches."""
+    return job_kind(text) is not None
 
 
 _NEW_PROJECT = re.compile(r"\b(?:yeni\s+(?:bir\s+)?(?:klasor|proje|depo|repo)\w*|bos\s+(?:bir\s+)?klasor\w*|"
@@ -95,7 +140,8 @@ def new_project_folder(text: str, clock_text: str, base=None) -> Path:
     base = Path(base or os.getenv("SPES_PROJECTS_HOME") or Path.home() / "Documents" / "SpeS Projeleri")
     words = [w for w in re.findall(r"[a-z0-9]+", turkish_fold(instruction_text(text)))
              if w not in {"bir", "ve", "ile", "icin", "bu", "su", "yeni", "klasor", "klasorde", "proje", "projede",
-                          "bana", "sifirdan", "bastan", "sona", "yap", "olustur", "gelistir", "kur", "saat", "dakika"}
+                          "bana", "sifirdan", "bastan", "sona", "yap", "olustur", "gelistir", "kur", "saat", "dakika",
+                          "tum", "butun", "tek", "deki", "daki", "hepsini", "lutfen"}
              and not w.isdigit()]
     slug = "-".join(words[:4])[:40].strip("-") or "is"
     folder = base / f"{slug}-{clock_text}"
@@ -135,6 +181,7 @@ PLAN_RULE = (
     "Her taşın kabul ölçütü somut ve gözle/testle doğrulanabilir olsun (\"oyun açılıyor ve oyuncu ok tuşlarıyla "
     "hareket ediyor\" gibi). Kullanıcının istediği her özellik bir taşa düşsün; hiçbirini atlama. Son taş "
     "bütün işi baştan sona dener ve eksik bırakmaz.\n"
+    "{kind_rule}"
     "Yanıtın YALNIZ şu biçimde olsun, başka metin yazma:\n"
     "PLAN\n1. Başlık | kabul ölçütü\n2. Başlık | kabul ölçütü\n...\nSON\n")
 
@@ -216,7 +263,19 @@ def job_branch(project_path, goal: str, clock_text: str) -> str | None:
     return f"spes/{clock_text}-{slug}"
 
 
-def job_spec(text: str, milestones: list[dict], project_path, clock_text: str, full_access=False) -> dict:
+DATA_PLAN_RULE = (
+    "Bu bir dosya/veri işi, yazılım değil. Kaynak dosyalar yalnız okunur; hiçbiri değiştirilmez, taşınmaz, "
+    "yeniden adlandırılmaz ya da silinmez. Bütün çıktılar projenin klasörüne yazılır. İlk taş kaynakları bulur "
+    "ve projeye kaynaklar.md olarak listeler (yol, sayı). Kabul ölçütleri dosyalarla doğrulanabilir olsun "
+    "(\"cikti/faturalar.csv var; 12 faturanın her biri bir satır; tarih, firma, tutar sütunları dolu\" gibi).\n")
+
+
+def plan_rule(kind: str | None = None) -> str:
+    return PLAN_RULE.format(max=MAX_MILESTONES, kind_rule=DATA_PLAN_RULE if kind == "data" else "")
+
+
+def job_spec(text: str, milestones: list[dict], project_path, clock_text: str, full_access=False,
+             kind: str | None = None) -> dict:
     """The job as the user asked for it: their words, their duration, SpeS's own check.
 
     Fides 26 Nov (F1): the check runs the project's tests on the host, and the writer can
@@ -228,7 +287,7 @@ def job_spec(text: str, milestones: list[dict], project_path, clock_text: str, f
     return {"goal": goal[:4000], "milestones": milestones or fallback_plan(text),
             "hours": requested_hours(text), "auto_resume": wants_auto_resume(text),
             "verify": detected_check(project_path) if full else None, "auto_check": full, "review": True,
-            "git_branch": job_branch(project_path, goal, clock_text)}
+            "git_branch": job_branch(project_path, goal, clock_text), "kind": "data" if kind == "data" else "code"}
 
 
 # -- talking to a running job in plain words ------------------------------------------
