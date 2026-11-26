@@ -826,3 +826,9 @@ class DataJobTests(unittest.TestCase):
                 texts.append(chat.sent[-1]["text"])
         self.assertIn("çıktı dosyalarını açıp oku", texts[0])
         self.assertNotIn("çıktı dosyalarını açıp oku", texts[1])
+
+    def test_a_path_in_the_request_never_names_the_folder(self):
+        from core.job_intent import new_project_folder
+        text = (r"C:\Users\LENAVO\Documents\SpeS Projeleri\fatura-kaynaklari-deneme klasöründeki tüm PDF "
+                "faturaları tek bir tabloya aktar; firma bazında toplamları da ekle. 20 dakika çalış.")
+        self.assertEqual(new_project_folder(text, "1126-1016", base="x").name, "pdf-faturalari-tabloya-aktar-1126-1016")

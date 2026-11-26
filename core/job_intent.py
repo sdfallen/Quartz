@@ -138,10 +138,14 @@ def new_project_folder(text: str, clock_text: str, base=None) -> Path:
     """A fresh, unused folder named after the request, under Documents\\SpeS Projeleri."""
     import os
     base = Path(base or os.getenv("SPES_PROJECTS_HOME") or Path.home() / "Documents" / "SpeS Projeleri")
-    words = [w for w in re.findall(r"[a-z0-9]+", turkish_fold(instruction_text(text)))
+    # Live 26 Nov: "C:\Users\...\fatura-kaynaklari klasöründeki ..." named the folder "c-users-lenavo-...";
+    # paths in the request never name the job.
+    request = " ".join(w for w in instruction_text(text).split() if "\\" not in w and "/" not in w)
+    words = [w for w in re.findall(r"[a-z0-9]+", turkish_fold(request))
              if w not in {"bir", "ve", "ile", "icin", "bu", "su", "yeni", "klasor", "klasorde", "proje", "projede",
                           "bana", "sifirdan", "bastan", "sona", "yap", "olustur", "gelistir", "kur", "saat", "dakika",
-                          "tum", "butun", "tek", "deki", "daki", "hepsini", "lutfen"}
+                          "tum", "butun", "tek", "deki", "daki", "hepsini", "lutfen", "klasorundeki", "klasordeki",
+                          "calis", "dakika", "da", "de"}
              and not w.isdigit()]
     slug = "-".join(words[:4])[:40].strip("-") or "is"
     folder = base / f"{slug}-{clock_text}"
