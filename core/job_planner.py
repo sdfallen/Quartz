@@ -71,7 +71,8 @@ class JobPlannerMixin:
         except Exception:
             project = None
         path = (project or {}).get("path") or ""
-        spec = job_spec(request["text"], milestones, path, time.strftime("%m%d-%H%M"))
+        spec = job_spec(request["text"], milestones, path, time.strftime("%m%d-%H%M"),
+                        full_access=bool(request.get("full_access")))
         with self._lock:
             message = next((m for m in self.store.get(cid).get("messages", []) if m["id"] == msg_id), None)
             if message is not None:
@@ -81,15 +82,33 @@ class JobPlannerMixin:
                 self.store.update_message_content(cid, msg_id, note, metadata={
                     **(message.get("metadata") or {}), "job_plan": True, "status": "completed"})
             self._finish_turn(msg_id, "completed")
+            plan_turn = (self._active_turn or {}).get("turn_id")
         threading.Thread(target=self._start_planned_job, name="spes-job-plan",
-                         args=(cid, spec, request), daemon=True).start()
+                         args=(cid, spec, {**request, "plan_turn": plan_turn}), daemon=True).start()
 
     def _start_planned_job(self, cid, spec, request, settle=0.5, tries=60):
-        """The job starts once the planning turn has let go; it never runs beside a turn."""
+        """The job starts once the planning turn has let go; it never runs beside a turn.
+
+        Fides 26 Nov (F5): never after SpeS began closing, never after the plan's turn was
+        stopped, and never by waiting past a chat that stays busy."""
+        def refuse(reason):
+            self.store.append_message(cid, "assistant", f"İş başlatılmadı: {reason}", sender="quartz", metadata={
+                "sender": "quartz", "recipient": "user", "status": "completed",
+                "sequence": self._next_sequence(self.store.get(cid))})
         for _ in range(tries):
-            if not self._job_turn_busy():
+            if self.__dict__.get("_closed") or not self._job_turn_busy():
                 break
             time.sleep(settle)
+        if self.__dict__.get("_closed"):
+            return
+        with self._lock:
+            turn = self._active_turn or {}
+            stopped = bool(request.get("plan_turn") and turn.get("turn_id") == request.get("plan_turn")
+                           and turn.get("status") in {"cancelled", "cancelling"})
+        if stopped:
+            return refuse("plan turu durduruldu.")
+        if self._job_turn_busy():
+            return refuse("sohbet hâlâ meşgul; isteği yeniden gönder.")
         try:
             self.job_start({**spec, "conversation_id": cid,
                             "permission_level": "full" if request.get("full_access") else "project"})
@@ -119,6 +138,20 @@ class JobPlannerMixin:
             return None
         if any(j.ledger.data["status"] in {"running", "waiting_limit", "paused"} for j in self._jobs().values()):
             return self._answer_without_agents(conv["id"], text, "Şu an başka bir uzun iş sürüyor; önce o bitmeli.")
+        project = None
+        try:
+            project = self.agent_service.projects.get(conv.get("project_id")) if conv.get("project_id") else None
+        except Exception:
+            project = None
+        from pathlib import Path as _Path
+        same = isinstance(project, dict) and project.get("path") and \
+            str(_Path(project["path"]).resolve()).lower() == str(_Path(ledger.data["project_path"]).resolve()).lower()
+        if not same or project.get("protected") or project.get("workflow") == "warband":
+            # Fides 26 Nov (F2): the writer would go to the chat's new project while the
+            # checks and backups stayed on the old one.
+            return self._answer_without_agents(conv["id"], text, (
+                "Bu sohbetin projesi işin başladığı projeden farklı (ya da korumalı); süre uzatılmadı. "
+                "İşin projesine dönüp yeniden dene ya da yeni bir istek gönder."))
         job = self._make_job(ledger)
         try:
             job.extend(hours)
@@ -142,7 +175,7 @@ class JobPlannerMixin:
         kind = job_message_kind(text)
         data = job.ledger.data
         from core.job_intent import extension_hours
-        more = extension_hours(text)
+        more = extension_hours(text) if kind not in {"stop", "pause"} else None
         if more:
             # "30 dakika daha çalış" while the job runs: the deadline moves (26 Nov).
             from core.long_job import JobError

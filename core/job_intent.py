@@ -216,12 +216,18 @@ def job_branch(project_path, goal: str, clock_text: str) -> str | None:
     return f"spes/{clock_text}-{slug}"
 
 
-def job_spec(text: str, milestones: list[dict], project_path, clock_text: str) -> dict:
-    """The job as the user asked for it: their words, their duration, SpeS's own check."""
+def job_spec(text: str, milestones: list[dict], project_path, clock_text: str, full_access=False) -> dict:
+    """The job as the user asked for it: their words, their duration, SpeS's own check.
+
+    Fides 26 Nov (F1): the check runs the project's tests on the host, and the writer can
+    write those tests (or package.json's test script). With Proje permission ("yalnız dosya
+    yazar, komut çalıştıramaz") SpeS therefore runs no check at all; the teammate's review
+    decides. Only Tam Yetki, where the writer may run commands anyway, gets the check."""
     goal = " ".join(str(text or "").split())
+    full = bool(full_access)
     return {"goal": goal[:4000], "milestones": milestones or fallback_plan(text),
             "hours": requested_hours(text), "auto_resume": wants_auto_resume(text),
-            "verify": detected_check(project_path), "auto_check": True, "review": True,
+            "verify": detected_check(project_path) if full else None, "auto_check": full, "review": True,
             "git_branch": job_branch(project_path, goal, clock_text)}
 
 
@@ -247,6 +253,8 @@ _ADD_HEAD = re.compile(r"^(?:(?:sunu|bunu|su|bu)\s+da\s+ekle|yeni\s+(?:bir\s+)?(
 def job_change(text: str):
     """("skip", 3) for "3. adımı iptal et"; ("add", "koyu tema") for "koyu tema da ekle"; else None."""
     raw = " ".join(str(text or "").split())
+    if negated(raw):
+        return None
     folded = turkish_fold(raw)
     if len(folded) != len(raw):  # spelling the fold cannot keep aligned: use the folded text
         raw = folded
@@ -264,12 +272,21 @@ def job_change(text: str):
 
 
 _EXTEND = re.compile(r"\b(?:daha|ek\s+(?:sure|zaman)|fazladan|uzat)\b")
+# Fides 26 Nov (F4): "3. adımı iptal etme", "15 dakika daha çalışma, dur" were applied backwards.
+_NEGATED = re.compile(r"\b(?:iptal\s+etme(?:yin|yelim)?|atlama(?:yin)?|cikarma(?:yin)?|kaldirma(?:yin)?|"
+                      r"ekleme(?:yin)?|calisma(?:yin)?|uzatma(?:yin)?|devam\s+etme(?:yin)?|gerek\s+yok|"
+                      r"istemiyorum|vazgec\w*|dur|durdur\w*|yapma(?:yin)?)\b")
+
+
+def negated(text: str) -> bool:
+    """The message withdraws or forbids a change ("etme", "gerek yok", "dur")."""
+    return bool(_NEGATED.search(turkish_fold(instruction_text(text)))) or request_withdrawn(text)
 
 
 def extension_hours(text: str) -> float | None:
     """"15 dakika daha çalış", "bir saat daha devam et", "süreyi 30 dakika uzat" -> hours."""
     folded = turkish_fold(instruction_text(text))
-    if not _EXTEND.search(folded) or not (_HOURS.search(folded) or _WORD_HOURS.search(folded)):
+    if negated(text) or not _EXTEND.search(folded) or not (_HOURS.search(folded) or _WORD_HOURS.search(folded)):
         return None
     return requested_hours(text)
 

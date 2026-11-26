@@ -27,7 +27,13 @@ def acquire(name: str = MUTEX_NAME, *, kernel32=None, last_error=None) -> bool:
             if sys.platform != "win32":
                 return True
             import ctypes
+            from ctypes import wintypes
             kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            # Fides 26 Nov (F7): HANDLE is pointer-sized; the default c_int would cut it.
+            kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+            kernel32.CreateMutexW.restype = wintypes.HANDLE
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            kernel32.CloseHandle.restype = wintypes.BOOL
             last_error = ctypes.get_last_error
         handle = kernel32.CreateMutexW(None, False, name)
         if not handle:
@@ -48,7 +54,14 @@ def show_running_window(title: str = WINDOW_TITLE, *, user32=None) -> bool:
             if sys.platform != "win32":
                 return False
             import ctypes
-            user32 = ctypes.windll.user32
+            from ctypes import wintypes
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+            user32.FindWindowW.restype = wintypes.HWND
+            user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+            user32.ShowWindow.restype = wintypes.BOOL
+            user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+            user32.SetForegroundWindow.restype = wintypes.BOOL
         hwnd = user32.FindWindowW(None, title)
         if not hwnd:
             return False

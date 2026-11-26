@@ -423,8 +423,8 @@ class LongJob:
             if not any(m["status"] in {"pending", "running"} for m in d["milestones"]):
                 raise JobError("Bu işte yapılacak adım kalmadı.")
             now = clock()
-            used = max(0.0, (min(now, d["deadline"]) - d["created_at"]) / 3600)
-            if used + hours > 12:
+            if float(d.get("hours") or 0) + hours > 12:
+                # Fides 26 Nov (F6): the budget given so far counts, not the time used.
                 raise JobError("Bir iş toplamda 12 saati geçemez.")
             d["deadline"] = max(d["deadline"], now) + hours * 3600
             d["hours"] = round(d.get("hours", 0) + hours, 3)
@@ -696,7 +696,9 @@ class LongJob:
             accepted_by = review.get("by") if review and review.get("ok") is True else None
             with ledger._lock:
                 milestone.update(status="done", commit=sha, last_failure="",
-                                 verified=bool(accepted_by or ran_check), reviewer=accepted_by)
+                                 verified=bool(accepted_by or ran_check), reviewer=accepted_by,
+                                 evidence=("test+denetim" if ran_check and accepted_by else
+                                           "test" if ran_check else "denetim" if accepted_by else "yok"))
                 milestone["history"].append(entry)
                 ledger.save()
             ledger.event(f"{milestone['id']} tamam" + (f" (commit {sha[:8]})" if sha else "")
@@ -756,6 +758,7 @@ def finish_report(ledger: JobLedger) -> str:
     lines = [head]
     lines += [f"✔ {m['title']}" + (f" (commit {m['commit'][:8]})" if m.get("commit") else "")
               + (f" · {PERSONA.get(m['reviewer'], m['reviewer'])} denetledi" if m.get("reviewer") else "")
+              + (" · test geçti" if m.get("evidence") in {"test", "test+denetim"} else "")
               + ("" if m.get("verified", True) else " · denetlenmedi") for m in done]
     unchecked = [m for m in done if not m.get("verified", True)]
     if unchecked:

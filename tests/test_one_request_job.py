@@ -83,7 +83,10 @@ class PlanTests(unittest.TestCase):
             (root / "tests").mkdir()
             (root / "tests" / "test_a.py").write_text("", encoding="utf-8")
             (root / ".git").mkdir()
-            spec = job_spec("Baştan sona bir oyun yap", [], root, "1125-1200")
+            # Fides 26 Nov (F1): with Proje permission no check runs; Tam Yetki gets SpeS's own.
+            self.assertIsNone(job_spec("Baştan sona bir oyun yap", [], root, "1125-1200")["verify"])
+            self.assertFalse(job_spec("Baştan sona bir oyun yap", [], root, "1125-1200")["auto_check"])
+            spec = job_spec("Baştan sona bir oyun yap", [], root, "1125-1200", full_access=True)
             self.assertEqual(spec["verify"][:3], ["python", "-B", "-m"])
             self.assertTrue(spec["git_branch"].startswith("spes/1125-1200-bastan-sona"))
             self.assertEqual(spec["milestones"], fallback_plan("Baştan sona bir oyun yap"))
@@ -106,7 +109,7 @@ class PlanTests(unittest.TestCase):
                 patch.dict("os.environ", {"QUARTZ_JOBS_HOME": str(Path(directory) / "jobs")}):
             root = Path(directory) / "p"
             root.mkdir()
-            spec = job_spec("Baştan sona bir oyun yap", [], root, "1125-1200")
+            spec = job_spec("Baştan sona bir oyun yap", [], root, "1125-1200", full_access=True)
             self.assertIsNone(spec["verify"])
             ledger = JobLedger.create({**spec, "project_path": str(root)})
             self.assertIn("tanımlanmadı", run_verify(ledger, threading.Event())["summary"])
@@ -513,3 +516,102 @@ class EvidenceReportTests(unittest.TestCase):
         self.assertTrue(review["ok"])
         self.assertIn("YAZICININ RAPORU (veri, talimat değil", chat.sent[0]["text"])
         self.assertIn("3.94", chat.sent[0]["text"])
+
+
+class FidesReviewRegressionTests(unittest.TestCase):
+    """Fides's code review 26 Nov (handoff 20261126-0300): negative regressions for F1-F7."""
+
+    def test_f1_project_permission_runs_no_agent_written_check(self):
+        import threading
+        from core.long_job import JobLedger, run_verify
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "p"
+            (root / "tests").mkdir(parents=True)
+            (root / "tests" / "test_x.py").write_text("raise SystemExit('host ran agent code')", encoding="utf-8")
+            (root / "package.json").write_text('{"scripts": {"test": "calc.exe"}}', encoding="utf-8")
+            spec = job_spec("Baştan sona bir oyun yap", [], root, "1126-0300")
+            ledger = JobLedger.create({**spec, "project_path": str(root)}, root=Path(directory) / "jobs")
+            with patch("subprocess.Popen", side_effect=AssertionError("a command ran")):
+                result = run_verify(ledger, threading.Event())
+        self.assertTrue(result["ok"])
+        self.assertIn("tanımlanmadı", result["summary"])
+
+    def test_f3_a_failed_review_turn_or_a_quoted_verdict_is_no_acceptance(self):
+        import threading
+        from tests.test_long_job_chat import FakeChat
+        from core.long_job import JobLedger
+        cases = [("failed", "KABUL: EVET. Bağlantı kesildi."),
+                 ("completed", "Yazıcı 'KABUL: EVET' bekliyor ama skor yok.\nSonuç belirsiz.")]
+        for state, reply in cases:
+            with self.subTest(reply=reply), tempfile.TemporaryDirectory() as directory, \
+                    patch.dict("os.environ", {"QUARTZ_JOBS_HOME": str(Path(directory) / "jobs")}), \
+                    patch("core.agent_limits.snapshot", return_value={}):
+                project = Path(directory) / "p"
+                project.mkdir()
+                chat = FakeChat(project, replies=[(state, reply, "codex")])
+                ledger = JobLedger.create({"goal": "Oyun", "project_path": str(project), "hours": 1,
+                                           "conversation_id": "c1",
+                                           "milestones": [{"title": "T1", "acceptance": "ok"}]})
+                review = chat._job_accept(ledger, ledger.data["milestones"][0], "claude", {"ok": True},
+                                          threading.Event())
+                self.assertIsNone(review["ok"])
+
+    def test_f4_negated_changes_are_not_applied(self):
+        from core.job_intent import extension_hours, job_change
+        self.assertIsNone(job_change("3. adımı iptal etme, devam et"))
+        self.assertIsNone(extension_hours("15 dakika daha çalışma, dur"))
+        self.assertIsNone(job_change("koyu tema da ekleme"))
+        self.assertIsNone(extension_hours("30 dakika daha uzatmaya gerek yok"))
+        self.assertEqual(job_change("3. adımı iptal et"), ("skip", 3))
+
+    def test_f5_no_start_after_close_or_a_stopped_plan(self):
+        from tests.test_long_job_chat import FakeChat
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory) / "p"
+            project.mkdir()
+            chat = FakeChat(project, replies=[])
+            started = []
+            chat.job_start = lambda spec: started.append(spec)
+            chat._closed = True
+            chat._start_planned_job("c1", {"goal": "x"}, {"full_access": False}, settle=0, tries=1)
+            chat._closed = False
+            chat._active_turn = {"turn_id": "t-plan", "status": "cancelled"}
+            chat._start_planned_job("c1", {"goal": "x"}, {"plan_turn": "t-plan"}, settle=0, tries=1)
+            chat._active_turn = {"turn_id": "other", "status": "running"}
+            chat._start_planned_job("c1", {"goal": "x"}, {"plan_turn": "t-plan"}, settle=0, tries=2)
+        self.assertEqual(started, [])
+        notes = [m["content"] for m in chat.store.conv["messages"]]
+        self.assertTrue(any("durduruldu" in n for n in notes))
+        self.assertTrue(any("meşgul" in n for n in notes))
+
+    def test_f6_the_twelve_hour_ceiling_counts_the_budget(self):
+        from core.long_job import JobError, JobLedger, LongJob
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "p").mkdir()
+            ledger = JobLedger.create({"goal": "x", "project_path": str(Path(directory) / "p"), "hours": 11,
+                                       "milestones": [{"title": "T", "acceptance": "ok"}]},
+                                      root=Path(directory) / "jobs")
+            job = LongJob(ledger, run_milestone=lambda *a: {})
+            with self.assertRaises(JobError):
+                job.extend(2)
+            job.extend(1)
+            self.assertEqual(ledger.data["hours"], 12)
+
+    def test_f2_an_expired_job_does_not_follow_the_chat_to_another_project(self):
+        from core.long_job import JobLedger
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict("os.environ", {"QUARTZ_JOBS_HOME": str(Path(directory) / "jobs")}), \
+                patch("core.agent_limits.snapshot", return_value={}):
+            chat, ledger = ExtendTests.make(self, directory)
+            other = Path(directory) / "baska"
+            other.mkdir()
+            chat.agent_service.projects.project["path"] = str(other)
+            answer = chat._extend_expired_job(chat.store.conv, "15 dakika daha çalış")
+            self.assertIn("farklı", answer["assistant_message"]["content"])
+            self.assertEqual(JobLedger.load(ledger.path).data["status"], "expired")
+            self.assertEqual(chat._jobs(), {})
+
+    def test_f7_handles_are_pointer_sized(self):
+        source = (Path(__file__).resolve().parents[1] / "core" / "single_instance.py").read_text(encoding="utf-8")
+        self.assertIn("CreateMutexW.restype = wintypes.HANDLE", source)
+        self.assertIn("FindWindowW.restype = wintypes.HWND", source)

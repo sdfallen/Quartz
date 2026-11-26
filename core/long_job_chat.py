@@ -226,7 +226,8 @@ class LongJobChatMixin:
         """A teammate who did not write the milestone reads the project against its acceptance
         criterion in a read-only turn of the job's conversation (Fides/Eos 25 Nov)."""
         cid = ledger.data["conversation_id"]
-        limited = set((ledger.data.get("limited") or {}).keys())
+        now = time.time()
+        limited = {a for a, until in (ledger.data.get("limited") or {}).items() if float(until or 0) > now}
         reviewers = [m for m in self._job_members(cid) if m != writer and m not in limited]
         if not reviewers:
             return {"ok": None, "summary": "Denetleyecek ikinci ajan yok."}
@@ -256,11 +257,14 @@ class LongJobChatMixin:
         with self._lock:
             if self._active_turn and self._active_turn.get("turn_id") == turn_id:
                 self._active_turn["long_job"] = ledger.data["id"]
+        step_status = None
         while True:
             with self._lock:
                 turn = self._active_turn
-                running = bool(turn and turn.get("turn_id") == turn_id
-                               and (turn.get("status") in {"running", "cancelling"} or turn.get("worker_pending")))
+                mine = bool(turn and turn.get("turn_id") == turn_id)
+                running = mine and (turn.get("status") in {"running", "cancelling"} or turn.get("worker_pending"))
+                if mine:
+                    step_status = turn.get("step_status") or step_status
             if not running:
                 break
             if stop.is_set():
@@ -268,13 +272,20 @@ class LongJobChatMixin:
             stop.wait(POLL_SECONDS)
         messages = self.store.get(cid).get("messages", [])
         index = next((i for i, m in enumerate(messages) if m.get("id") == user_id), None)
+        user = messages[index] if index is not None else {}
         replies = [m for m in (messages[index + 1:] if index is not None else [])
                    if m.get("role") == "assistant" and m.get("sender") == reviewer]
-        text = " ".join(str(m.get("content") or "") for m in replies)
-        verdicts = re.findall(r"KABUL\s*:\s*(EVET|HAYIR)", text, re.I)
-        if not verdicts:
+        text = "\n".join(str(m.get("content") or "") for m in replies).strip()
+        # Fides 26 Nov (F3): a failed review turn ("KABUL: EVET. Bağlantı kesildi.") was taken
+        # as acceptance. The turn must have completed and the verdict must be its last line.
+        state = (user.get("metadata") or {}).get("instruction_state") or step_status
+        failed = state not in {"completed", None} or any(
+            (m.get("metadata") or {}).get("status") in {"failed", "cancelled"} for m in replies)
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        last = re.match(r"^KABUL\s*:\s*(EVET|HAYIR)\b", lines[-1], re.I) if lines else None
+        if failed or not last:
             return {"ok": None, "by": reviewer, "summary": text[-400:]}
-        return {"ok": verdicts[-1].upper() == "EVET", "by": reviewer, "summary": text[-1200:]}
+        return {"ok": last.group(1).upper() == "EVET", "by": reviewer, "summary": text[-1200:]}
 
     def _job_turn_outcome(self, cid, user_id, writer, step_status):
         messages = self.store.get(cid).get("messages", [])
