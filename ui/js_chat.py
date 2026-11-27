@@ -632,7 +632,10 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       userPinnedToBottom = true;
       unreadWhileScrolledUp = 0;
       updateJumpBottomBtn();
-      if (!conv.messages || !conv.messages.length) {
+      if ((!conv.messages || !conv.messages.length) && conv.free) {
+        // 27 Nov (live): an empty free conversation opens its own chat, not the first screen again.
+        appendMsg('bot', 'SPES', 'Ücretsiz sohbet açıldı. Bağladığın ücretsiz hesaplarla konuşuyorsun; dosyalarına ve programlarına dokunulmaz.\nAklındakini yaz: sohbet edelim, fikir verelim, birlikte çözelim.', '', 'quartz');
+      } else if (!conv.messages || !conv.messages.length) {
         const welcome = appendMsg('bot', 'SPES', 'Merhaba! Ben SpeS. Doğrudan Antigravity ve Codex ajanlarıyla çalışıyorum.\nÜstteki seçiciden Antigravity, Codex veya Birlikte modunu seçip mesaj gönderebilirsin.', '', 'quartz');
         welcome.dataset.welcome = '1';
       } else {

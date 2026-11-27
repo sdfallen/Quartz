@@ -1016,7 +1016,10 @@ body.compact .face-mark, body.compact .face-mark .q-mark { width: 56px !importan
 :root:not([data-space="chat"]) .empty-state.face .space-chat-only { display: none; }
 :root[data-space="chat"] .empty-state.face .space-work-only { display: none; }
 /* A free conversation: the free speakers answer; agent and permission choices do not apply. */
-body.free-chat .agent-seg-group, body.free-chat #mainPermissionLevel, body.free-chat .crew { display: none !important; }
+/* (Live 27 Nov: .crew is the whole stage with the chat and the composer; only the agents' lanes and
+   their core go.) */
+body.free-chat .agent-seg-group, body.free-chat #mainPermissionLevel, body.free-chat .lane-col,
+body.free-chat .crew-core, body.free-chat .core-beam { display: none !important; }
 .msg.sender-free .msg-sender-tag { color: var(--accent); }
 
 /* Ücretsiz bağlantılar sheet */

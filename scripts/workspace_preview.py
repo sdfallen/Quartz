@@ -49,6 +49,7 @@ if(name==='coordination_route'&&!/erişim|yetki|pencere|masaüstü/i.test(String
 if(name==='chat_open_space'){previewSpace=args[0]==='chat'?'chat':'work';return {status:'ok',data:{}};}
 // 27 Nov: "#empty" shows the first screen (the face); free_chat answers with three sample channels.
 if(location.hash.includes('empty')){sampleConversation.messages=[];chatConversation.messages=[];}
+if(name==='free_chat'&&args[0]==='new'){previewSpace='chat';chatConversation.free=true;chatConversation.id='free-preview';chatConversation.title='Ücretsiz sohbet';chatConversation.messages=[];return {status:'ok',data:{id:'free-preview'}};}
 if(name==='free_chat'){const ch=(id,label,persona,connected)=>({id,label,persona,connected,send:connected,backup:connected,model:connected?'gemini-3.8-flash':'',key_page:'https://example.invalid',privacy:'Önizleme: gizlilik notu burada.'});
  return {status:'ok',data:{order:['gemini','openrouter','groq'],channels:[ch('gemini','Gemini (Google AI Studio)','Eos',true),ch('openrouter','OpenRouter (Kimi)','Kimi',false),ch('groq','Groq (açık modeller)','Lyra',false)]}};}
 if(name==='chat_status')return {status:'ok',data:{preferences:{response_detail:'short'},active_conversation:previewSpace==='chat'?chatConversation:sampleConversation,conversations:[sampleConversation,chatConversation,{id:'older',title:'Önceki test notları'}],projects:[{id:'preview-project',name:'Geçici test projesi',path:'Preview only'}],agents:{},models:{},single_writer:{}}};

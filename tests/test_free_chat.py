@@ -443,5 +443,24 @@ class ChatServiceTests(Base):
         self.assertEqual(chat.free_chat_action("is_free", {"conversation_id": "yok"}), {"free": False})
 
 
+class FreeChatPageTests(unittest.TestCase):
+    """Live 27 Nov: "Yeni ücretsiz sohbet" left no chat on screen."""
+
+    def test_a_free_conversation_never_hides_the_stage_with_the_chat_and_composer(self):
+        import re
+        css = (Path(__file__).resolve().parents[1] / "assets" / "workspace.css").read_text(encoding="utf-8")
+        rules = [m.group(0) for m in re.finditer(r"[^{}]*body\.free-chat[^{}]*\{[^}]*display:\s*none[^}]*\}", css)]
+        self.assertTrue(rules)
+        for rule in rules:
+            selectors = [s.strip() for s in rule.split("{")[0].split(",")]
+            for hidden in (".crew", ".stage", ".stream", ".chat-stage", ".chat", ".dock", "#composer", ".composer"):
+                self.assertNotIn("body.free-chat " + hidden, selectors)
+
+    def test_an_empty_free_conversation_shows_its_own_opening_not_the_first_screen(self):
+        from ui.js_chat import JAVASCRIPT
+        opening = JAVASCRIPT.index("conv.free) {")
+        self.assertIn("Ücretsiz sohbet açıldı", JAVASCRIPT[opening:opening + 600])
+        self.assertNotIn("data-welcome", JAVASCRIPT[opening:opening + 400])
+
 if __name__ == "__main__":
     unittest.main()
