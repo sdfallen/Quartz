@@ -62,6 +62,12 @@ ACCOUNT_FEATURES_ALLOWED_ON = frozenset({
     "enable_request_compression", "fast_mode", "guardian_reuse_parent_compaction", "instant_interrupt",
     "system_proxy_fallback", "ultrafast_mode", "unbounded_connection_retries",
 })
+# Graduated non-tool internals that codex-cli 0.163.0 reports with stage "removed" and value "true".
+# Accepted only when their reported stage is "removed", never as an active/stable capability.
+ACCOUNT_REMOVED_BUILTIN_ON = frozenset({
+    "collaboration_modes", "item_ids", "resize_all_images", "sqlite", "steer",
+    "terminal_resize_reflow", "tool_search_always_defer_mcp_tools", "tui_app_server",
+})
 ACCOUNT_POLICY = (
     'forced_login_method="chatgpt"',  # Codex's own policy, on the command line (config.toml is ignored)
     'cli_auth_credentials_store="file"',  # the sign-in lives in the channel's home, not the OS key store
@@ -344,7 +350,7 @@ class CodexRuntime:
             allowed = {"quartz_desktop"}
         return self._verified_mcp_flags(flags, cwd, allowed, should_abort, env)
 
-    def _verified_mcp_flags(self, flags, cwd, allowed, should_abort=None, env=None):
+    def _verified_mcp_flags(self, flags, cwd, allowed, should_abort=None, env=None, executable=None):
         """Read the effective MCP set back with `flags`; disable extras by name and re-check.
 
         Every name in `allowed` must be enabled; anything else enabled is
@@ -362,7 +368,9 @@ class CodexRuntime:
         def enabled_extra(current):
             if should_abort and should_abort():
                 raise RuntimeError("Codex run cancelled before start")
-            probe = subprocess.run(self._command(current + ["mcp", "list", "--json"]), cwd=str(cwd),
+            cmd_args = current + ["mcp", "list", "--json"]
+            command = [str(executable), *cmd_args] if executable else self._command(cmd_args)
+            probe = subprocess.run(command, cwd=str(cwd),
                                    capture_output=True, text=True, encoding="utf-8", errors="replace",
                                    timeout=30, env=env,
                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
@@ -389,12 +397,35 @@ class CodexRuntime:
             raise RuntimeError("Codex keeps other MCP servers enabled; start refused")
         return flags
 
+    @staticmethod
+    def _verify_pinned_executable(executable, expected_sha256: str) -> str:
+        """Fides P1-3: verify the exact resolved native binary right before running it."""
+        import hashlib
+        if not (isinstance(executable, (str, Path)) and str(executable).strip()):
+            raise ValueError("ChatGPT hesabı yürütücüsü belirtilmedi")
+        if not (isinstance(expected_sha256, str) and len(expected_sha256) == 64
+                and all(c in "0123456789abcdef" for c in expected_sha256.lower())):
+            raise ValueError("ChatGPT hesabı yürütücü özeti geçersiz")
+        path = Path(executable)
+        try:
+            st = os.lstat(path)
+        except OSError as exc:
+            raise RuntimeError("Codex yürütücüsü okunamadı") from exc
+        if path.is_symlink() or bool(getattr(st, "st_file_attributes", 0) & 0x400) or not path.is_file():
+            raise RuntimeError("Codex yürütücüsü geçerli bir dosya değil")
+        with path.open("rb") as stream:
+            actual = hashlib.file_digest(stream, "sha256").hexdigest()
+        if actual != expected_sha256.lower():
+            raise RuntimeError("Codex yürütücüsü onaylanan özetten farklı")
+        return str(path)
+
     def start(self, prompt, project_path, *, sandbox="read-only", approval="never",
               squad_task_id=None, squad_agent_id=None, resume_thread_id=None,
               timeout=None, model: str | None = None, effort: str | None = None,
               desktop_connection=None, tool_guard=False, project_read=False, should_abort=None,
-              web=False, account_chat=False, codex_home=None, run_id=None) -> dict:
-        if not self.executable:
+              web=False, account_chat=False, codex_home=None, account_executable=None,
+              account_executable_sha256=None, run_id=None) -> dict:
+        if not self.executable and not (account_chat and account_executable):
             raise RuntimeError(self._init_error or "Codex CLI was not found")
         if account_chat and not (tool_guard and sandbox == "read-only" and approval == "never" and not web
                                  and desktop_connection is None and not project_read and not resume_thread_id
@@ -403,6 +434,8 @@ class CodexRuntime:
             raise ValueError("ChatGPT hesabı sohbeti yalnız araçsız, salt okunur, taze bir çalışmadır")
         if account_chat and not codex_home:
             raise ValueError("ChatGPT hesabı sohbeti kendi Codex evinde çalışır")
+        pinned_executable = (self._verify_pinned_executable(account_executable, account_executable_sha256)
+                             if account_chat else None)
         if run_id is not None and not (isinstance(run_id, str) and len(run_id) == 32
                                        and all(c in "0123456789abcdef" for c in run_id)):
             raise ValueError("Geçersiz çalışma kimliği")
@@ -459,7 +492,7 @@ class CodexRuntime:
                 # The channel's own home, no keys, and the policy + feature cut for the probe AND the run.
                 base_env = account_only_environment(base_env, codex_home)
                 guard_config = self._verified_mcp_flags(account_profile_flags(), project, set(), should_abort,
-                                                        base_env)
+                                                        base_env, executable=pinned_executable)
             else:
                 guard_config = self._guarded_config(project, desktop_connection, should_abort, base_env, web=web)
 
@@ -499,6 +532,7 @@ class CodexRuntime:
                 "_tool_guard": bool(tool_guard),
                 "_account_chat": bool(account_chat),
                 "_project_read": str(read_root) if read_root else None,
+                "_project_key": project_key,
             }
             self._runs[run_id] = record
             if is_writer:
@@ -553,7 +587,7 @@ class CodexRuntime:
             # CODEX_HOME); both are exec options, so the MCP listing above keeps its own command.
             account = ["--ephemeral", "--ignore-user-config"] if account_chat else []
             args = common + ["--json", "--skip-git-repo-check", *account, "-"]
-        command = self._command(args)
+        command = ([pinned_executable, *args] if account_chat else self._command(args))
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | CREATE_SUSPENDED
         job_errors: list[str] = []
         if should_abort and should_abort():
@@ -566,6 +600,8 @@ class CodexRuntime:
                     self._writers.pop(project_key, None)
             raise RuntimeError("Codex run cancelled before start")
         try:
+            if account_chat:
+                self._verify_pinned_executable(pinned_executable, account_executable_sha256)
             from core.cli_installer import cli_environment, with_project
             process_options = {"env": with_project(desktop_env if desktop_env is not None
                                                    else base_env if base_env is not None else cli_environment(),
@@ -607,8 +643,9 @@ class CodexRuntime:
                               process_exit_confirmed=exited)
                 if exited:
                     self._processes.pop(run_id, None)
-                if self._writers.get(project_key) == run_id:
-                    self._writers.pop(project_key, None)
+                    # Fides P2 (20261128): the writer lock stays held until process-tree exit is confirmed.
+                    if self._writers.get(project_key) == run_id:
+                        self._writers.pop(project_key, None)
             raise
 
         with self._lock:
@@ -858,6 +895,9 @@ class CodexRuntime:
                 with self._lock:
                     record.update(cleanup_pending=False, process_exit_confirmed=True, exit_code=process.poll())
                     self._processes.pop(run_id, None)
+                    project_key = record.get("_project_key") or os.path.normcase(str(record.get("project") or ""))
+                    if self._writers.get(project_key) == run_id:
+                        self._writers.pop(project_key, None)
             return self.get(run_id)
         if owned_cleanup_pending(process):
             stop_process_tree(process, timeout=max(1, timeout))

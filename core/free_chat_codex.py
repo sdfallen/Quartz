@@ -1,31 +1,37 @@
-"""The "ChatGPT hesabın (Codex)" channel of Ücretsiz sohbet (27 Nov 2026).
+"""The "ChatGPT hesabın (Codex)" channel of Ücretsiz sohbet (27-28 Nov 2026).
 
 Fides: design ŞARTLI KABUL (20261127-1613), implementation RED (1629, CG1-CG4), design 2 ŞARTLI KABUL
-(1638, D2-1..D2-4). The channel stays closed in code (free_chat.ACCOUNT_CHANNEL_OPEN) until Fides's
-independent review and the user's separately approved live acceptance.
+(1638, D2-1..D2-4), implementation 2 RED (20261128, P1-1..P1-3, P2-4). The channel stays closed in code
+(free_chat.ACCOUNT_CHANNEL_OPEN) until Fides's independent review and the user's separately approved
+live acceptance.
 
 - Its own Codex home ``free_chat\\codex-home`` (D2-2): every call - version, sign-in status, MCP
   listing, feature listing, sign-in and the turn - runs with that CODEX_HOME, without any API key or
   endpoint, and with the same policy + feature flags (core.codex_runtime.account_profile_flags:
   forced_login_method="chatgpt" and the file credential store on the command line, D2-1). The shared
   Codex home (Fides's own sign-in) is never passed to these calls.
-- The sign-in is the user's own click on this channel's "ChatGPT ile giriş"; SpeS never reads,
-  copies or logs the token.
-- Before every turn, under the channel's lock, a fresh opening gate (D2-3): a supported CLI version
-  and the launcher chain's SHA-256; the home's contents against a narrow allow-list (no config.toml,
-  skills, hooks, AGENTS.md, plugins...; an unknown entry or a link closes it); `mcp list --json` is
-  []; `features list` shows every ACCOUNT_FEATURES_OFF false and nothing outside
-  ACCOUNT_FEATURES_ALLOWED_ON true; `login status` is exactly "Logged in using ChatGPT".
-- Ownership (CG3/CG4, D2-4): the run id is chosen before the start; a turn whose process exit is not
-  confirmed stays pending and blocks the next turn and sign-in until cancel()'s cleanup confirms it;
-  a start failure deletes the room only when the runtime's record proves no process was created.
-  The answer is returned only after the exit is confirmed.
+- Real native binary resolution and receipt binding (P1-3): npm ``.cmd`` / ``bin/codex.js`` launchers
+  are resolved through verified ``@openai/codex`` + ``@openai/codex-<platform>-<arch>`` packages to the
+  actual native ``codex.exe`` binary; unresolvable wrappers or links fail closed. Both preflight/login
+  calls and ``CodexRuntime.start`` execute that exact native binary directly, re-checking its SHA-256
+  before spawning. ``connect()`` records the approved receipt; a binary change (even reporting the same
+  CLI version string) invalidates the connection until re-checked.
+- Pre-login and pre-turn gate (P1-1, P1-2, D2-3): before any CLI process runs (including ``login``),
+  every existing ancestor of ``base``, ``home`` and ``rooms`` is checked against links/reparse points
+  and ``home`` is scanned strictly with ``os.scandir`` (no swallowed ``os.walk`` errors); ``features list``
+  is parsed line-by-line (rejecting malformed, duplicate or contradictory rows and requiring every
+  ``ACCOUNT_FEATURES_OFF`` entry to be present and ``false``). ``login`` runs only after the full
+  identity-free preflight passes.
+- Ownership (CG3/CG4, D2-4, P2-4): the run id is chosen before the start; a turn whose process exit is
+  not confirmed stays pending and blocks the next turn and sign-in until ``cancel()``'s cleanup confirms
+  it; a start failure deletes the room only when the runtime's record proves no process was created.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import tempfile
@@ -40,7 +46,7 @@ SETTLE_SECONDS = 5
 CALL_SECONDS = 30
 LOGIN_SECONDS = 600
 SUPPORTED_CLI = frozenset({"codex-cli 0.163.0"})
-PROFILE_VERSION = "account-chat-2"
+PROFILE_VERSION = "account-chat-3"
 SIGNED_IN = "Logged in using ChatGPT"
 # The home's allow-list (codex-cli 0.163.0). Entries a real sign-in adds are to be confirmed with
 # Fides during the approved live acceptance; until then anything else keeps the channel closed.
@@ -55,10 +61,25 @@ HOME_ALLOWED = (
     (re.compile(r"log"), "dir"),
     (re.compile(r"log/codex-[A-Za-z0-9_.-]{0,60}\.log"), "file"),
 )
+_FEATURE_ROW = re.compile(
+    r"^([A-Za-z0-9_.-]+)\s+(stable|experimental|under development|deprecated|removed)\s+(true|false)$"
+)
+_PLATFORM_TARGETS = {
+    ("windows", "amd64"): ("@openai/codex-win32-x64", "x86_64-pc-windows-msvc", "codex.exe"),
+    ("windows", "x86_64"): ("@openai/codex-win32-x64", "x86_64-pc-windows-msvc", "codex.exe"),
+    ("windows", "arm64"): ("@openai/codex-win32-arm64", "aarch64-pc-windows-msvc", "codex.exe"),
+    ("windows", "aarch64"): ("@openai/codex-win32-arm64", "aarch64-pc-windows-msvc", "codex.exe"),
+    ("linux", "x86_64"): ("@openai/codex-linux-x64", "x86_64-unknown-linux-musl", "codex"),
+    ("linux", "amd64"): ("@openai/codex-linux-x64", "x86_64-unknown-linux-musl", "codex"),
+    ("linux", "aarch64"): ("@openai/codex-linux-arm64", "aarch64-unknown-linux-musl", "codex"),
+    ("linux", "arm64"): ("@openai/codex-linux-arm64", "aarch64-unknown-linux-musl", "codex"),
+    ("darwin", "x86_64"): ("@openai/codex-darwin-x64", "x86_64-apple-darwin", "codex"),
+    ("darwin", "arm64"): ("@openai/codex-darwin-arm64", "aarch64-apple-darwin", "codex"),
+}
 
 
 class AccountChatError(Exception):
-    """str() is a free_chat.EXPLAIN kind (busy, account, quota, unreachable, cancelled, other, closed)."""
+    """str() is a free_chat.EXPLAIN kind (busy, account, quota, unreachable, cancelled, other, closed:...)."""
 
 
 def classify_record(record: dict) -> str:
@@ -84,46 +105,271 @@ def _is_link(path: Path) -> bool:
     return path.is_symlink() or bool(getattr(st, "st_file_attributes", 0) & 0x400)
 
 
+def _ancestors_problem(path: Path, label: str, *, allow_leaf_file: bool = False) -> str:
+    """Every existing ancestor (and the leaf if it exists) must be a real directory without links."""
+    raw = Path(path)
+    if not raw.is_absolute():
+        return f"göreli yol: {label}"
+    chain = []
+    cur = raw
+    while True:
+        chain.append(cur)
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    for idx, node in enumerate(reversed(chain)):
+        is_root = idx == 0
+        is_leaf = node == raw
+        try:
+            exists = os.path.lexists(node)
+        except OSError:
+            return f"okunamayan yol: {label}"
+        if not exists:
+            continue
+        if not is_root and _is_link(node):
+            return f"bağlantı: {label}"
+        try:
+            st = os.lstat(node)
+        except OSError:
+            return f"okunamayan yol: {label}"
+        import stat as _stat
+        if is_leaf and allow_leaf_file:
+            if not (_stat.S_ISREG(st.st_mode) or _stat.S_ISDIR(st.st_mode)):
+                return f"geçersiz yol: {label}"
+        elif not _stat.S_ISDIR(st.st_mode):
+            return f"klasör değil: {label}"
+    return ""
+
+
 def home_problem(home: Path) -> str:
-    """'' when the home holds only allowed entries; else the first reason (names only, no content)."""
-    if not home.is_dir() or _is_link(home):
+    """'' when the home holds only allowed entries; else the first reason (names only, no content).
+
+    Fides P1-2: uses os.scandir explicitly so directory scan / permission errors fail closed instead
+    of being silently skipped by os.walk.
+    """
+    import stat as _stat
+    anc = _ancestors_problem(home, "Codex evi")
+    if anc:
+        return anc
+    try:
+        if not os.path.lexists(home):
+            return "Codex evi yok ya da bir bağlantı"
+    except OSError:
+        return "Codex evi okunamadı"
+    if _is_link(home) or not home.is_dir():
         return "Codex evi yok ya da bir bağlantı"
-    for folder, dirs, files in os.walk(home, followlinks=False):
-        for name in sorted(dirs) + sorted(files):
-            path = Path(folder) / name
-            rel = path.relative_to(home).as_posix()
-            if _is_link(path):
+    stack = [home]
+    while stack:
+        folder = stack.pop()
+        rel_folder = "." if folder == home else folder.relative_to(home).as_posix()
+        try:
+            with os.scandir(folder) as it:
+                entries = sorted(list(it), key=lambda e: e.name)
+        except OSError:
+            return f"okunamayan klasör: {rel_folder}"
+        dirs_next = []
+        for entry in entries:
+            entry_path = Path(folder) / entry.name
+            rel = entry_path.relative_to(home).as_posix()
+            if _is_link(entry_path):
                 return f"bağlantı: {rel}"
-            kind = "dir" if path.is_dir() else "file"
+            try:
+                st = entry.stat(follow_symlinks=False)
+            except OSError:
+                return f"okunamayan: {rel}"
+            if _stat.S_ISDIR(st.st_mode):
+                kind = "dir"
+                dirs_next.append(entry_path)
+            elif _stat.S_ISREG(st.st_mode):
+                kind = "file"
+            else:
+                return f"beklenmeyen tür: {rel}"
             if not any(rx.fullmatch(rel) and want in (kind, "any") for rx, want in HOME_ALLOWED):
                 return f"beklenmeyen: {rel}"
+        stack.extend(reversed(dirs_next))
     return ""
 
 
-def parse_features(text: str) -> dict | None:
-    rows = {}
-    for line in (text or "").splitlines():
-        parts = line.split()
-        if len(parts) >= 3 and parts[-1] in {"true", "false"}:
-            rows[parts[0]] = parts[-1] == "true"
-    return rows or None
+def roots_problem(base: Path, home: Path, rooms: Path, *, require_home: bool) -> str:
+    """Fides P1-1: validate base, rooms, home and every existing parent before any CLI call."""
+    for target, label in ((base, "taban klasör"), (rooms, "oda klasörü"), (home, "Codex evi")):
+        problem = _ancestors_problem(target, label)
+        if problem:
+            return problem
+    if require_home or os.path.lexists(home):
+        return home_problem(home)
+    return ""
 
 
-def features_problem(rows: dict | None) -> str:
-    from core.codex_runtime import ACCOUNT_FEATURES_ALLOWED_ON, ACCOUNT_FEATURES_OFF
-    if not rows:
+class FeatureRows(dict):
+    """dict[name -> bool] that also carries each feature's reported stage from `features list`."""
+
+    def __init__(self, pairs: dict[str, tuple[str, bool]]):
+        super().__init__({name: enabled for name, (_stage, enabled) in pairs.items()})
+        self.stages = {name: stage for name, (stage, _enabled) in pairs.items()}
+
+
+def parse_features_strict(text: str) -> tuple[FeatureRows | None, str]:
+    """Fides P1-2: every non-empty line must be valid and unique; duplicates/contradictions fail."""
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    if not lines:
+        return None, "özellik listesi okunamadı"
+    pairs: dict[str, tuple[str, bool]] = {}
+    for line in lines:
+        match = _FEATURE_ROW.match(line)
+        if not match:
+            return None, "özellik listesinde geçersiz satır"
+        name, stage, raw_val = match.group(1), match.group(2), match.group(3)
+        if name in pairs:
+            return None, f"tekrarlı ya da çelişkili özellik: {name}"
+        pairs[name] = (stage, raw_val == "true")
+    return FeatureRows(pairs), ""
+
+
+def parse_features(text: str) -> FeatureRows | None:
+    rows, problem = parse_features_strict(text)
+    return None if problem else rows
+
+
+def features_problem(source) -> str:
+    """'' when every ACCOUNT_FEATURES_OFF entry is present and false, and nothing unexpected is true."""
+    from core.codex_runtime import ACCOUNT_FEATURES_ALLOWED_ON, ACCOUNT_FEATURES_OFF, ACCOUNT_REMOVED_BUILTIN_ON
+    if isinstance(source, str):
+        strict_rows, problem = parse_features_strict(source)
+        if problem or not strict_rows:
+            return problem or "özellik listesi okunamadı"
+        stages = strict_rows.stages
+        rows = dict(strict_rows)
+    elif isinstance(source, dict) and source:
+        stages = dict(getattr(source, "stages", None) or {})
+        rows = {}
+        for name, val in source.items():
+            if isinstance(val, tuple) and len(val) == 2 and isinstance(val[1], bool):
+                stages[name] = str(val[0])
+                rows[name] = val[1]
+            elif isinstance(val, bool):
+                stages.setdefault(name, "stable")
+                rows[name] = val
+            else:
+                return "özellik listesi okunamadı"
+    else:
         return "özellik listesi okunamadı"
-    for name in ACCOUNT_FEATURES_OFF:
-        if name in rows and rows[name]:
-            return f"kapanmayan özellik: {name}"
-    required = {"shell_tool", "unified_exec", "apps", "plugins", "hooks", "computer_use", "browser_use"}
-    missing = sorted(n for n in required if n not in rows)
+    missing = sorted(name for name in ACCOUNT_FEATURES_OFF if name not in rows)
     if missing:
         return "özellik listesinde yok: " + ", ".join(missing)
-    extra = sorted(n for n, on in rows.items() if on and n not in ACCOUNT_FEATURES_ALLOWED_ON)
+    for name in ACCOUNT_FEATURES_OFF:
+        if rows[name]:
+            return f"kapanmayan özellik: {name}"
+    extra = []
+    for name, enabled in rows.items():
+        if not enabled:
+            continue
+        stage = stages.get(name, "stable")
+        if stage == "removed":
+            if name not in ACCOUNT_REMOVED_BUILTIN_ON:
+                extra.append(name)
+        elif name not in ACCOUNT_FEATURES_ALLOWED_ON:
+            extra.append(name)
     if extra:
-        return "bilinmeyen açık özellik: " + ", ".join(extra)
+        return "bilinmeyen açık özellik: " + ", ".join(sorted(extra))
     return ""
+
+
+def _sha256_file(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def resolve_codex_target(executable, *, system: str | None = None, machine: str | None = None) -> dict:
+    """Fides P1-3: resolve npm .cmd/.js wrappers to the real native platform binary and hash the chain.
+
+    Fails closed when any link/reparse point is in the chain, when a wrapper is not the official
+    ``@openai/codex`` layout, or when the platform binary is missing.
+    """
+    if not executable:
+        raise AccountChatError("closed:Codex kurulu değil")
+    raw = Path(str(executable))
+    if not raw.is_absolute():
+        raw = raw.resolve(strict=False)
+    anc = _ancestors_problem(raw, "Codex yürütücüsü", allow_leaf_file=True)
+    if anc or not raw.is_file() or _is_link(raw):
+        raise AccountChatError("closed:Codex yürütücüsü doğrulanamadı")
+    suffix = raw.suffix.lower()
+    chain = [raw]
+    if suffix in {".bat", ".ps1", ".sh"}:
+        raise AccountChatError("closed:desteklenmeyen Codex sarmalayıcısı")
+    if suffix in {".cmd", ".js", ".mjs", ".cjs"}:
+        js_path = raw
+        if suffix == ".cmd":
+            from core.cli_installer import package_entry
+            try:
+                js_path = package_entry(raw.parent, "codex")
+            except Exception as exc:
+                raise AccountChatError("closed:Codex sarmalayıcısı tanınmadı") from exc
+            if _ancestors_problem(js_path, "Codex giriş betiği", allow_leaf_file=True) or _is_link(js_path):
+                raise AccountChatError("closed:Codex giriş betiği doğrulanamadı")
+            chain.append(js_path)
+        pkg_root = js_path.parent.parent if js_path.parent.name == "bin" else js_path.parent
+        pkg_json = pkg_root / "package.json"
+        if _ancestors_problem(pkg_json, "Codex paketi", allow_leaf_file=True) or not pkg_json.is_file() or _is_link(pkg_json):
+            raise AccountChatError("closed:Codex paketi doğrulanamadı")
+        try:
+            meta = json.loads(pkg_json.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise AccountChatError("closed:Codex paket bilgisi okunamadı") from exc
+        if meta.get("name") != "@openai/codex":
+            raise AccountChatError("closed:Codex paket kimliği uyuşmuyor")
+        chain.append(pkg_json)
+        sys_key = (system or platform.system()).lower()
+        arch_key = (machine or platform.machine()).lower()
+        target_info = _PLATFORM_TARGETS.get((sys_key, arch_key))
+        if not target_info:
+            raise AccountChatError("closed:bu platform için Codex ikilisi tanımlı değil")
+        plat_pkg_name, triple, bin_name = target_info
+        short_name = plat_pkg_name.split("/", 1)[1]
+        candidates = [
+            pkg_root / "node_modules" / "@openai" / short_name,
+            pkg_root.parent.parent / "@openai" / short_name,
+        ]
+        plat_root = next((c for c in candidates if os.path.lexists(c)), None)
+        native = None
+        if plat_root is not None:
+            plat_json = plat_root / "package.json"
+            if (_ancestors_problem(plat_json, "Codex platform paketi", allow_leaf_file=True)
+                    or not plat_json.is_file() or _is_link(plat_json)):
+                raise AccountChatError("closed:Codex platform paketi doğrulanamadı")
+            try:
+                plat_meta = json.loads(plat_json.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise AccountChatError("closed:Codex platform paketi okunamadı") from exc
+            if plat_meta.get("name") != plat_pkg_name:
+                raise AccountChatError("closed:Codex platform paket kimliği uyuşmuyor")
+            chain.append(plat_json)
+            native = plat_root / "vendor" / triple / "bin" / bin_name
+        else:
+            vendor_native = pkg_root / "vendor" / triple / "bin" / bin_name
+            if os.path.lexists(vendor_native):
+                native = vendor_native
+        if (native is None or _ancestors_problem(native, "Codex ikilisi", allow_leaf_file=True)
+                or not native.is_file() or _is_link(native)):
+            raise AccountChatError("closed:Codex platform ikilisi bulunamadı")
+        chain.append(native)
+        binary = native
+    else:
+        binary = raw
+    try:
+        binary_sha = _sha256_file(binary)
+        combined = hashlib.sha256()
+        seen = set()
+        for item in chain:
+            key = os.path.normcase(str(item))
+            if key in seen:
+                continue
+            seen.add(key)
+            combined.update(key.encode("utf-8") + b"\0" + bytes.fromhex(_sha256_file(item)))
+    except OSError as exc:
+        raise AccountChatError("closed:Codex ikilisi okunamadı") from exc
+    return {"executable": str(binary), "sha256": binary_sha, "chain_sha256": combined.hexdigest()}
 
 
 class CodexAccountChannel:
@@ -140,8 +386,8 @@ class CodexAccountChannel:
         self._state_lock = threading.Lock()  # passive status never waits for the turn
         self._pending = None                 # {"run_id", "room"} until its exit is confirmed
         self._login_running = False
-        self._last = {"installed": False, "chatgpt": False, "checked": None, "reason": "", "login": False}
-        self._receipts = {}
+        self._last = {"installed": False, "chatgpt": False, "checked": None, "reason": "", "login": False,
+                      "receipt": ""}
 
     # ── passive state ────────────────────────────────────────────────────────────
     def last(self) -> dict:
@@ -169,12 +415,12 @@ class CodexAccountChannel:
             base = cli_environment()
         return account_only_environment(base, self.home)
 
-    def _call(self, runtime, args, timeout=CALL_SECONDS):
+    def _call(self, binary_executable: str, args, timeout=CALL_SECONDS):
         from core.codex_runtime import account_profile_flags
         run = self._run
         if run is None:
             from core.cli_installer import owned_run as run
-        command = runtime._command([*account_profile_flags(), *args])
+        command = [str(binary_executable), *account_profile_flags(), *args]
         import subprocess
         done = run(command, capture_output=True, text=True, timeout=timeout, env=self.env(), cwd=str(self.base),
                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
@@ -190,47 +436,50 @@ class CodexAccountChannel:
             except Exception:
                 pass
 
-    def _receipt(self, runtime) -> str:
-        """Fides: bound to the resolved launcher chain's SHA-256, the CLI version and the profile."""
-        files = []
-        for token in runtime._command(["--version"]):
-            path = Path(str(token))
-            if path.is_file():
-                files.append(path.resolve())
-        digest = hashlib.sha256()
-        for path in files:
-            with path.open("rb") as stream:
-                digest.update(str(path).encode("utf-8") + b"\0" + hashlib.file_digest(stream, "sha256").digest())
-        code, out, _err = self._call(runtime, ["--version"])
+    def _preflight_locked(self, runtime, *, require_home: bool) -> tuple[str, dict]:
+        """Identity-free home, binary, version, MCP and feature checks BEFORE login or turn (P1-1..P1-3)."""
+        problem = roots_problem(self.base, self.home, self.rooms, require_home=require_home)
+        if problem:
+            raise AccountChatError("closed:" + problem)
+        target = resolve_codex_target(getattr(runtime, "executable", None))
+        if not require_home and not os.path.lexists(self.home):
+            self.home.mkdir(parents=True, exist_ok=True)
+            problem = roots_problem(self.base, self.home, self.rooms, require_home=True)
+            if problem:
+                raise AccountChatError("closed:" + problem)
+        binary = target["executable"]
+        code, out, _err = self._call(binary, ["--version"])
         version = out.strip()
         if code != 0 or version not in SUPPORTED_CLI:
             raise AccountChatError("closed:desteklenmeyen Codex sürümü")
-        return f"{digest.hexdigest()}|{version}|{PROFILE_VERSION}"
+        receipt = (f"{os.path.normcase(binary)}|{target['sha256']}|{target['chain_sha256']}|"
+                   f"{version}|{PROFILE_VERSION}")
+        code, out, _err = self._call(binary, ["mcp", "list", "--json"])
+        try:
+            servers = json.loads(out)
+        except ValueError:
+            servers = None
+        if code != 0 or servers != []:
+            raise AccountChatError("closed:Codex evinde araç sunucusu var ya da liste okunamadı")
+        code, out, _err = self._call(binary, ["features", "list"])
+        feat_err = features_problem(out if code == 0 else "")
+        if feat_err:
+            raise AccountChatError("closed:" + feat_err)
+        problem = home_problem(self.home)
+        if problem:
+            raise AccountChatError("closed:" + problem)
+        return receipt, target
 
-    def _gate_locked(self, runtime) -> dict:
-        """The full opening gate, fresh (D2-3). Never starts a model call."""
-        state = {"installed": False, "chatgpt": False, "checked": time.time(), "reason": ""}
+    def _gate_locked(self, runtime) -> tuple[dict, dict | None]:
+        """The full opening gate, fresh (D2-3, P1-1..P1-3). Never starts a model call."""
+        state = {"installed": False, "chatgpt": False, "checked": time.time(), "reason": "", "receipt": ""}
         if runtime is None or not getattr(runtime, "executable", None):
             state["reason"] = "Codex kurulu değil"
-            return state
+            return state, None
         state["installed"] = True
         try:
-            receipt = self._receipt(runtime)
-            problem = home_problem(self.home)
-            if problem:
-                raise AccountChatError("closed:" + problem)
-            code, out, _err = self._call(runtime, ["mcp", "list", "--json"])
-            try:
-                servers = json.loads(out)
-            except ValueError:
-                servers = None
-            if code != 0 or servers != []:
-                raise AccountChatError("closed:Codex evinde araç sunucusu var ya da liste okunamadı")
-            code, out, _err = self._call(runtime, ["features", "list"])
-            problem = features_problem(parse_features(out) if code == 0 else None)
-            if problem:
-                raise AccountChatError("closed:" + problem)
-            code, out, err = self._call(runtime, ["login", "status"])
+            receipt, target = self._preflight_locked(runtime, require_home=True)
+            code, out, err = self._call(target["executable"], ["login", "status"])
             lines = [line.strip() for line in (out + "\n" + err).splitlines() if line.strip()
                      and not line.strip().startswith("WARNING:")]
             if code != 0 or lines != [SIGNED_IN]:
@@ -239,11 +488,12 @@ class CodexAccountChannel:
             if problem:
                 raise AccountChatError("closed:" + problem)
             state.update(chatgpt=True, receipt=receipt)
+            return state, target
         except AccountChatError as exc:
             state["reason"] = str(exc).removeprefix("closed:")
         except Exception:
             state["reason"] = "Codex denetimi tamamlanamadı"
-        return state
+        return state, None
 
     def check(self) -> dict:
         """The user's explicit "Kontrol et ve bağla"."""
@@ -252,7 +502,7 @@ class CodexAccountChannel:
         if not self._lock.acquire(blocking=False):
             return self.last()
         try:
-            state = self._gate_locked(runtime)
+            state, _target = self._gate_locked(runtime)
         finally:
             self._lock.release()
         self._remember(**state)
@@ -260,8 +510,11 @@ class CodexAccountChannel:
 
     # ── the channel's own sign-in ────────────────────────────────────────────────
     def login(self) -> dict:
-        """The user's click: `codex login` (ChatGPT, browser) in the channel's home. Never a turn at
-        the same time; never an API key."""
+        """The user's click: `codex login` (ChatGPT, browser) in the channel's home.
+
+        Fides P1-1: validates the channel's home, ancestors, native binary, CLI version, MCP list and
+        feature cut BEFORE starting `codex login`. Never runs alongside a turn; never uses an API key.
+        """
         runtime = self._runtime()
         self._find_late_install(runtime)
         if runtime is None or not getattr(runtime, "executable", None):
@@ -270,25 +523,27 @@ class CodexAccountChannel:
             raise AccountChatError("busy")
         try:
             self._settle_locked(runtime)
-            self.home.mkdir(parents=True, exist_ok=True)
-            if _is_link(self.home) or _is_link(self.base):
-                raise AccountChatError("closed:Codex evi bir bağlantı")
-        except BaseException:
+            _receipt, target = self._preflight_locked(runtime, require_home=False)
+        except BaseException as exc:
+            if isinstance(exc, AccountChatError) and str(exc).startswith("closed:"):
+                self._remember(installed=True, chatgpt=False, checked=time.time(),
+                               reason=str(exc).removeprefix("closed:"), receipt="")
             self._lock.release()
             raise
+        binary = target["executable"]
         with self._state_lock:
             self._login_running = True
 
         def work():
             try:
-                self._call(runtime, ["login"], timeout=LOGIN_SECONDS)
+                self._call(binary, ["login"], timeout=LOGIN_SECONDS)
             except Exception:
                 pass
             finally:
                 with self._state_lock:
                     self._login_running = False
                 try:
-                    state = self._gate_locked(runtime)
+                    state, _ = self._gate_locked(runtime)
                 finally:
                     self._lock.release()
                 self._remember(**state)
@@ -322,7 +577,7 @@ class CodexAccountChannel:
         if room.parent == self.rooms and not _is_link(room):
             shutil.rmtree(room, ignore_errors=True)
 
-    def ask(self, prompt: str, cancel: threading.Event, gate) -> str:
+    def ask(self, prompt: str, cancel: threading.Event, gate, *, approved_receipt: str = "") -> str:
         """``gate()`` raises when Stop, the consent for this call's role or access is gone; it runs
         before the fresh opening gate and again right before the start."""
         runtime = self._runtime()
@@ -331,18 +586,28 @@ class CodexAccountChannel:
         try:
             self._settle_locked(runtime)
             gate()
-            state = self._gate_locked(runtime)
+            state, target = self._gate_locked(runtime)
+            if state["chatgpt"] and (not approved_receipt or state.get("receipt") != approved_receipt):
+                # Fides P1-3: a binary changed since connect() cannot run on the old approval receipt.
+                state = {**state, "chatgpt": False, "receipt": "",
+                         "reason": "Codex yürütücüsü değişti; yeniden kontrol et ve bağla"}
+                target = None
             self._remember(**state)
-            if not state["chatgpt"]:
+            if not state["chatgpt"] or target is None:
                 raise AccountChatError("account")
             gate()
+            if _ancestors_problem(self.rooms, "oda klasörü"):
+                raise AccountChatError("account")
             self.rooms.mkdir(parents=True, exist_ok=True)
+            if _is_link(self.rooms):
+                raise AccountChatError("account")
             room = Path(tempfile.mkdtemp(prefix="turn-", dir=self.rooms))
             run_id = uuid.uuid4().hex
             self._pending = {"run_id": run_id, "room": room}
             try:
                 runtime.start(prompt, str(room), sandbox="read-only", approval="never", tool_guard=True,
                               web=False, should_abort=cancel.is_set, account_chat=True, codex_home=str(self.home),
+                              account_executable=target["executable"], account_executable_sha256=target["sha256"],
                               run_id=run_id)
             except Exception:
                 try:

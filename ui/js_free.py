@@ -46,10 +46,10 @@ JAVASCRIPT = r"""
         // 27 Nov: the ChatGPT account has no key. Codex is installed and signed in only by the
         // user's own clicks (the existing setup and sign-in); SpeS then checks the sign-in method.
         const row = freeEl('div', 'free-key-row');
-        const stateText = !ch.installed ? 'Bu kanal için Codex gerekiyor (birkaç yüz MB indirir).'
+        const stateText = !ch.installed ? 'Bu kanal için Codex gerekiyor (birkaç yüz MB indirir); anahtar istemez.'
           : ch.login_running ? 'Giriş sürüyor: açılan tarayıcıda ChatGPT hesabınla giriş yap.'
           : (ch.checked && !ch.signed_in ? `Kapalı: ${ch.reason || 'ChatGPT ile giriş görünmüyor'}.`
-             : 'Bu kanal için bir kez ayrıca ChatGPT ile giriş yapman gerekir.');
+             : 'API anahtarı gerekmez; tarayıcıda mevcut ChatGPT hesabınla bir kez giriş yapman yeterli.');
         row.append(freeEl('span', 'free-persona', stateText));
         const before = freeEl('div', 'free-consents');
         const pre = {};
@@ -77,7 +77,7 @@ JAVASCRIPT = r"""
           install.addEventListener('click', () => begin('install', install, 'Kuruluyor…'));
           row.append(install);
         } else {
-          const login = freeEl('button', 'free-btn ghost', 'ChatGPT ile giriş');
+          const login = freeEl('button', 'free-btn ghost', 'ChatGPT hesabımla bağlan');
           login.type = 'button';
           // This channel's OWN sign-in (its own Codex home), never the shared one Fides uses.
           login.addEventListener('click', async () => {

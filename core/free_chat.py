@@ -47,14 +47,15 @@ CHANNELS = {
     "chatgpt": {
         "label": "ChatGPT hesabın (Codex)", "persona": "Nova", "kind": "account",
         "key_page": "https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan",
-        "privacy": ("Yazdıkların OpenAI'a gider ve ChatGPT hesabının Codex kullanım hakkından düşer (ücretli "
-                    "hesapta bu, Fides'in kullandığı Codex hakkıyla aynıdır). Ücretsiz planda Codex sınırlı olabilir. "
-                    "Bu kanal için ayrıca bir kez ChatGPT ile giriş yapılır; giriş SpeS'in kendi Codex klasöründe "
-                    "durur (SpeS okumaz) ve kaldırırken verilerini de silmeyi seçersen o da silinir. Codex bu "
-                    "sohbetin oturum dosyalarını yazmaz; SpeS kendi sohbet kaydını tutar."),
+        "privacy": ("API anahtarı gerekmez; internet bağlantısı ve desteklenen bir ChatGPT hesabı gerekir. "
+                    "Yazdıkların OpenAI'a gider ve kendi ChatGPT hesabının Codex kullanım kotasından düşer "
+                    "(SpeS üzerinden ek fatura çıkmaz; ücretli hesapta Fides'le aynı Codex hakkını kullanır, "
+                    "ücretsiz planda kota sınırlı olabilir). Bu kanal için bir kez tarayıcıda resmi giriş yapılır; "
+                    "giriş SpeS'in bu kanala özel Codex klasöründe durur (SpeS token okumaz) ve kaldırırken "
+                    "verilerini silmeyi seçersen o da silinir."),
     },
 }
-ORDER = ("gemini", "openrouter", "groq", "chatgpt")
+ORDER = ("chatgpt", "gemini", "openrouter", "groq")
 
 
 # Fides RED 20261127-1629 (CG1/CG2): the account channel stays closed - not offered, not sendable -
@@ -183,6 +184,7 @@ class Settings:
         return {"channels": {c: {"send": bool((channels.get(c) or {}).get("send")),
                                  "backup": bool((channels.get(c) or {}).get("backup")),
                                  "model": str((channels.get(c) or {}).get("model") or "")[:120],
+                                 "receipt": str((channels.get(c) or {}).get("receipt") or "")[:360],
                                  "alternates": [str(m)[:120] for m in ((channels.get(c) or {}).get("alternates")
                                                                        or [])[:MODEL_TRIES] if m]}
                              for c in CHANNELS},
@@ -198,6 +200,8 @@ class Settings:
                     data["channels"][channel][name] = bool(values[name])
             if "model" in values:
                 data["channels"][channel]["model"] = str(values["model"] or "")[:120]
+            if "receipt" in values:
+                data["channels"][channel]["receipt"] = str(values["receipt"] or "")[:360]
             if "alternates" in values:
                 data["channels"][channel]["alternates"] = [str(m)[:120] for m in (values["alternates"] or [])
                                                            if m][:MODEL_TRIES]
@@ -319,8 +323,9 @@ class FreeChat:
         for c in data["order"]:
             if is_account(c) and (self.account is None or not ACCOUNT_CHANNEL_OPEN):
                 continue  # no Codex runtime in this process (tests, previews): the channel is not offered
+            saved = {k: v for k, v in data["channels"][c].items() if k != "receipt"}
             entry = {"id": c, **{k: CHANNELS[c][k] for k in ("label", "persona", "key_page", "privacy")},
-                     "kind": CHANNELS[c].get("kind", "key"), "connected": self._has_access(c), **data["channels"][c]}
+                     "kind": CHANNELS[c].get("kind", "key"), "connected": self._has_access(c), **saved}
             if is_account(c):
                 last = self.account.last()
                 entry.update(installed=self.account.installed(), checked=last.get("checked"),
@@ -330,11 +335,14 @@ class FreeChat:
         return {"order": [c["id"] for c in channels], "channels": channels}
 
     def _has_access(self, channel: str) -> bool:
-        """A key channel: a stored key. The account channel: Codex present and the last check said
-        "signed in with ChatGPT" (passive; every message checks again before sending)."""
+        """A key channel: a stored key. The account channel: Codex present, an approved receipt stored,
+        and the last check matched that receipt (passive; every message checks again before sending)."""
         if is_account(channel):
-            return bool(ACCOUNT_CHANNEL_OPEN and self.account is not None and self.account.installed()
-                        and self.account.last().get("chatgpt"))
+            if not (ACCOUNT_CHANNEL_OPEN and self.account is not None and self.account.installed()):
+                return False
+            saved_receipt = (self.settings.read()["channels"].get(channel) or {}).get("receipt") or ""
+            last = self.account.last()
+            return bool(saved_receipt and last.get("chatgpt") and last.get("receipt") == saved_receipt)
         return self.store.has(channel)
 
     def connect(self, channel: str, key: str, send=False, backup=False) -> dict:
@@ -348,10 +356,10 @@ class FreeChat:
             state = self.account.check()
             if not state["installed"]:
                 raise FreeChatError("ChatGPT hesabın: önce Codex'in kurulması gerekiyor.")
-            if not state["chatgpt"]:
+            if not state["chatgpt"] or not state.get("receipt"):
                 reason = state.get("reason") or "ChatGPT ile giriş yapılmamış"
                 raise FreeChatError(f"ChatGPT hesabın: {reason}.")
-            self.settings.update(channel, send=send, backup=backup)
+            self.settings.update(channel, send=send, backup=backup, receipt=state["receipt"])
             return self.status()
         key = str(key or "").strip()
         try:
@@ -379,8 +387,8 @@ class FreeChat:
 
     def disconnect(self, channel: str) -> dict:
         if is_account(channel):
-            # Only this channel's consents: Codex stays signed in (Fides uses the same sign-in).
-            self.settings.update(channel, send=False, backup=False)
+            # Only this channel's consents and receipt: Codex stays signed in.
+            self.settings.update(channel, send=False, backup=False, receipt="")
             return self.status()
         self.store.remove(channel)
         self.settings.update(channel, send=False, backup=False, model="")
@@ -419,9 +427,11 @@ class FreeChat:
         self._gate(channel, as_backup, cancel)
         if is_account(channel):
             from core.free_chat_codex import AccountChatError
+            approved = (self.settings.read()["channels"].get(channel) or {}).get("receipt") or ""
             try:
                 return self.account.ask(account_prompt(messages), cancel,
-                                        lambda: self._gate(channel, as_backup, cancel))
+                                        lambda: self._gate(channel, as_backup, cancel),
+                                        approved_receipt=approved)
             except AccountChatError as exc:
                 kind = str(exc)
                 raise FreeChatError("account" if kind == "key" else kind) from None
