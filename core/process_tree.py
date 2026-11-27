@@ -124,9 +124,14 @@ def bind_kill_on_close_job(
     process: subprocess.Popen | None,
     *,
     resume: bool = False,
+    allow_unowned: bool = False,
     error_sink=None,
 ) -> bool:
-    """Attach a Windows Job Object with KILL_ON_JOB_CLOSE before resuming a suspended process."""
+    """Attach a Windows Job Object with KILL_ON_JOB_CLOSE before resuming a suspended process.
+
+    When ``resume=True`` and Job Object assignment fails, the suspended process is terminated
+    instead of resumed unless the caller explicitly opts into ``allow_unowned=True``.
+    """
     if process is None or os.name != "nt":
         return False
     proc_handle = getattr(process, "_handle", None)
@@ -134,7 +139,11 @@ def bind_kill_on_close_job(
         if isinstance(process, _POPEN_TYPE):
             _record_job_error(process, "Process handle is missing for Job Object assignment", error_sink)
             if resume:
-                _resume_or_stop(process, error_sink)
+                if allow_unowned:
+                    _resume_or_stop(process, error_sink)
+                else:
+                    _stop_owned_root(process, timeout=1)
+                    close_process_job(process)
         return False
     with _state_lock(process):
         assigned = False
@@ -205,8 +214,13 @@ def bind_kill_on_close_job(
                         error_sink,
                     )
         finally:
-            if resume and not _resume_or_stop(process, error_sink):
-                assigned = False
+            if resume:
+                if assigned or allow_unowned:
+                    if not _resume_or_stop(process, error_sink):
+                        assigned = False
+                else:
+                    _stop_owned_root(process, timeout=1)
+                    close_process_job(process)
         return assigned
 
 

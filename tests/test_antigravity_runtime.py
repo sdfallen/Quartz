@@ -315,7 +315,7 @@ class AntigravityRuntimeTests(unittest.TestCase):
         )
         runtime = AntigravityRuntime(self.exe)
 
-        def fake_bind(process, *, resume=False, error_sink=None):
+        def fake_bind(process, *, resume=False, allow_unowned=False, error_sink=None):
             if callable(error_sink):
                 error_sink("Simulated AssignProcessToJobObject failure")
             return False

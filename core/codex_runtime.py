@@ -626,7 +626,7 @@ class CodexRuntime:
             record.update(process_started=True, pid=process.pid)
             self._processes[run_id] = process
         try:
-            job_bound = bind_kill_on_close_job(process, resume=True, error_sink=job_errors.append)
+            job_bound = bind_kill_on_close_job(process, resume=True, allow_unowned=True, error_sink=job_errors.append)
             process.stdin.write(text)
             process.stdin.close()
         except Exception:
@@ -716,7 +716,7 @@ class CodexRuntime:
                 stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) | CREATE_SUSPENDED,
                 env=cli_environment())
-            job_bound = bind_kill_on_close_job(process, resume=True, error_sink=job_errors.append)
+            job_bound = bind_kill_on_close_job(process, resume=True, allow_unowned=True, error_sink=job_errors.append)
         except Exception as exc:
             finish("failed", exc, no_process=True)
             raise

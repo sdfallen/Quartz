@@ -94,7 +94,68 @@ class ProcessTreeTests(unittest.TestCase):
                 quartz_sim.stdout.close()
 
     @unittest.skipUnless(os.name == "nt", "Windows CREATE_SUSPENDED + Job Object failure handling")
-    def test_r3_job_assignment_failure_logs_error_and_resumes_suspended_process(self):
+    def test_r3_job_assignment_failure_stops_suspended_process_by_default(self):
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "print('must-never-run', flush=True)"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) | CREATE_SUSPENDED,
+        )
+        errors: list[str] = []
+        try:
+            with patch("core.process_tree.ctypes.windll.kernel32.AssignProcessToJobObject", return_value=0):
+                with self.assertLogs("core.process_tree", level="WARNING"):
+                    ok = bind_kill_on_close_job(proc, resume=True, error_sink=errors.append)
+            self.assertFalse(ok)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("AssignProcessToJobObject failed", errors[0])
+            self.assertFalse(getattr(proc, "_quartz_resumed", False))
+            out, _ = proc.communicate(timeout=5)
+            self.assertEqual(out.strip(), "")
+            self.assertIsNotNone(proc.poll())
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=3)
+            if proc.stdout:
+                proc.stdout.close()
+            if proc.stderr:
+                proc.stderr.close()
+
+    @unittest.skipUnless(os.name == "nt", "Windows missing handle stops suspended process by default")
+    def test_missing_handle_stops_suspended_process_unless_allow_unowned(self):
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "print('must-never-run', flush=True)"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) | CREATE_SUSPENDED,
+        )
+        errors: list[str] = []
+        real_handle = proc._handle
+        try:
+            proc._handle = 0
+            ok = bind_kill_on_close_job(proc, resume=True, error_sink=errors.append)
+            proc._handle = real_handle
+            self.assertFalse(ok)
+            self.assertIn("Process handle is missing", errors[0])
+            self.assertFalse(getattr(proc, "_quartz_resumed", False))
+            proc.kill()
+            out, _ = proc.communicate(timeout=5)
+            self.assertEqual(out.strip(), "")
+        finally:
+            proc._handle = real_handle
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=3)
+            if proc.stdout:
+                proc.stdout.close()
+            if proc.stderr:
+                proc.stderr.close()
+
+    @unittest.skipUnless(os.name == "nt", "Windows CREATE_SUSPENDED + explicit allow_unowned fallback")
+    def test_r3_job_assignment_failure_logs_error_and_resumes_when_allow_unowned_is_true(self):
         proc = subprocess.Popen(
             [sys.executable, "-c", "print('resumed-ok', flush=True)"],
             stdout=subprocess.PIPE,
@@ -106,7 +167,7 @@ class ProcessTreeTests(unittest.TestCase):
         try:
             with patch("core.process_tree.ctypes.windll.kernel32.AssignProcessToJobObject", return_value=0):
                 with self.assertLogs("core.process_tree", level="WARNING") as captured_logs:
-                    ok = bind_kill_on_close_job(proc, resume=True, error_sink=errors.append)
+                    ok = bind_kill_on_close_job(proc, resume=True, allow_unowned=True, error_sink=errors.append)
             self.assertFalse(ok)
             self.assertEqual(len(errors), 1)
             self.assertIn("AssignProcessToJobObject failed", errors[0])

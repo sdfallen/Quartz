@@ -350,7 +350,7 @@ class ClaudeRuntime(CodexRuntime):
                 encoding="utf-8", errors="replace", creationflags=flags,
                 env=_with_project(desktop_env if desktop_env is not None else self.child_environment(), project),
             )
-            job_bound = bind_kill_on_close_job(process, resume=True, error_sink=job_errors.append)
+            job_bound = bind_kill_on_close_job(process, resume=True, allow_unowned=True, error_sink=job_errors.append)
         except Exception:
             release("failed")
             raise
