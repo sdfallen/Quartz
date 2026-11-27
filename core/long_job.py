@@ -426,15 +426,6 @@ def keep_awake():
                 pass
 
 
-def _legacy_detected(ledger, argv) -> bool:
-    """A ledger from before verify_source: its stored check is SpeS's when it equals what SpeS
-    detects for the project now (a user's own command never matches the generated form)."""
-    if "verify_source" in ledger.data and ledger.data.get("verify_source") is not None:
-        return False
-    from core.job_intent import detected_check
-    return bool(argv) and argv == detected_check(ledger.data.get("project_path"))
-
-
 def run_verify(ledger: JobLedger, stop: threading.Event) -> dict:
     """The job's own check, defined by the user when the job started (never by an agent).
 
@@ -446,7 +437,9 @@ def run_verify(ledger: JobLedger, stop: threading.Event) -> dict:
     argv = ledger.data.get("verify")
     env = None
     detected = ledger.data.get("verify_source") == "detected"
-    if ledger.data.get("auto_check") and (not argv or detected or _legacy_detected(ledger, argv)):
+    # Fides MP1-L: a stored check with no recorded origin (an older ledger) is kept exactly as it
+    # is — an equal command says nothing about who chose it.
+    if ledger.data.get("auto_check") and (not argv or detected):
         # SpeS looks for the project's own tests again before each check; the command it finds is
         # SpeS's, never the user's (Fides MP1: also when job_spec stored it in "verify").
         from core.job_intent import detected_check

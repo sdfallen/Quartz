@@ -173,20 +173,22 @@ class ManagedPythonTests(unittest.TestCase):
         self.assertEqual(seen["argv"], ["python", "benim_kontrolum.py"])
         self.assertIsNone(seen["env"])
 
-    def test_mp1_an_older_ledger_with_the_generated_check_is_recognised(self):
-        result = self.install()
+    def test_mp1l_an_older_ledgers_stored_check_is_kept_even_when_it_equals_the_generated_one(self):
+        self.install()
         from core import long_job
         from core.job_intent import detected_check
         project = Path(self.tmp.name) / "eski-proje"
         project.mkdir()
         (project / "test_x.py").write_text("", encoding="utf-8")
+        stored = detected_check(project)
         ledger = type("L", (), {"data": {"permission_level": "full", "auto_check": True,
-                                         "verify": detected_check(project), "project_path": str(project)}})()
+                                         "verify": stored, "project_path": str(project)}})()
         seen = {}
         with patch.object(long_job.subprocess, "Popen",
-                          side_effect=lambda argv, **kw: seen.update(argv=argv) or (_ for _ in ()).throw(OSError("x"))):
+                          side_effect=lambda argv, **kw: seen.update(argv=argv, env=kw.get("env")) or
+                          (_ for _ in ()).throw(OSError("x"))):
             long_job.run_verify(ledger, __import__("threading").Event())
-        self.assertEqual(seen["argv"][0], result["executable"])
+        self.assertEqual((seen["argv"], seen["env"]), (stored, None))
 
     def test_mp2_an_installers_own_root_is_kept_and_roots_never_cross(self):
         from core.cli_installer import CliInstaller
