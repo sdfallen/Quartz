@@ -109,6 +109,8 @@ def validate_spec(spec: dict) -> dict:
             "git_branch": branch, "models": dict(spec.get("models") or {}),
             # SpeS looks for the project's own tests again before each check (one-request jobs).
             "auto_check": bool(spec.get("auto_check")),
+            # Fides MP1: where the check came from — "detected" (SpeS) or the user's own command.
+            "verify_source": "detected" if spec.get("verify_source") == "detected" else "user",
             # A teammate who did not write the milestone accepts it (one-request jobs, Fides 25 Nov).
             "review": bool(spec.get("review")),
             # 26 Nov: a job on documents and data; its writer never touches the sources.
@@ -424,6 +426,15 @@ def keep_awake():
                 pass
 
 
+def _legacy_detected(ledger, argv) -> bool:
+    """A ledger from before verify_source: its stored check is SpeS's when it equals what SpeS
+    detects for the project now (a user's own command never matches the generated form)."""
+    if "verify_source" in ledger.data and ledger.data.get("verify_source") is not None:
+        return False
+    from core.job_intent import detected_check
+    return bool(argv) and argv == detected_check(ledger.data.get("project_path"))
+
+
 def run_verify(ledger: JobLedger, stop: threading.Event) -> dict:
     """The job's own check, defined by the user when the job started (never by an agent).
 
@@ -434,9 +445,12 @@ def run_verify(ledger: JobLedger, stop: threading.Event) -> dict:
         return {"ok": True, "summary": "Kontrol komutu tanımlanmadı (Proje izninde SpeS komut çalıştırmaz)."}
     argv = ledger.data.get("verify")
     env = None
-    if not argv and ledger.data.get("auto_check"):
+    detected = ledger.data.get("verify_source") == "detected"
+    if ledger.data.get("auto_check") and (not argv or detected or _legacy_detected(ledger, argv)):
+        # SpeS looks for the project's own tests again before each check; the command it finds is
+        # SpeS's, never the user's (Fides MP1: also when job_spec stored it in "verify").
         from core.job_intent import detected_check
-        argv = detected_check(ledger.data.get("project_path"))
+        argv = detected_check(ledger.data.get("project_path")) or (argv if detected else None)
         if argv and argv[0] == "python":
             # Fides MP1 (27 Nov): the Python check SpeS itself chose runs with the same interpreter
             # the agents and launch_check use (SpeS's own first, else the user's); a check command

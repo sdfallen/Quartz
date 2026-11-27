@@ -406,6 +406,8 @@ def job_spec(text: str, milestones: list[dict], project_path, clock_text: str, f
     return {"goal": goal[:4000], "milestones": milestones or fallback_plan(text),
             "hours": requested_hours(text), "auto_resume": wants_auto_resume(text),
             "verify": detected_check(project_path) if full else None, "auto_check": full, "review": True,
+            # Fides MP1 (27 Nov): SpeS chose this check, so SpeS may run it with its own Python.
+            "verify_source": "detected" if full else None,
             "git_branch": job_branch(project_path, goal, clock_text), "kind": "data" if kind == "data" else "code",
             **({"sources": [str(s) for s in sources][:5]} if kind == "data" and sources else {})}
 

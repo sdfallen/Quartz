@@ -134,6 +134,60 @@ class ManagedPythonTests(unittest.TestCase):
             long_job.run_verify(ledger, __import__("threading").Event())
         self.assertEqual(seen["argv"], ["python", "kontrol.py"])
 
+    def run_real_job(self, project, **spec_changes):
+        """The production path: job_spec -> JobLedger.create -> run_verify (Popen observed only)."""
+        from core import long_job
+        from core.job_intent import job_spec
+        spec = job_spec("Bir hesap makinesi yap", [{"title": "a", "acceptance": "b"}], project, "0101",
+                        full_access=True)
+        spec.update(project_path=str(project), permission_level="full", **spec_changes)
+        ledger = long_job.JobLedger.create(spec, root=Path(self.tmp.name) / "jobs")
+        ledger.data["permission_level"] = "full"
+        seen = {}
+
+        def popen(argv, **kwargs):
+            seen.update(argv=argv, env=kwargs.get("env"))
+            raise FileNotFoundError("stop here")
+        with patch.object(long_job.subprocess, "Popen", side_effect=popen):
+            long_job.run_verify(ledger, __import__("threading").Event())
+        return ledger, seen
+
+    def test_mp1_a_project_with_tests_from_the_start_uses_the_chosen_interpreter(self):
+        result = self.install()
+        project = Path(self.tmp.name) / "hazir-proje"
+        project.mkdir()
+        (project / "test_hesap.py").write_text("", encoding="utf-8")
+        ledger, seen = self.run_real_job(project)
+        self.assertEqual(ledger.data["verify_source"], "detected")
+        self.assertEqual(seen["argv"][0], result["executable"])
+        self.assertNotIn("PYTHONPATH", seen["env"])
+        self.assertEqual(Path(seen["env"]["PATH"].split(os.pathsep)[0]), Path(result["executable"]).parent)
+
+    def test_mp1_a_users_own_check_stays_exactly_as_given(self):
+        self.install()
+        project = Path(self.tmp.name) / "kullanici-proje"
+        project.mkdir()
+        (project / "test_hesap.py").write_text("", encoding="utf-8")
+        ledger, seen = self.run_real_job(project, verify=["python", "benim_kontrolum.py"], verify_source=None)
+        self.assertEqual(ledger.data["verify_source"], "user")
+        self.assertEqual(seen["argv"], ["python", "benim_kontrolum.py"])
+        self.assertIsNone(seen["env"])
+
+    def test_mp1_an_older_ledger_with_the_generated_check_is_recognised(self):
+        result = self.install()
+        from core import long_job
+        from core.job_intent import detected_check
+        project = Path(self.tmp.name) / "eski-proje"
+        project.mkdir()
+        (project / "test_x.py").write_text("", encoding="utf-8")
+        ledger = type("L", (), {"data": {"permission_level": "full", "auto_check": True,
+                                         "verify": detected_check(project), "project_path": str(project)}})()
+        seen = {}
+        with patch.object(long_job.subprocess, "Popen",
+                          side_effect=lambda argv, **kw: seen.update(argv=argv) or (_ for _ in ()).throw(OSError("x"))):
+            long_job.run_verify(ledger, __import__("threading").Event())
+        self.assertEqual(seen["argv"][0], result["executable"])
+
     def test_mp2_an_installers_own_root_is_kept_and_roots_never_cross(self):
         from core.cli_installer import CliInstaller
         other = Path(self.tmp.name) / "selected-bin"
