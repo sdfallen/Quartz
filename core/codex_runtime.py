@@ -631,7 +631,10 @@ class CodexRuntime:
             record.update(process_started=True, pid=process.pid)
             self._processes[run_id] = process
         try:
-            job_bound = bind_kill_on_close_job(process, resume=True, allow_unowned=True, error_sink=job_errors.append)
+            job_bound = bind_kill_on_close_job(process, resume=True, allow_unowned=not account_chat,
+                                              error_sink=job_errors.append)
+            if account_chat and not job_bound:
+                raise RuntimeError("ChatGPT hesabı süreci sahiplenilemedi")
             process.stdin.write(text)
             process.stdin.close()
         except Exception:

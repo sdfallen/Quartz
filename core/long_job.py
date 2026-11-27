@@ -543,24 +543,6 @@ def _build_junk(relative: str) -> bool:
     return "__pycache__/" in relative or relative.lower().endswith(JUNK_SUFFIXES)
 
 
-def _git_batched(root, prefix_args: list[str], paths: list[str], *, batch_size: int = 60, max_chars: int = 12000):
-    """Run git pathspec commands in safe chunks well below Windows' 32,767-char CreateProcess limit."""
-    chunk: list[str] = []
-    chars = 0
-    last = None
-    for rel in paths:
-        if chunk and (len(chunk) >= batch_size or chars + len(rel) + 2 > max_chars):
-            last = _git(root, *prefix_args, "--", *chunk)
-            if last.returncode != 0:
-                return last
-            chunk, chars = [], 0
-        chunk.append(rel)
-        chars += len(rel) + 2
-    if chunk:
-        last = _git(root, *prefix_args, "--", *chunk)
-    return last
-
-
 def dirty_paths(ledger: JobLedger, *, strict: bool = False) -> dict:
     """{posix path: [size, mtime_ns] or None if deleted} for every non-ignored uncommitted path."""
     root = Path(ledger.data["project_path"])
@@ -731,8 +713,8 @@ class LongJob:
         with self.ledger._lock:
             d = self.ledger.data
             branch = d.get("git_branch")
-            if not branch:
-                raise JobError("Bu işte Git dalı yok; önceki adıma geri sarma yalnız Git kaydı olan işlerde çalışır.")
+            if not isinstance(branch, str) or not branch.startswith("spes/"):
+                raise JobError("Geri sarma yalnız işin kendi SpeS dalında çalışır.")
             milestones = d["milestones"]
             loop_active = (d.get("status") in {"running", "waiting_limit"} and not self.pause_event.is_set()
                            and self.thread is not None and self.thread.is_alive())
@@ -809,53 +791,16 @@ class LongJob:
             if _git(root, "update-ref", backup_ref, head_sha).returncode != 0:
                 raise JobError("Geri sarmadan önce güvenlik yedeği oluşturulamadı.")
 
-            restore_rels, remove_rels = [], []
-            for rel in changed_rels:
-                if _git(root, "cat-file", "-e", f"{target_sha}:{rel}").returncode == 0:
-                    restore_rels.append(rel)
-                else:
-                    remove_rels.append(rel)
-
-            try:
-                if _git(root, "reset", "--soft", target_sha).returncode != 0:
-                    raise JobError("Git dalı hedef kayda taşınamadı.")
-                if remove_rels:
-                    rm_res = _git_batched(root, ["rm", "-f", "--ignore-unmatch", "-q"], remove_rels)
-                    if rm_res is not None and rm_res.returncode != 0:
-                        _git(root, "reset", "--soft", head_sha)
-                        raise JobError("Sonraki adımın dosyaları temizlenemedi.")
-                    resolved_root = root.resolve()
-                    for rel in remove_rels:
-                        parts = [p for p in rel.split("/") if p not in ("", ".")]
-                        if not parts or any(p == ".." for p in parts):
-                            continue
-                        cur = root
-                        unsafe_parent = False
-                        for part in parts[:-1]:
-                            cur = cur / part
-                            if os.path.lexists(cur) and cur.is_symlink():
-                                unsafe_parent = True
-                                break
-                        if unsafe_parent:
-                            continue
-                        leaf = cur / parts[-1]
-                        if os.path.lexists(leaf) and resolved_root in leaf.parent.resolve().parents | {leaf.parent.resolve()}:
-                            try:
-                                if leaf.is_symlink() or leaf.is_file():
-                                    leaf.unlink()
-                            except OSError:
-                                pass
-                if restore_rels:
-                    co_res = _git_batched(root, ["checkout", target_sha], restore_rels)
-                    if co_res is not None and co_res.returncode != 0:
-                        _git(root, "reset", "--soft", head_sha)
-                        _git_batched(root, ["checkout", head_sha], changed_rels)
-                        raise JobError("Önceki adımın dosyaları geri yüklenemedi.")
-                if changed_rels:
-                    _git_batched(root, ["reset", "-q", target_sha], changed_rels)
-            except OSError as exc:
-                _git(root, "reset", "--soft", head_sha)
-                raise JobError("Geri sarma sırasında dosya sistemi hatası oluştu.") from exc
+            # Git's two-tree update preserves unrelated index/worktree entries and
+            # rejects an obstruction before applying the checkout.
+            if _git(root, "read-tree", "-m", "-u", head_sha, target_sha).returncode != 0:
+                raise JobError("Git dosyaları güvenle geri yükleyemedi; dal ilerletilmedi.")
+            moved = _git(root, "update-ref", f"refs/heads/{branch}", target_sha, head_sha)
+            if moved.returncode != 0:
+                reverted = _git(root, "read-tree", "-m", "-u", target_sha, head_sha).returncode == 0
+                if not reverted:
+                    raise JobError(f"Dal değişti ve dosyalar otomatik toparlanamadı. Güvenlik yedeği: {backup_ref}.")
+                raise JobError("Dal eşzamanlı değişti; geri sarma iptal edildi.")
 
             d["initial_dirty"] = dirty_paths(self.ledger, strict=True)
             for m in milestones[step_num:]:

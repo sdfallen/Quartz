@@ -155,6 +155,33 @@ class GitTimeCapsuleTests(unittest.TestCase):
             job.rewind_milestone(2)
         self.assertIn("yeni Git kayıtları", str(manual_ctx.exception))
 
+    def test_rewind_preserves_unrelated_staged_file_and_rolls_back_if_ref_update_fails(self):
+        from core import long_job as module
+
+        job, ledger = self.make_three_step_job()
+        job.run()
+        head = self.git("rev-parse", "HEAD").stdout.strip()
+        staged = self.project / "kullanici_notu.txt"
+        self.git("add", "--", staged.name)
+        index_before = self.git("diff", "--cached", "--name-only").stdout
+        original_git = module._git
+
+        def fail_ref_update(root, *args, **kwargs):
+            if args[0] == "update-ref" and args[1].startswith("refs/heads/"):
+                return subprocess.CompletedProcess(args, 1)
+            return original_git(root, *args, **kwargs)
+
+        with patch.object(module, "_git", side_effect=fail_ref_update):
+            with self.assertRaises(JobError):
+                job.rewind_milestone(2)
+        self.assertEqual(self.git("rev-parse", "HEAD").stdout.strip(), head)
+        self.assertEqual(self.git("diff", "--cached", "--name-only").stdout, index_before)
+        self.assertTrue((self.project / "extra_m3.py").is_file())
+        self.assertEqual(ledger.data["milestones"][2]["status"], "done")
+        job.rewind_milestone(2)
+        self.assertEqual(self.git("diff", "--cached", "--name-only").stdout, index_before)
+        self.assertEqual(staged.read_text(encoding="utf-8"), "özel taslak\n")
+
     def test_undo_first_step_returns_to_base_git_head_and_dirty_conflict_is_refused(self):
         job, ledger = self.make_three_step_job()
         job.run()

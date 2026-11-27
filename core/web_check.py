@@ -345,8 +345,10 @@ def observe_web(entry: Path, project: Path, evidence_dir: Path, stop: threading.
         "review_dir": str(review),
         "broken_assets": [],
         "js_errors": [],
+        "js_checked": False,
         "checked_assets": 0,
         "rendered_text_chars": 0,
+        "dom_confirmed": False,
         "output_tail": "",
     }
     if stop.is_set():
@@ -391,6 +393,7 @@ def observe_web(entry: Path, project: Path, evidence_dir: Path, stop: threading.
     if node_exe and (js_files or parser.inline_scripts):
         js_errors = _check_js_syntax(node_exe, js_files, parser.inline_scripts, stop, run_fn)
         receipt["js_errors"] = js_errors
+        receipt["js_checked"] = not stop.is_set()
         if js_errors:
             receipt.update(launch_state="checked", termination_reason="js_syntax_error",
                            output_tail="\n".join(js_errors))
@@ -423,6 +426,8 @@ def observe_web(entry: Path, project: Path, evidence_dir: Path, stop: threading.
                 "--disable-extensions",
                 "--disable-sync",
                 "--disable-background-networking",
+                "--disable-quic",
+                "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
                 "--mute-audio",
                 "--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1",
                 "--proxy-server=127.0.0.1:9",
@@ -432,7 +437,7 @@ def observe_web(entry: Path, project: Path, evidence_dir: Path, stop: threading.
                 f"--user-data-dir={profile_dir}",
             ]
             shot_proc = run_fn([*common_args, f"--screenshot={raw_shot}", url],
-                               capture_output=True, text=True, timeout=RENDER_TIMEOUT,
+                               capture_output=True, timeout=RENDER_TIMEOUT,
                                cwd=str(profile_dir), creationflags=flags)
             if stop.is_set():
                 receipt["termination_reason"] = "cancelled"
@@ -452,12 +457,14 @@ def observe_web(entry: Path, project: Path, evidence_dir: Path, stop: threading.
 
             if not stop.is_set():
                 dom_proc = run_fn([*common_args, "--dump-dom", url],
-                                  capture_output=True, text=True, timeout=RENDER_TIMEOUT,
+                                  capture_output=True, timeout=RENDER_TIMEOUT,
                                   cwd=str(profile_dir), creationflags=flags)
-                if int(dom_proc.returncode) == 0 and (dom_proc.stdout or "").strip():
+                if int(dom_proc.returncode) == 0 and dom_proc.stdout and dom_proc.stdout.strip():
                     dom_inspector = _PageInspector()
                     try:
-                        dom_inspector.feed(dom_proc.stdout)
+                        dom_inspector.feed(dom_proc.stdout.decode("utf-8", errors="strict"))
+                        dom_inspector.close()
+                        receipt["dom_confirmed"] = True
                         dom_title = _redact(" ".join(" ".join(dom_inspector.title_parts).split()))[:200]
                         if dom_title:
                             receipt["window_title"] = dom_title
@@ -499,7 +506,8 @@ def verdict(receipt: dict) -> str:
         return "static_ok"
     if receipt.get("launch_state") != "started":
         return "blocked"
-    if reason == "closed_by_spes" and receipt.get("capture_state") in {"captured", "blank"}:
+    if (reason == "closed_by_spes" and receipt.get("capture_state") == "captured"
+            and receipt.get("dom_confirmed") is True and receipt.get("cleanup_state") == "confirmed"):
         return "page_seen"
     if reason == "startup_timeout":
         return "startup_timeout"
@@ -520,8 +528,9 @@ def evidence_text(receipt: dict) -> str:
             f"görünür metin: {receipt.get('rendered_text_chars', 0)} karakter."
         )
     elif v == "static_ok":
+        js = "JavaScript sözdizimi denetlendi" if receipt.get("js_checked") else "JavaScript sözdizimi denetlenmedi"
         lines.append(
-            f"Yerel kaynaklar ({receipt.get('checked_assets', 0)}) ve JavaScript sözdizimi doğrulandı "
+            f"Yerel kaynaklar ({receipt.get('checked_assets', 0)}) doğrulandı. {js} "
             f"(başlık: \"{receipt.get('window_title') or '(başlıksız)'}\"); tarayıcı görüntüsü alınmadı."
         )
     elif v == "broken_page":

@@ -34,7 +34,10 @@ def main():
                    "core.desktop_agents", "core.desktop_control", "core.desktop_native", "core.desktop_broker",
                    "core.desktop_mcp", "core.desktop_launch", "core.desktop_task_ui", "core.natural_desktop", "core.warband_workspace", "core.project_registry", "core.multi_agent_service", "core.message_intent", "core.codex_runtime", "core.antigravity_runtime", "core.process_tree", "core.chat_coordination", "core.branding",
                    "core.async_snapshot", "core.task_outcome", "core.source_verification", "core.run_evidence_store", "core.writer_journal", "core.screen_overlay",
-                   "core.rea_analysis", "core.rea_analysis.binary", "core.rea_analysis.managed", "core.rea_analysis.packages", "core.rea_analysis.service"):
+                   "core.rea_analysis", "core.rea_analysis.binary", "core.rea_analysis.managed", "core.rea_analysis.packages", "core.rea_analysis.service",
+                   "core.free_chat", "core.free_chat_chat", "core.free_chat_codex", "ui.js_free",
+                   "core.web_check", "core.local_preview", "core.job_intent", "core.job_planner",
+                   "core.long_job", "core.long_job_chat"):
         source = ROOT / (module.replace(".", "/") + ".py")
         if module in {"core.investigation", "core.rea_analysis", "core.tool_workbench"}: source = ROOT / module.replace('.', '/') / '__init__.py'
         if module not in pyz.toc:

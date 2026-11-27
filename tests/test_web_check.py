@@ -204,6 +204,15 @@ class HeadlessBrowserRenderTests(unittest.TestCase):
             self.assertGreater((ev / "denetci" / "window.png").stat().st_size, 500)
 
 
+class WebEvidenceTests(unittest.TestCase):
+    def test_unreadable_dom_or_blank_image_cannot_verify_a_page(self):
+        receipt = dict(launch_state="started", termination_reason="closed_by_spes",
+                       cleanup_state="confirmed", capture_state="captured", dom_confirmed=False)
+        self.assertEqual(wc.verdict(receipt), "blocked")
+        self.assertEqual(wc.verdict(dict(receipt, dom_confirmed=True, capture_state="blank")), "blocked")
+        self.assertEqual(wc.verdict(dict(receipt, dom_confirmed=True)), "page_seen")
+
+
 class LongJobWebIntegrationTests(unittest.TestCase):
     def test_broken_web_milestone_is_sent_back_to_writer_then_passes_and_open_page_uses_ledger_only(self):
         with tempfile.TemporaryDirectory() as tmp, \
