@@ -19,6 +19,20 @@ from core.process_tree import (CREATE_SUSPENDED, OwnedCleanupUnconfirmed,
                                wait_process_with_job_sync)
 
 
+ACCOUNT_ONLY_DROP = ("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "OPENAI_API_BASE",
+                     "OPENAI_ORG_ID", "OPENAI_ORGANIZATION", "OPENAI_PROJECT_ID", "AZURE_OPENAI_API_KEY")
+
+
+def account_only_environment(env) -> dict:
+    """27 Nov (Fides): the ChatGPT-account chat never carries an API key or another endpoint, so
+    Codex can only use the account's own sign-in; nothing on disk changes."""
+    clean = dict(env)
+    for name in list(clean):
+        if name.upper() in ACCOUNT_ONLY_DROP:
+            clean.pop(name)
+    return clean
+
+
 class CodexRuntime:
     TERMINAL = {"completed", "failed", "cancelled"}
     SUPPORTED_EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"]
@@ -331,9 +345,14 @@ class CodexRuntime:
               squad_task_id=None, squad_agent_id=None, resume_thread_id=None,
               timeout=None, model: str | None = None, effort: str | None = None,
               desktop_connection=None, tool_guard=False, project_read=False, should_abort=None,
-              web=False) -> dict:
+              web=False, account_chat=False) -> dict:
         if not self.executable:
             raise RuntimeError(self._init_error or "Codex CLI was not found")
+        if account_chat and not (tool_guard and sandbox == "read-only" and approval == "never" and not web
+                                 and desktop_connection is None and not project_read and not resume_thread_id
+                                 and not model and not effort):
+            # 27 Nov (Fides ChatGPT-channel design): the free chat's account profile is one fixed shape.
+            raise ValueError("ChatGPT hesabı sohbeti yalnız araçsız, salt okunur, taze bir çalışmadır")
         if web and (not tool_guard or desktop_connection is not None or project_read or sandbox != "read-only"):
             raise PermissionError("Codex web araması yalnız araçsız, salt okunur sohbette açılır.")
         text = str(prompt or "").strip()
@@ -383,6 +402,8 @@ class CodexRuntime:
             # the probe and the real run share one base environment.
             from core.cli_installer import cli_environment
             base_env = cli_environment()
+            if account_chat:
+                base_env = account_only_environment(base_env)  # the probe and the real run alike
             guard_config = self._guarded_config(project, desktop_connection, should_abort, base_env, web=web)
 
         clean_model = str(model or "").strip() or None
@@ -417,6 +438,7 @@ class CodexRuntime:
                 "cancel_requested": False,
                 "_oracle_seq": 0,
                 "_tool_guard": bool(tool_guard),
+                "_account_chat": bool(account_chat),
                 "_project_read": str(read_root) if read_root else None,
             }
             self._runs[run_id] = record
@@ -468,7 +490,10 @@ class CodexRuntime:
                 str(resume_thread_id), "-",
             ]
         else:
-            args = common + ["--json", "--skip-git-repo-check", "-"]
+            # The account chat keeps no session files and reads no user config.toml (auth stays in
+            # CODEX_HOME); both are exec options, so the MCP listing above keeps its own command.
+            account = ["--ephemeral", "--ignore-user-config"] if account_chat else []
+            args = common + ["--json", "--skip-git-repo-check", *account, "-"]
         command = self._command(args)
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | CREATE_SUSPENDED
         job_errors: list[str] = []

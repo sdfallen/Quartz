@@ -118,6 +118,8 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
     if (!m) return 'SPES';
     // Ücretsiz sohbet (27 Nov): the free speaker's name and the service that answered.
     if (m.metadata && m.metadata.free_chat && m.metadata.free_persona && m.role !== 'user') {
+      // The ChatGPT-account channel is not labelled "ücretsiz": it uses the account's Codex allowance.
+      if (m.metadata.free_channel === 'chatgpt') return `${String(m.metadata.free_persona).toUpperCase()} · CHATGPT HESABI`;
       const via = {gemini: 'GEMINI', openrouter: 'OPENROUTER', groq: 'GROQ'}[m.metadata.free_channel] || 'ÜCRETSİZ';
       return `${String(m.metadata.free_persona).toUpperCase()} · ${via} · ÜCRETSİZ`;
     }

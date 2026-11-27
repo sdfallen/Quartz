@@ -42,7 +42,59 @@ JAVASCRIPT = r"""
       const error = freeEl('p', 'free-error');
       error.id = `freeErr-${ch.id}`;
       error.setAttribute('role', 'alert');
-      if (!ch.connected) {
+      if (!ch.connected && ch.kind === 'account') {
+        // 27 Nov: the ChatGPT account has no key. Codex is installed and signed in only by the
+        // user's own clicks (the existing setup and sign-in); SpeS then checks the sign-in method.
+        const row = freeEl('div', 'free-key-row');
+        const stateText = !ch.installed ? 'Bu kanal için Codex gerekiyor (birkaç yüz MB indirir).'
+          : (ch.checked && !ch.signed_in ? 'Codex\'te ChatGPT ile giriş görünmüyor.' : 'Codex kurulu. ChatGPT ile giriş yaptıysan kontrol et.');
+        row.append(freeEl('span', 'free-persona', stateText));
+        const before = freeEl('div', 'free-consents');
+        const pre = {};
+        for (const [field, text] of FREE_CONSENTS) {
+          const label = freeEl('label');
+          const box = freeEl('input');
+          box.type = 'checkbox'; box.checked = false;
+          pre[field] = box;
+          label.append(box, document.createTextNode(text));
+          before.append(label);
+        }
+        const begin = async (operation, button, busy) => {
+          const old = button.textContent; button.disabled = true; button.textContent = busy; error.textContent = '';
+          try {
+            const r = await window.pywebview.api.onboarding_begin(operation, 'codex', '');
+            if (r && r.status && r.status !== 'ok') error.textContent = r.message || r.data || 'Başlatılamadı.';
+            else error.textContent = operation === 'install' ? 'Codex kuruluyor; bitince "Kontrol et ve bağla"ya bas.'
+              : 'Açılan pencerede ChatGPT hesabınla giriş yap, sonra "Kontrol et ve bağla"ya bas.';
+          } catch (e) { error.textContent = String(e); }
+          button.disabled = false; button.textContent = old;
+        };
+        if (!ch.installed) {
+          const install = freeEl('button', 'free-btn', 'Codex\'i kur');
+          install.type = 'button';
+          install.addEventListener('click', () => begin('install', install, 'Kuruluyor…'));
+          row.append(install);
+        } else {
+          const login = freeEl('button', 'free-btn ghost', 'ChatGPT ile giriş');
+          login.type = 'button';
+          login.addEventListener('click', () => begin('account', login, 'Açılıyor…'));
+          row.append(login);
+        }
+        const connect = freeEl('button', 'free-btn', 'Kontrol et ve bağla');
+        connect.type = 'button';
+        connect.addEventListener('click', async () => {
+          connect.disabled = true; connect.textContent = 'Kontrol ediliyor…'; error.textContent = '';
+          const result = await freeCall('connect', {channel: ch.id, key: '', send: pre.send.checked, backup: pre.backup.checked});
+          connect.disabled = false; connect.textContent = 'Kontrol et ve bağla';
+          if (result.status !== 'ok') { error.textContent = result.message || result.data || 'Bağlanamadı.'; return; }
+          renderFreeChannels(result.data);
+        });
+        const get = freeEl('button', 'free-link', 'Ücretsiz planda Codex nedir?');
+        get.type = 'button';
+        get.addEventListener('click', () => window.pywebview?.api?.open_external?.(ch.key_page));
+        row.append(connect, get);
+        card.append(row, before);
+      } else if (!ch.connected) {
         const row = freeEl('div', 'free-key-row');
         const label = freeEl('label', '', 'Ücretsiz anahtarını buraya yapıştır');
         const input = freeEl('input', 'free-key');
@@ -99,7 +151,8 @@ JAVASCRIPT = r"""
           const result = await freeCall('disconnect', {channel: ch.id});
           if (result.status === 'ok') renderFreeChannels(result.data);
         });
-        const model = freeEl('span', 'free-persona', ch.model ? `Model: ${ch.model}` : '');
+        const model = freeEl('span', 'free-persona', ch.kind === 'account' ? 'Model: Codex\'in varsayılanı'
+          : (ch.model ? `Model: ${ch.model}` : ''));
         consents.append(remove, model);
         card.append(consents);
       }

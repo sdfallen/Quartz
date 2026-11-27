@@ -33,7 +33,13 @@ class FreeChatMixin:
 
     def _free(self) -> FreeChat:
         if self._free_chat_service is None:
-            self._free_chat_service = FreeChat()
+            from core.free_chat import home
+            from core.free_chat_codex import CodexAccountChannel
+            service = getattr(self, "agent_service", None)
+            # The ChatGPT-account channel runs on the app's own CodexRuntime (one owner of Codex
+            # processes); its turns get folders under free_chat\codex-rooms.
+            account = CodexAccountChannel(lambda: getattr(service, "codex", None), home() / "codex-rooms")
+            self._free_chat_service = FreeChat(account=account)
         return self._free_chat_service
 
     def _free_rounds(self) -> dict:
