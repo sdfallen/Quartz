@@ -298,6 +298,74 @@ class ManagedPythonTests(unittest.TestCase):
         from core.cli_installer import cli_environment
         self.assertEqual(cli_environment()["PIP_REQUIRE_VIRTUALENV"], "1")
 
+    def test_v2_a_venv_someone_else_creates_meanwhile_is_never_removed(self):
+        self.install()
+        project = Path(self.tmp.name) / "yaris"
+        project.mkdir()
+
+        def racing_run(cmd, **kwargs):
+            # Another owner writes into .venv while SpeS's venv command fails.
+            (Path(cmd[4]) / "external-user-data.txt").write_text("benim", encoding="utf-8")
+            return subprocess.CompletedProcess(cmd, 1, "", "")
+        self.assertIsNone(mp.ensure_project_venv(project, run=racing_run))
+        self.assertEqual((project / ".venv" / "external-user-data.txt").read_text(encoding="utf-8"), "benim")
+        # A .venv that already exists (even empty, without pyvenv.cfg) is never reserved or touched.
+        other = Path(self.tmp.name) / "dolu"
+        (other / ".venv").mkdir(parents=True)
+        self.assertIsNone(mp.ensure_project_venv(other, run=lambda *a, **k: self.fail("no run")))
+        self.assertTrue((other / ".venv").is_dir())
+
+    def test_v2_a_stop_before_the_command_makes_nothing(self):
+        self.install()
+        project = Path(self.tmp.name) / "dur"
+        project.mkdir()
+        self.assertIsNone(mp.ensure_project_venv(project, run=lambda *a, **k: self.fail("no run"),
+                                                 cancelled=lambda: True))
+        self.assertFalse((project / ".venv").exists())
+
+    def test_v3_every_agents_start_environment_gets_the_project_venv(self):
+        self.install()
+        project = Path(self.tmp.name) / "ajan"
+        project.mkdir()
+        made = mp.ensure_project_venv(project, run=self.fake_venv_run())
+        from core.cli_installer import with_project, cli_environment
+        base = {"PATH": "C:/base", "PYTHONPATH": "x", "QUARTZ_DESKTOP_URL": "u", "CODEX_HOME": "h"}
+        env = with_project(base, project)
+        self.assertEqual(env["PATH"].split(os.pathsep)[0], str(made.parent))
+        self.assertEqual(env["VIRTUAL_ENV"], str(project / ".venv"))
+        self.assertNotIn("PYTHONPATH", env)
+        self.assertEqual((env["QUARTZ_DESKTOP_URL"], env["CODEX_HOME"]), ("u", "h"))  # the runtime's own env kept
+        other = Path(self.tmp.name) / "baska"
+        other.mkdir()
+        self.assertIs(with_project(base, other), base)  # no venv, no change, no leak between projects
+        self.assertIsNone(with_project(None, other))
+        # The three runtimes apply it at their real start.
+        root = Path(__file__).resolve().parents[1]
+        for name in ("codex_runtime.py", "claude_runtime.py", "antigravity_runtime.py"):
+            self.assertIn("with_project", (root / "core" / name).read_text(encoding="utf-8"), name)
+
+    def test_v1_a_refused_plan_prepares_nothing(self):
+        from core.long_job import JobError
+        from core.long_job_chat import LongJobChatMixin
+        import threading
+        project = Path(self.tmp.name) / "plan"
+        project.mkdir()
+        calls = []
+        chat = LongJobChatMixin.__new__(LongJobChatMixin)
+        chat._lock = threading.RLock()
+        chat.__dict__.update(_plan_generation=1, _closed=False, _long_jobs={})
+        conv = {"id": "c1", "space": "work", "project_id": "p1"}
+        chat.store = type("S", (), {"get": lambda self, cid: conv, "get_active": lambda self: conv,
+                                    "get_agent_model": lambda self, c, a: {}})()
+        chat.agent_service = type("A", (), {"projects": type("P", (), {
+            "get": lambda self, pid: {"path": str(project)}})()})()
+        with patch("core.managed_python.ensure_project_venv", side_effect=lambda *a, **k: calls.append(1)):
+            with self.assertRaises(JobError):
+                chat.job_start({"goal": "oyun", "milestones": [{"title": "a", "acceptance": "b"}],
+                                "permission_level": "full", "plan_generation": 0, "conversation_id": "c1"})
+        self.assertEqual(calls, [])
+        self.assertFalse((project / ".venv").exists())
+
     def test_the_pin_is_an_exact_official_release(self):
         self.assertTrue(mp.URL.startswith("https://www.python.org/ftp/python/" + mp.VERSION + "/"))
         self.assertRegex(mp.SHA256, r"^[0-9a-f]{64}$")

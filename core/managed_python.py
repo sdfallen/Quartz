@@ -117,7 +117,29 @@ def _ignore_in_git(project: Path) -> None:
         pass
 
 
-def ensure_project_venv(project, run=None, base=None) -> Path | None:
+_VENV_LOCKS: dict = {}
+_VENV_LOCKS_GUARD = __import__("threading").Lock()
+_VENV_PARTS = ("pyvenv.cfg", "Scripts", "Lib", "Include", "spes-created.txt", ".gitignore")
+
+
+def _remove_our_venv(folder: Path) -> None:
+    """Only what venv itself makes goes; anything else someone put there stays (Fides V2)."""
+    for name in _VENV_PARTS:
+        target = folder / name
+        if target.is_dir():
+            shutil.rmtree(target, ignore_errors=True)
+        else:
+            try:
+                target.unlink()
+            except OSError:
+                pass
+    try:
+        folder.rmdir()  # only when nothing foreign is left
+    except OSError:
+        pass
+
+
+def ensure_project_venv(project, run=None, base=None, cancelled=None) -> Path | None:
     """A new venv for a project from SpeS's own runtime, so packages a job installs stay in the
     project and never in SpeS's shared runtime (Fides: protect the managed base). An existing
     .venv is never touched; without SpeS's runtime nothing is made (the user's Python is not ours
@@ -126,25 +148,39 @@ def ensure_project_venv(project, run=None, base=None) -> Path | None:
     if existing is not None:
         return existing
     managed = published(base)
-    folder = Path(str(project or "")) / VENV
-    if managed is None or not Path(str(project or "")).is_dir() or folder.exists():
+    root_dir = Path(str(project or ""))
+    if managed is None or not root_dir.is_dir():
         return None
-    from core.cli_installer import owned_run
-    run = run or owned_run
-    env = {k: v for k, v in os.environ.items() if k not in {"PYTHONHOME", "PYTHONPATH"}}
-    try:
-        result = run([str(managed), "-I", "-m", "venv", str(folder)], capture_output=True, text=True,
-                     timeout=180, env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        made = project_venv(project)
-        if result.returncode or made is None:
-            raise RuntimeError("venv oluşturulamadı")
-        (folder / "spes-created.txt").write_text("SpeS bu sanal ortamı projenin paketleri için oluşturdu.\n",
-                                                 encoding="utf-8")
-        _ignore_in_git(Path(str(project)))
-        return made
-    except Exception:
-        shutil.rmtree(folder, ignore_errors=True)
-        return None
+    key = os.path.normcase(str(root_dir.resolve()))
+    with _VENV_LOCKS_GUARD:
+        lock = _VENV_LOCKS.setdefault(key, __import__("threading").Lock())
+    with lock:  # one SpeS creator per project at a time
+        existing = project_venv(project)
+        if existing is not None:
+            return existing
+        folder = root_dir / VENV
+        try:
+            folder.mkdir()  # Fides V2: an exclusive reservation; anything already there is not ours
+        except OSError:
+            return None
+        from core.cli_installer import owned_run
+        run = run or owned_run
+        env = {k: v for k, v in os.environ.items() if k not in {"PYTHONHOME", "PYTHONPATH"}}
+        try:
+            if callable(cancelled) and cancelled():
+                raise RuntimeError("durduruldu")
+            result = run([str(managed), "-I", "-m", "venv", str(folder)], capture_output=True, text=True,
+                         timeout=180, env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            made = project_venv(project)
+            if result.returncode or made is None or (callable(cancelled) and cancelled()):
+                raise RuntimeError("venv oluşturulamadı")
+            (folder / "spes-created.txt").write_text("SpeS bu sanal ortamı projenin paketleri için oluşturdu.\n",
+                                                     encoding="utf-8")
+            _ignore_in_git(root_dir)
+            return made
+        except Exception:
+            _remove_our_venv(folder)
+            return None
 
 
 def task_environment(base=None, project=None) -> dict:

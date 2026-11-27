@@ -111,6 +111,25 @@ def node_command(executable, args=()):
     return [str(path), *args]
 
 
+def with_project(env, project):
+    """Fides V3 (27 Nov): an agent working in a project with its own venv sees that venv first
+    (Scripts on PATH, VIRTUAL_ENV), on top of whatever environment its runtime built (session
+    filters, desktop capability, permission). A project without a venv changes nothing."""
+    try:
+        from core.managed_python import project_venv
+        venv = project_venv(project)
+    except Exception:
+        venv = None
+    if venv is None:
+        return env
+    merged = dict(env if env is not None else cli_environment())
+    merged.pop("PYTHONHOME", None)
+    merged.pop("PYTHONPATH", None)
+    merged["VIRTUAL_ENV"] = str(venv.parent.parent)
+    merged["PATH"] = os.pathsep.join([str(venv.parent), merged.get("PATH", "")])
+    return merged
+
+
 def cli_environment():
     env = os.environ.copy()
     paths = [str(managed_root() / "node"), str(managed_root())]

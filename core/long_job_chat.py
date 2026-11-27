@@ -63,24 +63,44 @@ class LongJobChatMixin:
             spec["source_manifest"], spec["source_scope"] = source_fingerprint(spec["sources"])
         spec["conversation_id"] = conv["id"]
         spec["project_path"] = project["path"]  # the conversation's project, never a free path
-        if spec.get("kind") != "data" and spec.get("permission_level") == "full":
-            # 27 Nov: a code job gets its own venv from SpeS's runtime when SpeS has one; an existing
-            # .venv or the user's own Python is left alone. Done before the lock (it takes seconds).
-            from core.managed_python import ensure_project_venv
-            ensure_project_venv(project["path"])
+        prepare_venv = spec.get("kind") != "data" and spec.get("permission_level") == "full"
         # The models the user chose are recorded once; SpeS never switches them by itself.
         spec["models"] = {agent: self.store.get_agent_model(conv["id"], agent)
                           for agent in ("claude", "codex", "antigravity")}
         # Fides acceptance review 26 Nov (F5): the plan's generation, the close flag, the
         # one-job rule, the ledger and the job's registration and start are one step under the
         # lock Stop (cancel_active) and close() take, so a Stop can no longer slip in between.
-        with self._lock:
-            if generation is not None and (self.__dict__.get("_closed")
-                                           or generation != self.__dict__.get("_plan_generation", 0)):
-                raise JobError("Plan durduruldu; iş başlatılmadı.")
+        def refused():
+            if self.__dict__.get("_closed") or (generation is not None
+                                                and generation != self.__dict__.get("_plan_generation", 0)):
+                return "Plan durduruldu; iş başlatılmadı."
             if any(job.ledger.data["status"] in {"running", "waiting_limit", "paused"}
                    for job in self._jobs().values()):
-                raise JobError("Zaten sürmekte olan bir uzun iş var; önce onu bitir ya da durdur.")
+                return "Zaten sürmekte olan bir uzun iş var; önce onu bitir ya da durdur."
+            return None
+        made_venv = None
+        if prepare_venv:
+            # Fides V1 (27 Nov): every refusal (stale plan, closing, another job, an invalid spec)
+            # comes before the first side effect; the venv (seconds) is made outside the lock.
+            with self._lock:
+                reason = refused()
+            if reason:
+                raise JobError(reason)
+            from core.long_job import validate_spec
+            validate_spec(dict(spec))
+            from core.managed_python import ensure_project_venv, project_venv
+            had_venv = project_venv(project["path"]) is not None
+            gen_at_start = self.__dict__.get("_plan_generation", 0)
+            made = ensure_project_venv(project["path"], cancelled=lambda: bool(
+                self.__dict__.get("_closed") or self.__dict__.get("_plan_generation", 0) != gen_at_start))
+            made_venv = made if (made is not None and not had_venv) else None
+        with self._lock:
+            reason = refused()
+            if reason:
+                if made_venv is not None:
+                    from core.managed_python import _remove_our_venv
+                    _remove_our_venv(made_venv.parent.parent)  # a Stop meanwhile: nothing stays
+                raise JobError(reason)
             ledger = JobLedger.create(spec)
             job = self._make_job(ledger)
             self._jobs()[ledger.data["id"]] = job

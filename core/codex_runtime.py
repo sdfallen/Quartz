@@ -482,9 +482,10 @@ class CodexRuntime:
                     self._writers.pop(project_key, None)
             raise RuntimeError("Codex run cancelled before start")
         try:
-            from core.cli_installer import cli_environment
-            process_options = {"env": desktop_env if desktop_env is not None
-                               else base_env if base_env is not None else cli_environment()}
+            from core.cli_installer import cli_environment, with_project
+            process_options = {"env": with_project(desktop_env if desktop_env is not None
+                                                   else base_env if base_env is not None else cli_environment(),
+                                                   project)}
             process = subprocess.Popen(
                 command, cwd=str(project), stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
