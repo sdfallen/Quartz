@@ -63,6 +63,11 @@ class LongJobChatMixin:
             spec["source_manifest"], spec["source_scope"] = source_fingerprint(spec["sources"])
         spec["conversation_id"] = conv["id"]
         spec["project_path"] = project["path"]  # the conversation's project, never a free path
+        if spec.get("kind") != "data" and spec.get("permission_level") == "full":
+            # 27 Nov: a code job gets its own venv from SpeS's runtime when SpeS has one; an existing
+            # .venv or the user's own Python is left alone. Done before the lock (it takes seconds).
+            from core.managed_python import ensure_project_venv
+            ensure_project_venv(project["path"])
         # The models the user chose are recorded once; SpeS never switches them by itself.
         spec["models"] = {agent: self.store.get_agent_model(conv["id"], agent)
                           for agent in ("claude", "codex", "antigravity")}
@@ -202,7 +207,7 @@ class LongJobChatMixin:
         entry, why = lc.detected_entry(ledger.data["project_path"])
         if entry is None:
             return skipped(why)
-        interpreter = lc.python_interpreter()
+        interpreter = lc.python_interpreter(ledger.data["project_path"])
         if not interpreter:
             return skipped("python bulunamadı")
         lease = None

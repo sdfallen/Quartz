@@ -238,6 +238,66 @@ class ManagedPythonTests(unittest.TestCase):
         packages = self.root / "packages"
         self.assertEqual(list(packages.iterdir()) if packages.exists() else [], [])
 
+    def fake_venv_run(self, fail=False):
+        def run(cmd, **kwargs):
+            self.assertEqual(cmd[1:4], ["-I", "-m", "venv"])
+            folder = Path(cmd[4])
+            (folder / "Scripts").mkdir(parents=True)
+            if not fail:
+                (folder / "pyvenv.cfg").write_text("home = x\n", encoding="utf-8")
+                (folder / "Scripts" / "python.exe").write_bytes(b"MZ")
+            return subprocess.CompletedProcess(cmd, 1 if fail else 0, "", "")
+        return run
+
+    def test_venv_a_code_project_gets_its_own_environment_from_spes_runtime(self):
+        self.install()
+        project = Path(self.tmp.name) / "oyun"
+        project.mkdir()
+        (project / ".gitignore").write_text("__pycache__/", encoding="utf-8")
+        made = mp.ensure_project_venv(project, run=self.fake_venv_run())
+        self.assertEqual(made, project / ".venv" / "Scripts" / "python.exe")
+        self.assertEqual(mp.project_interpreter(project), str(made))
+        self.assertIn(".venv/", (project / ".gitignore").read_text(encoding="utf-8").splitlines())
+        env = mp.task_environment(project=project)
+        self.assertEqual(env["VIRTUAL_ENV"], str(project / ".venv"))
+        self.assertEqual(Path(env["PATH"].split(os.pathsep)[0]), made.parent)
+        from core import launch_check
+        self.assertEqual(launch_check.python_interpreter(project), str(made))
+
+    def test_venv_an_existing_venv_and_a_computer_without_spes_runtime_are_left_alone(self):
+        project = Path(self.tmp.name) / "eski"
+        (project / ".venv" / "Scripts").mkdir(parents=True)
+        (project / ".venv" / "pyvenv.cfg").write_text("home = mine\n", encoding="utf-8")
+        (project / ".venv" / "Scripts" / "python.exe").write_bytes(b"mine")
+        never = lambda *a, **k: self.fail("no venv is made over an existing one")
+        self.assertEqual(mp.ensure_project_venv(project, run=never), project / ".venv" / "Scripts" / "python.exe")
+        bare = Path(self.tmp.name) / "bos"
+        bare.mkdir()
+        self.assertIsNone(mp.ensure_project_venv(bare, run=never))  # no SpeS runtime: nothing is made
+        self.assertFalse((bare / ".venv").exists())
+
+    def test_venv_a_failed_creation_leaves_no_half_environment(self):
+        self.install()
+        project = Path(self.tmp.name) / "yarim"
+        project.mkdir()
+        self.assertIsNone(mp.ensure_project_venv(project, run=self.fake_venv_run(fail=True)))
+        self.assertFalse((project / ".venv").exists())
+        self.assertFalse((project / ".gitignore").exists())
+
+    def test_venv_the_check_the_writer_and_pip_all_use_the_project_environment(self):
+        self.install()
+        project = Path(self.tmp.name) / "hazir"
+        project.mkdir()
+        (project / "test_a.py").write_text("", encoding="utf-8")
+        made = mp.ensure_project_venv(project, run=self.fake_venv_run())
+        ledger, seen = self.run_real_job(project)
+        self.assertEqual(seen["argv"][0], str(made))
+        self.assertEqual(seen["env"]["VIRTUAL_ENV"], str(project / ".venv"))
+        from core.long_job import milestone_prompt, VENV_RULE
+        self.assertIn(VENV_RULE, milestone_prompt(ledger, ledger.data["milestones"][0], "claude"))
+        from core.cli_installer import cli_environment
+        self.assertEqual(cli_environment()["PIP_REQUIRE_VIRTUALENV"], "1")
+
     def test_the_pin_is_an_exact_official_release(self):
         self.assertTrue(mp.URL.startswith("https://www.python.org/ftp/python/" + mp.VERSION + "/"))
         self.assertRegex(mp.SHA256, r"^[0-9a-f]{64}$")

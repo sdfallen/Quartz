@@ -516,7 +516,9 @@ def run(backend, hwnd, steps, stop, *, report_path, review_dir, alive, pid=None,
                 remaining = max_seconds - (time.monotonic() - began)
                 if stop.wait(min(step["seconds"], max(0.0, remaining))):
                     return end("cancelled", "durduruldu", item)
-                if over():
+                # A wait that reached the deadline ends the run: the timer may wake a hair early,
+                # so the deadline is decided by the wait, not by re-reading the clock (27 Nov).
+                if step["seconds"] >= remaining or over():
                     return end("blocked", "süre doldu", item)
                 if program_error(report()):
                     return end("failed", "program beklerken hata verdi", item)

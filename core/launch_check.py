@@ -85,11 +85,11 @@ def wants_look(milestone) -> bool:
     return bool(_WANTS_LOOK.search(text))
 
 
-def python_interpreter():
-    """SpeS's own Python first (core.managed_python, 27 Nov), else the user's Python on PATH; None
-    when neither exists."""
-    from core.managed_python import interpreter
-    return interpreter()
+def python_interpreter(project=None):
+    """The project's own venv first, then SpeS's own Python (core.managed_python, 27 Nov), else the
+    user's Python on PATH; None when none exists."""
+    from core.managed_python import project_interpreter
+    return project_interpreter(project)
 
 
 def _redact(text: str) -> str:

@@ -121,6 +121,8 @@ def cli_environment():
         python = published()
         if python is not None:
             paths = [str(python.parent), str(python.parent / "Scripts"), *paths]
+            # Fides: the managed base is shared; pip installs go into a project's venv only.
+            env["PIP_REQUIRE_VIRTUALENV"] = "1"
     except Exception:
         pass
     env["PATH"] = os.pathsep.join([*paths, env.get("PATH", "")])

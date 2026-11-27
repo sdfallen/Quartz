@@ -448,11 +448,11 @@ def run_verify(ledger: JobLedger, stop: threading.Event) -> dict:
             # Fides MP1 (27 Nov): the Python check SpeS itself chose runs with the same interpreter
             # the agents and launch_check use (SpeS's own first, else the user's); a check command
             # the user gave is never rewritten.
-            from core.managed_python import interpreter, task_environment
-            chosen = interpreter()
+            from core.managed_python import project_interpreter, task_environment
+            chosen = project_interpreter(ledger.data.get("project_path"))
             if chosen:
                 argv = [chosen, *argv[1:]]
-            env = task_environment()
+            env = task_environment(project=ledger.data.get("project_path"))
     if not argv:
         return {"ok": True, "summary": "Kontrol komutu tanımlanmadı."}
     from core.process_tree import stop_process_tree
@@ -1110,6 +1110,14 @@ def finish_report(ledger: JobLedger) -> str:
     return chr(10).join(lines)
 
 
+# 27 Nov: a project SpeS set up has its own Python environment; packages go there.
+VENV_RULE = (
+    "Bu projenin kendi Python ortamı var (.venv). Paket kurman gerekirse "
+    "`.venv\\Scripts\\python -m pip install <paket>` kullan; programı ve testleri de "
+    "`.venv\\Scripts\\python` ile çalıştır. Genel Python'a paket kurma."
+)
+
+
 # 26 Nov v2: SpeS opens a windowed program and tries it like a user, from the writer's scenario.
 INTERACTION_RULE = (
     "Bu taş pencereli bir program istiyor: SpeS programı açıp içinde deneyecek. Proje köküne "
@@ -1185,6 +1193,10 @@ def milestone_prompt(ledger: JobLedger, milestone: dict, writer: str) -> str:
         from core.launch_check import wants_look
         if wants_look(milestone):
             parts.append(INTERACTION_RULE)
+        from core.managed_python import project_venv
+        if project_venv(d.get("project_path")) is not None:
+            # 27 Nov: the project's own venv keeps a job's packages out of SpeS's shared runtime.
+            parts.append(VENV_RULE)
     if d.get("writer") and writer != "claude":
         # 26 Nov: the user may select Fides or Eos; the writer is not always standing in for Fatum.
         parts.append(f"Bu taşta yazıcı sensin ({PERSONA.get(writer, writer)}).")

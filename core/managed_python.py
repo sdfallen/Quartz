@@ -86,13 +86,81 @@ def safe_extract(archive: Path, target: Path) -> None:
         bundle.extractall(target)
 
 
-def task_environment(base=None) -> dict:
+VENV = ".venv"
+
+
+def project_venv(project) -> Path | None:
+    """A project's own virtual environment (Fides P2, first choice): <project>/.venv with its
+    pyvenv.cfg and python.exe, whoever made it. None when there is none."""
+    folder = Path(str(project or "")) / VENV
+    exe = folder / "Scripts" / "python.exe"
+    return exe if (folder / "pyvenv.cfg").is_file() and exe.is_file() else None
+
+
+def project_interpreter(project, base=None) -> str | None:
+    """The one interpreter for a project's checks, launches and agents: its own venv first, then
+    SpeS's runtime, then the user's Python."""
+    venv = project_venv(project)
+    return str(venv) if venv is not None else interpreter(base)
+
+
+def _ignore_in_git(project: Path) -> None:
+    """The venv is the computer's, not the project's: it never enters the job's commits."""
+    ignore = project / ".gitignore"
+    try:
+        lines = ignore.read_text(encoding="utf-8").splitlines() if ignore.is_file() else []
+        if not any(line.strip().rstrip("/") == VENV for line in lines):
+            prefix = "" if not lines or ignore.read_text(encoding="utf-8").endswith("\n") else "\n"
+            with ignore.open("a", encoding="utf-8") as stream:
+                stream.write(prefix + VENV + "/\n")
+    except OSError:
+        pass
+
+
+def ensure_project_venv(project, run=None, base=None) -> Path | None:
+    """A new venv for a project from SpeS's own runtime, so packages a job installs stay in the
+    project and never in SpeS's shared runtime (Fides: protect the managed base). An existing
+    .venv is never touched; without SpeS's runtime nothing is made (the user's Python is not ours
+    to build on). Owned process; a failure leaves no half venv behind."""
+    existing = project_venv(project)
+    if existing is not None:
+        return existing
+    managed = published(base)
+    folder = Path(str(project or "")) / VENV
+    if managed is None or not Path(str(project or "")).is_dir() or folder.exists():
+        return None
+    from core.cli_installer import owned_run
+    run = run or owned_run
+    env = {k: v for k, v in os.environ.items() if k not in {"PYTHONHOME", "PYTHONPATH"}}
+    try:
+        result = run([str(managed), "-I", "-m", "venv", str(folder)], capture_output=True, text=True,
+                     timeout=180, env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        made = project_venv(project)
+        if result.returncode or made is None:
+            raise RuntimeError("venv oluşturulamadı")
+        (folder / "spes-created.txt").write_text("SpeS bu sanal ortamı projenin paketleri için oluşturdu.\n",
+                                                 encoding="utf-8")
+        _ignore_in_git(Path(str(project)))
+        return made
+    except Exception:
+        shutil.rmtree(folder, ignore_errors=True)
+        return None
+
+
+def task_environment(base=None, project=None) -> dict:
     """The environment SpeS's own Python commands run in (Fides MP1): the managed runtime and its
     Scripts first on PATH, no PYTHONHOME/PYTHONPATH from the host; nothing system-wide changes."""
     env = {k: v for k, v in os.environ.items() if k not in {"PYTHONHOME", "PYTHONPATH"}}
+    first = []
+    venv = project_venv(project) if project is not None else None
+    if venv is not None:
+        env["VIRTUAL_ENV"] = str(venv.parent.parent)
+        first.append(str(venv.parent))
     managed = published(base)
     if managed is not None:
-        env["PATH"] = os.pathsep.join([str(managed.parent), str(managed.parent / "Scripts"), env.get("PATH", "")])
+        first += [str(managed.parent), str(managed.parent / "Scripts")]
+    if first:
+        env["PATH"] = os.pathsep.join([*first, env.get("PATH", "")])
     return env
 
 
