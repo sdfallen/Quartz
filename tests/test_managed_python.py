@@ -220,6 +220,31 @@ class ManagedPythonTests(unittest.TestCase):
         self.assertEqual(parts[:3], [str(made.parent), str(exe.parent), str(exe.parent / "Scripts")])
         self.assertEqual(parts.count(str(exe.parent)), 1)
 
+    def test_agypip_every_start_path_on_the_shared_runtime_carries_the_pip_guard(self):
+        self.install()
+        project = Path(self.tmp.name) / "pipsiz"
+        project.mkdir()
+        from core.cli_installer import with_project
+        desktop = {"PATH": "C:/masaustu", "QUARTZ_DESKTOP_URL": "u"}
+        with patch.dict(os.environ, {"PATH": "C:/host"}):
+            os.environ.pop("PIP_REQUIRE_VIRTUALENV", None)
+            self.assertEqual(with_project(None, project)["PIP_REQUIRE_VIRTUALENV"], "1")
+            capability = with_project(desktop, project)
+        self.assertEqual(capability["PIP_REQUIRE_VIRTUALENV"], "1")
+        self.assertEqual(capability["QUARTZ_DESKTOP_URL"], "u")
+        self.assertNotIn("PIP_REQUIRE_VIRTUALENV", desktop)  # the given dict is never changed
+        made = mp.ensure_project_venv(project, run=self.fake_venv_run())
+        venv_env = with_project(None, project)
+        self.assertEqual(venv_env["VIRTUAL_ENV"], str(made.parent.parent))  # pip works inside the venv
+
+    def test_agypip_no_guard_is_added_for_a_users_own_python(self):
+        project = Path(self.tmp.name) / "haricí"
+        project.mkdir()
+        from core.cli_installer import with_project
+        with patch.dict(os.environ, {"PATH": "C:/host"}):
+            os.environ.pop("PIP_REQUIRE_VIRTUALENV", None)
+            self.assertNotIn("PIP_REQUIRE_VIRTUALENV", with_project(None, project))
+
     def test_reading_the_runtime_runs_nothing(self):
         self.install()
         with patch.object(mp, "prove", side_effect=AssertionError("no proof while reading")):
@@ -596,7 +621,9 @@ class ManagedPythonTests(unittest.TestCase):
         other.mkdir()
         plain = with_project(base, other)  # no venv: no venv fields, no leak between projects
         self.assertNotIn("VIRTUAL_ENV", plain)
-        self.assertEqual({k: v for k, v in plain.items() if k != "PATH"}, {k: v for k, v in base.items() if k != "PATH"})
+        kept = {k: v for k, v in plain.items() if k not in {"PATH", "PIP_REQUIRE_VIRTUALENV"}}
+        self.assertEqual(kept, {k: v for k, v in base.items() if k != "PATH"})
+        self.assertEqual(plain["PIP_REQUIRE_VIRTUALENV"], "1")  # Fides AGY-PIP: the shared runtime's guard
         self.assertEqual(plain["PATH"].split(os.pathsep)[-1], "C:/base")
         self.assertEqual(base["PATH"], "C:/base")  # the given dict is never changed
         self.assertIsNotNone(with_project(None, other))  # Fides REF-AGY: always a filtered environment

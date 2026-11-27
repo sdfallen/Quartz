@@ -127,6 +127,10 @@ def with_project(env, project):
         python = published()
         first = [str(python.parent), str(python.parent / "Scripts")] if python is not None else []
         merged["PATH"] = os.pathsep.join([*first, inherited]) if first else inherited
+        if first:
+            # Fides AGY-PIP: the shared runtime keeps cli_environment's guard on every start path;
+            # pip installs go into a project's venv only (a venv still satisfies it).
+            merged["PIP_REQUIRE_VIRTUALENV"] = "1"
         venv = project_venv(project)
     except Exception:
         venv = None
