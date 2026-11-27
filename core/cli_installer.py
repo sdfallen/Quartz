@@ -113,7 +113,17 @@ def node_command(executable, args=()):
 
 def cli_environment():
     env = os.environ.copy()
-    env["PATH"] = os.pathsep.join([str(managed_root() / "node"), str(managed_root()), env.get("PATH", "")])
+    paths = [str(managed_root() / "node"), str(managed_root())]
+    # 27 Nov (Fides P3): the agents' task environment sees SpeS's own Python first; the user's PATH
+    # and system settings are never changed.
+    try:
+        from core.managed_python import published
+        python = published()
+        if python is not None:
+            paths = [str(python.parent), str(python.parent / "Scripts"), *paths]
+    except Exception:
+        pass
+    env["PATH"] = os.pathsep.join([*paths, env.get("PATH", "")])
     # Read only SpeS's config, regardless of the task's working directory.
     from dotenv import dotenv_values
     values = dotenv_values(app_root() / ".env")
@@ -228,6 +238,10 @@ class CliInstaller:
     def install(self, provider):
         if provider == "agy":
             return self._install_agy()
+        if provider == "python":
+            # 27 Nov: SpeS's own Python runtime (core.managed_python, Fides option E).
+            from core import managed_python
+            return managed_python.install(run=self.run)
         if provider not in PACKAGES:
             raise ValueError("Bilinmeyen CLI")
         with _LOCK:

@@ -25,19 +25,29 @@ from pathlib import Path
 
 from core.atomic_json import atomic_write_json, load_json
 
-TOOLS = (("codex", "Codex (Fides)"), ("agy", "Antigravity (Eos)"), ("claude", "Claude Code (Fatum)"))
+TOOLS = (("python", "Python (SpeS'in kendi)"), ("codex", "Codex (Fides)"), ("agy", "Antigravity (Eos)"),
+         ("claude", "Claude Code (Fatum)"))
 RETRY_SECONDS = 6 * 3600
 # Measured 27 Nov: Claude Code's native program alone is ~400 MB; Antigravity ~200 MB.
-DOWNLOAD_TEXT = "yaklaşık 800 MB indirir, diskte yaklaşık 1,5 GB yer kaplar"
+DOWNLOAD_TEXT = "yaklaşık 850 MB indirir, diskte yaklaşık 1,6 GB yer kaplar"
 
 
 class AutoSetup:
     def __init__(self, installer, state_path: Path | None = None, clock=time.time, resolve=None):
         from core.cli_installer import managed_root, resolve_cli
+
+        def default_resolve(tool):
+            if tool == "python":
+                from core.managed_python import published
+                found = published()
+                if found is None:
+                    raise FileNotFoundError("SpeS'in Python'u henüz kurulu değil")
+                return str(found)
+            return resolve_cli(tool)
         self.installer = installer
         self.state_path = Path(state_path or (managed_root() / "auto_setup.json"))
         self.clock = clock
-        self.resolve = resolve or resolve_cli
+        self.resolve = resolve or default_resolve
         self.lock = threading.Lock()
         self.thread = None
         self.stop_event = threading.Event()

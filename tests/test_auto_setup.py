@@ -55,13 +55,13 @@ class AutoSetupTests(unittest.TestCase):
 
     def test_every_missing_tool_is_installed_once_after_the_choice(self):
         installer = FakeInstaller()
-        setup = self.make(installer, present={"codex"})
+        setup = self.make(installer, present={"python", "codex"})
         self.assertEqual(setup.start(consent=True)["state"], "running")
         self.assertIn(setup.start()["state"], {"running", "done"})  # a second start never runs it twice
         status = self.finish(setup)
         self.assertEqual(status["state"], "done")
         self.assertEqual(installer.calls, ["agy", "claude"])
-        later = self.make(installer, present={"codex"})
+        later = self.make(installer, present={"python", "codex"})
         self.assertEqual(later.start()["state"], "ready")  # the recorded choice carries over
 
     def test_a_failed_tool_is_recorded_and_retried_only_later(self):
@@ -90,7 +90,7 @@ class AutoSetupTests(unittest.TestCase):
         release.set()
         status = self.finish(setup)
         self.assertEqual(status["state"], "stopped")
-        self.assertEqual(installer.calls, ["codex"])
+        self.assertEqual(installer.calls, ["python"])
 
     def test_rfs3_free_only_during_setup_stops_the_tools_still_waiting(self):
         release = threading.Event()
@@ -103,7 +103,7 @@ class AutoSetupTests(unittest.TestCase):
         self.assertEqual(setup.status()["state"], "stopping")
         release.set()
         self.finish(setup)
-        self.assertEqual(installer.calls, ["codex"])
+        self.assertEqual(installer.calls, ["python"])
         self.assertEqual(setup.start()["state"], "needs_choice")  # no choice, no new download
 
     def test_free_only_forgets_the_choice(self):
@@ -113,8 +113,8 @@ class AutoSetupTests(unittest.TestCase):
         setup.forget_choice()
         self.assertFalse(setup.consented())
 
-    def test_the_three_agent_tools_are_the_set(self):
-        self.assertEqual([t for t, _ in TOOLS], ["codex", "agy", "claude"])
+    def test_python_then_the_three_agent_tools_are_the_set(self):
+        self.assertEqual([t for t, _ in TOOLS], ["python", "codex", "agy", "claude"])
 
 
 class OnboardingAutoTests(unittest.TestCase):

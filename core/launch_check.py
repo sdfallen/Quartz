@@ -86,9 +86,10 @@ def wants_look(milestone) -> bool:
 
 
 def python_interpreter():
-    """The interpreter the job's check uses ("python" on PATH), resolved; None when missing."""
-    found = shutil.which("python")
-    return str(Path(found).resolve()) if found else None
+    """SpeS's own Python first (core.managed_python, 27 Nov), else the user's Python on PATH; None
+    when neither exists."""
+    from core.managed_python import interpreter
+    return interpreter()
 
 
 def _redact(text: str) -> str:
