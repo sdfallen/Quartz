@@ -336,9 +336,16 @@ class FreeChat:
         consent = self.settings.read()["channels"].get(channel) or {}
         return bool(consent.get("send") and (consent.get("backup") or not as_backup) and self.store.has(channel))
 
-    def ask(self, channel: str, messages: list, cancel: threading.Event) -> str:
+    def _gate(self, channel: str, as_backup: bool, cancel: threading.Event) -> None:
+        """Fides FM1/FM2: right before every network request (each model's chat, the one-time model
+        discovery): Stop, the current consent for this call's role, and the key still being there."""
         if cancel.is_set():
             raise FreeChatError("cancelled")
+        if not self.allowed(channel, as_backup=as_backup):
+            raise FreeChatError("not_allowed")
+
+    def ask(self, channel: str, messages: list, cancel: threading.Event, as_backup: bool = False) -> str:
+        self._gate(channel, as_backup, cancel)
         key = self.store.get(channel)
         saved = self.settings.read()["channels"][channel]
         if not key or not saved["model"]:
@@ -354,8 +361,7 @@ class FreeChat:
         while True:
             model = models[tried]
             tried += 1
-            if cancel.is_set():
-                raise FreeChatError("cancelled")
+            self._gate(channel, as_backup, cancel)
             try:
                 # Fides: no tools, no functions, no web; a returned tool call is never run.
                 response = client.chat.completions.create(
@@ -367,10 +373,13 @@ class FreeChat:
                     raise
                 if tried >= len(models) and not learned:
                     learned = True  # a connection made before alternates were kept: learn them once
+                    self._gate(channel, as_backup, cancel)
                     try:
                         found = model_candidates(channel, [m.id for m in client.models.list()])
                     except Exception:
                         found = []
+                    if cancel.is_set():
+                        raise FreeChatError("cancelled")
                     models += [m for m in found if m not in models]
                     self.settings.update(channel, alternates=[m for m in models if m != saved["model"]])
                 if tried >= len(models):
@@ -397,14 +406,14 @@ class FreeChat:
                 continue
             started = time.time()
             try:
-                text = self.ask(name, messages, cancel)
+                text = self.ask(name, messages, cancel, as_backup=name != channel)
             except Exception as exc:
                 kind = (str(exc) if isinstance(exc, FreeChatError) and str(exc) in EXPLAIN else classify(exc))
                 if isinstance(exc, FreeChatError) and str(exc) == "empty":
                     kind = "other"
                 attempts.append({"channel": name, "result": kind, "seconds": round(time.time() - started, 1)})
-                if kind in FALLS_THROUGH:
-                    continue
+                if kind in FALLS_THROUGH or kind == "not_allowed":
+                    continue  # a consent withdrawn mid-answer: like one closed at the start
                 return {"text": "", "channel": name, "attempts": attempts, "outcome": kind}
             attempts.append({"channel": name, "result": "ok", "seconds": round(time.time() - started, 1)})
             return {"text": text, "channel": name, "attempts": attempts, "outcome": "ok"}

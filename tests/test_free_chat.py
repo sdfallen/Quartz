@@ -160,10 +160,10 @@ class ReplyTests(Base):
         self.script["gemini"]["chat"] = api_error("RateLimitError", 429)
         original = self.free.ask
 
-        def ask(channel, messages, cancel):
+        def ask(channel, messages, cancel, **kw):
             if channel == "gemini":
                 self.free.consent("openrouter", backup=False)  # withdrawn while Gemini was asked
-            return original(channel, messages, cancel)
+            return original(channel, messages, cancel, **kw)
         self.free.ask = ask
         result = self.free.reply("gemini", [{"role": "user", "content": "selam"}], self.cancel)
         self.assertEqual(result["channel"], "groq")
@@ -282,10 +282,10 @@ class ChatServiceTests(Base):
         entered, release = threading.Event(), threading.Event()
         original = self.free.ask
 
-        def slow(channel, messages, cancel):
+        def slow(channel, messages, cancel, **kw):
             entered.set()
             release.wait(5)
-            return original(channel, messages, cancel)
+            return original(channel, messages, cancel, **kw)
         self.free.ask = slow
         chat.send_message("selam", conversation_id=cid)
         self.assertTrue(entered.wait(2))
@@ -305,10 +305,10 @@ class ChatServiceTests(Base):
         entered, release = threading.Event(), threading.Event()
         original = self.free.ask
 
-        def slow(channel, messages, cancel):
+        def slow(channel, messages, cancel, **kw):
             entered.set()
             release.wait(5)
-            return original(channel, messages, cancel)
+            return original(channel, messages, cancel, **kw)
         self.free.ask = slow
         chat.send_message("selam", conversation_id=cid)
         self.assertTrue(entered.wait(2))
@@ -325,12 +325,12 @@ class ChatServiceTests(Base):
         original = self.free.ask
         calls = []
 
-        def slow(channel, messages, cancel):
+        def slow(channel, messages, cancel, **kw):
             calls.append(1)
             if len(calls) == 1:
                 entered.set()
                 release.wait(5)
-            return original(channel, messages, cancel)
+            return original(channel, messages, cancel, **kw)
         self.free.ask = slow
         chat.send_message("bir", conversation_id=cid)
         self.assertTrue(entered.wait(2))
@@ -508,6 +508,65 @@ class ModelFallbackTests(Base):
             self.script["gemini"]["chat"] = error
             self.free.reply("gemini", [{"role": "user", "content": "selam"}], threading.Event())
             self.assertEqual(len([c for c in self.client.calls if c[1] == "chat"]), 1)
+
+    def busy_then(self, channel, action):
+        """The first model of ``channel`` answers 503 and, while it does, ``action`` runs."""
+        import openai
+        original = self.client.__call__
+        outer = self
+
+        def calling(ch, key):
+            made = original(ch, key)
+            create = made.chat.completions.create
+
+            def wrapped(**kwargs):
+                result = None
+                try:
+                    result = create(**kwargs)
+                finally:
+                    if ch == channel and not getattr(outer, "_acted", False):
+                        outer._acted = True
+                        action()
+                return result
+            made.chat.completions.create = wrapped
+            return made
+        self.free.client = calling
+        self.script[channel]["chat"] = api_error("InternalServerError", 503, "busy")
+
+    def chat_calls(self, channel):
+        return [c for c in self.client.calls if c[0] == channel and c[1] == "chat"]
+
+    def test_fm1_a_send_consent_withdrawn_mid_answer_stops_the_next_model(self):
+        self.script["gemini"]["models"] = self.live_ids()
+        self.free.connect("gemini", "anahtar", send=True)
+        self.busy_then("gemini", lambda: self.free.settings.update("gemini", send=False))
+        result = self.free.reply("gemini", [{"role": "user", "content": "x"}], threading.Event())
+        self.assertEqual(len(self.chat_calls("gemini")), 1)
+        self.assertNotEqual(result["outcome"], "ok")
+
+    def test_fm1_a_backup_consent_withdrawn_mid_answer_stops_that_backup(self):
+        self.script["gemini"]["models"] = self.live_ids()
+        self.free.connect("gemini", "a", send=True)
+        self.free.connect("openrouter", "b", send=True, backup=True)
+        self.script["openrouter"]["models"] = ["x/one:free", "x/two:free"]
+        self.free.connect("openrouter", "b", send=True, backup=True)
+        self.script["gemini"]["chat"] = api_error("AuthenticationError", 401)
+        self.busy_then("openrouter", lambda: self.free.settings.update("openrouter", backup=False))
+        self.script["gemini"]["chat"] = api_error("AuthenticationError", 401)
+        result = self.free.reply("gemini", [{"role": "user", "content": "x"}], threading.Event())
+        self.assertEqual(len(self.chat_calls("openrouter")), 1)
+        self.assertNotEqual(result["outcome"], "ok")
+
+    def test_fm2_no_model_discovery_starts_after_stop(self):
+        self.script["gemini"]["models"] = self.live_ids()
+        self.free.store.set("gemini", "anahtar")
+        self.free.settings.update("gemini", send=True, model="gemini-flash-latest")
+        cancel = threading.Event()
+        self.busy_then("gemini", cancel.set)
+        result = self.free.reply("gemini", [{"role": "user", "content": "x"}], cancel)
+        self.assertEqual(result["outcome"], "cancelled")
+        self.assertEqual([c for c in self.client.calls if c[1] == "models"], [])
+        self.assertEqual(len(self.chat_calls("gemini")), 1)
 
     def test_a_withdrawn_model_404_moves_on_too(self):
         self.script["gemini"]["models"] = self.live_ids()
