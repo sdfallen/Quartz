@@ -98,6 +98,7 @@ class SignalTests(unittest.TestCase):
         calls = []
 
         def run(argv, **kwargs):
+            self.assertNotIn("PSMODULEPATH", {key.upper() for key in kwargs["env"]})
             calls.append((argv, kwargs["env"]["SPES_SIGNATURE_PATHS"]))
             paths = json.loads(kwargs["env"]["SPES_SIGNATURE_PATHS"])
             return type("Done", (), {"stdout": json.dumps([{"path": p, "status": "NotSigned", "subject": ""} for p in paths])})()

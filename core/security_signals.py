@@ -93,8 +93,12 @@ class SignatureChecker:
 
     def _ask(self, paths) -> dict:
         try:
+            # Windows PowerShell must discover its own modules even when SpeS
+            # was launched from PowerShell 7, which supplies a different PSModulePath.
+            env = {key: value for key, value in os.environ.items() if key.upper() != "PSMODULEPATH"}
+            env["SPES_SIGNATURE_PATHS"] = json.dumps(paths)
             done = self._run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", _SCRIPT],
-                             env=dict(os.environ, SPES_SIGNATURE_PATHS=json.dumps(paths)),
+                             env=env,
                              capture_output=True, text=True, encoding="utf-8", errors="replace",
                              timeout=SIGNATURE_TIMEOUT, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             rows = json.loads(done.stdout or "[]")
