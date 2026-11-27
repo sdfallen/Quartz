@@ -101,6 +101,8 @@ class AutoSetup:
             missing = self.missing()
             todo = [t for t in missing if consent or not self._recently_failed(t)]
             if not self._rechecked:
+                # Tried once per app run; a failed proof makes the tool "missing" (Fides RE2), so a
+                # later start, or the user's retry, tries it again instead of calling it ready.
                 self._rechecked = True
                 todo = [t for t, _label in TOOLS
                         if t in todo or (t in self.recheck and t not in missing)]

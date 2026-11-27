@@ -96,6 +96,49 @@ class ManagedPythonTests(unittest.TestCase):
         self.assertFalse(fresh["reused"])
         self.assertTrue(Path(old).is_file())
 
+    def offline(self, url, destination, *, allowed, limit):
+        raise OSError("çevrimdışı")
+
+    def broken_for(self, old):
+        return lambda cmd, **kw: (subprocess.CompletedProcess(cmd, 1, "", "No module named tkinter")
+                                  if cmd[0] == str(old) else self.run_ok(cmd, **kw))
+
+    def test_re1_a_runtime_that_failed_is_not_selected_when_no_replacement_comes(self):
+        old = Path(self.install()["executable"])
+        self.download = self.offline
+        with self.assertRaises(OSError):
+            self.install(run=self.broken_for(old))
+        self.assertTrue(old.is_file())  # kept on disk
+        self.assertIsNone(mp.published())
+        self.assertNotEqual(mp.interpreter(), str(old))
+        self.assertTrue(json.loads((self.root / "installed.json").read_text(encoding="utf-8"))["python"]["unproven"])
+
+    def test_re1_a_failed_mark_holds_in_process_even_when_the_record_cannot_be_written(self):
+        old = Path(self.install()["executable"])
+        self.download = self.offline
+        from core import atomic_json
+        with patch.object(atomic_json, "atomic_write_json", side_effect=OSError("disk dolu")):
+            with self.assertRaises(OSError):
+                self.install(run=self.broken_for(old))
+        self.assertIsNone(mp.published())
+
+    def test_re1_only_a_passed_proof_brings_a_failed_runtime_back(self):
+        old = Path(self.install()["executable"])
+        self.download = self.offline
+        with self.assertRaises(OSError):
+            self.install(run=self.broken_for(old))
+        again = self.install()  # it works again (the probe passes): reused, mark cleared
+        self.assertTrue(again["reused"])
+        self.assertEqual(mp.published(), old)
+        self.assertNotIn("unproven", json.loads((self.root / "installed.json").read_text(encoding="utf-8"))["python"])
+
+    def test_re1_a_stale_mark_never_touches_a_newer_record(self):
+        old = Path(self.install()["executable"])
+        fresh = Path(self.install(run=self.broken_for(old))["executable"])
+        mp._set_unproven(self.root, old, True)
+        self.assertEqual(mp.published(), fresh)
+        self.assertNotIn("unproven", json.loads((self.root / "installed.json").read_text(encoding="utf-8"))["python"])
+
     def test_reading_the_runtime_runs_nothing(self):
         self.install()
         with patch.object(mp, "prove", side_effect=AssertionError("no proof while reading")):

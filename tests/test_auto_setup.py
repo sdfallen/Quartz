@@ -59,6 +59,29 @@ class AutoSetupTests(unittest.TestCase):
         setup.start()
         self.assertEqual(installer.calls, ["python"])  # once per app run
 
+    def test_re2_a_failed_proof_is_retried_and_never_turned_into_ready(self):
+        broken = {"python"}
+
+        class Reproving(FakeInstaller):
+            def install(self, tool):
+                self.calls.append(tool)
+                raise RuntimeError("denetimden geçmedi; çevrimdışı")
+
+        installer = Reproving()
+
+        def resolve(tool):
+            if tool in broken and installer.calls:  # after a failed proof the runtime is not selected
+                raise FileNotFoundError(tool)
+            return f"C:/fake/{tool}.exe"
+        setup = AutoSetup(installer, self.state, clock=lambda: self.now[0], resolve=resolve,
+                          recheck=("python",))
+        setup.start(consent=True)
+        self.assertEqual(self.finish(setup)["state"], "partial")
+        self.assertEqual(setup.start()["state"], "waiting")  # recently failed: not ready, not re-run
+        self.assertEqual(setup.start(consent=True)["state"], "running")  # the user's retry proves again
+        self.finish(setup)
+        self.assertEqual(installer.calls, ["python", "python"])
+
     def test_without_a_choice_nothing_is_re_proven(self):
         installer = FakeInstaller()
         setup = AutoSetup(installer, self.state, clock=lambda: self.now[0],

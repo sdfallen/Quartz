@@ -15,7 +15,10 @@ package it carries tkinter, Tcl/Tk, pip and venv.
   a half-finished setup is never "ready".
 - Reuse contract (Fides, open item of the MP reviews): a recorded runtime is reused only after the
   same two gates pass again (PSF signature, capability probe). One that fails is not reused: a fresh
-  copy is proven and published into a new folder and the record moves to it. The old folder is never
+  copy is proven and published into a new folder and the record moves to it. Fides RE1: a runtime
+  that failed is marked UNPROVEN (in the record and, should that write fail, in this process) and is
+  never selected again until it passes both gates; only a passed proof or a fresh copy clears it.
+  The old folder is never
   deleted while SpeS runs (a running job or a project venv may still use it); SpeS's uninstaller
   removes the whole folder. This proves the runtime still works; it is not a guard against changes
   made by the same Windows user.
@@ -53,12 +56,46 @@ def root(base=None):
     return managed_root()
 
 
-def published(base=None) -> Path | None:
-    """The managed python.exe SpeS recorded after all gates, or None."""
+_UNPROVEN: set[str] = set()  # Fides RE1: runtimes this process saw fail, even if the record could not say so
+
+
+def _entry(base) -> dict:
     from core.atomic_json import load_json
-    entry = load_json(root(base) / "installed.json", {}).get("python") or {}
+    return load_json(root(base) / "installed.json", {}).get("python") or {}
+
+
+def published(base=None) -> Path | None:
+    """The managed python.exe SpeS recorded after all gates and not since found failing, or None.
+    Reading only: never runs anything."""
+    entry = _entry(base)
     exe = Path(str(entry.get("executable") or ""))
-    return exe if entry.get("version") == VERSION and exe.is_file() else None
+    if entry.get("version") != VERSION or not exe.is_file():
+        return None
+    if entry.get("unproven") or str(exe) in _UNPROVEN:
+        return None
+    return exe
+
+
+def _set_unproven(base, exe: Path, failed: bool) -> None:
+    """Record (or clear) a failed proof for the runtime the record still names; called under _LOCK."""
+    from core.atomic_json import atomic_write_json, load_json
+    if failed:
+        _UNPROVEN.add(str(exe))
+    else:
+        _UNPROVEN.discard(str(exe))
+    try:
+        manifest = load_json(base / "installed.json", {})
+        entry = manifest.get("python") or {}
+        if str(entry.get("executable") or "") != str(exe):
+            return  # the record moved on: never touch a newer entry
+        if failed:
+            entry["unproven"] = True
+        else:
+            entry.pop("unproven", None)
+        manifest["python"] = entry
+        atomic_write_json(base / "installed.json", manifest)
+    except OSError:
+        pass  # the in-process mark still keeps a failed runtime from being selected
 
 
 def interpreter(base=None) -> str | None:
@@ -249,13 +286,18 @@ def _install(run, download, verify, base) -> dict:
     run = run or owned_run
     download = download or install_security.download
     verify = verify or install_security.verify_publisher
-    existing = published(base)
-    if existing is not None:
+    entry = _entry(base)
+    recorded = Path(str(entry.get("executable") or ""))
+    if entry.get("version") == VERSION and recorded.is_file():
+        # Also a runtime marked unproven gets its chance: a passed proof is the only way back.
         try:
-            prove(existing, run, verify)
-            return {"installed": True, "executable": str(existing), "version": VERSION, "reused": True}
+            prove(recorded, run, verify)
         except Exception:
-            pass  # not reused: a fresh copy is proven into a new folder; the old one stays in place
+            _set_unproven(base, recorded, True)  # not selected again; the folder stays in place
+        else:
+            if entry.get("unproven") or str(recorded) in _UNPROVEN:
+                _set_unproven(base, recorded, False)
+            return {"installed": True, "executable": str(recorded), "version": VERSION, "reused": True}
     base.mkdir(parents=True, exist_ok=True)
     stage = base / ("python-stage-" + uuid.uuid4().hex[:8])
     stage.mkdir()
