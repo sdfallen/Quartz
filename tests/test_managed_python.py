@@ -186,6 +186,40 @@ class ManagedPythonTests(unittest.TestCase):
         self.assertEqual(parts[0], str(exe.parent))
         self.assertEqual(parts.count(str(exe.parent)), 1)  # the inherited copy is dropped, the chosen one stays
 
+    def test_refagy_an_agent_that_built_no_environment_still_never_reaches_a_failed_runtime(self):
+        old = Path(self.install()["executable"])
+        self.download = self.offline
+        with self.assertRaises(OSError):
+            self.install(run=self.broken_for(old))
+        project = Path(self.tmp.name) / "agy-venvsiz"
+        project.mkdir()
+        user = Path(self.tmp.name) / "kullanici-python"
+        user.mkdir()
+        (user / "python.exe").write_bytes(b"MZ")
+        from core.cli_installer import with_project
+        desktop = {"PATH": os.pathsep.join([str(old.parent), str(user)]), "SPES_DESKTOP_TOKEN_FIELD": "x"}
+        given = dict(desktop)
+        with patch.dict(os.environ, {"PATH": str(old.parent), "PATHEXT": ".EXE"}):
+            inherited = with_project(None, project)  # Antigravity without a desktop connection
+            self.assertIsNotNone(inherited)
+            self.assertIsNone(shutil.which("python", path=inherited["PATH"]))
+            capability = with_project(desktop, project)  # with the desktop connection's environment
+            self.assertEqual(Path(shutil.which("python", path=capability["PATH"])).resolve(),
+                             (user / "python.exe").resolve())
+            self.assertEqual(capability["SPES_DESKTOP_TOKEN_FIELD"], "x")
+        self.assertEqual(desktop, given)  # the runtime's own dict is never changed
+
+    def test_refagy_the_selected_runtime_and_the_venv_keep_their_order(self):
+        exe = Path(self.install()["executable"])
+        project = Path(self.tmp.name) / "sirali"
+        project.mkdir()
+        made = mp.ensure_project_venv(project, run=self.fake_venv_run())
+        from core.cli_installer import with_project
+        with patch.dict(os.environ, {"PATH": str(exe.parent)}):
+            parts = with_project(None, project)["PATH"].split(os.pathsep)
+        self.assertEqual(parts[:3], [str(made.parent), str(exe.parent), str(exe.parent / "Scripts")])
+        self.assertEqual(parts.count(str(exe.parent)), 1)
+
     def test_reading_the_runtime_runs_nothing(self):
         self.install()
         with patch.object(mp, "prove", side_effect=AssertionError("no proof while reading")):
@@ -560,8 +594,12 @@ class ManagedPythonTests(unittest.TestCase):
         self.assertEqual((env["QUARTZ_DESKTOP_URL"], env["CODEX_HOME"]), ("u", "h"))  # the runtime's own env kept
         other = Path(self.tmp.name) / "baska"
         other.mkdir()
-        self.assertIs(with_project(base, other), base)  # no venv, no change, no leak between projects
-        self.assertIsNone(with_project(None, other))
+        plain = with_project(base, other)  # no venv: no venv fields, no leak between projects
+        self.assertNotIn("VIRTUAL_ENV", plain)
+        self.assertEqual({k: v for k, v in plain.items() if k != "PATH"}, {k: v for k, v in base.items() if k != "PATH"})
+        self.assertEqual(plain["PATH"].split(os.pathsep)[-1], "C:/base")
+        self.assertEqual(base["PATH"], "C:/base")  # the given dict is never changed
+        self.assertIsNotNone(with_project(None, other))  # Fides REF-AGY: always a filtered environment
         # The three runtimes apply it at their real start.
         root = Path(__file__).resolve().parents[1]
         for name in ("codex_runtime.py", "claude_runtime.py", "antigravity_runtime.py"):

@@ -112,17 +112,26 @@ def node_command(executable, args=()):
 
 
 def with_project(env, project):
-    """Fides V3 (27 Nov): an agent working in a project with its own venv sees that venv first
+    """The final step of every agent's start environment (Claude, Codex, Antigravity, Gemini).
+
+    Fides V3 (27 Nov): an agent working in a project with its own venv sees that venv first
     (Scripts on PATH, VIRTUAL_ENV), on top of whatever environment its runtime built (session
-    filters, desktop capability, permission). A project without a venv changes nothing."""
+    filters, desktop capability, permission). Fides REF-AGY: it always returns an environment, even
+    when the runtime built none (it would have inherited SpeS's own): no PATH entry may reach a SpeS
+    runtime other than the selected one, which goes first. Every other field is kept as given; the
+    given dict is never changed and the user's PATH setting never either."""
+    merged = dict(env if env is not None else os.environ)
     try:
-        from core.managed_python import project_venv
+        from core.managed_python import foreign_path, project_venv, published
+        inherited = foreign_path(merged.get("PATH", ""))
+        python = published()
+        first = [str(python.parent), str(python.parent / "Scripts")] if python is not None else []
+        merged["PATH"] = os.pathsep.join([*first, inherited]) if first else inherited
         venv = project_venv(project)
     except Exception:
         venv = None
     if venv is None:
-        return env
-    merged = dict(env if env is not None else cli_environment())
+        return merged
     merged.pop("PYTHONHOME", None)
     merged.pop("PYTHONPATH", None)
     merged["VIRTUAL_ENV"] = str(venv.parent.parent)
