@@ -112,6 +112,8 @@ class LongJobChatMixin:
     def job_control(self, job_id: str, action: str) -> dict:
         if action == "open_folder":
             return self._job_open_folder(job_id)
+        if action == "open_page":
+            return self._job_open_page(job_id)
         job = self._jobs().get(str(job_id or ""))
         if job is None:
             # Live 15 Nov: a job paused before a restart is on disk only; "Devam" must find it.
@@ -201,27 +203,66 @@ class LongJobChatMixin:
         opener(str(folder))
         return {"status": "opened", "path": str(folder)}
 
+    def _job_open_page(self, job_id) -> dict:
+        """"Sayfayı aç" on a finish report (28 Nov): opens the job's verified HTML entry from its ledger.
+        Never accepts a path or URL from the page; only a regular .html/.htm inside the job's folder."""
+        import os
+        from core import web_check as wc
+        job = self._jobs().get(str(job_id or ""))
+        ledger = job.ledger if job is not None else next(
+            (l for l in JobLedger.all() if l.data["id"] == str(job_id or "")), None)
+        if ledger is None:
+            raise JobError("Bu iş bulunamadı.")
+        raw = str(ledger.data.get("project_path") or "").strip()
+        if not raw or not Path(raw).is_absolute():
+            raise JobError("İşin klasör kaydı geçersiz.")
+        folder = Path(raw).resolve()
+        if not folder.is_dir():
+            raise JobError("İşin klasörü artık yok.")
+        entry, why = wc.detected_web_entry(folder)
+        if entry is None:
+            raise JobError(f"Açılacak bir web sayfası bulunamadı ({why}).")
+        opener = getattr(os, "startfile", None)
+        if opener is None:
+            raise JobError("Sayfa yalnız Windows'ta açılır.")
+        opener(str(entry))
+        return {"status": "opened", "path": str(entry)}
+
     def _job_launch(self, ledger, milestone, stop):
-        """SpeS opens what a code milestone built and looks (core.launch_check); None when it does
-        not apply. Fides 26 Nov: Tam Yetki and code jobs only; only when the milestone asks for a
-        running program; host-wide desktop lease for the whole look."""
+        """SpeS opens what a code milestone built and looks (core.launch_check / core.web_check);
+        None when it does not apply. Fides 26 Nov: Tam Yetki and code jobs only."""
         import uuid
         from core import launch_check as lc
         from core import launch_interact as li
+        from core import web_check as wc
         if ledger.data.get("kind") == "data" or ledger.data.get("permission_level") != "full":
             return None
         # Fides Q3: read once; the run keeps this snapshot and its SHA even if the file changes.
         loaded, scenario = li.load_scenario(ledger.data["project_path"])
         steps = (loaded or {}).get("steps")
-        # 26 Nov v2: a project with a scenario is an interactive program; it is tried every milestone.
-        if not lc.wants_look(milestone) and scenario == "senaryo yok":
+        wants_gui = lc.wants_look(milestone) or scenario != "senaryo yok"
+        wants_web = wc.wants_web_look(milestone)
+        if not wants_gui and not wants_web:
             return None
 
         def skipped(reason):
             return {"verdict": "skipped", "reason": reason}
+        entry, why = lc.detected_entry(ledger.data["project_path"])
+        if entry is None and why == "pencere açan bir Python programı bulunamadı":
+            web_entry, web_why = wc.detected_web_entry(ledger.data["project_path"])
+            if web_entry is not None:
+                evidence = (Path(ledger.path).parent / "launch"
+                            / f"{milestone['id']}-web{milestone.get('attempts', 0)}-{uuid.uuid4().hex[:6]}")
+                try:
+                    return wc.observe_web(web_entry, Path(ledger.data["project_path"]), evidence, stop)
+                except Exception as exc:
+                    return skipped(f"web denetimi başlatılamadı ({type(exc).__name__})")
+            if not wants_gui:
+                return skipped(web_why)
+        if not wants_gui:
+            return None
         if lc.unconfirmed():
             return skipped("önceki programın kapandığı henüz doğrulanmadı")
-        entry, why = lc.detected_entry(ledger.data["project_path"])
         if entry is None:
             return skipped(why)
         interpreter = lc.python_interpreter(ledger.data["project_path"])
@@ -263,12 +304,19 @@ class LongJobChatMixin:
     def _job_note(self, ledger, text, urgent=False, report=False):
         cid = ledger.data.get("conversation_id")
         try:
+            has_web = False
+            if report and ledger.data.get("kind") != "data":
+                from core import web_check as wc
+                raw_p = str(ledger.data.get("project_path") or "").strip()
+                if raw_p and Path(raw_p).is_absolute():
+                    has_web = wc.detected_web_entry(raw_p)[0] is not None
             conv = self.store.get(cid)
             self.store.append_message(cid, "assistant", text, sender="quartz", metadata={
                 "sender": "quartz", "recipient": "user", "status": "completed", "long_job": ledger.data["id"],
                 **({"notify": "call"} if urgent else {}),
                 # The phone rings like a call for a report (mobile WatchService, "bitince haber ver").
                 **({"report": True} if report else {}),
+                **({"has_web_page": True} if has_web else {}),
                 "sequence": self._next_sequence(conv)})
         except Exception:
             pass
@@ -423,8 +471,8 @@ class LongJobChatMixin:
                     read_root = look.get("review_dir")
                     prompt += ("\nPencere görüntüsü: window.png (bu klasörde). Görüntüyü açıp baktıysan bunu söyle; "
                                "açmadıysan 'görsel incelendi' deme.")
-                elif look.get("verdict") == "window_seen":
-                    prompt += "\nPencereyi SpeS gözledi; görüntü sana açılmadı, görsel incelendi deme."
+                elif look.get("verdict") in {"window_seen", "page_seen"}:
+                    prompt += "\nGörüntüyü SpeS aldı; görüntü sana açılmadı, görsel incelendi deme."
             if view_note:
                 prompt += "\n" + view_note
             if stop.is_set():  # Fides FC1: checked again right before the turn is admitted

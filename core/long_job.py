@@ -909,9 +909,9 @@ class LongJob:
                 return
             if look:
                 with ledger._lock:
-                    milestone["launch"] = {k: look.get(k) for k in ("verdict", "entry", "window_title",
+                    milestone["launch"] = {k: look.get(k) for k in ("kind", "verdict", "entry", "window_title",
                                                                     "capture_state", "reason", "evidence_dir",
-                                                                    "scenario", "scenario_sha256")}
+                                                                    "scenario", "scenario_sha256", "checked_assets")}
                     if look.get("interaction"):
                         from core.launch_interact import summary
                         milestone["launch"]["interaction"] = {
@@ -923,6 +923,10 @@ class LongJob:
                     check = {"ok": False, "summary": "SpeS açtığı programın kapandığını doğrulayamadı; "
                                                      "taş senin kararını bekliyor."}
                     hold = True
+                elif look.get("verdict") == "broken_page":
+                    # 28 Nov: broken local CSS/JS/image asset or JavaScript SyntaxError in a web page.
+                    check = {"ok": False, "summary": "SpeS web sayfasını denetledi; sayfada hata var:\n"
+                             + str(look.get("output_tail") or look.get("reason") or "")[-1200:]}
                 elif look.get("verdict") == "window_seen" and str(look.get("scenario") or "").startswith(
                         "senaryo geçersiz"):
                     # The writer was asked for a valid scenario; SpeS ran no step of an invalid one.
@@ -1091,7 +1095,15 @@ def finish_report(ledger: JobLedger) -> str:
             lines.append(f"Program açıldı: SpeS {last.get('entry')} dosyasını çalıştırdı, pencereyi gördü "
                          f"(\"{last.get('window_title') or 'başlıksız'}\") ve kapattı. "
                          + (played or "Etkileşim denenmedi (senaryo yoktu)."))
-        elif last.get("reason") == "pencere açan bir Python programı bulunamadı":
+        elif last.get("verdict") == "page_seen":
+            lines.append(f"Web sayfası açıldı: SpeS {last.get('entry')} sayfasını tarayıcı motorunda çalıştırdı, "
+                         f"görüntüsünü aldı (\"{last.get('window_title') or 'başlıksız'}\") ve "
+                         f"{last.get('checked_assets') or 0} yerel kaynağı doğruladı.")
+        elif last.get("verdict") == "static_ok":
+            lines.append(f"Web sayfası denetlendi: SpeS {last.get('entry')} sayfasının yerel kaynaklarını ve "
+                         "JavaScript sözdizimini doğruladı.")
+        elif last.get("reason") in {"pencere açan bir Python programı bulunamadı",
+                                    "pencere açan bir Python programı ya da web sayfası bulunamadı"}:
             # Live 26 Nov 17:30: a command-line program read as a problem; it is not one.
             lines.append("Pencereli bir program yok; SpeS açıp bakma adımını uygulamadı.")
         else:

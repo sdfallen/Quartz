@@ -524,6 +524,18 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
         row.append(b);
       });
       if (msg?.metadata?.report) {
+        if (msg?.metadata?.has_web_page) {
+          const page = document.createElement('button'); page.type = 'button';
+          page.className = 'control-btn long-job-btn'; page.textContent = 'Sayfayı aç';
+          page.title = 'İşin yaptığı web sayfasını tarayıcıda açar.';
+          page.onclick = async () => {
+            page.disabled = true;
+            const r = await window.pywebview.api.job_control(String(longJob), 'open_page');
+            page.disabled = false;
+            if (!(r && r.status === 'ok')) logLine('Uzun iş: ' + String((r && r.message) || 'sayfa açılamadı'));
+          };
+          row.append(page);
+        }
         // 26 Nov: the finish report opens the job's own folder (path from SpeS's ledger only).
         const open = document.createElement('button'); open.type = 'button';
         open.className = 'control-btn long-job-btn'; open.textContent = 'Klasörü aç';
