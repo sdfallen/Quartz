@@ -44,6 +44,29 @@ class AutoSetupTests(unittest.TestCase):
         setup.thread.join(5)
         return setup.status()
 
+    def test_a_present_python_is_re_proven_once_per_run_and_status_runs_nothing(self):
+        installer = FakeInstaller()
+
+        def resolve(tool):
+            return f"C:/fake/{tool}.exe"
+        setup = AutoSetup(installer, self.state, clock=lambda: self.now[0], resolve=resolve,
+                          recheck=("python",))
+        setup.status()
+        self.assertEqual(installer.calls, [])  # reading never re-proves
+        setup.start(consent=True)
+        self.finish(setup)
+        self.assertEqual(installer.calls, ["python"])  # the installer's reuse path proves it again
+        setup.start()
+        self.assertEqual(installer.calls, ["python"])  # once per app run
+
+    def test_without_a_choice_nothing_is_re_proven(self):
+        installer = FakeInstaller()
+        setup = AutoSetup(installer, self.state, clock=lambda: self.now[0],
+                          resolve=lambda tool: f"C:/fake/{tool}.exe", recheck=("python",))
+        self.assertEqual(setup.start()["state"], "ready")
+        self.assertIsNone(setup.thread)
+        self.assertEqual(installer.calls, [])
+
     def test_fs6_nothing_starts_without_the_users_choice_and_status_only_reads(self):
         installer = FakeInstaller()
         setup = self.make(installer)

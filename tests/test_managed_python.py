@@ -60,6 +60,48 @@ class ManagedPythonTests(unittest.TestCase):
         self.assertEqual([p.name for p in self.root.iterdir() if p.name.startswith("python-stage-")], [])
         self.assertTrue(self.install()["reused"])
 
+    def test_reuse_proves_the_recorded_runtime_again(self):
+        first = self.install()
+        probes = []
+
+        def counting(cmd, **kwargs):
+            probes.append(cmd[0])
+            return self.run_ok(cmd, **kwargs)
+        again = self.install(run=counting)
+        self.assertTrue(again["reused"])
+        self.assertEqual(probes, [first["executable"]])
+        self.assertEqual(self.signed, ["Python Software Foundation"] * 2)
+
+    def test_a_runtime_that_fails_again_is_replaced_and_never_deleted(self):
+        first = self.install()
+        old = Path(first["executable"])
+        broken = lambda cmd, **kw: (subprocess.CompletedProcess(cmd, 1, "", "No module named tkinter")
+                                    if cmd[0] == str(old) else self.run_ok(cmd, **kw))
+        fresh = self.install(run=broken)
+        self.assertFalse(fresh["reused"])
+        self.assertNotEqual(fresh["executable"], str(old))
+        self.assertEqual(mp.published(), Path(fresh["executable"]))
+        self.assertTrue(old.is_file())  # a running job or a venv may still use it
+
+    def test_a_failed_signature_on_reuse_is_not_reused(self):
+        first = self.install()
+        old = first["executable"]
+
+        def refuse_old(exe, publisher):
+            if str(exe) == old:
+                raise ValueError("imza")
+            return {"status": "Valid", "publisher": publisher}
+        self.verify = refuse_old
+        fresh = self.install()
+        self.assertFalse(fresh["reused"])
+        self.assertTrue(Path(old).is_file())
+
+    def test_reading_the_runtime_runs_nothing(self):
+        self.install()
+        with patch.object(mp, "prove", side_effect=AssertionError("no proof while reading")):
+            self.assertIsNotNone(mp.published())
+            self.assertIsNotNone(mp.interpreter())
+
     def test_a_wrong_hash_publishes_nothing(self):
         with patch.object(mp, "SHA256", "0" * 64):
             with self.assertRaises(ValueError):

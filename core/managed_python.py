@@ -13,6 +13,12 @@ package it carries tkinter, Tcl/Tk, pip and venv.
   (version, tkinter with Tcl/Tk, venv, ensurepip) run owned (core.cli_installer.owned_run).
 - Atomic publish: the staging folder is renamed into place and only then recorded in installed.json;
   a half-finished setup is never "ready".
+- Reuse contract (Fides, open item of the MP reviews): a recorded runtime is reused only after the
+  same two gates pass again (PSF signature, capability probe). One that fails is not reused: a fresh
+  copy is proven and published into a new folder and the record moves to it. The old folder is never
+  deleted while SpeS runs (a running job or a project venv may still use it); SpeS's uninstaller
+  removes the whole folder. This proves the runtime still works; it is not a guard against changes
+  made by the same Windows user.
 - Resolution (P2): the managed runtime first, then the user's own Python only as a fallback; the user's
   Python is never changed, upgraded or removed.
 """
@@ -223,6 +229,19 @@ def install(run=None, download=None, verify=None, base=None) -> dict:
         return _install(run, download, verify, root(base))
 
 
+def prove(exe: Path, run, verify) -> str:
+    """The two gates every runtime passes before it is published or reused: python.exe signed by the
+    Python Software Foundation, and the isolated capability probe. Returns the probe's output."""
+    verify(exe, "Python Software Foundation")
+    env = {k: v for k, v in os.environ.items() if k not in {"PYTHONHOME", "PYTHONPATH"}}
+    probe = run([str(exe), "-I", "-c", PROBE], capture_output=True, text=True, timeout=60, env=env,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    out = (probe.stdout or "").strip()
+    if probe.returncode or not out.startswith(VERSION + "|"):
+        raise RuntimeError("SpeS'in Python'u denetimden geçmedi (tkinter/venv/pip)")
+    return out
+
+
 def _install(run, download, verify, base) -> dict:
     from core.atomic_json import atomic_write_json, load_json
     from core.cli_installer import owned_run
@@ -232,7 +251,11 @@ def _install(run, download, verify, base) -> dict:
     verify = verify or install_security.verify_publisher
     existing = published(base)
     if existing is not None:
-        return {"installed": True, "executable": str(existing), "version": VERSION, "reused": True}
+        try:
+            prove(existing, run, verify)
+            return {"installed": True, "executable": str(existing), "version": VERSION, "reused": True}
+        except Exception:
+            pass  # not reused: a fresh copy is proven into a new folder; the old one stays in place
     base.mkdir(parents=True, exist_ok=True)
     stage = base / ("python-stage-" + uuid.uuid4().hex[:8])
     stage.mkdir()
@@ -246,13 +269,7 @@ def _install(run, download, verify, base) -> dict:
         exe = unpacked / "python.exe"
         if not exe.is_file():
             raise ValueError("Python arşivinde python.exe yok")
-        verify(exe, "Python Software Foundation")
-        env = {k: v for k, v in os.environ.items() if k not in {"PYTHONHOME", "PYTHONPATH"}}
-        probe = run([str(exe), "-I", "-c", PROBE], capture_output=True, text=True, timeout=60, env=env,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        out = (probe.stdout or "").strip()
-        if probe.returncode or not out.startswith(VERSION + "|"):
-            raise RuntimeError("SpeS'in Python'u denetimden geçmedi (tkinter/venv/pip)")
+        out = prove(exe, run, verify)
         final = base / "packages" / ("python-" + VERSION + "-" + uuid.uuid4().hex[:8])
         final.parent.mkdir(parents=True, exist_ok=True)
         os.replace(unpacked, final)  # atomic publish of the folder

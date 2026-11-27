@@ -33,7 +33,8 @@ DOWNLOAD_TEXT = "yaklaşık 850 MB indirir, diskte yaklaşık 1,6 GB yer kaplar"
 
 
 class AutoSetup:
-    def __init__(self, installer, state_path: Path | None = None, clock=time.time, resolve=None):
+    def __init__(self, installer, state_path: Path | None = None, clock=time.time, resolve=None,
+                 recheck=None):
         from core.cli_installer import managed_root, resolve_cli
 
         def default_resolve(tool):
@@ -48,6 +49,10 @@ class AutoSetup:
         self.state_path = Path(state_path or (managed_root() / "auto_setup.json"))
         self.clock = clock
         self.resolve = resolve or default_resolve
+        # Fides reuse contract: once per app run, a tool already in place is re-proven by its own
+        # installer (managed Python: signature + probe; a failed one is replaced, never deleted).
+        self.recheck = tuple(recheck if recheck is not None else (() if resolve else ("python",)))
+        self._rechecked = False
         self.lock = threading.Lock()
         self.thread = None
         self.stop_event = threading.Event()
@@ -93,7 +98,12 @@ class AutoSetup:
             if not state.get("consent"):
                 self.live["state"] = "needs_choice" if self.missing() else "ready"
                 return self._status_locked()
-            todo = [t for t in self.missing() if consent or not self._recently_failed(t)]
+            missing = self.missing()
+            todo = [t for t in missing if consent or not self._recently_failed(t)]
+            if not self._rechecked:
+                self._rechecked = True
+                todo = [t for t, _label in TOOLS
+                        if t in todo or (t in self.recheck and t not in missing)]
             if not todo:
                 self.live.update(state="ready" if not self.missing() else "waiting", current=None)
                 return self._status_locked()
