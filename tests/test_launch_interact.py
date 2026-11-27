@@ -454,10 +454,16 @@ class ObserveWiringTests(unittest.TestCase):
 
         def capture(hwnd, result, verify):
             result.update(state=state, png=b"png")
+        def windows(pids):
+            # The window's owner is chosen once (the root process), like a real window: the Python
+            # launcher may add a child to the tree later, which must not move the window (27 Nov, a
+            # full-suite run under load saw the owner change between polls).
+            if not self.pid[0]:
+                self.pid[0] = min(pids)
+            return [(1234, self.pid[0], "T")] if self.pid[0] in pids else []
         with patch.object(lc, "_owner_pid", side_effect=lambda hwnd: self.pid[0]):
             return lc.observe(self.entry, self.root / "p", self.root / "kanit", threading.Event(), sys.executable,
-                              windows=lambda pids: self.pid.__setitem__(0, min(pids)) or [(1234, min(pids), "T")],
-                              settle=0.2, capture=capture, interact=interact)
+                              windows=windows, settle=0.2, capture=capture, interact=interact)
 
     def test_the_scenario_runs_through_the_probe_in_the_proved_window_and_cleanup_stays_one(self):
         from core import launch_check as lc
