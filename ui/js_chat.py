@@ -607,7 +607,9 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       applySpace(conv.space);
       if (typeof refreshAttachChips === 'function') refreshAttachChips();
       chatConvTitle.textContent = conv.title || 'Yeni Sohbet';
-      if (conv.agent) syncAgentUI(conv.agent);
+      // Ücretsiz sohbet (27 Nov): its speakers are the free channels, not an agent of the picker.
+      if (conv.agent && !conv.free) syncAgentUI(conv.agent);
+      if (typeof window.applyFreeChat === 'function') window.applyFreeChat(conv);
       syncModelCatalogAndSelection(data.models, conv.models);
       syncTeamMembers(conv.team_passive);
       const activeProjectId = conv.project_id || 'squad-pilot';
@@ -630,7 +632,10 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
       userPinnedToBottom = true;
       unreadWhileScrolledUp = 0;
       updateJumpBottomBtn();
-      if (!conv.messages || !conv.messages.length) {
+      if ((!conv.messages || !conv.messages.length) && conv.free) {
+        // 27 Nov (live): an empty free conversation opens its own chat, not the first screen again.
+        appendMsg('bot', 'SPES', 'Ücretsiz sohbet açıldı. Bağladığın ücretsiz hesaplarla konuşuyorsun; dosyalarına ve programlarına dokunulmaz.\nAklındakini yaz: sohbet edelim, fikir verelim, birlikte çözelim.', '', 'quartz');
+      } else if (!conv.messages || !conv.messages.length) {
         const welcome = appendMsg('bot', 'SPES', 'Merhaba! Ben SpeS. Doğrudan Antigravity ve Codex ajanlarıyla çalışıyorum.\nÜstteki seçiciden Antigravity, Codex veya Birlikte modunu seçip mesaj gönderebilirsin.', '', 'quartz');
         welcome.dataset.welcome = '1';
       } else {
@@ -1002,7 +1007,8 @@ JAVASCRIPT = r"""  // ── Agent Chat & Model Selection Integration ───�
     renderChatStopReceipt({status:'pending'});
     try {
       const [chatResult] = await Promise.allSettled([
-        Promise.resolve().then(() => window.pywebview.api.chat_cancel()),
+        // Ücretsiz sohbet: Stop ends that conversation's free round only (27 Nov).
+        Promise.resolve().then(() => window.pywebview.api.chat_cancel(document.body?.classList?.contains?.('free-chat') ? currentConvId : '')),
         Promise.resolve().then(() => window.pywebview.api.cancel_request())
       ]);
       if (chatResult.status === 'fulfilled' && chatResult.value?.status === 'ok') {

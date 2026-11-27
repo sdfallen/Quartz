@@ -104,6 +104,11 @@ MODELS = (
 
 _LINGER_IDLE = threading.Event()  # never set; see ClaudeRuntime._close_after_answer
 
+def _with_project(env, project):
+    from core.cli_installer import with_project
+    return with_project(env, project)
+
+
 class ClaudeRuntime(CodexRuntime):
     SUPPORTED_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
     _SHARED_PROBE_CACHE: dict[str, tuple[float, dict]] = {}
@@ -116,7 +121,9 @@ class ClaudeRuntime(CodexRuntime):
         for candidate in candidates:
             if candidate and Path(candidate).is_file():
                 return str(Path(candidate).resolve())
-        raise FileNotFoundError("Claude CLI was not found")
+        # 27 Nov: the copy SpeS set up itself in its private folder (core.auto_setup).
+        from core.cli_installer import resolve_cli
+        return resolve_cli("claude")
 
     # -- discovery ---------------------------------------------------------
     def list_models(self, force: bool = False) -> dict:
@@ -223,7 +230,7 @@ class ClaudeRuntime(CodexRuntime):
         return args
 
     @staticmethod
-    def child_environment():
+    def child_environment():  # noqa: D401 - project venv overlay is applied at start (_with_project)
         from core.cli_installer import cli_environment
         env = cli_environment()
         for name in _INHERITED_SESSION_VARS:
@@ -341,7 +348,7 @@ class ClaudeRuntime(CodexRuntime):
                 command, cwd=str(project), stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 encoding="utf-8", errors="replace", creationflags=flags,
-                env=desktop_env if desktop_env is not None else self.child_environment(),
+                env=_with_project(desktop_env if desktop_env is not None else self.child_environment(), project),
             )
             job_bound = bind_kill_on_close_job(process, resume=True, error_sink=job_errors.append)
         except Exception:

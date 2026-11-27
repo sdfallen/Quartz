@@ -42,6 +42,7 @@ def _writer_failed(message, run, run_id):
 from core.skill_turn import SkillTurnMixin
 from core.long_job_chat import LongJobChatMixin
 from core.job_planner import JobPlannerMixin
+from core.free_chat_chat import FreeChatMixin, is_free, is_free_id
 
 
 
@@ -56,7 +57,7 @@ def desktop_evidence(folder) -> dict:
         count = 0
     return {"observations": count, "folder": str(folder)} if count else {}
 
-class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlannerMixin):
+class AgentChatService(FreeChatMixin, TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlannerMixin):
     MAX_GROUP_ROUNDS = 2
 
     def __init__(self, agent_service: MultiAgentService, store_path: str | Path):
@@ -418,6 +419,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
             self._plan_generation = self.__dict__.get("_plan_generation", 0) + 1
         for job in list(self.__dict__.get("_long_jobs", {}).values()):
             job.halt()  # resumable after restart; Stop is the user's only final word
+        self.free_stop()  # Fides FS2: no free round writes after closing
         session = self.__dict__.get("_desktop_session")
         if session is not None:
             try:
@@ -529,8 +531,26 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
                 turn["stop_receipt"].setdefault("runs", {})[run_id] = state
         return state
 
+    def _is_free_cid(self, conversation_id) -> bool:
+        """The stored flag or the id (Fides RFS1: free conversations from before the prefix)."""
+        if is_free_id(conversation_id):
+            return True
+        try:
+            return is_free(self.store.get(str(conversation_id)))
+        except Exception:
+            return False
+
+    def _refuse_if_free(self, conversation_id):
+        try:
+            conversation = self.store.get(conversation_id) if conversation_id else self.store.get_active()
+        except Exception:
+            return
+        if is_free(conversation):
+            raise PermissionError("Ücretsiz sohbette bu işlem yok; yalnız sohbet edilir.")
+
     def prepare_resume(self, conversation_id, message_id):
         """Return an editable draft only. No dispatch, permission or session reuse."""
+        self._refuse_if_free(conversation_id)
         with self._lock:
             self._refresh_stop_receipt()
             if self._closed or (self._active_turn or {}).get("stop_receipt", {}).get("status") in {"pending", "failed"}:
@@ -739,6 +759,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
                 "evidence": lambda: desktop_evidence(folder)}
 
     def coordination_message(self, cid, sender, content, metadata=None):
+        self._refuse_if_free(cid)
         if sender not in {"user", "quartz", "codex", "antigravity", "claude"}:
             raise ValueError("Geçersiz koordinasyon katılımcısı")
         if not isinstance(content, str) or len(content) > 64000: raise ValueError("Geçersiz mesaj")
@@ -829,6 +850,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
 
     def panel_read(self, cid, scope, path, batch=None):
         """One file for the panel, only from the lists panel_files returns."""
+        self._refuse_if_free(cid)
         from core.local_preview import read_for_panel
         files = self.panel_files(cid)
         rel = str(path or "")
@@ -1007,6 +1029,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
             return bool(turn and turn.get("conversation_id") == cid and turn.get("conversation_only"))
 
     def set_project(self, conversation_id: str, project_id: str | None) -> None:
+        self._refuse_if_free(conversation_id)
         with self._lock:
             if project_id is not None:
                 self.agent_service.projects.get(project_id)
@@ -1129,6 +1152,13 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
         if requested_permission_level not in {'read-only','project','full'}: raise ValueError('Invalid requested permission level')
         from core.space_policy import is_chat
         target = self.store.get(conversation_id) if conversation_id else self.store.get_active()
+        if is_free(target) or is_free_id(conversation_id):
+            # Ücretsiz sohbet (27 Nov): routed before every other branch; it only ever talks.
+            if self._closed:
+                raise RuntimeError("SpeS kapanıyor; yeni mesaj alınmadı.")
+            if origin == "long_job":
+                raise PermissionError("Ücretsiz sohbette uzun iş yok.")
+            return self._free_chat_turn(target, text)
         if origin != "long_job" and target is not None and not is_chat(target):
             # A conversation with a running job: the user talks to it in plain words
             # ("ne durumda?", "dur", "devam", anything else is a note) - no commands (25 Nov).
@@ -1389,6 +1419,7 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
 
     def continue_discussion(self, conversation_id: str | None = None) -> dict:
         """Trigger 1 additional mutual evaluation round between Codex and Antigravity in Birlikte mode."""
+        self._refuse_if_free(conversation_id)
         with self._lock:
             if self._closed:
                 raise RuntimeError("SpeS kapanıyor; yeni görev başlatılamaz.")
@@ -1465,7 +1496,14 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
             "agent": "collaboration",
         }
 
-    def cancel_active(self) -> dict:
+    def cancel_active(self, conversation_id=None) -> dict:
+        # Ücretsiz sohbet (Fides FS2): Stop in a free conversation ends its round and nothing else;
+        # a global Stop ends free rounds too.
+        if conversation_id and self._is_free_cid(conversation_id):
+            stopped = self.free_stop(str(conversation_id))
+            return {"cancelled": bool(stopped), "free": True,
+                    "stop_receipt": {"status": "confirmed", "runs": {}, "worker_pending": False}}
+        self.free_stop()
         with self._lock:
             # A planned job waiting to start belongs to the generation before this Stop (F5).
             self._plan_generation = self.__dict__.get("_plan_generation", 0) + 1
@@ -1538,6 +1576,13 @@ class AgentChatService(TeamTurnMixin, SkillTurnMixin, LongJobChatMixin, JobPlann
         """Poll the state, current message, and full conversation message list of the active chat turn."""
         with self._lock:
             self._refresh_stop_receipt()
+        # A free round is not an agent turn but the page follows it the same way (27 Nov). Fides
+        # RFS2: it is chosen by the selected conversation, so a finished Workspace turn left in
+        # _active_turn never hides it (a free conversation never has an agent turn of its own).
+        free = self.free_poll()
+        if free is not None:
+            return free
+        with self._lock:
             if not self._active_turn:
                 return {"active": False}
             turn = deepcopy(self._active_turn)

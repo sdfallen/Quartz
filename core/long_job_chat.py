@@ -40,6 +40,13 @@ class LongJobChatMixin:
 
     # -- public API (IPC) -----------------------------------------------------------
     def job_start(self, spec: dict) -> dict:
+        from core.free_chat_chat import is_free
+        try:
+            current = self.store.get(spec.get("conversation_id")) if (spec or {}).get("conversation_id")                 else self.store.get_active()
+        except Exception:
+            current = None
+        if is_free(current):
+            raise JobError("Ücretsiz sohbette uzun iş başlatılamaz; Workspace'te başlat.")
         """Start a job the user approved in this conversation's project."""
         from core.space_policy import is_chat
         spec = dict(spec or {})
@@ -56,19 +63,41 @@ class LongJobChatMixin:
             spec["source_manifest"], spec["source_scope"] = source_fingerprint(spec["sources"])
         spec["conversation_id"] = conv["id"]
         spec["project_path"] = project["path"]  # the conversation's project, never a free path
+        prepare_venv = spec.get("kind") != "data" and spec.get("permission_level") == "full"
         # The models the user chose are recorded once; SpeS never switches them by itself.
         spec["models"] = {agent: self.store.get_agent_model(conv["id"], agent)
                           for agent in ("claude", "codex", "antigravity")}
         # Fides acceptance review 26 Nov (F5): the plan's generation, the close flag, the
         # one-job rule, the ledger and the job's registration and start are one step under the
         # lock Stop (cancel_active) and close() take, so a Stop can no longer slip in between.
-        with self._lock:
-            if generation is not None and (self.__dict__.get("_closed")
-                                           or generation != self.__dict__.get("_plan_generation", 0)):
-                raise JobError("Plan durduruldu; iş başlatılmadı.")
+        def refused():
+            if self.__dict__.get("_closed") or (generation is not None
+                                                and generation != self.__dict__.get("_plan_generation", 0)):
+                return "Plan durduruldu; iş başlatılmadı."
             if any(job.ledger.data["status"] in {"running", "waiting_limit", "paused"}
                    for job in self._jobs().values()):
-                raise JobError("Zaten sürmekte olan bir uzun iş var; önce onu bitir ya da durdur.")
+                return "Zaten sürmekte olan bir uzun iş var; önce onu bitir ya da durdur."
+            return None
+        if prepare_venv:
+            # Fides V1 (27 Nov): every refusal (stale plan, closing, another job, an invalid spec)
+            # comes before the first side effect; the venv (seconds) is made outside the lock.
+            with self._lock:
+                reason = refused()
+            if reason:
+                raise JobError(reason)
+            from core.long_job import validate_spec
+            validate_spec(dict(spec))
+            from core.managed_python import ensure_project_venv
+            gen_at_start = self.__dict__.get("_plan_generation", 0)
+            # Fides V1-R: a finished venv is never removed here — another start may already use it,
+            # and a complete, .gitignored project environment harms nothing. A Stop only keeps the
+            # command from starting (cancelled) and the job from starting (checked again below).
+            ensure_project_venv(project["path"], cancelled=lambda: bool(
+                self.__dict__.get("_closed") or self.__dict__.get("_plan_generation", 0) != gen_at_start))
+        with self._lock:
+            reason = refused()
+            if reason:
+                raise JobError(reason)
             ledger = JobLedger.create(spec)
             job = self._make_job(ledger)
             self._jobs()[ledger.data["id"]] = job
@@ -178,9 +207,14 @@ class LongJobChatMixin:
         running program; host-wide desktop lease for the whole look."""
         import uuid
         from core import launch_check as lc
+        from core import launch_interact as li
         if ledger.data.get("kind") == "data" or ledger.data.get("permission_level") != "full":
             return None
-        if not lc.wants_look(milestone):
+        # Fides Q3: read once; the run keeps this snapshot and its SHA even if the file changes.
+        loaded, scenario = li.load_scenario(ledger.data["project_path"])
+        steps = (loaded or {}).get("steps")
+        # 26 Nov v2: a project with a scenario is an interactive program; it is tried every milestone.
+        if not lc.wants_look(milestone) and scenario == "senaryo yok":
             return None
 
         def skipped(reason):
@@ -190,7 +224,7 @@ class LongJobChatMixin:
         entry, why = lc.detected_entry(ledger.data["project_path"])
         if entry is None:
             return skipped(why)
-        interpreter = lc.python_interpreter()
+        interpreter = lc.python_interpreter(ledger.data["project_path"])
         if not interpreter:
             return skipped("python bulunamadı")
         lease = None
@@ -200,10 +234,21 @@ class LongJobChatMixin:
             lease = NativeDesktopBackend.acquire_lease()
         except Exception:
             return skipped("masaüstü başka bir görevde ya da ekran kilitli")
+        interact = None
         try:
+            if steps:
+                # Fides: built inside the lease's try, so a failing constructor still releases it.
+                backend = NativeDesktopBackend()
+
+                def interact(hwnd, stop_event, **kwargs):
+                    return li.run(backend, hwnd, steps, stop_event, **kwargs)
             evidence = (Path(ledger.path).parent / "launch"
                         / f"{milestone['id']}-deneme{milestone.get('attempts', 0)}-{uuid.uuid4().hex[:6]}")
-            receipt = lc.observe(entry, ledger.data["project_path"], evidence, stop, interpreter)
+            receipt = lc.observe(entry, ledger.data["project_path"], evidence, stop, interpreter,
+                                 interact=interact)
+            receipt["scenario"] = f"{len(steps)} adım" if steps else scenario
+            if loaded:
+                receipt["scenario_sha256"] = loaded["sha256"]
         except Exception as exc:
             return skipped(f"başlatılamadı ({type(exc).__name__})")
         finally:

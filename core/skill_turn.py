@@ -101,6 +101,7 @@ class SkillTurnMixin:
 
     def skill_override(self, cid, override_id):
         """The user's explicit "Yine de kur" after a veto. Only the desktop click calls this."""
+        self._refuse_if_free(cid)
         import time as _time
         with self._lock:
             pending = self.__dict__.setdefault("_skill_overrides", {}).get(cid)

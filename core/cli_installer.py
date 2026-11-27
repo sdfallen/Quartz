@@ -18,7 +18,8 @@ from pathlib import Path
 
 from core.atomic_json import atomic_write_json, load_json
 
-PACKAGES = {"codex": "@openai/codex", "gemini": "@google/gemini-cli"}
+# 27 Nov: Claude Code joins, so SpeS sets up every agent tool itself (core.auto_setup).
+PACKAGES = {"codex": "@openai/codex", "gemini": "@google/gemini-cli", "claude": "@anthropic-ai/claude-code"}
 _LOCK = threading.Lock()
 
 
@@ -45,10 +46,26 @@ def package_entry(prefix, provider):
     return resolved
 
 
+def claude_native(prefix):
+    """Claude Code's signed native program from its platform package (never the npm stub)."""
+    arch = {"amd64": "x64", "x86_64": "x64", "arm64": "arm64", "aarch64": "arm64"}.get(platform.machine().lower())
+    if not arch:
+        raise RuntimeError("Bu Windows işlemci mimarisi desteklenmiyor")
+    package = Path(prefix) / "node_modules" / "@anthropic-ai" / f"claude-code-win32-{arch}"
+    metadata = json.loads((package / "package.json").read_text(encoding="utf-8"))
+    if metadata.get("name") != f"@anthropic-ai/claude-code-win32-{arch}":
+        raise ValueError("Claude Code paket kimliği uyuşmuyor")
+    binary = (package / "claude.exe").resolve()
+    if package.resolve() not in binary.parents or not binary.is_file():
+        raise ValueError("Claude Code programı bulunamadı")
+    return binary
+
+
 def resolve_cli(provider, explicit=None, *, root=None):
     if provider not in {*PACKAGES, "agy"}:
         raise ValueError("Bilinmeyen CLI")
-    env_name = {"codex": "QUARTZ_CODEX_PATH", "gemini": "QUARTZ_GEMINI_PATH", "agy": "QUARTZ_ANTIGRAVITY_PATH"}[provider]
+    env_name = {"codex": "QUARTZ_CODEX_PATH", "gemini": "QUARTZ_GEMINI_PATH", "agy": "QUARTZ_ANTIGRAVITY_PATH",
+                "claude": "QUARTZ_CLAUDE_PATH"}[provider]
     candidates = [explicit, os.getenv(env_name)]
     managed = Path(root) if root else managed_root()
     manifest = load_json(managed / "installed.json", {})
@@ -84,7 +101,7 @@ def node_command(executable, args=()):
             raise FileNotFoundError("Node çalışma zamanı bulunamadı")
         return [str(Path(candidate).resolve(strict=False)), str(path), *args]
     if path.suffix.lower() == ".cmd":
-        package = "codex" if path.stem == "codex" else "gemini"
+        package = path.stem if path.stem in PACKAGES else "gemini"
         try:
             return node_command(package_entry(path.parent, package), args)
         except (OSError, ValueError):
@@ -94,9 +111,58 @@ def node_command(executable, args=()):
     return [str(path), *args]
 
 
+def with_project(env, project):
+    """The final step of every agent's start environment (Claude, Codex, Antigravity, Gemini).
+
+    Fides V3 (27 Nov): an agent working in a project with its own venv sees that venv first
+    (Scripts on PATH, VIRTUAL_ENV), on top of whatever environment its runtime built (session
+    filters, desktop capability, permission). Fides REF-AGY: it always returns an environment, even
+    when the runtime built none (it would have inherited SpeS's own): no PATH entry may reach a SpeS
+    runtime other than the selected one, which goes first. Every other field is kept as given; the
+    given dict is never changed and the user's PATH setting never either."""
+    merged = dict(env if env is not None else os.environ)
+    try:
+        from core.managed_python import foreign_path, project_venv, published
+        inherited = foreign_path(merged.get("PATH", ""))
+        python = published()
+        first = [str(python.parent), str(python.parent / "Scripts")] if python is not None else []
+        merged["PATH"] = os.pathsep.join([*first, inherited]) if first else inherited
+        if first:
+            # Fides AGY-PIP: the shared runtime keeps cli_environment's guard on every start path;
+            # pip installs go into a project's venv only (a venv still satisfies it).
+            merged["PIP_REQUIRE_VIRTUALENV"] = "1"
+        venv = project_venv(project)
+    except Exception:
+        venv = None
+    if venv is None:
+        return merged
+    merged.pop("PYTHONHOME", None)
+    merged.pop("PYTHONPATH", None)
+    merged["VIRTUAL_ENV"] = str(venv.parent.parent)
+    merged["PATH"] = os.pathsep.join([str(venv.parent), merged.get("PATH", "")])
+    return merged
+
+
 def cli_environment():
     env = os.environ.copy()
-    env["PATH"] = os.pathsep.join([str(managed_root() / "node"), str(managed_root()), env.get("PATH", "")])
+    try:  # Fides REF-ENV: no inherited entry may reach a SpeS runtime that is not the selected one
+        from core.managed_python import foreign_path
+        env["PATH"] = foreign_path(env.get("PATH", ""))
+    except Exception:
+        pass
+    paths = [str(managed_root() / "node"), str(managed_root())]
+    # 27 Nov (Fides P3): the agents' task environment sees SpeS's own Python first; the user's PATH
+    # and system settings are never changed.
+    try:
+        from core.managed_python import published
+        python = published()
+        if python is not None:
+            paths = [str(python.parent), str(python.parent / "Scripts"), *paths]
+            # Fides: the managed base is shared; pip installs go into a project's venv only.
+            env["PIP_REQUIRE_VIRTUALENV"] = "1"
+    except Exception:
+        pass
+    env["PATH"] = os.pathsep.join([*paths, env.get("PATH", "")])
     # Read only SpeS's config, regardless of the task's working directory.
     from dotenv import dotenv_values
     values = dotenv_values(app_root() / ".env")
@@ -106,11 +172,41 @@ def cli_environment():
     return env
 
 
+def owned_run(cmd, *, input=None, capture_output=False, text=False, timeout=None, env=None, cwd=None,
+              creationflags=0):
+    """subprocess.run for setup steps, owned (Fides FS6 lifecycle, 27 Nov): the process starts
+    suspended, is bound to a kill-on-close Job Object and only then runs; a timeout, closing SpeS or
+    the uninstaller closing SpeS ends the whole tree (npm, node and what they started). A process
+    that cannot be owned is never resumed."""
+    if os.name != "nt":
+        return subprocess.run(cmd, input=input, capture_output=capture_output, text=text, timeout=timeout,
+                              env=env, cwd=cwd)
+    from core.process_tree import CREATE_SUSPENDED, bind_kill_on_close_job, close_process_job, resume_process
+    pipe = subprocess.PIPE if capture_output else None
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
+                            stdout=pipe, stderr=pipe, text=text, env=env, cwd=cwd,
+                            creationflags=creationflags | CREATE_SUSPENDED)
+    try:
+        if not bind_kill_on_close_job(proc, resume=False) or not resume_process(proc):
+            proc.kill()
+            proc.wait(timeout=5)
+            raise RuntimeError("Kurulum süreci SpeS'e bağlanamadı; başlatılmadı")
+        try:
+            out, err = proc.communicate(input, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            close_process_job(proc)  # the whole tree ends with the job
+            proc.communicate()
+            raise
+        return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+    finally:
+        close_process_job(proc)
+
+
 class CliInstaller:
     def __init__(self, root=None, fetch=None, run=None):
         self.root = Path(root) if root else managed_root()
         self.fetch = fetch or self._fetch
-        self.run = run or subprocess.run
+        self.run = run or owned_run
 
     @staticmethod
     def _fetch(url, limit=150 * 1024 * 1024):
@@ -181,6 +277,10 @@ class CliInstaller:
     def install(self, provider):
         if provider == "agy":
             return self._install_agy()
+        if provider == "python":
+            # 27 Nov: SpeS's own Python runtime (core.managed_python, Fides option E).
+            from core import managed_python
+            return managed_python.install(run=self.run, base=self.root)
         if provider not in PACKAGES:
             raise ValueError("Bilinmeyen CLI")
         with _LOCK:
@@ -220,10 +320,20 @@ class CliInstaller:
                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             if result.returncode:
                 raise RuntimeError("CLI kurulumu tamamlanamadı. Ağ bağlantısını kontrol edip yeniden deneyin.")
-            executable = package_entry(prefix, provider)
+            if provider == "claude":
+                # 27 Nov: Claude Code's npm package puts its native program in place with an install
+                # script, which SpeS never runs (--ignore-scripts). The platform package carries the
+                # same signed program; SpeS uses it after checking Anthropic's signature.
+                executable = claude_native(prefix)
+                from core.install_security import verify_publisher
+                verify_publisher(executable, "Anthropic, PBC")
+                check_cmd = [str(executable), "--version"]
+            else:
+                executable = package_entry(prefix, provider)
+                check_cmd = [str(node), str(executable), "--version"]
             if not executable.is_file():
                 raise RuntimeError("Kurulan CLI giriş dosyası bulunamadı")
-            check = self.run([str(node), str(executable), "--version"], env=env, capture_output=True, text=True, timeout=30,
+            check = self.run(check_cmd, env=env, capture_output=True, text=True, timeout=30,
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             if check.returncode:
                 raise RuntimeError("CLI kuruldu ancak başlangıç doğrulaması başarısız")

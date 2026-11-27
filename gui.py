@@ -33,6 +33,40 @@ IPC_HOST = "127.0.0.1"
 IPC_PORT = 55_123
 
 
+_FREE_REFUSAL = {"status": "error", "data": "Ücretsiz sohbette yalnız sohbet edilir; bu işlem Workspace'te yapılır."}
+
+
+_KNOWN_FREE: set = set()
+
+
+def _learn_free(result):
+    """Fides RFS1: free conversations made before ids carried "free-" (the 27 Nov first slice) keep
+    their stored flag; every conversation list the backend sends teaches the page layer which ids
+    are free, so the check needs no extra IPC on a message."""
+    try:
+        data = (result or {}).get("data") or {}
+        items = list(data.get("conversations") or [])
+        for key in ("active_conversation", "conversation"):
+            if isinstance(data.get(key), dict):
+                items.append(data[key])
+        if isinstance(data, dict) and data.get("id"):
+            items.append(data)
+        for item in items:
+            if isinstance(item, dict) and item.get("free") and item.get("id"):
+                _KNOWN_FREE.add(str(item["id"]))
+    except Exception:
+        pass
+    return result
+
+
+def _free_conversation(conversation_id) -> bool:
+    """Ücretsiz sohbet (Fides FS1/RFS1): SpeS gives such a conversation an id starting with "free-"
+    at creation; older free conversations are known from their stored flag (_learn_free). The page
+    layer refuses every tool path for it before any side effect, with no IPC on the message."""
+    value = str(conversation_id or "")
+    return value.startswith("free-") or value in _KNOWN_FREE
+
+
 def ipc_send(action: str, data=None) -> dict:
     req = {"action": action, "auth": request_token()}
     if data is not None:
@@ -143,6 +177,16 @@ class Api:
         except Exception as exc:
             return {"status": "error", "data": str(exc)}
 
+    @_application_action
+    def onboarding_auto(self, action="status"):
+        """SpeS's own tool setup: prepare (the user's choice), continue, stop, free_only, status."""
+        if action not in {"status", "prepare", "continue", "stop", "free_only"}:
+            return {"status": "error", "data": "Geçersiz kurulum işlemi"}
+        try:
+            return {"status": "ok", "data": self._onboarding_service().auto_setup(action)}
+        except Exception as exc:
+            return {"status": "error", "data": str(exc)}
+
     def onboarding_refresh(self):
         return ipc_send("onboarding_refresh")
 
@@ -188,6 +232,8 @@ class Api:
 
     @_application_action
     def diagnostics_select_application(self, question=None, chat_request=None, conversation_id=None):
+        if _free_conversation(conversation_id):
+            return _FREE_REFUSAL
         """Native file selection grants one target read, never tool execution."""
         with self._diagnostic_tools_lock:
             task=None
@@ -318,6 +364,8 @@ class Api:
 
     @_application_action
     def natural_start(self, text, conversation_id, project_id, models, permission_level='read-only'):
+        if _free_conversation(conversation_id):
+            return _FREE_REFUSAL
         """Start reasoning/tool selection, NOT a desktop grant."""
         try:
             with self._natural_start_lock:
@@ -394,6 +442,11 @@ class Api:
             from core.message_intent import message_intent, tools_disallowed
             from core.desktop_task_ui import desktop_intent, desktop_help
             if permission_level not in {'read-only','project','full'}: raise ValueError('Geçersiz dosya yetkisi seçimi')
+            # Ücretsiz sohbet (27 Nov): no diagnostics, desktop, REA or job path; it only talks.
+            # Fides FS1: a free conversation is known from its id (given by SpeS at creation, never
+            # changed), before any side effect and whatever agent the caller sent.
+            if agent == 'free' or _free_conversation(conversation_id):
+                return {'status':'ok','data':{'handled':False,'intent':'conversation'}}
             if agent == 'notion' or re.match(r'^\s*@notion\b', text, re.I):
                 # A cloud-agent message cannot start REA, desktop control or
                 # become an instruction to a running local operator.
@@ -555,6 +608,8 @@ class Api:
 
     @_application_action
     def coordination_prepare(self, text, conversation_id, project_id, models):
+        if _free_conversation(conversation_id):
+            return _FREE_REFUSAL
         """A GUI task request only prepares consent; never starts an operator."""
         try:
             if self._natural and self._natural.status()["active"]:
@@ -796,7 +851,7 @@ class Api:
 
     # ── Agent Chat API ──────────────────────────────────────
     def chat_status(self) -> dict:
-        return ipc_send("chat_status")
+        return _learn_free(ipc_send("chat_status"))
 
     def memory_list(self) -> dict:
         return ipc_send("memory_list")
@@ -960,6 +1015,10 @@ class Api:
         return ipc_send("chat_new", {"title": title, "agent": agent, "project_id": project_id or None,
                                      "space": space or None})
 
+    def free_chat(self, action: str, data: dict | None = None) -> dict:
+        """Ücretsiz sohbet: status, connect, disconnect, consent, order, new."""
+        return _learn_free(ipc_send("free_chat", {"action": str(action or ""), "data": dict(data or {})}))
+
     def security_act(self, alert_id: str, action: str) -> dict:
         """One of a security alert's own actions (stop, quarantine, remove autorun, undo, ignore)."""
         return ipc_send("security_act", {"id": alert_id, "action": action})
@@ -1004,6 +1063,8 @@ class Api:
         return {"status": "ok", "data": True}
 
     def chat_attach_pick(self, conversation_id: str = "") -> dict:
+        if _free_conversation(conversation_id):
+            return _FREE_REFUSAL
         """Native picker for files to add to the next message (photos, documents, zip)."""
         window = webview.windows[0] if webview.windows else None
         if window is None:
@@ -1014,6 +1075,8 @@ class Api:
         return ipc_send("chat_attach_paths", {"conversation_id": conversation_id, "paths": list(paths)[:10]})
 
     def chat_attach_data(self, conversation_id: str, name: str, data_b64: str) -> dict:
+        if _free_conversation(conversation_id):
+            return _FREE_REFUSAL
         """A pasted or dropped file (base64, bounded on the host)."""
         return ipc_send("chat_attach_add", {"conversation_id": conversation_id, "name": name, "data": data_b64})
 
@@ -1028,7 +1091,7 @@ class Api:
         return ipc_send("chat_open_space", {"space": space})
 
     def chat_select(self, conversation_id: str) -> dict:
-        return ipc_send("chat_select", {"conversation_id": conversation_id})
+        return _learn_free(ipc_send("chat_select", {"conversation_id": conversation_id}))
 
     def _chat_delete_guard(self):
         for service in (self._natural, self._coordination):
@@ -1114,8 +1177,9 @@ class Api:
     def chat_poll(self) -> dict:
         return ipc_send("chat_poll")
 
-    def chat_cancel(self) -> dict:
-        return ipc_send("chat_cancel")
+    def chat_cancel(self, conversation_id: str = "") -> dict:
+        # 27 Nov: in a free conversation Stop ends its round only (Fides FS2).
+        return ipc_send("chat_cancel", {"conversation_id": conversation_id} if conversation_id else None)
 
     def notion_tool_decide(self, pending_id, conversation_id, accept, confirmed=False) -> dict:
         """In-chat Notion test-file permission. The backend binds it to the live turn."""

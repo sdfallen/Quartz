@@ -66,7 +66,7 @@ class ClaudeReadinessTests(unittest.TestCase):
                 "codex": {"installed": False, "executable": None},
                 "gemini": {"installed": False, "executable": None}}})()
             service._load_connections = lambda: {"gemini": {"backend": "agy"}}
-            for ready, message in ((True, "Claude hesabı bağlı"), (False, "/login")):
+            for ready, message in ((True, "Claude hesabı bağlı"), (False, "Hesabımla bağlan")):
                 with self.subTest(ready=ready), \
                         patch("core.antigravity_runtime.AntigravityRuntime.probe", return_value={"ready": False}), \
                         patch("core.claude_runtime.ClaudeRuntime.probe",

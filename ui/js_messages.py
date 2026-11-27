@@ -18,12 +18,14 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
 
   function tick() {
     const d = new Date();
+    const uptimeEl = document.getElementById('sessUptime');
+    if (!clockEl || !uptimeEl) return;  // the compact shell has no clock row
     clockEl.textContent = d.toLocaleTimeString('tr-TR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
     const up = Math.floor((Date.now() - startTime) / 1000);
     const h = String(Math.floor(up/3600)).padStart(2,'0');
     const m = String(Math.floor((up%3600)/60)).padStart(2,'0');
     const s = String(up%60).padStart(2,'0');
-    document.getElementById('sessUptime').textContent = `${h}:${m}:${s}`;
+    uptimeEl.textContent = `${h}:${m}:${s}`;
   }
   setInterval(tick, 1000); tick();
 
@@ -114,6 +116,11 @@ JAVASCRIPT = r"""  let ttsEnabled = true;
   }
   function formatMessageLabel(m) {
     if (!m) return 'SPES';
+    // Ücretsiz sohbet (27 Nov): the free speaker's name and the service that answered.
+    if (m.metadata && m.metadata.free_chat && m.metadata.free_persona && m.role !== 'user') {
+      const via = {gemini: 'GEMINI', openrouter: 'OPENROUTER', groq: 'GROQ'}[m.metadata.free_channel] || 'ÜCRETSİZ';
+      return `${String(m.metadata.free_persona).toUpperCase()} · ${via} · ÜCRETSİZ`;
+    }
     // Eos the security watcher speaks through SpeS's own messages (14 Nov).
     if (m.metadata && (m.metadata.security_alert || m.metadata.security_result)) return 'EOS · GÜVENLİK';
     if (m.metadata && m.metadata.team && TEAM_PERSONA[(m.sender || m.metadata.sender || '').toLowerCase()]) {

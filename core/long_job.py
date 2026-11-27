@@ -109,6 +109,8 @@ def validate_spec(spec: dict) -> dict:
             "git_branch": branch, "models": dict(spec.get("models") or {}),
             # SpeS looks for the project's own tests again before each check (one-request jobs).
             "auto_check": bool(spec.get("auto_check")),
+            # Fides MP1: where the check came from — "detected" (SpeS) or the user's own command.
+            "verify_source": "detected" if spec.get("verify_source") == "detected" else "user",
             # A teammate who did not write the milestone accepts it (one-request jobs, Fides 25 Nov).
             "review": bool(spec.get("review")),
             # 26 Nov: a job on documents and data; its writer never touches the sources.
@@ -433,16 +435,31 @@ def run_verify(ledger: JobLedger, stop: threading.Event) -> dict:
     if ledger.data.get("permission_level") != "full":
         return {"ok": True, "summary": "Kontrol komutu tanımlanmadı (Proje izninde SpeS komut çalıştırmaz)."}
     argv = ledger.data.get("verify")
-    if not argv and ledger.data.get("auto_check"):
+    env = None
+    detected = ledger.data.get("verify_source") == "detected"
+    # Fides MP1-L: a stored check with no recorded origin (an older ledger) is kept exactly as it
+    # is — an equal command says nothing about who chose it.
+    if ledger.data.get("auto_check") and (not argv or detected):
+        # SpeS looks for the project's own tests again before each check; the command it finds is
+        # SpeS's, never the user's (Fides MP1: also when job_spec stored it in "verify").
         from core.job_intent import detected_check
-        argv = detected_check(ledger.data.get("project_path"))
+        argv = detected_check(ledger.data.get("project_path")) or (argv if detected else None)
+        if argv and argv[0] == "python":
+            # Fides MP1 (27 Nov): the Python check SpeS itself chose runs with the same interpreter
+            # the agents and launch_check use (SpeS's own first, else the user's); a check command
+            # the user gave is never rewritten.
+            from core.managed_python import project_interpreter, task_environment
+            chosen = project_interpreter(ledger.data.get("project_path"))
+            if chosen:
+                argv = [chosen, *argv[1:]]
+            env = task_environment(project=ledger.data.get("project_path"))
     if not argv:
         return {"ok": True, "summary": "Kontrol komutu tanımlanmadı."}
     from core.process_tree import stop_process_tree
     try:
         process = subprocess.Popen(argv, cwd=ledger.data["project_path"], stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
-                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                                   env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except OSError as exc:
         return {"ok": False, "summary": f"Kontrol başlatılamadı: {exc}"}
     deadline = time.monotonic() + ledger.data.get("verify_timeout", 900)
@@ -893,7 +910,12 @@ class LongJob:
             if look:
                 with ledger._lock:
                     milestone["launch"] = {k: look.get(k) for k in ("verdict", "entry", "window_title",
-                                                                    "capture_state", "reason", "evidence_dir")}
+                                                                    "capture_state", "reason", "evidence_dir",
+                                                                    "scenario", "scenario_sha256")}
+                    if look.get("interaction"):
+                        from core.launch_interact import summary
+                        milestone["launch"]["interaction"] = {
+                            "state": look["interaction"].get("state"), "summary": summary(look["interaction"])}
                     ledger.save()
                 if look.get("verdict") == "cleanup_pending":
                     # Fides L1: no review, no commit and no next milestone over a program whose
@@ -901,6 +923,20 @@ class LongJob:
                     check = {"ok": False, "summary": "SpeS açtığı programın kapandığını doğrulayamadı; "
                                                      "taş senin kararını bekliyor."}
                     hold = True
+                elif look.get("verdict") == "window_seen" and str(look.get("scenario") or "").startswith(
+                        "senaryo geçersiz"):
+                    # The writer was asked for a valid scenario; SpeS ran no step of an invalid one.
+                    check = {"ok": False, "summary": "SpeS spes_deneme.json'u çalıştırmadı: " + look["scenario"]}
+                elif look.get("verdict") == "window_seen" and (look.get("interaction") or {}).get("state") in {
+                        "failed", "crashed"}:
+                    # 26 Nov v2: the scenario's own expectation failed or the program ended under it:
+                    # a defect the writer fixes (a busy desktop or Stop never lands here).
+                    from core.launch_interact import step_lines, summary
+                    played = look["interaction"]
+                    check = {"ok": False, "summary": "SpeS programı denedi: " + summary(played) + "\n"
+                             + "\n".join(step_lines(played))[-1500:]
+                             + ("\n" + str(look.get("output_tail") or "")[-800:]
+                                if played.get("state") == "crashed" and look.get("output_tail") else "")}
                 elif look.get("verdict") in {"crashed", "no_window"}:
                     check = {"ok": False, "summary": "SpeS programı çalıştırdı: "
                              + ("hata verip kapandı." if look["verdict"] == "crashed" else "pencere açmadan bitti.")
@@ -1051,8 +1087,10 @@ def finish_report(ledger: JobLedger) -> str:
     if looks:
         last = looks[-1]
         if last.get("verdict") == "window_seen":
+            played = (last.get("interaction") or {}).get("summary")
             lines.append(f"Program açıldı: SpeS {last.get('entry')} dosyasını çalıştırdı, pencereyi gördü "
-                         f"(\"{last.get('window_title') or 'başlıksız'}\") ve kapattı. Etkileşim denenmedi.")
+                         f"(\"{last.get('window_title') or 'başlıksız'}\") ve kapattı. "
+                         + (played or "Etkileşim denenmedi (senaryo yoktu)."))
         elif last.get("reason") == "pencere açan bir Python programı bulunamadı":
             # Live 26 Nov 17:30: a command-line program read as a problem; it is not one.
             lines.append("Pencereli bir program yok; SpeS açıp bakma adımını uygulamadı.")
@@ -1070,6 +1108,29 @@ def finish_report(ledger: JobLedger) -> str:
     if d.get("git_branch"):
         lines.append(f"Dal: {d['git_branch']}")
     return chr(10).join(lines)
+
+
+# 27 Nov: a project SpeS set up has its own Python environment; packages go there.
+VENV_RULE = (
+    "Bu projenin kendi Python ortamı var (.venv). Paket kurman gerekirse "
+    "`.venv\\Scripts\\python -m pip install <paket>` kullan; programı ve testleri de "
+    "`.venv\\Scripts\\python` ile çalıştır. Genel Python'a paket kurma."
+)
+
+
+# 26 Nov v2: SpeS opens a windowed program and tries it like a user, from the writer's scenario.
+INTERACTION_RULE = (
+    "Bu taş pencereli bir program istiyor: SpeS programı açıp içinde deneyecek. Proje köküne "
+    "spes_deneme.json yaz (her taşta güncelle) ve bu taşın kabul ölçütünü bir kullanıcı gibi deneyen "
+    "adımları koy: {\"adimlar\": [...]}. Adımlar (en çok 20): {\"tikla\": \"Düğme metni\"} (tkinter, "
+    "ekrandaki metni tam eşleşen tek öğe), {\"tikla\": [x, y]} (programın kendi çizim koordinatı, ör. "
+    "pygame ekranı), {\"tus\": \"left left space\"} (harf, rakam, ok, enter, space, esc…), "
+    "{\"bas\": \"right\", \"sure\": 0.5} (basılı tut, 1 sn'ye kadar), {\"bekle\": 1} (3 sn'ye kadar), "
+    "{\"beklenen\": \"Puan: 1\"} (tkinter: bir öğenin metni tam olarak bu), {\"beklenen_icerir\": \"Puan\"} "
+    "(metnin içinde geçer). Beklenen olmayan senaryo yalnız duman testi sayılır. Kaydet/Sil/Gönder gibi "
+    "düğmelere SpeS basmaz; Ctrl/Alt/Win/F tuşları yoktur. Senaryo geçersizse, beklenen tutmazsa ya da "
+    "program hata verirse taş geçmez."
+)
 
 
 DATA_MILESTONE_RULE = (
@@ -1128,6 +1189,14 @@ def milestone_prompt(ledger: JobLedger, milestone: dict, writer: str) -> str:
             "" if d.get("permission_level") == "full" else
             " Bu işte komut çalıştıramazsın (Proje izni): çıktıları metin dosyası olarak (CSV, MD, JSON) "
             "kendin yaz; Excel CSV'yi açar."))
+    if d.get("kind") != "data" and d.get("permission_level") == "full":
+        from core.launch_check import wants_look
+        if wants_look(milestone):
+            parts.append(INTERACTION_RULE)
+        from core.managed_python import project_venv
+        if project_venv(d.get("project_path")) is not None:
+            # 27 Nov: the project's own venv keeps a job's packages out of SpeS's shared runtime.
+            parts.append(VENV_RULE)
     if d.get("writer") and writer != "claude":
         # 26 Nov: the user may select Fides or Eos; the writer is not always standing in for Fatum.
         parts.append(f"Bu taşta yazıcı sensin ({PERSONA.get(writer, writer)}).")

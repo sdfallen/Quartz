@@ -182,6 +182,7 @@ class ConversationStore:
                     "models": self._normalize_models(cdata.get("models")),
                     "space": space_of(cdata),
                     "kind": cdata.get("kind"),
+                    **({"free": True} if cdata.get("free") else {}),
                     "message_count": len(cdata.get("messages", [])),
                     "is_active": cid == self._active_id,
                 })
@@ -189,9 +190,11 @@ class ConversationStore:
             return result
 
     def create(self, title: str = "Yeni Sohbet", agent: str = "antigravity",
-               project_id: str | None = None, models: dict | None = None, space: str | None = None) -> dict:
+               project_id: str | None = None, models: dict | None = None, space: str | None = None,
+               free: bool = False) -> dict:
         with self._lock:
-            cid = uuid.uuid4().hex
+            # Ücretsiz sohbet (27 Nov, Fides FS1): the id itself says "free", given here once.
+            cid = ("free-" if free else "") + uuid.uuid4().hex
             now = time.time()
             record = {
                 "id": cid,
@@ -199,7 +202,8 @@ class ConversationStore:
                 "agent": agent,
                 "space": normalize_space(space),
                 "project_id": project_id,
-                "permission_level": "full",
+                "permission_level": "full",  # a free conversation never reaches a tool path anyway
+                **({"free": True} if free else {}),
                 "created_at": now,
                 "updated_at": now,
                 "models": self._normalize_models(models),
@@ -304,6 +308,16 @@ class ConversationStore:
             self._conversations, self._active_id = remaining, active
             return {"deleted_count": len(ids), "active_conversation": deepcopy(remaining[active]),
                     "backup": str(backup)}
+
+    def mark_free(self, conversation_id: str) -> None:
+        """Ücretsiz sohbet (27 Nov): a stored, one-way property; such a conversation only talks."""
+        with self._lock:
+            conv = self._conversations.get(conversation_id)
+            if conv is None:
+                raise KeyError(f"Conversation not found: {conversation_id}")
+            conv["free"] = True
+            conv["space"] = "chat"
+            self._save()
 
     def latest_in_space(self, space: str) -> dict | None:
         """Most recently updated conversation of a space (for the space switch)."""

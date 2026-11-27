@@ -372,6 +372,11 @@ class AntigravityRuntime:
             process_options["env"] = connection_environment(desktop_connection)
         process_options = self._process_options(process_options, project, desktop_connection, tool_guard,
                                                 full_access=full_access)
+        # Fides V3: the project's own venv first for the agent, on top of the runtime's environment.
+        from core.cli_installer import with_project
+        overlaid = with_project(process_options.get("env"), project)
+        if overlaid is not None:
+            process_options["env"] = overlaid
         job_errors: list[str] = []
         try:
             process = subprocess.Popen(

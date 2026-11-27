@@ -1,18 +1,20 @@
 # SpeS mark
 
-Redesigned on 13 November 2026 when Quartz became SpeS (Latin *spes*, hope): a
-sun rising over a horizon. A smooth half disc, five short rays that do not touch
-it, and one sage horizon bar. The earlier gauge-like segmented version was
-rejected because the user asked for a calm desk, not a cockpit.
+Redesigned on 27 November 2026 (the user asked for a new logo and interface with a strong first
+impression). SpeS is Latin for *hope*; the mark is a **hope star at dawn**: a rounded tile whose
+night indigo turns to dawn coral, a four-pointed star of warm light, a small companion star and
+the first arc of the horizon. The earlier marks (Quartz crystal; 13 Nov sun over a horizon) are
+retired.
 
-One geometry in `scripts/build_brand_assets.py` produces `spes-mark.svg`,
-`spes-mark.png`, `spes-mark-48.png`, `spes-mark.ico` and `brand-manifest.json`:
+One geometry in `scripts/build_brand_assets.py` produces `spes-mark.svg`, `spes-mark.png`,
+`spes-mark-48.png`, `spes-mark.ico`, `brand-manifest.json` and, with `--android`, the Android
+launcher foreground:
 
-`python scripts/build_brand_assets.py`
+`python scripts/build_brand_assets.py --android android/app/src/main/res/drawable/ic_launcher_foreground.xml`
 
-Icon frames below 32 px use one solid tone so the mark stays legible. The in-app
-mark in `ui/shell.py` uses the same polygons; its colours come from the theme
-tokens (sun and rays in warm tones, horizon in the selected accent).
+Icon frames below 32 px are a flat tile with the star only, so the mark stays legible. The in-app
+mark in `ui/shell.py` uses the same polygons and the `#spesDawn` gradient from the icon sprite.
+The interface palette "Şafak" (`ui/styles.py`) takes its accent and brand ramp from the mark.
 The PyInstaller, native window and Inno configuration select the ICO.
-`scripts/verify_branding.py` checks actual PE icon resource payloads, not just
-the file extension or HTML appearance.
+`scripts/verify_branding.py` checks actual PE icon resource payloads, not just the file
+extension or HTML appearance.
