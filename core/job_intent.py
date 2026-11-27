@@ -425,13 +425,15 @@ _FILLER = re.compile(r"^(?:(?:peki|tamam|simdi|su\s+an|simdilik|lutfen|hey|spes|
 
 
 _SKIP = re.compile(r"\b(\d{1,2})\s*\.?\s*(?:(?:numarali|nolu|inci|nci|uncu|ncu)\s+)?(?:adim|tas|asama|kilometre\s+tasi)\w*\s+(?:iptal\s+et|cikar|atla|kaldir|yapma)")
+_REWIND_VERB = r"(?:don(?:elim|un|unuz|sene|senize)?|sar(?:alim|in|iniz|sana|saniza)?)"
+_UNDO_VERB = r"(?:al(?:alim|in|iniz|sana|saniza)?|sar(?:alim|in|iniz|sana|saniza)?)"
 _REWIND_STEP = re.compile(
     r"^(\d{1,2})\s*\.?\s*(?:(?:numarali|nolu|inci|nci|uncu|ncu)\s+)?(?:adim|tas|asama|kilometre\s+tasi)"
-    r"(?:a|na|ya|ina|una)\s+(?:geri\s+)?(?:don\w*|sar\w*)(?:\s*(?:[,:;.-]|\bve\b|\bsonra\b)\s*(.+))?\s*[.!]*$"
+    rf"(?:a|na|ya|ina|una)\s+(?:geri\s+)?{_REWIND_VERB}\b(?:\s*(?:[,:;.-]|\bve\b|\bsonra\b)\s*(.+))?\s*[.!]*$"
 )
 _REWIND_PREV = re.compile(
-    r"^(?:(?:bir\s+)?onceki\s+(?:adim|tas|asama|kilometre\s+tasi)(?:a|na|ya)\s+(?:geri\s+)?(?:don\w*|sar\w*)|"
-    r"son\s+(?:adim|tas|asama|kilometre\s+tasi)(?:i|ni|yi|ini|unu)\s+geri\s+(?:al\w*|sar\w*))"
+    rf"^(?:(?:bir\s+)?onceki\s+(?:adim|tas|asama|kilometre\s+tasi)(?:a|na|ya)\s+(?:geri\s+)?{_REWIND_VERB}\b|"
+    rf"son\s+(?:adim|tas|asama|kilometre\s+tasi)(?:i|ni|yi|ini|unu)\s+geri\s+{_UNDO_VERB}\b)"
     r"(?:\s*(?:[,:;.-]|\bve\b|\bsonra\b)\s*(.+))?\s*[.!]*$"
 )
 _LEAD = re.compile(r"^(?:(?:peki|tamam|simdi|su\s+an|simdilik|lutfen|hey|spes|ya)[\s,]+)+")

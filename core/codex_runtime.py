@@ -399,14 +399,19 @@ class CodexRuntime:
 
     @staticmethod
     def _verify_pinned_executable(executable, expected_sha256: str) -> str:
-        """Fides P1-3: verify the exact resolved native binary right before running it."""
+        """Fides P1-3: verify the exact resolved native binary and all its ancestors right before running it."""
         import hashlib
+        from core.free_chat_codex import _ancestors_problem
         if not (isinstance(executable, (str, Path)) and str(executable).strip()):
             raise ValueError("ChatGPT hesabı yürütücüsü belirtilmedi")
         if not (isinstance(expected_sha256, str) and len(expected_sha256) == 64
                 and all(c in "0123456789abcdef" for c in expected_sha256.lower())):
             raise ValueError("ChatGPT hesabı yürütücü özeti geçersiz")
-        path = Path(executable)
+        path = Path(str(executable))
+        if not path.is_absolute():
+            raise RuntimeError("Codex yürütücüsü mutlak yol olmalı")
+        if _ancestors_problem(path, "Codex yürütücüsü", allow_leaf_file=True):
+            raise RuntimeError("Codex yürütücüsü yolu doğrulanamadı")
         try:
             st = os.lstat(path)
         except OSError as exc:
@@ -874,8 +879,8 @@ class CodexRuntime:
                 raise KeyError(f"Unknown Codex run: {run_id}")
             record = self._runs[run_id]
             process = self._processes.get(run_id)
-            retry_cleanup = (record["status"] in self.TERMINAL and record.get("cleanup_pending") is True
-                             and process is not None)
+            retry_cleanup = (record.get("cleanup_pending") is True and process is not None
+                             and (record["status"] in self.TERMINAL or record.get("_watcher_done") is True))
             if record["status"] in self.TERMINAL and not retry_cleanup:
                 return self.get(run_id)
             if not retry_cleanup:
@@ -894,6 +899,9 @@ class CodexRuntime:
                 close_process_job(process)
                 with self._lock:
                     record.update(cleanup_pending=False, process_exit_confirmed=True, exit_code=process.poll())
+                    if record["status"] not in self.TERMINAL:
+                        record["status"] = "cancelled" if record.get("cancel_requested") else "failed"
+                        record["finished_at"] = record.get("finished_at") or time.time()
                     self._processes.pop(run_id, None)
                     project_key = record.get("_project_key") or os.path.normcase(str(record.get("project") or ""))
                     if self._writers.get(project_key) == run_id:
@@ -1254,6 +1262,8 @@ class CodexRuntime:
                         })
         finally:
             with self._lock:
+                if run_id in self._runs:
+                    self._runs[run_id]["_watcher_done"] = True
                 if exit_known:
                     close_process_job(process)
                     self._processes.pop(run_id, None)

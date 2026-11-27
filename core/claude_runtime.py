@@ -35,7 +35,7 @@ from pathlib import Path
 
 from core.codex_runtime import CodexRuntime
 from core.process_tree import (CREATE_SUSPENDED, bind_kill_on_close_job,
-                               stop_process_tree)
+                               owned_cleanup_pending, stop_process_tree)
 
 READ_TOOLS = ("Read", "Grep", "Glob")
 EDIT_TOOLS = ("Edit", "Write", "NotebookEdit")
@@ -321,6 +321,7 @@ class ClaudeRuntime(CodexRuntime):
                 "_expected_servers": ([MCP_SERVER] if desktop_env is not None else
                                       [PROJECT_SERVER] if read_root is not None else []),
                 "_project_read": str(read_root) if read_root is not None else None,
+                "_project_key": project_key,
             }
             self._runs[run_id] = record
             if is_writer:
@@ -350,16 +351,32 @@ class ClaudeRuntime(CodexRuntime):
                 encoding="utf-8", errors="replace", creationflags=flags,
                 env=_with_project(desktop_env if desktop_env is not None else self.child_environment(), project),
             )
-            job_bound = bind_kill_on_close_job(process, resume=True, allow_unowned=True, error_sink=job_errors.append)
         except Exception:
             release("failed")
             raise
+        with self._lock:
+            record.update(process_started=True, pid=process.pid)
+            self._processes[run_id] = process
         try:
+            job_bound = bind_kill_on_close_job(process, resume=True, allow_unowned=True, error_sink=job_errors.append)
             process.stdin.write(text)
             process.stdin.close()
         except Exception:
-            process.terminate()
-            release("failed")
+            try:
+                stop_process_tree(process, timeout=5)
+            except Exception:
+                pass
+            try:
+                exited = process.poll() is not None and not owned_cleanup_pending(process)
+            except Exception:
+                exited = False
+            with self._lock:
+                record.update(status="failed", finished_at=time.time(), cleanup_pending=not exited,
+                              process_exit_confirmed=exited)
+                if exited:
+                    self._processes.pop(run_id, None)
+                    if self._writers.get(project_key) == run_id:
+                        self._writers.pop(project_key, None)
             raise
         with self._lock:
             record["pid"] = process.pid

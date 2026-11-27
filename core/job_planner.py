@@ -166,6 +166,13 @@ class JobPlannerMixin:
             return None
         if any(j.ledger.data["status"] in {"running", "waiting_limit", "paused"} for j in self._jobs().values()):
             return self._answer_without_agents(conv["id"], text, "Şu an başka bir uzun iş sürüyor; önce o bitmeli.")
+        existing = self._jobs().get(ledger.data["id"])
+        if existing is not None:
+            if existing.thread is not None and existing.thread.is_alive():
+                existing.thread.join(2.0)
+            if existing.thread is not None and existing.thread.is_alive():
+                return self._answer_without_agents(conv["id"], text, "İş tamamlanma kaydını kapatıyor; birkaç saniye sonra yeniden dene.")
+            ledger = existing.ledger
         project = None
         try:
             project = self.agent_service.projects.get(conv.get("project_id")) if conv.get("project_id") else None
@@ -207,6 +214,13 @@ class JobPlannerMixin:
         ledger = max(found, key=lambda l: l.data.get("created_at") or 0)
         if any(j.ledger.data["status"] in {"running", "waiting_limit", "paused"} for j in self._jobs().values()):
             return self._answer_without_agents(conv["id"], text, "Şu an başka bir uzun iş sürüyor; önce o bitmeli.")
+        existing = self._jobs().get(ledger.data["id"])
+        if existing is not None:
+            if existing.thread is not None and existing.thread.is_alive():
+                existing.thread.join(2.0)
+            if existing.thread is not None and existing.thread.is_alive():
+                return self._answer_without_agents(conv["id"], text, "İş tamamlanma kaydını kapatıyor; birkaç saniye sonra yeniden dene.")
+            ledger = existing.ledger
         project = None
         try:
             project = self.agent_service.projects.get(conv.get("project_id")) if conv.get("project_id") else None

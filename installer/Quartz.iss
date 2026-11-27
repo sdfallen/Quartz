@@ -95,6 +95,10 @@ begin
       mbConfirmation, MB_YESNO, IDNO) = IDYES then
     begin
       DeleteFile(ExpandConstant('{app}\chat_history.json'));
+      DeleteFile(ExpandConstant('{app}\quartz_conversations.json'));
+      DeleteFile(ExpandConstant('{app}\quartz_projects.json'));
+      DeleteFile(ExpandConstant('{app}\cli_connections.json'));
+      DeleteFile(ExpandConstant('{app}\mobile_access.json'));
       DeleteFile(ExpandConstant('{app}\quartz_memory.json'));
       DeleteFile(ExpandConstant('{app}\quartz_user_memory.json'));
       DeleteFile(ExpandConstant('{app}\quartz_tasks.json'));
@@ -102,8 +106,13 @@ begin
       DeleteFile(ExpandConstant('{app}\quartz_workflows.json'));
       DeleteFile(ExpandConstant('{app}\local_search_index.json'));
       DeleteFile(ExpandConstant('{app}\.env'));
-      { 27 Nov: free chat keys (DPAPI) and settings }
+      DelTree(ExpandConstant('{app}\quartz_deleted_chats'), True, True, True);
+      DelTree(ExpandConstant('{app}\state'), True, True, True);
+      { 27-28 Nov: free chat keys (DPAPI), long-job ledgers, attachments and setup state }
       DelTree(ExpandConstant('{localappdata}\Quartz\free_chat'), True, True, True);
+      DelTree(ExpandConstant('{localappdata}\Quartz\jobs'), True, True, True);
+      DelTree(ExpandConstant('{localappdata}\Quartz\attachments'), True, True, True);
+      DeleteFile(ExpandConstant('{localappdata}\Quartz\auto_setup.json'));
     end;
   end;
 end;

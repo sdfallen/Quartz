@@ -7,6 +7,7 @@ directory listings, no hidden or secret-looking files. Stopped when SpeS closes.
 from __future__ import annotations
 
 import mimetypes
+import os
 import threading
 import urllib.parse
 from functools import partial
@@ -26,17 +27,36 @@ class PreviewError(ValueError):
     """Not a file SpeS shows."""
 
 
+def _is_link(path: Path) -> bool:
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return True
+    return path.is_symlink() or bool(getattr(st, "st_file_attributes", 0) & 0x400)
+
+
 def resolve_inside(root, relative) -> Path:
-    """``root/relative`` if it is a visible, non-secret file strictly inside ``root``."""
-    base = Path(root).resolve(strict=True)
+    """``root/relative`` if it is a visible, non-secret, link-free path strictly inside ``root``."""
+    raw_root = Path(root)
+    if os.path.lexists(raw_root) and _is_link(raw_root):
+        raise PreviewError("Bağlantılar gösterilmez")
+    base = raw_root.resolve(strict=True)
     rel = str(relative or "").replace("\\", "/").lstrip("/")
     parts = [p for p in rel.split("/") if p not in ("", ".")]
-    if any(p == ".." or p.startswith(".") or SECRET_NAME.match(p) for p in parts):
-        raise PreviewError("Bu dosya gösterilmez")
-    target = base.joinpath(*parts).resolve()
+    cur = base
+    for part in parts:
+        if part == ".." or part.startswith(".") or SECRET_NAME.match(part):
+            raise PreviewError("Bu dosya gösterilmez")
+        cur = cur / part
+        if os.path.lexists(cur) and _is_link(cur):
+            raise PreviewError("Bağlantılar gösterilmez")
+    target = cur.resolve()
     if target != base and base not in target.parents:
         raise PreviewError("Klasör dışına çıkılamaz")
-    if target.is_symlink():
+    rel_parts = target.relative_to(base).parts
+    if any(p.startswith(".") or SECRET_NAME.match(p) for p in rel_parts):
+        raise PreviewError("Bu dosya gösterilmez")
+    if os.path.lexists(target) and _is_link(target):
         raise PreviewError("Bağlantılar gösterilmez")
     return target
 
@@ -79,7 +99,13 @@ class _Handler(SimpleHTTPRequestHandler):
         except (PreviewError, OSError):
             return str(Path(self.directory) / "__spes_missing__" / "404")
         if target.is_dir():
-            index = target / "index.html"
+            base = Path(self.directory).resolve()
+            rel_dir = "" if target == base else target.relative_to(base).as_posix()
+            index_rel = f"{rel_dir}/index.html".lstrip("/")
+            try:
+                index = resolve_inside(self.directory, index_rel)
+            except (PreviewError, OSError):
+                return str(Path(self.directory) / "__spes_missing__" / "404")
             return str(index) if index.is_file() else str(Path(self.directory) / "__spes_missing__" / "404")
         return str(target)
 

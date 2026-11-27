@@ -75,8 +75,17 @@ def wants_web_look(milestone: dict) -> bool:
 
 def detected_web_entry(project_path) -> tuple[Path | None, str]:
     """(html_path, reason): the one safe HTML entry inside project_path, or (None, why)."""
+    from core.free_chat_codex import _ancestors_problem
+    raw_str = str(project_path or "").strip()
+    if not raw_str:
+        return None, "proje klasörü yok"
+    raw_path = Path(raw_str)
+    if not raw_path.is_absolute():
+        raw_path = Path(os.path.abspath(raw_str))
+    if _ancestors_problem(raw_path, "proje klasörü"):
+        return None, "proje klasörü doğrulanamadı"
     try:
-        root = Path(str(project_path or "")).resolve(strict=True)
+        root = raw_path.resolve(strict=True)
     except OSError:
         return None, "proje klasörü yok"
     if not root.is_dir() or _is_link(root):
@@ -192,10 +201,15 @@ class _PageInspector(HTMLParser):
                 self.text_parts.append(cleaned)
 
 
+def _has_server_template_syntax(text: str) -> bool:
+    """True for Jinja2/Django/EJS server template interpolations (`{{ ... }}`, `{% ... %}`, `<% ... %>`)."""
+    return "{{" in text or "{%" in text or "<%" in text
+
+
 def _local_ref_path(serve_root: Path, page_dir: Path, raw_ref: str) -> tuple[Path | None, str]:
-    """Resolve a local asset URL relative to the page or serve_root; (None, '') for external URLs."""
+    """Resolve a local asset URL relative to the page or serve_root; (None, '') for external/template URLs."""
     ref = raw_ref.strip()
-    if not ref or ref.startswith("#") or ref.lower().startswith(_EXTERNAL_SCHEMES):
+    if not ref or ref.startswith("#") or ref.lower().startswith(_EXTERNAL_SCHEMES) or _has_server_template_syntax(ref):
         return None, ""
     parsed = urlsplit(ref)
     if parsed.scheme or parsed.netloc:
@@ -252,7 +266,7 @@ def _check_js_syntax(node_exe: str, js_files: list[Path], inline_scripts: list[t
     """Return syntax error descriptions (at most 3) for local .js/.mjs files and inline scripts."""
     errors: list[str] = []
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    with tempfile.TemporaryDirectory(prefix="spes-jscheck-") as scratch:
+    with tempfile.TemporaryDirectory(prefix="spes-jscheck-", ignore_cleanup_errors=True) as scratch:
         scratch_dir = Path(scratch)
         targets: list[tuple[str, Path]] = []
         for idx, js_path in enumerate(js_files[:MAX_SCRIPT_CHECKS]):
@@ -261,6 +275,8 @@ def _check_js_syntax(node_exe: str, js_files: list[Path], inline_scripts: list[t
                 copied.write_bytes(js_path.read_bytes())
                 targets.append((js_path.name, copied))
         for idx, (kind, code) in enumerate(inline_scripts[:MAX_SCRIPT_CHECKS]):
+            if _has_server_template_syntax(code):
+                continue
             inline_file = scratch_dir / f"inline-{idx + 1}.{kind}"
             inline_file.write_text(code, encoding="utf-8")
             targets.append((f"satır içi <script #{idx + 1}>", inline_file))
@@ -394,8 +410,9 @@ def observe_web(entry: Path, project: Path, evidence_dir: Path, stop: threading.
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         base_url = servers.url_for(serve_root)
+        preview_port = urlsplit(base_url).port
         url = base_url if rel_url_path.lower() == "index.html" else (base_url + rel_url_path)
-        with tempfile.TemporaryDirectory(prefix="spes-edge-profile-") as profile_dir:
+        with tempfile.TemporaryDirectory(prefix="spes-edge-profile-", ignore_cleanup_errors=True) as profile_dir:
             raw_shot = Path(profile_dir) / "raw.png"
             common_args = [
                 edge_exe,
@@ -408,6 +425,8 @@ def observe_web(entry: Path, project: Path, evidence_dir: Path, stop: threading.
                 "--disable-background-networking",
                 "--mute-audio",
                 "--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1",
+                "--proxy-server=127.0.0.1:9",
+                f"--proxy-bypass-list=<-loopback>;127.0.0.1:{preview_port}",
                 "--virtual-time-budget=1500",
                 "--window-size=1280,800",
                 f"--user-data-dir={profile_dir}",

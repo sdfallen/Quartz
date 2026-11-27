@@ -32,10 +32,21 @@ class IntentTests(unittest.TestCase):
                          ("rewind", {"target": "previous", "note": "renkleri değiştir"}))
         self.assertEqual(job_message_kind("2. adıma geri dön"), "rewind")
 
-    def test_negated_and_question_phrases_never_trigger_rewind(self):
-        for text in ("2. adıma geri dönme", "son adımı geri alma", "2. adıma geri dönsek ne olur?",
-                     "2. adıma dönmek istemiyorum", "2. adıma geri dön, dur"):
+    def test_negated_question_and_descriptive_phrases_never_trigger_rewind(self):
+        for text in (
+            "2. adıma geri dönme",
+            "son adımı geri alma",
+            "2. adıma geri dönsek ne olur?",
+            "2. adıma dönmek istemiyorum",
+            "2. adıma geri dön, dur",
+            "2. adıma döndüğünde, hata veriyor",
+            "bir önceki adıma dönünce, form sıfırlanıyor",
+            "2. adıma dönüştür ve kaydet",
+            "1. aşamaya dönük testler, kontroller",
+            "son adımı geri aldığında, ekran bozuluyor",
+        ):
             with self.subTest(text=text):
+                self.assertIsNone(job_change(text))
                 self.assertNotEqual(job_message_kind(text), "rewind")
 
 
@@ -115,9 +126,34 @@ class GitTimeCapsuleTests(unittest.TestCase):
         self.assertEqual(ledger.data["milestones"][2]["status"], "pending")
 
         # Running again executes only m3, now applying the new note!
+        # Also create a NEW untracked user file AFTER job completion before rewinding: it must NOT be
+        # swept into m3's commit or deleted on a subsequent rewind!
+        late_note = self.project / "sonradan_eklenen_not.txt"
+        late_note.write_text("kullanıcının sonradan yazdığı özel dosya\n", encoding="utf-8")
+        # Refresh initial_dirty via rewind already happened before late_note; test rewinding AFTER late_note exists:
         job.run()
         self.assertEqual(ledger.data["status"], "done")
         self.assertEqual((self.project / "ui.py").read_text(encoding="utf-8"), "theme = 'dark'\n")
+
+        late_note2 = self.project / "ikinci_ozel_dosya.txt"
+        late_note2.write_text("bu dosya asla silinmemeli\n", encoding="utf-8")
+        job.rewind_milestone(2, note="koyu tema kullan")
+        job.run()
+        # Neither m3's commit nor a second rewind may touch ikinci_ozel_dosya.txt!
+        committed_files = self.git("show", "--name-only", "--pretty=format:", "HEAD").stdout.splitlines()
+        self.assertNotIn("ikinci_ozel_dosya.txt", committed_files)
+        job.rewind_milestone(2)
+        self.assertTrue(late_note2.is_file(), "User file added before rewind must never be deleted!")
+        self.assertEqual(late_note2.read_text(encoding="utf-8"), "bu dosya asla silinmemeli\n")
+
+        # Post-job manual commits made outside the job are protected against accidental rewind!
+        job.run()
+        (self.project / "manual.py").write_text("user_work = 1\n", encoding="utf-8")
+        self.git("add", "manual.py")
+        self.git("commit", "-qm", "manual user commit")
+        with self.assertRaises(JobError) as manual_ctx:
+            job.rewind_milestone(2)
+        self.assertIn("yeni Git kayıtları", str(manual_ctx.exception))
 
     def test_undo_first_step_returns_to_base_git_head_and_dirty_conflict_is_refused(self):
         job, ledger = self.make_three_step_job()

@@ -216,6 +216,9 @@ class LongJobChatMixin:
         raw = str(ledger.data.get("project_path") or "").strip()
         if not raw or not Path(raw).is_absolute():
             raise JobError("İşin klasör kaydı geçersiz.")
+        from core.free_chat_codex import _ancestors_problem
+        if _ancestors_problem(Path(raw), "proje klasörü"):
+            raise JobError("İşin klasör yolu doğrulanamadı.")
         folder = Path(raw).resolve()
         if not folder.is_dir():
             raise JobError("İşin klasörü artık yok.")

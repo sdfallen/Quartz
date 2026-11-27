@@ -470,20 +470,37 @@ class ClosedTests(ChannelBase):
         pkg = npm_prefix / "node_modules" / "@openai" / "codex"
         (pkg / "bin").mkdir(parents=True)
         cmd_wrapper = npm_prefix / "codex.cmd"
-        cmd_wrapper.write_text("@echo off\r\n", encoding="utf-8")
+        cmd_wrapper.write_text('@ECHO off\r\n"%~dp0\\node.exe" "%~dp0\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n',
+                               encoding="utf-8")
         (pkg / "package.json").write_text(json.dumps({"name": "@openai/codex", "bin": {"codex": "bin/codex.js"}}),
                                           encoding="utf-8")
         js_entry = pkg / "bin" / "codex.js"
         js_entry.write_text("// launcher\n", encoding="utf-8")
         plat_pkg = pkg / "node_modules" / "@openai" / "codex-win32-x64"
-        native_dir = plat_pkg / "vendor" / "x86_64-pc-windows-msvc" / "bin"
+        native_dir = plat_pkg / "vendor" / "x86_64-pc-windows-msvc" / "codex"
         native_dir.mkdir(parents=True)
-        (plat_pkg / "package.json").write_text(json.dumps({"name": "@openai/codex-win32-x64"}), encoding="utf-8")
+        # Real @openai/codex@0.163.0 uses npm package aliasing ("name": "@openai/codex", "version": "0.163.0-win32-x64").
+        (plat_pkg / "package.json").write_text(json.dumps({
+            "name": "@openai/codex",
+            "version": "0.163.0-win32-x64",
+            "os": ["win32"],
+            "cpu": ["x64"],
+        }), encoding="utf-8")
+        (plat_pkg / "vendor" / "x86_64-pc-windows-msvc" / "codex-package.json").write_text(
+            json.dumps({"version": "0.163.0"}), encoding="utf-8"
+        )
         native_exe = native_dir / "codex.exe"
         native_exe.write_bytes(b"MZ-native-0.163.0-original")
 
+        # Unrelated .cmd wrapper next to node_modules must fail closed.
+        rogue_cmd = npm_prefix / "other.cmd"
+        rogue_cmd.write_text("@echo off\r\necho hijacked\r\n", encoding="utf-8")
+
         with patch("core.free_chat_codex.platform.system", return_value="Windows"), \
                 patch("core.free_chat_codex.platform.machine", return_value="AMD64"):
+            with self.assertRaises(AccountChatError):
+                resolve_codex_target(rogue_cmd)
+
             target = resolve_codex_target(cmd_wrapper)
             self.assertEqual(Path(target["executable"]), native_exe)
             self.assertEqual(target["sha256"], sha256_bytes(b"MZ-native-0.163.0-original"))
@@ -515,6 +532,35 @@ class ClosedTests(ChannelBase):
             native_exe.unlink()
             with self.assertRaises(AccountChatError):
                 resolve_codex_target(cmd_wrapper)
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction test")
+    def test_p1_3_junction_inside_npm_node_modules_or_real_npm_install_is_verified(self):
+        import subprocess
+        # 1. If a real @openai/codex npm wrapper exists on this machine, verify resolve_codex_target resolves its .exe.
+        real_cmd = Path(os.environ.get("APPDATA") or "") / "npm" / "codex.cmd"
+        if real_cmd.is_file() and not real_cmd.is_symlink():
+            real_target = resolve_codex_target(real_cmd)
+            self.assertTrue(real_target["executable"].lower().endswith("codex.exe"))
+            self.assertEqual(len(real_target["sha256"]), 64)
+
+        # 2. A directory junction inside node_modules/@openai/codex must fail closed before .resolve().
+        prefix = Path(self.tmp.name) / "junc-npm"
+        real_target_dir = Path(self.tmp.name) / "real-pkg"
+        (real_target_dir / "bin").mkdir(parents=True)
+        (real_target_dir / "package.json").write_text(
+            json.dumps({"name": "@openai/codex", "bin": {"codex": "bin/codex.js"}}), encoding="utf-8"
+        )
+        (real_target_dir / "bin" / "codex.js").write_text("// js\n", encoding="utf-8")
+        (prefix / "node_modules" / "@openai").mkdir(parents=True)
+        cmd_file = prefix / "codex.cmd"
+        cmd_file.write_text('@ECHO off\r\n"%~dp0\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n', encoding="utf-8")
+        junc_path = prefix / "node_modules" / "@openai" / "codex"
+        mk = subprocess.run(["cmd.exe", "/c", "mklink", "/J", str(junc_path), str(real_target_dir)],
+                            capture_output=True, text=True)
+        if mk.returncode == 0:
+            self.addCleanup(lambda: subprocess.run(["cmd.exe", "/c", "rmdir", str(junc_path)], capture_output=True))
+            with self.assertRaises(AccountChatError):
+                resolve_codex_target(cmd_file)
 
 
 class TurnTests(ChannelBase):

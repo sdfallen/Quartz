@@ -263,10 +263,45 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertTrue(calls[0].lower().endswith("powershell.exe"))
 
-    def test_the_uninstaller_removes_what_spes_set_up(self):
-        iss = (ROOT / "installer" / "Quartz.iss").read_text(encoding="utf-8")
+    def test_the_uninstaller_removes_what_spes_set_up_and_compiles_cleanly(self):
+        import shutil
+        import subprocess
+        iss_path = ROOT / "installer" / "Quartz.iss"
+        iss = iss_path.read_text(encoding="utf-8")
         self.assertIn('Type: filesandordirs; Name: "{localappdata}\\Quartz\\bin"', iss)
-        self.assertIn("DelTree(ExpandConstant('{localappdata}\\Quartz\\free_chat')", iss)
+        for expected in (
+            "quartz_conversations.json",
+            "quartz_projects.json",
+            "cli_connections.json",
+            "quartz_deleted_chats",
+            "{localappdata}\\Quartz\\free_chat",
+            "{localappdata}\\Quartz\\jobs",
+            "{localappdata}\\Quartz\\attachments",
+            "{localappdata}\\Quartz\\auto_setup.json",
+        ):
+            self.assertIn(expected, iss)
+        iscc_candidates = [
+            shutil.which("ISCC.exe"),
+            Path(os.environ.get("LOCALAPPDATA") or "") / "Programs" / "Inno Setup 6" / "ISCC.exe",
+            Path(r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
+        ]
+        iscc = next((str(p) for p in iscc_candidates if p and Path(p).is_file()), None)
+        if iscc and (ROOT / "assets" / "branding" / "spes-mark.ico").is_file():
+            with tempfile.TemporaryDirectory() as tmp:
+                pkg = Path(tmp) / "pkg"
+                (pkg / "_internal").mkdir(parents=True)
+                (pkg / "Quartz.exe").write_bytes(b"MZ-stub")
+                (pkg / "_internal" / "runtime.txt").write_text("ok", encoding="utf-8")
+                (pkg / "README.txt").write_text("SpeS", encoding="utf-8")
+                (pkg / "release-manifest.json").write_text("{}", encoding="utf-8")
+                out = Path(tmp) / "out"
+                out.mkdir()
+                res = subprocess.run(
+                    [iscc, "/Q", f"/DPackageDir={pkg}", f"/DReleaseOutput={out}", "/DMyAppVersion=1.0.0", str(iss_path)],
+                    capture_output=True, text=True, timeout=60,
+                )
+                self.assertEqual(res.returncode, 0, res.stderr or res.stdout)
+                self.assertTrue((out / "QuartzSetup-1.0.0.exe").is_file())
 
     def test_the_first_run_screen_offers_free_chat_and_says_setup_is_automatic(self):
         from ui.shell import SHELL_MARKUP

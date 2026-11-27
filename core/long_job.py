@@ -543,11 +543,31 @@ def _build_junk(relative: str) -> bool:
     return "__pycache__/" in relative or relative.lower().endswith(JUNK_SUFFIXES)
 
 
-def dirty_paths(ledger: JobLedger) -> dict:
+def _git_batched(root, prefix_args: list[str], paths: list[str], *, batch_size: int = 60, max_chars: int = 12000):
+    """Run git pathspec commands in safe chunks well below Windows' 32,767-char CreateProcess limit."""
+    chunk: list[str] = []
+    chars = 0
+    last = None
+    for rel in paths:
+        if chunk and (len(chunk) >= batch_size or chars + len(rel) + 2 > max_chars):
+            last = _git(root, *prefix_args, "--", *chunk)
+            if last.returncode != 0:
+                return last
+            chunk, chars = [], 0
+        chunk.append(rel)
+        chars += len(rel) + 2
+    if chunk:
+        last = _git(root, *prefix_args, "--", *chunk)
+    return last
+
+
+def dirty_paths(ledger: JobLedger, *, strict: bool = False) -> dict:
     """{posix path: [size, mtime_ns] or None if deleted} for every non-ignored uncommitted path."""
     root = Path(ledger.data["project_path"])
     status = _git(root, "status", "--porcelain", "-z", "--untracked-files=all")
     if status.returncode != 0:
+        if strict:
+            raise JobError("Projenin çalışma ağacı durumu okunamadı; güvenlik için işlem durduruldu.")
         return {}
     found, entries, index = {}, status.stdout.split("\0"), 0
     while index < len(entries):
@@ -714,7 +734,9 @@ class LongJob:
             if not branch:
                 raise JobError("Bu işte Git dalı yok; önceki adıma geri sarma yalnız Git kaydı olan işlerde çalışır.")
             milestones = d["milestones"]
-            if any(m["status"] == "running" for m in milestones):
+            loop_active = (d.get("status") in {"running", "waiting_limit"} and not self.pause_event.is_set()
+                           and self.thread is not None and self.thread.is_alive())
+            if loop_active or any(m["status"] == "running" for m in milestones):
                 raise JobError("Şu an çalışan bir adım var; önce 'bekle' yazıp işi duraklat, sonra geri sar.")
             root = Path(d["project_path"])
             current_branch = _git(root, "rev-parse", "--abbrev-ref", "HEAD")
@@ -731,11 +753,11 @@ class LongJob:
                     raise JobError("Henüz geri alınabilecek tamamlanmış bir adım yok.")
                 if len(done_steps) >= 2:
                     step_num = done_steps[-2]
-                    target_sha = str(milestones[step_num - 1]["commit"])
+                    target_sha = str(milestones[step_num - 1]["commit"]).strip()
                     step_title = milestones[step_num - 1]["title"]
                 elif d.get("base_git_head"):
                     step_num = 0
-                    target_sha = str(d["base_git_head"])
+                    target_sha = str(d["base_git_head"]).strip()
                     step_title = "başlangıç durumu"
                 else:
                     raise JobError("İlk adımın öncesine ait Git başlangıç kaydı bulunamadı.")
@@ -748,8 +770,17 @@ class LongJob:
                     raise JobError(f"{step_num}. adım henüz tamamlanmamış; yalnız bitmiş bir adıma dönebilirsin.")
                 if not chosen.get("commit"):
                     raise JobError(f"{step_num}. adımın Git kaydı yok; geri sarılamaz.")
-                target_sha = str(chosen["commit"])
+                target_sha = str(chosen["commit"]).strip()
                 step_title = chosen["title"]
+
+            if not re.fullmatch(r"[0-9a-fA-F]{7,64}", target_sha):
+                raise JobError("Hedef adımın Git kaydı geçersiz.")
+            known_commits = {str(m["commit"]).strip() for m in milestones if m.get("commit")}
+            if d.get("base_git_head"):
+                known_commits.add(str(d["base_git_head"]).strip())
+            if known_commits and head_sha not in known_commits:
+                raise JobError("İş bittikten sonra bu dalda yeni Git kayıtları oluşturulmuş; "
+                               "senin değişikliklerini korumak için otomatik geri sarılmadı.")
 
             after_progressed = any(m["status"] != "pending" or m.get("attempts") for m in milestones[step_num:])
             if target_sha == head_sha and not after_progressed:
@@ -763,14 +794,17 @@ class LongJob:
             if diff_res.returncode != 0:
                 raise JobError("Adımlar arasındaki dosya farkı okunamadı.")
             changed_rels = sorted({p for p in diff_res.stdout.split("\0") if p})
-            dirty_now = dirty_paths(self.ledger)
-            conflicts = [rel for rel in changed_rels if rel in dirty_now]
+            dirty_now = dirty_paths(self.ledger, strict=True)
+            conflicts = [
+                rel for rel in changed_rels
+                if any(rel == dp or rel.startswith(dp + "/") or dp.startswith(rel + "/") for dp in dirty_now)
+            ]
             if conflicts:
                 raise JobError(f"'{conflicts[0]}' dosyasında kaydedilmemiş değişiklik var; verini korumak için geri sarılmadı.")
 
             now = self.clock()
             seq = len(d.get("rewinds") or []) + 1
-            safe_job_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(d["id"]))
+            safe_job_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(d["id"])).strip(".-") or "job"
             backup_ref = f"refs/spes-rewind/{safe_job_id}/{int(now)}-{seq}"
             if _git(root, "update-ref", backup_ref, head_sha).returncode != 0:
                 raise JobError("Geri sarmadan önce güvenlik yedeği oluşturulamadı.")
@@ -782,23 +816,48 @@ class LongJob:
                 else:
                     remove_rels.append(rel)
 
-            if _git(root, "reset", "--soft", target_sha).returncode != 0:
-                raise JobError("Git dalı hedef kayda taşınamadı.")
-            if restore_rels and _git(root, "checkout", target_sha, "--", *restore_rels).returncode != 0:
+            try:
+                if _git(root, "reset", "--soft", target_sha).returncode != 0:
+                    raise JobError("Git dalı hedef kayda taşınamadı.")
+                if remove_rels:
+                    rm_res = _git_batched(root, ["rm", "-f", "--ignore-unmatch", "-q"], remove_rels)
+                    if rm_res is not None and rm_res.returncode != 0:
+                        _git(root, "reset", "--soft", head_sha)
+                        raise JobError("Sonraki adımın dosyaları temizlenemedi.")
+                    resolved_root = root.resolve()
+                    for rel in remove_rels:
+                        parts = [p for p in rel.split("/") if p not in ("", ".")]
+                        if not parts or any(p == ".." for p in parts):
+                            continue
+                        cur = root
+                        unsafe_parent = False
+                        for part in parts[:-1]:
+                            cur = cur / part
+                            if os.path.lexists(cur) and cur.is_symlink():
+                                unsafe_parent = True
+                                break
+                        if unsafe_parent:
+                            continue
+                        leaf = cur / parts[-1]
+                        if os.path.lexists(leaf) and resolved_root in leaf.parent.resolve().parents | {leaf.parent.resolve()}:
+                            try:
+                                if leaf.is_symlink() or leaf.is_file():
+                                    leaf.unlink()
+                            except OSError:
+                                pass
+                if restore_rels:
+                    co_res = _git_batched(root, ["checkout", target_sha], restore_rels)
+                    if co_res is not None and co_res.returncode != 0:
+                        _git(root, "reset", "--soft", head_sha)
+                        _git_batched(root, ["checkout", head_sha], changed_rels)
+                        raise JobError("Önceki adımın dosyaları geri yüklenemedi.")
+                if changed_rels:
+                    _git_batched(root, ["reset", "-q", target_sha], changed_rels)
+            except OSError as exc:
                 _git(root, "reset", "--soft", head_sha)
-                raise JobError("Önceki adımın dosyaları geri yüklenemedi.")
-            if remove_rels:
-                _git(root, "rm", "-f", "--ignore-unmatch", "-q", "--", *remove_rels)
-                for rel in remove_rels:
-                    candidate = (root / rel).resolve()
-                    if root.resolve() in candidate.parents and candidate.is_file() and not candidate.is_symlink():
-                        try:
-                            candidate.unlink()
-                        except OSError:
-                            pass
-            if changed_rels:
-                _git(root, "reset", "-q", target_sha, "--", *changed_rels)
+                raise JobError("Geri sarma sırasında dosya sistemi hatası oluştu.") from exc
 
+            d["initial_dirty"] = dirty_paths(self.ledger, strict=True)
             for m in milestones[step_num:]:
                 m.update(status="pending", attempts=0, crashes=0, writer=None, commit=None, checkpoint=None,
                          last_failure="", files=[], verified=False, reviewer=None, evidence="yok")
@@ -959,10 +1018,15 @@ class LongJob:
                 return
             milestone = ledger.current()
             if milestone is None:
-                waiting = [m for m in ledger.data["milestones"] if m["status"] == "needs_user"]
-                self._set(status="needs_user" if waiting else "done")
-                text = finish_report(ledger)
-                ledger.event(text.splitlines()[0])
+                with ledger._lock:
+                    if ledger.current() is not None:
+                        continue
+                    waiting = [m for m in ledger.data["milestones"] if m["status"] == "needs_user"]
+                    if not ledger.data.get("stopped"):
+                        ledger.data["status"] = "needs_user" if waiting else "done"
+                    text = finish_report(ledger)
+                    ledger.data["events"] = (ledger.data["events"] + [{"at": self.clock(), "text": text.splitlines()[0][:500]}])[-200:]
+                    ledger.save()
                 # User request 15 Nov: "bitince arasınlar" — the phone rings for a report.
                 self.notify(text, urgent=True, report=True)
                 return
@@ -978,6 +1042,8 @@ class LongJob:
 
     def _run_one(self, milestone, writer):
         ledger = self.ledger
+        if self.pause_event.is_set() or self.stop_event.is_set() or self._halt:
+            return
         previous = ledger.data.get("writer")
         if previous and previous != writer:
             text = f"Yazıcı {PERSONA.get(previous, previous)} → {PERSONA.get(writer, writer)}"
@@ -988,6 +1054,9 @@ class LongJob:
         if checkpoint.get("status") == "error":
             raise JobError("Yedek alınamadı: " + str(checkpoint.get("warning") or ""))
         with ledger._lock:
+            if (self.pause_event.is_set() or self.stop_event.is_set() or self._halt
+                    or milestone.get("status") != "pending" or ledger.current() is not milestone):
+                return
             milestone.update(status="running", writer=writer, attempts=milestone["attempts"] + 1,
                              checkpoint=checkpoint.get("ref"))
             ledger.data.update(status="running", writer=writer)

@@ -109,16 +109,78 @@ class StaticAndSyntaxCheckTests(unittest.TestCase):
         self.assertEqual(receipt["checked_assets"], 2)
         self.assertEqual(receipt["window_title"], "Şafak Panel")
 
+    def test_jinja_or_django_template_syntax_does_not_false_fail_static_check(self):
+        node = wc.find_node()
+        (self.project / "index.html").write_text(
+            '<!doctype html><html><head><title>{{ baslik }}</title>'
+            '<link rel="stylesheet" href="{{ url_for(\'static\', filename=\'style.css\') }}"></head>'
+            '<body>{% for item in items %}<p>{{ item }}</p>{% endfor %}'
+            '<script>const items = {{ items | tojson }};</script></body></html>',
+            encoding="utf-8",
+        )
+        receipt = wc.observe_web(self.project / "index.html", self.project, self.root / "ev-tpl",
+                                 threading.Event(), edge_executable=None, node_executable=node)
+        self.assertEqual(receipt["verdict"], "static_ok", receipt)
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction/link escape test")
+    def test_preview_server_blocks_directory_junction_and_secret_files(self):
+        import subprocess
+        import urllib.error
+        import urllib.request
+        from core.local_preview import PreviewError, PreviewServers, resolve_inside
+
+        (self.project / ".env").write_text("OPENAI_API_KEY=sk-secret-123456\n", encoding="utf-8")
+        (self.project / "index.html").write_text("<h1>OK</h1>", encoding="utf-8")
+        outside = self.root / "outside_secret"
+        outside.mkdir()
+        (outside / "index.html").write_text("TOP_SECRET_OUTSIDE", encoding="utf-8")
+        junc = self.project / "sub"
+        mk = subprocess.run(["cmd.exe", "/c", "mklink", "/J", str(junc), str(outside)],
+                            capture_output=True, text=True)
+        if mk.returncode == 0:
+            self.addCleanup(lambda: subprocess.run(["cmd.exe", "/c", "rmdir", str(junc)], capture_output=True))
+            with self.assertRaises(PreviewError):
+                resolve_inside(self.project, "sub/index.html")
+            servers = PreviewServers()
+            try:
+                base = servers.url_for(self.project)
+                for bad in ("sub/", "sub/index.html", ".env"):
+                    with self.assertRaises(urllib.error.HTTPError) as err_ctx:
+                        urllib.request.urlopen(base + bad, timeout=5)
+                    self.assertEqual(err_ctx.exception.code, 404)
+            finally:
+                servers.stop_all()
+
 
 @unittest.skipUnless(os.name == "nt" and wc.find_edge() is not None, "Windows headless Edge")
 class HeadlessBrowserRenderTests(unittest.TestCase):
-    def test_headless_edge_renders_js_dom_captures_isolated_png_and_blocks_external_hosts(self):
+    def test_headless_edge_renders_js_dom_captures_isolated_png_and_blocks_other_loopback_ports(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        hit_other_port = [False]
+
+        class OtherPortHandler(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+
+            def do_GET(self):
+                hit_other_port[0] = True
+                self.send_response(200)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(b"OTHER_LOCAL_SERVICE_SECRET")
+
+        other_srv = ThreadingHTTPServer(("127.0.0.1", 0), OtherPortHandler)
+        threading.Thread(target=other_srv.serve_forever, daemon=True).start()
+        self.addCleanup(lambda: (other_srv.shutdown(), other_srv.server_close()))
+
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             site = root / "site"
             site.mkdir()
             (site / "style.css").write_text("body { background: #14213d; color: #fca311; }", encoding="utf-8")
             (site / "app.js").write_text(
+                f'fetch("http://127.0.0.1:{other_srv.server_port}/").then(r => r.text()).then(t => {{ document.title = t; }}).catch(() => {{}});\n'
                 'document.title = "Canlı Bütçe";\n'
                 'document.getElementById("out").textContent = "Toplam: 1250 TL";\n',
                 encoding="utf-8",
@@ -134,6 +196,7 @@ class HeadlessBrowserRenderTests(unittest.TestCase):
             self.assertEqual(receipt["verdict"], "page_seen", receipt)
             self.assertEqual(receipt["capture_state"], "captured")
             self.assertEqual(receipt["window_title"], "Canlı Bütçe")
+            self.assertFalse(hit_other_port[0], "Headless Edge must not reach other loopback ports on 127.0.0.1")
             self.assertGreater(receipt["rendered_text_chars"], 5)
             # Reviewer folder contains ONLY window.png (Fides L5 isolation).
             review_files = [p.name for p in (ev / "denetci").iterdir()]

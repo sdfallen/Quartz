@@ -65,16 +65,16 @@ _FEATURE_ROW = re.compile(
     r"^([A-Za-z0-9_.-]+)\s+(stable|experimental|under development|deprecated|removed)\s+(true|false)$"
 )
 _PLATFORM_TARGETS = {
-    ("windows", "amd64"): ("@openai/codex-win32-x64", "x86_64-pc-windows-msvc", "codex.exe"),
-    ("windows", "x86_64"): ("@openai/codex-win32-x64", "x86_64-pc-windows-msvc", "codex.exe"),
-    ("windows", "arm64"): ("@openai/codex-win32-arm64", "aarch64-pc-windows-msvc", "codex.exe"),
-    ("windows", "aarch64"): ("@openai/codex-win32-arm64", "aarch64-pc-windows-msvc", "codex.exe"),
-    ("linux", "x86_64"): ("@openai/codex-linux-x64", "x86_64-unknown-linux-musl", "codex"),
-    ("linux", "amd64"): ("@openai/codex-linux-x64", "x86_64-unknown-linux-musl", "codex"),
-    ("linux", "aarch64"): ("@openai/codex-linux-arm64", "aarch64-unknown-linux-musl", "codex"),
-    ("linux", "arm64"): ("@openai/codex-linux-arm64", "aarch64-unknown-linux-musl", "codex"),
-    ("darwin", "x86_64"): ("@openai/codex-darwin-x64", "x86_64-apple-darwin", "codex"),
-    ("darwin", "arm64"): ("@openai/codex-darwin-arm64", "aarch64-apple-darwin", "codex"),
+    ("windows", "amd64"): ("@openai/codex-win32-x64", "x86_64-pc-windows-msvc", "codex.exe", "win32", "x64"),
+    ("windows", "x86_64"): ("@openai/codex-win32-x64", "x86_64-pc-windows-msvc", "codex.exe", "win32", "x64"),
+    ("windows", "arm64"): ("@openai/codex-win32-arm64", "aarch64-pc-windows-msvc", "codex.exe", "win32", "arm64"),
+    ("windows", "aarch64"): ("@openai/codex-win32-arm64", "aarch64-pc-windows-msvc", "codex.exe", "win32", "arm64"),
+    ("linux", "x86_64"): ("@openai/codex-linux-x64", "x86_64-unknown-linux-musl", "codex", "linux", "x64"),
+    ("linux", "amd64"): ("@openai/codex-linux-x64", "x86_64-unknown-linux-musl", "codex", "linux", "x64"),
+    ("linux", "aarch64"): ("@openai/codex-linux-arm64", "aarch64-unknown-linux-musl", "codex", "linux", "arm64"),
+    ("linux", "arm64"): ("@openai/codex-linux-arm64", "aarch64-unknown-linux-musl", "codex", "linux", "arm64"),
+    ("darwin", "x86_64"): ("@openai/codex-darwin-x64", "x86_64-apple-darwin", "codex", "darwin", "x64"),
+    ("darwin", "arm64"): ("@openai/codex-darwin-arm64", "aarch64-apple-darwin", "codex", "darwin", "arm64"),
 }
 
 
@@ -280,17 +280,37 @@ def _sha256_file(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def _valid_platform_meta(plat_meta: dict, plat_pkg_name: str, plat_os: str, plat_cpu: str) -> bool:
+    """Match either direct `@openai/codex-<os>-<cpu>` or OpenAI's official npm-aliased `@openai/codex` tarball."""
+    if not isinstance(plat_meta, dict):
+        return False
+    name = plat_meta.get("name")
+    if name == plat_pkg_name:
+        return True
+    if name != "@openai/codex":
+        return False
+    ver = plat_meta.get("version")
+    os_list = plat_meta.get("os")
+    cpu_list = plat_meta.get("cpu")
+    return (
+        isinstance(ver, str)
+        and ver.endswith(f"-{plat_os}-{plat_cpu}")
+        and (not os_list or (isinstance(os_list, list) and plat_os in os_list))
+        and (not cpu_list or (isinstance(cpu_list, list) and plat_cpu in cpu_list))
+    )
+
+
 def resolve_codex_target(executable, *, system: str | None = None, machine: str | None = None) -> dict:
     """Fides P1-3: resolve npm .cmd/.js wrappers to the real native platform binary and hash the chain.
 
-    Fails closed when any link/reparse point is in the chain, when a wrapper is not the official
+    Fails closed when any link/reparse point is in the lexical chain, when a wrapper is not the official
     ``@openai/codex`` layout, or when the platform binary is missing.
     """
     if not executable:
         raise AccountChatError("closed:Codex kurulu değil")
     raw = Path(str(executable))
     if not raw.is_absolute():
-        raw = raw.resolve(strict=False)
+        raw = Path(os.path.abspath(str(raw)))
     anc = _ancestors_problem(raw, "Codex yürütücüsü", allow_leaf_file=True)
     if anc or not raw.is_file() or _is_link(raw):
         raise AccountChatError("closed:Codex yürütücüsü doğrulanamadı")
@@ -299,33 +319,58 @@ def resolve_codex_target(executable, *, system: str | None = None, machine: str 
     if suffix in {".bat", ".ps1", ".sh"}:
         raise AccountChatError("closed:desteklenmeyen Codex sarmalayıcısı")
     if suffix in {".cmd", ".js", ".mjs", ".cjs"}:
-        js_path = raw
         if suffix == ".cmd":
-            from core.cli_installer import package_entry
             try:
-                js_path = package_entry(raw.parent, "codex")
-            except Exception as exc:
-                raise AccountChatError("closed:Codex sarmalayıcısı tanınmadı") from exc
-            if _ancestors_problem(js_path, "Codex giriş betiği", allow_leaf_file=True) or _is_link(js_path):
+                if raw.stat().st_size > 64 * 1024:
+                    raise AccountChatError("closed:Codex sarmalayıcısı tanınmadı")
+                wrapper_text = raw.read_text(encoding="utf-8", errors="replace").lower().replace("/", "\\")
+            except OSError as exc:
+                raise AccountChatError("closed:Codex sarmalayıcısı okunamadı") from exc
+            if "@openai\\codex" not in wrapper_text:
+                raise AccountChatError("closed:Codex sarmalayıcısı tanınmadı")
+            pkg_root = raw.parent / "node_modules" / "@openai" / "codex"
+            pkg_json = pkg_root / "package.json"
+            if (_ancestors_problem(pkg_json, "Codex paketi", allow_leaf_file=True)
+                    or not pkg_json.is_file() or _is_link(pkg_json)):
+                raise AccountChatError("closed:Codex paketi doğrulanamadı")
+            try:
+                meta = json.loads(pkg_json.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise AccountChatError("closed:Codex paket bilgisi okunamadı") from exc
+            if meta.get("name") != "@openai/codex":
+                raise AccountChatError("closed:Codex paket kimliği uyuşmuyor")
+            entry_def = meta.get("bin")
+            rel_entry = entry_def.get("codex") if isinstance(entry_def, dict) else entry_def
+            if not isinstance(rel_entry, str) or not rel_entry.strip():
+                raise AccountChatError("closed:Codex giriş betiği tanımlı değil")
+            rel_parts = [p for p in rel_entry.replace("\\", "/").split("/") if p not in ("", ".")]
+            if not rel_parts or any(p == ".." for p in rel_parts):
                 raise AccountChatError("closed:Codex giriş betiği doğrulanamadı")
-            chain.append(js_path)
-        pkg_root = js_path.parent.parent if js_path.parent.name == "bin" else js_path.parent
-        pkg_json = pkg_root / "package.json"
-        if _ancestors_problem(pkg_json, "Codex paketi", allow_leaf_file=True) or not pkg_json.is_file() or _is_link(pkg_json):
-            raise AccountChatError("closed:Codex paketi doğrulanamadı")
-        try:
-            meta = json.loads(pkg_json.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise AccountChatError("closed:Codex paket bilgisi okunamadı") from exc
-        if meta.get("name") != "@openai/codex":
-            raise AccountChatError("closed:Codex paket kimliği uyuşmuyor")
-        chain.append(pkg_json)
+            js_path = pkg_root.joinpath(*rel_parts)
+            if (_ancestors_problem(js_path, "Codex giriş betiği", allow_leaf_file=True)
+                    or not js_path.is_file() or _is_link(js_path)):
+                raise AccountChatError("closed:Codex giriş betiği doğrulanamadı")
+            chain.extend([js_path, pkg_json])
+        else:
+            js_path = raw
+            pkg_root = js_path.parent.parent if js_path.parent.name == "bin" else js_path.parent
+            pkg_json = pkg_root / "package.json"
+            if (_ancestors_problem(pkg_json, "Codex paketi", allow_leaf_file=True)
+                    or not pkg_json.is_file() or _is_link(pkg_json)):
+                raise AccountChatError("closed:Codex paketi doğrulanamadı")
+            try:
+                meta = json.loads(pkg_json.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise AccountChatError("closed:Codex paket bilgisi okunamadı") from exc
+            if meta.get("name") != "@openai/codex":
+                raise AccountChatError("closed:Codex paket kimliği uyuşmuyor")
+            chain.append(pkg_json)
         sys_key = (system or platform.system()).lower()
         arch_key = (machine or platform.machine()).lower()
         target_info = _PLATFORM_TARGETS.get((sys_key, arch_key))
         if not target_info:
             raise AccountChatError("closed:bu platform için Codex ikilisi tanımlı değil")
-        plat_pkg_name, triple, bin_name = target_info
+        plat_pkg_name, triple, bin_name, plat_os, plat_cpu = target_info
         short_name = plat_pkg_name.split("/", 1)[1]
         candidates = [
             pkg_root / "node_modules" / "@openai" / short_name,
@@ -333,6 +378,7 @@ def resolve_codex_target(executable, *, system: str | None = None, machine: str 
         ]
         plat_root = next((c for c in candidates if os.path.lexists(c)), None)
         native = None
+        vendor_root = None
         if plat_root is not None:
             plat_json = plat_root / "package.json"
             if (_ancestors_problem(plat_json, "Codex platform paketi", allow_leaf_file=True)
@@ -342,14 +388,29 @@ def resolve_codex_target(executable, *, system: str | None = None, machine: str 
                 plat_meta = json.loads(plat_json.read_text(encoding="utf-8"))
             except (OSError, ValueError) as exc:
                 raise AccountChatError("closed:Codex platform paketi okunamadı") from exc
-            if plat_meta.get("name") != plat_pkg_name:
+            if not _valid_platform_meta(plat_meta, plat_pkg_name, plat_os, plat_cpu):
                 raise AccountChatError("closed:Codex platform paket kimliği uyuşmuyor")
             chain.append(plat_json)
-            native = plat_root / "vendor" / triple / "bin" / bin_name
+            vendor_root = plat_root / "vendor" / triple
+            native = vendor_root / "bin" / bin_name
+            if not os.path.lexists(native):
+                alt_native = vendor_root / "codex" / bin_name
+                if os.path.lexists(alt_native):
+                    native = alt_native
         else:
-            vendor_native = pkg_root / "vendor" / triple / "bin" / bin_name
+            vendor_root = pkg_root / "vendor" / triple
+            vendor_native = vendor_root / "bin" / bin_name
             if os.path.lexists(vendor_native):
                 native = vendor_native
+            elif os.path.lexists(vendor_root / "codex" / bin_name):
+                native = vendor_root / "codex" / bin_name
+        if vendor_root is not None:
+            vendor_meta = vendor_root / "codex-package.json"
+            if os.path.lexists(vendor_meta):
+                if (_ancestors_problem(vendor_meta, "Codex ikili paketi", allow_leaf_file=True)
+                        or not vendor_meta.is_file() or _is_link(vendor_meta)):
+                    raise AccountChatError("closed:Codex ikili paketi doğrulanamadı")
+                chain.append(vendor_meta)
         if (native is None or _ancestors_problem(native, "Codex ikilisi", allow_leaf_file=True)
                 or not native.is_file() or _is_link(native)):
             raise AccountChatError("closed:Codex platform ikilisi bulunamadı")
@@ -503,9 +564,9 @@ class CodexAccountChannel:
             return self.last()
         try:
             state, _target = self._gate_locked(runtime)
+            self._remember(**state)
         finally:
             self._lock.release()
-        self._remember(**state)
         return state
 
     # ── the channel's own sign-in ────────────────────────────────────────────────
@@ -544,9 +605,9 @@ class CodexAccountChannel:
                     self._login_running = False
                 try:
                     state, _ = self._gate_locked(runtime)
+                    self._remember(**state)
                 finally:
                     self._lock.release()
-                self._remember(**state)
         threading.Thread(target=work, daemon=True, name="spes-chatgpt-login").start()
         return {"started": True}
 
