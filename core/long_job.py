@@ -703,6 +703,130 @@ class LongJob:
         self.wake.set()
         return milestone
 
+    def rewind_milestone(self, target, note: str = "") -> dict:
+        """Time Capsule (28 Nov): rewind the job's Git branch to a completed milestone's commit,
+        preserving a backup ref (refs/spes-rewind/...) and leaving the user's own uncommitted files
+        untouched."""
+        clean_note = " ".join(str(note or "").split())[:1500]
+        with self.ledger._lock:
+            d = self.ledger.data
+            branch = d.get("git_branch")
+            if not branch:
+                raise JobError("Bu işte Git dalı yok; önceki adıma geri sarma yalnız Git kaydı olan işlerde çalışır.")
+            milestones = d["milestones"]
+            if any(m["status"] == "running" for m in milestones):
+                raise JobError("Şu an çalışan bir adım var; önce 'bekle' yazıp işi duraklat, sonra geri sar.")
+            root = Path(d["project_path"])
+            current_branch = _git(root, "rev-parse", "--abbrev-ref", "HEAD")
+            if current_branch.returncode != 0 or current_branch.stdout.strip() != branch:
+                raise JobError(f"Proje işin kendi dalında ('{branch}') değil; güvenlik için geri sarılmadı.")
+            head_res = _git(root, "rev-parse", "HEAD")
+            if head_res.returncode != 0 or not head_res.stdout.strip():
+                raise JobError("Projenin mevcut Git kaydı okunamadı.")
+            head_sha = head_res.stdout.strip()
+
+            done_steps = [idx for idx, m in enumerate(milestones, 1) if m["status"] == "done" and m.get("commit")]
+            if target == "previous":
+                if not done_steps:
+                    raise JobError("Henüz geri alınabilecek tamamlanmış bir adım yok.")
+                if len(done_steps) >= 2:
+                    step_num = done_steps[-2]
+                    target_sha = str(milestones[step_num - 1]["commit"])
+                    step_title = milestones[step_num - 1]["title"]
+                elif d.get("base_git_head"):
+                    step_num = 0
+                    target_sha = str(d["base_git_head"])
+                    step_title = "başlangıç durumu"
+                else:
+                    raise JobError("İlk adımın öncesine ait Git başlangıç kaydı bulunamadı.")
+            else:
+                step_num = int(target)
+                if not 1 <= step_num <= len(milestones):
+                    raise JobError(f"Planda {step_num}. adım yok; plan {len(milestones)} adım.")
+                chosen = milestones[step_num - 1]
+                if chosen["status"] != "done":
+                    raise JobError(f"{step_num}. adım henüz tamamlanmamış; yalnız bitmiş bir adıma dönebilirsin.")
+                if not chosen.get("commit"):
+                    raise JobError(f"{step_num}. adımın Git kaydı yok; geri sarılamaz.")
+                target_sha = str(chosen["commit"])
+                step_title = chosen["title"]
+
+            after_progressed = any(m["status"] != "pending" or m.get("attempts") for m in milestones[step_num:])
+            if target_sha == head_sha and not after_progressed:
+                raise JobError(f"Proje zaten {step_num}. adımda; geri alınacak sonraki bir adım yok.")
+            if _git(root, "cat-file", "-e", f"{target_sha}^{{commit}}").returncode != 0:
+                raise JobError("Hedef adımın Git kaydı depoda bulunamadı.")
+            if _git(root, "merge-base", "--is-ancestor", target_sha, head_sha).returncode != 0:
+                raise JobError("Hedef kayıt mevcut dal geçmişinde değil; güvenlik için geri sarılmadı.")
+
+            diff_res = _git(root, "diff", "--name-only", "-z", target_sha, head_sha)
+            if diff_res.returncode != 0:
+                raise JobError("Adımlar arasındaki dosya farkı okunamadı.")
+            changed_rels = sorted({p for p in diff_res.stdout.split("\0") if p})
+            dirty_now = dirty_paths(self.ledger)
+            conflicts = [rel for rel in changed_rels if rel in dirty_now]
+            if conflicts:
+                raise JobError(f"'{conflicts[0]}' dosyasında kaydedilmemiş değişiklik var; verini korumak için geri sarılmadı.")
+
+            now = self.clock()
+            seq = len(d.get("rewinds") or []) + 1
+            safe_job_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(d["id"]))
+            backup_ref = f"refs/spes-rewind/{safe_job_id}/{int(now)}-{seq}"
+            if _git(root, "update-ref", backup_ref, head_sha).returncode != 0:
+                raise JobError("Geri sarmadan önce güvenlik yedeği oluşturulamadı.")
+
+            restore_rels, remove_rels = [], []
+            for rel in changed_rels:
+                if _git(root, "cat-file", "-e", f"{target_sha}:{rel}").returncode == 0:
+                    restore_rels.append(rel)
+                else:
+                    remove_rels.append(rel)
+
+            if _git(root, "reset", "--soft", target_sha).returncode != 0:
+                raise JobError("Git dalı hedef kayda taşınamadı.")
+            if restore_rels and _git(root, "checkout", target_sha, "--", *restore_rels).returncode != 0:
+                _git(root, "reset", "--soft", head_sha)
+                raise JobError("Önceki adımın dosyaları geri yüklenemedi.")
+            if remove_rels:
+                _git(root, "rm", "-f", "--ignore-unmatch", "-q", "--", *remove_rels)
+                for rel in remove_rels:
+                    candidate = (root / rel).resolve()
+                    if root.resolve() in candidate.parents and candidate.is_file() and not candidate.is_symlink():
+                        try:
+                            candidate.unlink()
+                        except OSError:
+                            pass
+            if changed_rels:
+                _git(root, "reset", "-q", target_sha, "--", *changed_rels)
+
+            for m in milestones[step_num:]:
+                m.update(status="pending", attempts=0, crashes=0, writer=None, commit=None, checkpoint=None,
+                         last_failure="", files=[], verified=False, reviewer=None, evidence="yok")
+                m.pop("launch", None)
+            d.setdefault("rewinds", []).append({
+                "at": now, "to_step": step_num, "to_commit": target_sha, "from_commit": head_sha,
+                "backup_ref": backup_ref, "note": clean_note,
+            })
+            if clean_note:
+                label = f"{step_num}. adım" if step_num else "başlangıç"
+                d["decisions"].append({"at": now, "text": f"Zaman kapsülü notu ({label} sonrası): {clean_note}"})
+            d["stopped"] = False
+            if d["deadline"] <= now:
+                room = max(0.0, 12.0 - float(d.get("hours") or 0))
+                extra = min(0.5, room)
+                if extra >= 0.05:
+                    d["deadline"] = now + extra * 3600
+                    d["hours"] = round(float(d.get("hours") or 0) + extra, 3)
+            if d["status"] in {"done", "needs_user", "stopped", "expired"} and d["deadline"] > now:
+                d["status"] = "paused" if self.pause_event.is_set() else "running"
+            self.ledger.save()
+        next_num = step_num + 1
+        self.ledger.event(f"Zaman kapsülü: proje {step_num}. adıma ({step_title}) geri sarıldı; yedek: {backup_ref}.")
+        self.wake.set()
+        return {"to_step": step_num, "title": step_title, "next_step": next_num,
+                "next_title": milestones[step_num]["title"] if step_num < len(milestones) else "",
+                "backup_ref": backup_ref, "note": clean_note, "expired": d["deadline"] <= self.clock()}
+
     def halt(self):
         """SpeS is closing: leave the job resumable (not Stop). Its turn is cancelled by close()."""
         self._halt = True
@@ -803,6 +927,12 @@ class LongJob:
                 ledger.save()
             ledger.event("Başlangıç yedeği alındı" + (f" ({saved.get('bytes', 0) // 1_000_000} MB)." if saved.get("bytes") else "."))
         prepare_branch(ledger)
+        if "base_git_head" not in ledger.data and ledger.data.get("git_branch"):
+            base_head = _git(ledger.data["project_path"], "rev-parse", "HEAD")
+            if base_head.returncode == 0 and base_head.stdout.strip():
+                with ledger._lock:
+                    ledger.data["base_git_head"] = base_head.stdout.strip()
+                    ledger.save()
         if "initial_dirty" not in ledger.data:
             # The user's own uncommitted files as they were before the first writer: never
             # committed by the job unless an agent changes them.

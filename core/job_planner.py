@@ -194,6 +194,47 @@ class JobPlannerMixin:
         job.start()
         return answer
 
+    def _rewind_conversation_job(self, conv, text):
+        """"2. adıma geri dön ve koyu tema yap" after a job finished/stopped/expired (28 Nov)."""
+        from core.job_intent import job_change
+        from core.long_job import JobError, JobLedger
+        change = job_change(text)
+        if not change or change[0] != "rewind":
+            return None
+        found = [l for l in JobLedger.all() if l.data.get("conversation_id") == conv["id"]]
+        if not found:
+            return None
+        ledger = max(found, key=lambda l: l.data.get("created_at") or 0)
+        if any(j.ledger.data["status"] in {"running", "waiting_limit", "paused"} for j in self._jobs().values()):
+            return self._answer_without_agents(conv["id"], text, "Şu an başka bir uzun iş sürüyor; önce o bitmeli.")
+        project = None
+        try:
+            project = self.agent_service.projects.get(conv.get("project_id")) if conv.get("project_id") else None
+        except Exception:
+            project = None
+        from pathlib import Path as _Path
+        same = isinstance(project, dict) and project.get("path") and \
+            str(_Path(project["path"]).resolve()).lower() == str(_Path(ledger.data["project_path"]).resolve()).lower()
+        if not same or project.get("protected") or project.get("workflow") == "warband":
+            return self._answer_without_agents(conv["id"], text, (
+                "Bu sohbetin projesi işin başladığı projeden farklı (ya da korumalı); geri sarılmadı."))
+        job = self._make_job(ledger)
+        try:
+            info = job.rewind_milestone(change[1]["target"], note=change[1]["note"])
+        except JobError as exc:
+            return self._answer_without_agents(conv["id"], text, str(exc))
+        self._jobs()[ledger.data["id"]] = job
+        where = f"{info['to_step']}. adıma ({info['title']})" if info["to_step"] else "başlangıç durumuna"
+        note_part = " Yeni talimatın iş defterine eklendi." if info["note"] else ""
+        if info["expired"]:
+            return self._answer_without_agents(conv["id"], text, (
+                f"Zaman kapsülü: proje {where} geri sarıldı (önceki hali yedekte korundu).{note_part} "
+                "İşin toplam 12 saat sınırı dolduğu için otomatik başlatılmadı."))
+        job.start()
+        return self._answer_without_agents(conv["id"], text, (
+            f"Zaman kapsülü: proje {where} geri sarıldı (önceki hali yedekte korundu).{note_part} "
+            f"Ekip {info['next_step']}. adımdan ({info['next_title']}) yeniden devam ediyor."))
+
     def _active_job_in(self, cid):
         return next((j for j in self._jobs().values() if j.ledger.data.get("conversation_id") == cid
                      and j.ledger.data["status"] in {"running", "waiting_limit", "paused"}), None)
@@ -220,8 +261,8 @@ class JobPlannerMixin:
                       + (f" · şimdi: {current['title']}" if current else "")
                       + f" · durum: {data['status']}.")
             return self._answer_without_agents(conv["id"], text, answer)
-        if kind in {"skip", "add"}:
-            # Live re-plan (Eos/Fides 25 Nov): the plan changes in plain words while the job runs.
+        if kind in {"skip", "add", "rewind"}:
+            # Live re-plan & Time Capsule (Eos/Fides 25-28 Nov): the plan changes in plain words.
             from core.job_intent import job_change
             from core.long_job import JobError
             _, value = job_change(text)
@@ -229,10 +270,21 @@ class JobPlannerMixin:
                 if kind == "skip":
                     milestone = job.skip_milestone(value)
                     answer = f"{value}. adım ({milestone['title']}) plandan çıkarıldı; ekip ona geçmeyecek."
-                else:
+                elif kind == "add":
                     milestone = job.add_milestone(value)
                     answer = (f"Plana eklendi: {milestone['id'][1:]}. adım — {milestone['title']}. "
                               "Sıradaki adımlardan sonra yapılacak ve denetlenecek.")
+                else:
+                    info = job.rewind_milestone(value["target"], note=value["note"])
+                    where = f"{info['to_step']}. adıma ({info['title']})" if info["to_step"] else "başlangıç durumuna"
+                    note_part = " Yeni talimatın iş defterine eklendi." if info["note"] else ""
+                    if data["status"] == "paused":
+                        job.resume()
+                        if job.thread is None or not job.thread.is_alive():
+                            job.thread = None
+                            job.start()
+                    answer = (f"Zaman kapsülü: proje {where} geri sarıldı (önceki hali yedekte korundu).{note_part} "
+                              f"Ekip {info['next_step']}. adımdan ({info['next_title']}) devam ediyor.")
             except JobError as exc:
                 answer = str(exc)
             return self._answer_without_agents(conv["id"], text, answer)

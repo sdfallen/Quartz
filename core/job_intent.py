@@ -425,6 +425,15 @@ _FILLER = re.compile(r"^(?:(?:peki|tamam|simdi|su\s+an|simdilik|lutfen|hey|spes|
 
 
 _SKIP = re.compile(r"\b(\d{1,2})\s*\.?\s*(?:(?:numarali|nolu|inci|nci|uncu|ncu)\s+)?(?:adim|tas|asama|kilometre\s+tasi)\w*\s+(?:iptal\s+et|cikar|atla|kaldir|yapma)")
+_REWIND_STEP = re.compile(
+    r"^(\d{1,2})\s*\.?\s*(?:(?:numarali|nolu|inci|nci|uncu|ncu)\s+)?(?:adim|tas|asama|kilometre\s+tasi)"
+    r"(?:a|na|ya|ina|una)\s+(?:geri\s+)?(?:don\w*|sar\w*)(?:\s*(?:[,:;.-]|\bve\b|\bsonra\b)\s*(.+))?\s*[.!]*$"
+)
+_REWIND_PREV = re.compile(
+    r"^(?:(?:bir\s+)?onceki\s+(?:adim|tas|asama|kilometre\s+tasi)(?:a|na|ya)\s+(?:geri\s+)?(?:don\w*|sar\w*)|"
+    r"son\s+(?:adim|tas|asama|kilometre\s+tasi)(?:i|ni|yi|ini|unu)\s+geri\s+(?:al\w*|sar\w*))"
+    r"(?:\s*(?:[,:;.-]|\bve\b|\bsonra\b)\s*(.+))?\s*[.!]*$"
+)
 _LEAD = re.compile(r"^(?:(?:peki|tamam|simdi|su\s+an|simdilik|lutfen|hey|spes|ya)[\s,]+)+")
 _ADD_TAIL = re.compile(r"^(.{3,}?)\s+(?:de|da)\s+ekle(?:r\s*misin|yin|\s+lutfen)?\s*[.!]*\s*$")
 _ADD_HEAD = re.compile(r"^(?:(?:sunu|bunu|su|bu)\s+da\s+ekle|yeni\s+(?:bir\s+)?(?:adim|tas|asama)\s+ekle|plana\s+ekle|"
@@ -432,16 +441,28 @@ _ADD_HEAD = re.compile(r"^(?:(?:sunu|bunu|su|bu)\s+da\s+ekle|yeni\s+(?:bir\s+)?(
 
 
 def job_change(text: str):
-    """("skip", 3) for "3. adımı iptal et"; ("add", "koyu tema") for "koyu tema da ekle"; else None."""
+    """("skip", 3), ("add", "koyu tema") or ("rewind", {"target": 2|"previous", "note": ...}); else None."""
     raw = " ".join(str(text or "").split())
-    if negated(raw):
+    if "?" in raw or negated(raw):
         return None
     folded = turkish_fold(raw)
+    if _ASKING.search(folded):
+        return None
     if len(folded) != len(raw):  # spelling the fold cannot keep aligned: use the folded text
         raw = folded
     lead = _LEAD.match(folded)
     cut = lead.end() if lead else 0
     body, raw_body = folded[cut:], raw[cut:]
+    rewind_step = _REWIND_STEP.match(body)
+    if rewind_step:
+        note = raw_body[rewind_step.start(2):rewind_step.end(2)].strip(" .!:,-") if rewind_step.group(2) else ""
+        note = re.sub(r"\s+lutfen$", "", note, flags=re.I) if note == turkish_fold(note) else re.sub(r"\s+lütfen$", "", note, flags=re.I)
+        return ("rewind", {"target": int(rewind_step.group(1)), "note": note.strip()})
+    rewind_prev = _REWIND_PREV.match(body)
+    if rewind_prev:
+        note = raw_body[rewind_prev.start(1):rewind_prev.end(1)].strip(" .!:,-") if rewind_prev.group(1) else ""
+        note = re.sub(r"\s+lutfen$", "", note, flags=re.I) if note == turkish_fold(note) else re.sub(r"\s+lütfen$", "", note, flags=re.I)
+        return ("rewind", {"target": "previous", "note": note.strip()})
     skip = _SKIP.search(body)
     if skip:
         return ("skip", int(skip.group(1)))
@@ -455,7 +476,8 @@ def job_change(text: str):
 _EXTEND = re.compile(r"\b(?:daha|ek\s+(?:sure|zaman)|fazladan|uzat)\b")
 # Fides 26 Nov (F4): "3. adımı iptal etme", "15 dakika daha çalışma, dur" were applied backwards.
 _NEGATED = re.compile(r"\b(?:iptal\s+etme(?:yin|yelim)?|atlama(?:yin)?|cikarma(?:yin)?|kaldirma(?:yin)?|"
-                      r"ekleme(?:yin)?|calisma(?:yin)?|uzatma(?:yin)?|devam\s+etme(?:yin)?|gerek\s+yok|"
+                      r"ekleme(?:yin)?|calisma(?:yin)?|uzatma(?:yin)?|devam\s+etme(?:yin)?|donme(?:yin|yelim)?|"
+                      r"geri\s+alma(?:yin|yalim)?|geri\s+sarma(?:yin|yalim)?|gerek\s+yok|"
                       r"istemiyorum|vazgec\w*|dur|durdur\w*|yapma(?:yin)?)\b")
 
 

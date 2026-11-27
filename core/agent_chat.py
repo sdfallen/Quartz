@@ -1169,6 +1169,10 @@ class AgentChatService(FreeChatMixin, TeamTurnMixin, SkillTurnMixin, LongJobChat
             extended = self._extend_expired_job(target, text)
             if extended is not None:
                 return extended
+            # "2. adıma geri dön ve koyu tema yap" after a job finished/stopped/expired (28 Nov).
+            rewound = self._rewind_conversation_job(target, text)
+            if rewound is not None:
+                return rewound
         from core.skill_shelf import install_request, list_request, named_skill
         skill = None
         skill_install = install_request(text)

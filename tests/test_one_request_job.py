@@ -1333,7 +1333,7 @@ class OpenFolderTests(unittest.TestCase):
             ledger = JobLedger.create({"goal": "Sayaç", "project_path": str(project), "hours": 1,
                                        "conversation_id": "c1", "milestones": [{"title": "T", "acceptance": "ok"}]})
             opened = []
-            for broken in ("", "goreli\klasor"):
+            for broken in ("", r"goreli\klasor"):
                 ledger.data["project_path"] = broken
                 ledger.save()
                 with patch("os.startfile", side_effect=opened.append, create=True), self.assertRaises(JobError):
