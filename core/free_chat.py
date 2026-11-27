@@ -49,6 +49,10 @@ HISTORY_MESSAGES = 12
 HISTORY_CHARS = 12000
 MAX_OUTPUT_TOKENS = 1200
 REQUEST_SECONDS = 60
+# Live 27 Nov: a free model is often "experiencing high demand" (503) or slow while a sibling answers
+# at once. One answer tries up to MODEL_TRIES models of the same channel, each for ATTEMPT_SECONDS.
+ATTEMPT_SECONDS = 25
+MODEL_TRIES = 4
 KEY_MAX = 400
 
 
@@ -158,7 +162,9 @@ class Settings:
         order += [c for c in ORDER if c not in order]
         return {"channels": {c: {"send": bool((channels.get(c) or {}).get("send")),
                                  "backup": bool((channels.get(c) or {}).get("backup")),
-                                 "model": str((channels.get(c) or {}).get("model") or "")[:120]}
+                                 "model": str((channels.get(c) or {}).get("model") or "")[:120],
+                                 "alternates": [str(m)[:120] for m in ((channels.get(c) or {}).get("alternates")
+                                                                       or [])[:MODEL_TRIES] if m]}
                              for c in CHANNELS},
                 "order": order}
 
@@ -172,6 +178,9 @@ class Settings:
                     data["channels"][channel][name] = bool(values[name])
             if "model" in values:
                 data["channels"][channel]["model"] = str(values["model"] or "")[:120]
+            if "alternates" in values:
+                data["channels"][channel]["alternates"] = [str(m)[:120] for m in (values["alternates"] or [])
+                                                           if m][:MODEL_TRIES]
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
             os.replace(tmp, self.path)
@@ -195,23 +204,27 @@ def _version(model_id: str) -> list:
     return [int(n) for n in re.findall(r"\d+", model_id)]
 
 
-def choose_model(channel: str, ids) -> str:
-    """The model SpeS uses on a channel. OpenRouter: only ":free" models (Fides: never a silent
-    paid model), Kimi first. Gemini: a Flash model. Groq: a known open model."""
+def model_candidates(channel: str, ids) -> list:
+    """The models SpeS may use on a channel, best first. OpenRouter: only ":free" models (Fides:
+    never a silent paid model), Kimi first. Gemini: Flash models (numbered releases before the
+    "-latest" aliases), then the fast Lite ones. Groq: known open models."""
     ids = [str(i).removeprefix("models/") for i in ids if i]
     if channel == "openrouter":
         free = [i for i in ids if i.endswith(":free")]
         kimi = sorted((i for i in free if "kimi" in i.lower()), key=_version, reverse=True)
-        return (kimi or free or [""])[0]
+        return (kimi + [i for i in free if i not in kimi])[:MODEL_TRIES]
     if channel == "gemini":
-        flash = [i for i in ids if "flash" in i and "image" not in i and "tts" not in i and "live" not in i
-                 and "preview" not in i]
-        flash.sort(key=lambda i: ("lite" in i, [-n for n in _version(i)]))
-        return (flash or [""])[0]
-    for preferred in GROQ_PREFERRED:
-        if preferred in ids:
-            return preferred
-    return ""
+        flash = [i for i in ids if "flash" in i and not any(w in i for w in
+                 ("image", "tts", "live", "preview", "audio", "omni"))]
+        flash.sort(key=lambda i: ("lite" in i, "latest" in i, [-n for n in _version(i)]))
+        full = [i for i in flash if "lite" not in i][:2]
+        lite = [i for i in flash if "lite" in i][:2]
+        return full + lite
+    return [p for p in GROQ_PREFERRED if p in ids][:MODEL_TRIES]
+
+
+def choose_model(channel: str, ids) -> str:
+    return (model_candidates(channel, ids) or [""])[0]
 
 
 def classify(exc) -> str:
@@ -235,6 +248,16 @@ def classify(exc) -> str:
     if isinstance(exc, openai.APIStatusError) and getattr(exc, "status_code", 0) == 402:
         return "quota"  # OpenRouter: free credits or daily free limit used up
     return "other"
+
+
+def _model_unavailable(exc) -> bool:
+    """A model that is busy (503), slow (timeout), unreachable or withdrawn (404) - not the key,
+    not the quota and not a refusal, which never move to another model."""
+    try:
+        import openai
+    except ImportError:  # pragma: no cover
+        return False
+    return classify(exc) == "unreachable" or isinstance(exc, openai.NotFoundError)
 
 
 EXPLAIN = {
@@ -262,6 +285,7 @@ class FreeChat:
         self.store = store or SecretStore()
         self.settings = settings or Settings()
         self.client = client or _client
+        self._answered = {}  # channel -> the model that last answered in this run (tried first)
 
     # status for the Bağlantılar screen: never a key, only that one exists
     def status(self) -> dict:
@@ -279,11 +303,11 @@ class FreeChat:
             ids = [m.id for m in self.client(channel, key).models.list()]
         except Exception as exc:
             raise FreeChatError(f"{CHANNELS[channel]['label']}: {EXPLAIN[classify(exc)]}.") from None
-        model = choose_model(channel, ids)
-        if not model:
+        models = model_candidates(channel, ids)
+        if not models:
             raise FreeChatError(f"{CHANNELS[channel]['label']}: {EXPLAIN['no_model']}.")
         self.store.set(channel, key)
-        self.settings.update(channel, send=send, backup=backup, model=model)
+        self.settings.update(channel, send=send, backup=backup, model=models[0], alternates=models[1:])
         return self.status()
 
     def disconnect(self, channel: str) -> dict:
@@ -316,17 +340,48 @@ class FreeChat:
         if cancel.is_set():
             raise FreeChatError("cancelled")
         key = self.store.get(channel)
-        model = self.settings.read()["channels"][channel]["model"]
-        if not key or not model:
+        saved = self.settings.read()["channels"][channel]
+        if not key or not saved["model"]:
             raise FreeChatError("key")
-        # Fides: no tools, no functions, no web; a returned tool call is never run.
-        response = self.client(channel, key).chat.completions.create(
-            model=model, messages=messages, max_tokens=MAX_OUTPUT_TOKENS, temperature=0.7)
-        choice = (getattr(response, "choices", None) or [None])[0]
-        text = str(getattr(getattr(choice, "message", None), "content", "") or "").strip()
-        if not text:
-            raise FreeChatError("empty")
-        return text
+        client = self.client(channel, key)
+        models = [saved["model"]] + [m for m in saved["alternates"] if m != saved["model"]]
+        good = self._answered.get(channel)
+        if good in models:
+            models.remove(good)
+            models.insert(0, good)
+        learned = bool(saved["alternates"])
+        tried = 0
+        while True:
+            model = models[tried]
+            tried += 1
+            if cancel.is_set():
+                raise FreeChatError("cancelled")
+            try:
+                # Fides: no tools, no functions, no web; a returned tool call is never run.
+                response = client.chat.completions.create(
+                    model=model, messages=messages, max_tokens=MAX_OUTPUT_TOKENS, temperature=0.7,
+                    timeout=ATTEMPT_SECONDS)
+            except Exception as exc:
+                # Busy, slow or withdrawn model: the same channel's next model, same consent.
+                if not _model_unavailable(exc) or tried >= MODEL_TRIES:
+                    raise
+                if tried >= len(models) and not learned:
+                    learned = True  # a connection made before alternates were kept: learn them once
+                    try:
+                        found = model_candidates(channel, [m.id for m in client.models.list()])
+                    except Exception:
+                        found = []
+                    models += [m for m in found if m not in models]
+                    self.settings.update(channel, alternates=[m for m in models if m != saved["model"]])
+                if tried >= len(models):
+                    raise
+                continue
+            choice = (getattr(response, "choices", None) or [None])[0]
+            text = str(getattr(getattr(choice, "message", None), "content", "") or "").strip()
+            if not text:
+                raise FreeChatError("empty")
+            self._answered[channel] = model
+            return text
 
     def reply(self, channel: str, messages: list, cancel: threading.Event) -> dict:
         """One answer: the chosen channel, then the user's consented backups for quota, key and

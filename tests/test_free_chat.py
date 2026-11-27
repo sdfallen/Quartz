@@ -37,7 +37,8 @@ class FakeClient:
         class Completions:
             def create(self, **kwargs):
                 outer.calls.append((channel, "chat", kwargs))
-                answer = outer.script.get(channel, {}).get("chat", "Merhaba!")
+                behaviour = outer.script.get(channel, {})
+                answer = behaviour.get("by_model", {}).get(kwargs.get("model"), behaviour.get("chat", "Merhaba!"))
                 if isinstance(answer, Exception):
                     raise answer
                 message = SimpleNamespace(content=answer, tool_calls=[SimpleNamespace(id="x")])
@@ -441,6 +442,78 @@ class ChatServiceTests(Base):
         cid = chat.new_free_conversation()["id"]
         self.assertEqual(chat.free_chat_action("is_free", {"conversation_id": cid}), {"free": True})
         self.assertEqual(chat.free_chat_action("is_free", {"conversation_id": "yok"}), {"free": False})
+
+
+class ModelFallbackTests(Base):
+    """Live 27 Nov: Gemini's chosen model answered 503 "high demand" while its Lite sibling answered
+    in a second; SpeS kept to one model and said "ulaşılamadı"."""
+
+    def live_ids(self):
+        return ["gemini-2.5-flash", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-flash-latest",
+                "gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.8-flash-tts",
+                "gemini-3.1-flash-image", "gemini-3-flash-preview", "gemini-omni-1.2-flash"]
+
+    def test_candidates_put_numbered_flash_first_then_lite_and_skip_special_models(self):
+        self.assertEqual(fc.model_candidates("gemini", self.live_ids()),
+                         ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash-lite", "gemini-flash-lite-latest"])
+        self.assertEqual(fc.choose_model("gemini", self.live_ids()), "gemini-3.8-flash")
+        self.assertTrue(all(m.endswith(":free") for m in fc.model_candidates("openrouter", self.script["openrouter"]["models"])))
+
+    def test_a_busy_model_moves_to_the_next_model_of_the_same_channel(self):
+        self.script["gemini"]["models"] = self.live_ids()
+        self.free.connect("gemini", "anahtar", send=True)
+        busy = api_error("InternalServerError", 503, "This model is currently experiencing high demand.")
+        self.script["gemini"]["by_model"] = {"gemini-3.8-flash": busy, "gemini-3.7-flash": busy,
+                                             "gemini-3.5-flash-lite": "Merhaba, buradayım."}
+        result = self.free.reply("gemini", [{"role": "user", "content": "selam"}], threading.Event())
+        self.assertEqual((result["outcome"], result["text"]), ("ok", "Merhaba, buradayım."))
+        tried = [c[2]["model"] for c in self.client.calls if c[1] == "chat"]
+        self.assertEqual(tried, ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash-lite"])
+        self.assertTrue(all(c[2]["timeout"] == fc.ATTEMPT_SECONDS for c in self.client.calls if c[1] == "chat"))
+
+    def test_the_model_that_answered_is_tried_first_next_time(self):
+        self.script["gemini"]["models"] = self.live_ids()
+        self.free.connect("gemini", "anahtar", send=True)
+        busy = api_error("InternalServerError", 503, "busy")
+        self.script["gemini"]["by_model"] = {"gemini-3.8-flash": busy, "gemini-3.7-flash": busy}
+        self.free.reply("gemini", [{"role": "user", "content": "1"}], threading.Event())
+        self.client.calls.clear()
+        self.free.reply("gemini", [{"role": "user", "content": "2"}], threading.Event())
+        self.assertEqual([c[2]["model"] for c in self.client.calls if c[1] == "chat"], ["gemini-3.5-flash-lite"])
+        self.assertEqual(self.free.settings.read()["channels"]["gemini"]["model"], "gemini-3.8-flash")
+
+    def test_a_connection_made_before_alternates_learns_them_once(self):
+        self.script["gemini"]["models"] = self.live_ids()
+        self.free.store.set("gemini", "anahtar")
+        self.free.settings.update("gemini", send=True, model="gemini-flash-latest")  # the live user's settings
+        busy = api_error("InternalServerError", 503, "high demand")
+        self.script["gemini"]["by_model"] = {"gemini-flash-latest": busy, "gemini-3.8-flash": busy,
+                                             "gemini-3.7-flash": busy}
+        result = self.free.reply("gemini", [{"role": "user", "content": "selam"}], threading.Event())
+        self.assertEqual(result["outcome"], "ok")
+        self.assertEqual(len([c for c in self.client.calls if c[1] == "models"]), 1)
+        saved = self.free.settings.read()["channels"]["gemini"]
+        self.assertEqual(saved["model"], "gemini-flash-latest")  # the user's choice is not rewritten
+        self.assertIn("gemini-3.5-flash-lite", saved["alternates"])
+
+    def test_tries_are_bounded_and_key_quota_or_refusal_never_switch_models(self):
+        self.script["gemini"]["models"] = self.live_ids()
+        self.free.connect("gemini", "anahtar", send=True)
+        self.script["gemini"]["chat"] = api_error("InternalServerError", 503, "busy")
+        result = self.free.reply("gemini", [{"role": "user", "content": "selam"}], threading.Event())
+        self.assertEqual(result["outcome"], "exhausted")
+        self.assertEqual(len([c for c in self.client.calls if c[1] == "chat"]), fc.MODEL_TRIES)
+        for error in (api_error("AuthenticationError", 401), api_error("RateLimitError", 429)):
+            self.client.calls.clear()
+            self.script["gemini"]["chat"] = error
+            self.free.reply("gemini", [{"role": "user", "content": "selam"}], threading.Event())
+            self.assertEqual(len([c for c in self.client.calls if c[1] == "chat"]), 1)
+
+    def test_a_withdrawn_model_404_moves_on_too(self):
+        self.script["gemini"]["models"] = self.live_ids()
+        self.free.connect("gemini", "anahtar", send=True)
+        self.script["gemini"]["by_model"] = {"gemini-3.8-flash": api_error("NotFoundError", 404, "no longer available")}
+        self.assertEqual(self.free.reply("gemini", [{"role": "user", "content": "x"}], threading.Event())["outcome"], "ok")
 
 
 class FreeChatPageTests(unittest.TestCase):
