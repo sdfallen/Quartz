@@ -433,16 +433,26 @@ def run_verify(ledger: JobLedger, stop: threading.Event) -> dict:
     if ledger.data.get("permission_level") != "full":
         return {"ok": True, "summary": "Kontrol komutu tanımlanmadı (Proje izninde SpeS komut çalıştırmaz)."}
     argv = ledger.data.get("verify")
+    env = None
     if not argv and ledger.data.get("auto_check"):
         from core.job_intent import detected_check
         argv = detected_check(ledger.data.get("project_path"))
+        if argv and argv[0] == "python":
+            # Fides MP1 (27 Nov): the Python check SpeS itself chose runs with the same interpreter
+            # the agents and launch_check use (SpeS's own first, else the user's); a check command
+            # the user gave is never rewritten.
+            from core.managed_python import interpreter, task_environment
+            chosen = interpreter()
+            if chosen:
+                argv = [chosen, *argv[1:]]
+            env = task_environment()
     if not argv:
         return {"ok": True, "summary": "Kontrol komutu tanımlanmadı."}
     from core.process_tree import stop_process_tree
     try:
         process = subprocess.Popen(argv, cwd=ledger.data["project_path"], stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
-                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                                   env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except OSError as exc:
         return {"ok": False, "summary": f"Kontrol başlatılamadı: {exc}"}
     deadline = time.monotonic() + ledger.data.get("verify_timeout", 900)

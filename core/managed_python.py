@@ -39,22 +39,25 @@ PROBE = ("import sys, tkinter, venv, ensurepip; "
          "print(sys.version.split()[0], t.eval('info patchlevel'), sep='|')")
 
 
-def root():
+def root(base=None):
+    """Fides MP2: an installer's own root is kept; the default is SpeS's private folder."""
+    if base is not None:
+        return Path(base)
     from core.cli_installer import managed_root
     return managed_root()
 
 
-def published() -> Path | None:
+def published(base=None) -> Path | None:
     """The managed python.exe SpeS recorded after all gates, or None."""
     from core.atomic_json import load_json
-    entry = load_json(root() / "installed.json", {}).get("python") or {}
+    entry = load_json(root(base) / "installed.json", {}).get("python") or {}
     exe = Path(str(entry.get("executable") or ""))
     return exe if entry.get("version") == VERSION and exe.is_file() else None
 
 
-def interpreter() -> str | None:
+def interpreter(base=None) -> str | None:
     """SpeS's own Python first; else the user's Python on PATH (never changed by SpeS); else None."""
-    managed = published()
+    managed = published(base)
     if managed is not None:
         return str(managed)
     found = shutil.which("python")
@@ -83,18 +86,36 @@ def safe_extract(archive: Path, target: Path) -> None:
         bundle.extractall(target)
 
 
-def install(run=None, download=None, verify=None) -> dict:
-    """Download, check, extract, prove and publish the pinned runtime; reuse it when present."""
+def task_environment(base=None) -> dict:
+    """The environment SpeS's own Python commands run in (Fides MP1): the managed runtime and its
+    Scripts first on PATH, no PYTHONHOME/PYTHONPATH from the host; nothing system-wide changes."""
+    env = {k: v for k, v in os.environ.items() if k not in {"PYTHONHOME", "PYTHONPATH"}}
+    managed = published(base)
+    if managed is not None:
+        env["PATH"] = os.pathsep.join([str(managed.parent), str(managed.parent / "Scripts"), env.get("PATH", "")])
+    return env
+
+
+def install(run=None, download=None, verify=None, base=None) -> dict:
+    """Download, check, extract, prove and publish the pinned runtime; reuse it when present.
+
+    Fides MP3: the whole install, from the reuse check to the manifest commit, holds the installer
+    lock every provider's manifest write holds, so no record is lost and no second copy is made."""
+    from core.cli_installer import _LOCK
+    with _LOCK:
+        return _install(run, download, verify, root(base))
+
+
+def _install(run, download, verify, base) -> dict:
     from core.atomic_json import atomic_write_json, load_json
     from core.cli_installer import owned_run
     from core import install_security
     run = run or owned_run
     download = download or install_security.download
     verify = verify or install_security.verify_publisher
-    existing = published()
+    existing = published(base)
     if existing is not None:
         return {"installed": True, "executable": str(existing), "version": VERSION, "reused": True}
-    base = root()
     base.mkdir(parents=True, exist_ok=True)
     stage = base / ("python-stage-" + uuid.uuid4().hex[:8])
     stage.mkdir()
@@ -120,9 +141,14 @@ def install(run=None, download=None, verify=None) -> dict:
         os.replace(unpacked, final)  # atomic publish of the folder
         entry = {"executable": str(final / "python.exe"), "version": VERSION, "sha256": SHA256,
                  "source": URL, "tcl": out.split("|", 1)[1]}
-        manifest = load_json(base / "installed.json", {})
-        manifest["python"] = entry
-        atomic_write_json(base / "installed.json", manifest)
+        try:
+            manifest = load_json(base / "installed.json", {})
+            manifest["python"] = entry
+            atomic_write_json(base / "installed.json", manifest)
+        except BaseException:
+            # Fides MP4: this call's own folder goes with a failed commit; nothing else is touched.
+            shutil.rmtree(final, ignore_errors=True)
+            raise
         return {"installed": True, **entry, "reused": False}
     finally:
         shutil.rmtree(stage, ignore_errors=True)

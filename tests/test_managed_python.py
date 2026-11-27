@@ -103,6 +103,85 @@ class ManagedPythonTests(unittest.TestCase):
         first = cli_environment()["PATH"].split(os.pathsep)[0]
         self.assertEqual(Path(first), Path(result["executable"]).parent)
 
+    def test_mp1_the_auto_detected_check_runs_with_the_chosen_interpreter(self):
+        result = self.install()
+        from core import long_job
+        project = Path(self.tmp.name) / "proje"
+        (project / "tests").mkdir(parents=True)
+        (project / "tests" / "test_a.py").write_text("", encoding="utf-8")
+        ledger = type("L", (), {"data": {"permission_level": "full", "verify": None, "auto_check": True,
+                                         "project_path": str(project)}})()
+        seen = {}
+
+        def popen(argv, **kwargs):
+            seen.update(argv=argv, env=kwargs.get("env"))
+            raise FileNotFoundError("stop here")
+        with patch.object(long_job.subprocess, "Popen", side_effect=popen):
+            long_job.run_verify(ledger, __import__("threading").Event())
+        self.assertEqual(seen["argv"][0], result["executable"])
+        self.assertEqual(Path(seen["env"]["PATH"].split(os.pathsep)[0]), Path(result["executable"]).parent)
+        from core import launch_check
+        self.assertEqual(launch_check.python_interpreter(), seen["argv"][0])  # one choice everywhere
+
+    def test_mp1_a_check_the_user_gave_is_never_rewritten(self):
+        self.install()
+        from core import long_job
+        ledger = type("L", (), {"data": {"permission_level": "full", "verify": ["python", "kontrol.py"],
+                                         "project_path": self.tmp.name}})()
+        seen = {}
+        with patch.object(long_job.subprocess, "Popen",
+                          side_effect=lambda argv, **kw: seen.update(argv=argv) or (_ for _ in ()).throw(OSError("x"))):
+            long_job.run_verify(ledger, __import__("threading").Event())
+        self.assertEqual(seen["argv"], ["python", "kontrol.py"])
+
+    def test_mp2_an_installers_own_root_is_kept_and_roots_never_cross(self):
+        from core.cli_installer import CliInstaller
+        other = Path(self.tmp.name) / "selected-bin"
+        with patch.object(mp, "SHA256", self.digest), \
+                patch("core.install_security.download", side_effect=self.download), \
+                patch("core.install_security.verify_publisher", side_effect=self.verify):
+            result = CliInstaller(root=other, run=self.run_ok).install("python")
+        self.assertIn(str(other), result["executable"])
+        self.assertIsNone(mp.published())  # the default root is untouched
+        self.assertEqual(mp.published(other), Path(result["executable"]))
+
+    def test_mp3_a_concurrent_provider_record_survives(self):
+        from core.atomic_json import atomic_write_json, load_json
+        import threading
+        self.root.mkdir(parents=True, exist_ok=True)
+        entered, release = threading.Event(), threading.Event()
+        original = self.verify
+
+        def slow_verify(exe, publisher):
+            entered.set()
+            release.wait(5)
+            return original(exe, publisher)
+        self.verify = slow_verify
+        worker = threading.Thread(target=self.install)
+        worker.start()
+        self.assertTrue(entered.wait(5))
+        from core.cli_installer import _LOCK
+
+        def other_provider():
+            with _LOCK:  # what every other provider's install does around its manifest write
+                manifest = load_json(self.root / "installed.json", {})
+                manifest["agy"] = {"executable": "agy.exe", "version": "1"}
+                atomic_write_json(self.root / "installed.json", manifest)
+        writer = threading.Thread(target=other_provider)
+        writer.start()
+        release.set()
+        worker.join(10)
+        writer.join(10)
+        self.assertEqual(set(load_json(self.root / "installed.json", {})), {"python", "agy"})
+
+    def test_mp4_a_failed_manifest_commit_leaves_no_runtime_folder(self):
+        with patch("core.atomic_json.atomic_write_json", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.install()
+        self.assertIsNone(mp.published())
+        packages = self.root / "packages"
+        self.assertEqual(list(packages.iterdir()) if packages.exists() else [], [])
+
     def test_the_pin_is_an_exact_official_release(self):
         self.assertTrue(mp.URL.startswith("https://www.python.org/ftp/python/" + mp.VERSION + "/"))
         self.assertRegex(mp.SHA256, r"^[0-9a-f]{64}$")

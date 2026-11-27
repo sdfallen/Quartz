@@ -241,7 +241,7 @@ class CliInstaller:
         if provider == "python":
             # 27 Nov: SpeS's own Python runtime (core.managed_python, Fides option E).
             from core import managed_python
-            return managed_python.install(run=self.run)
+            return managed_python.install(run=self.run, base=self.root)
         if provider not in PACKAGES:
             raise ValueError("Bilinmeyen CLI")
         with _LOCK:
