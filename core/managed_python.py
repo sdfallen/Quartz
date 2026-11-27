@@ -113,6 +113,35 @@ def _same(a: Path, b: Path) -> bool:
         return False
 
 
+def _own_runtime_folder(folder: str, base=None) -> bool:
+    """True for a PATH entry inside SpeS's runtime folder or one of a runtime this process saw fail."""
+    if not folder.strip():
+        return False
+    try:
+        entry = os.path.normcase(str(Path(folder).resolve()))
+        packages = os.path.normcase(str((root(base) / "packages").resolve()))
+    except OSError:
+        return False
+    if entry == packages or entry.startswith(packages + os.sep):
+        return True
+    for bad in list(_UNPROVEN):
+        try:
+            home = os.path.normcase(str(Path(bad).resolve().parent))
+        except OSError:
+            continue
+        if entry == home or entry.startswith(home + os.sep):
+            return True
+    return False
+
+
+def foreign_path(path: str, base=None) -> str:
+    """Fides REF-ENV: an inherited PATH without any of SpeS's own runtime folders, so an agent's
+    environment never reaches a runtime SpeS did not select. The caller puts the published runtime
+    (if any) first itself. Reading only; the user's PATH setting is never changed."""
+    return os.pathsep.join(part for part in (path or "").split(os.pathsep)
+                           if not _own_runtime_folder(part, base))
+
+
 def _user_python(base=None) -> str | None:
     """Fides RE1-F: the first python on PATH that is NOT one of SpeS's own runtimes (an unpublished,
     unproven or older copy under SpeS's folder is never "the user's Python"). Reading only."""
@@ -271,6 +300,7 @@ def task_environment(base=None, project=None) -> dict:
     """The environment SpeS's own Python commands run in (Fides MP1): the managed runtime and its
     Scripts first on PATH, no PYTHONHOME/PYTHONPATH from the host; nothing system-wide changes."""
     env = {k: v for k, v in os.environ.items() if k not in {"PYTHONHOME", "PYTHONPATH"}}
+    env["PATH"] = foreign_path(env.get("PATH", ""), base)
     first = []
     venv = project_venv(project) if project is not None else None
     if venv is not None:

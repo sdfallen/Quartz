@@ -132,6 +132,11 @@ def with_project(env, project):
 
 def cli_environment():
     env = os.environ.copy()
+    try:  # Fides REF-ENV: no inherited entry may reach a SpeS runtime that is not the selected one
+        from core.managed_python import foreign_path
+        env["PATH"] = foreign_path(env.get("PATH", ""))
+    except Exception:
+        pass
     paths = [str(managed_root() / "node"), str(managed_root())]
     # 27 Nov (Fides P3): the agents' task environment sees SpeS's own Python first; the user's PATH
     # and system settings are never changed.

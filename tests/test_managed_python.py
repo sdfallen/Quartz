@@ -3,6 +3,7 @@ download, signature check and probe are fakes; extraction and publishing are rea
 import hashlib
 import io
 import json
+import shutil
 import os
 import subprocess
 import tempfile
@@ -154,6 +155,36 @@ class ManagedPythonTests(unittest.TestCase):
         mp._UNPROVEN.discard(str(old))  # even without the in-process mark: SpeS's own folder is never "the user's"
         with patch.dict(os.environ, {"PATH": str(old.parent), "PATHEXT": ".EXE"}):
             self.assertIsNone(mp.interpreter())
+
+    def test_refenv_an_agents_environment_never_reaches_a_failed_runtime(self):
+        old = Path(self.install()["executable"])
+        self.download = self.offline
+        with self.assertRaises(OSError):
+            self.install(run=self.broken_for(old))
+        project = Path(self.tmp.name) / "venvsiz"
+        project.mkdir()
+        user = Path(self.tmp.name) / "kullanici-python"
+        user.mkdir()
+        (user / "python.exe").write_bytes(b"MZ")
+        from core.cli_installer import cli_environment, with_project
+        inherited = os.pathsep.join([str(old.parent), str(old.parent / "Scripts"), str(user)])
+        with patch.dict(os.environ, {"PATH": inherited, "PATHEXT": ".EXE"}):
+            for env in (with_project(cli_environment(), project), mp.task_environment(project=project)):
+                found = shutil.which("python", path=env["PATH"])
+                self.assertIsNotNone(found)
+                self.assertEqual(Path(found).resolve(), (user / "python.exe").resolve())
+                self.assertNotIn(os.path.normcase(str(old.parent)),
+                                 [os.path.normcase(part) for part in env["PATH"].split(os.pathsep)])
+        with patch.dict(os.environ, {"PATH": str(old.parent), "PATHEXT": ".EXE"}):
+            self.assertIsNone(shutil.which("python", path=with_project(cli_environment(), project)["PATH"]))
+
+    def test_refenv_the_selected_runtime_still_comes_first(self):
+        exe = Path(self.install()["executable"])
+        from core.cli_installer import cli_environment
+        with patch.dict(os.environ, {"PATH": str(exe.parent), "PATHEXT": ".EXE"}):
+            parts = cli_environment()["PATH"].split(os.pathsep)
+        self.assertEqual(parts[0], str(exe.parent))
+        self.assertEqual(parts.count(str(exe.parent)), 1)  # the inherited copy is dropped, the chosen one stays
 
     def test_reading_the_runtime_runs_nothing(self):
         self.install()
