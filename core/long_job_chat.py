@@ -78,7 +78,6 @@ class LongJobChatMixin:
                    for job in self._jobs().values()):
                 return "Zaten sürmekte olan bir uzun iş var; önce onu bitir ya da durdur."
             return None
-        made_venv = None
         if prepare_venv:
             # Fides V1 (27 Nov): every refusal (stale plan, closing, another job, an invalid spec)
             # comes before the first side effect; the venv (seconds) is made outside the lock.
@@ -88,18 +87,16 @@ class LongJobChatMixin:
                 raise JobError(reason)
             from core.long_job import validate_spec
             validate_spec(dict(spec))
-            from core.managed_python import ensure_project_venv, project_venv
-            had_venv = project_venv(project["path"]) is not None
+            from core.managed_python import ensure_project_venv
             gen_at_start = self.__dict__.get("_plan_generation", 0)
-            made = ensure_project_venv(project["path"], cancelled=lambda: bool(
+            # Fides V1-R: a finished venv is never removed here — another start may already use it,
+            # and a complete, .gitignored project environment harms nothing. A Stop only keeps the
+            # command from starting (cancelled) and the job from starting (checked again below).
+            ensure_project_venv(project["path"], cancelled=lambda: bool(
                 self.__dict__.get("_closed") or self.__dict__.get("_plan_generation", 0) != gen_at_start))
-            made_venv = made if (made is not None and not had_venv) else None
         with self._lock:
             reason = refused()
             if reason:
-                if made_venv is not None:
-                    from core.managed_python import _remove_our_venv
-                    _remove_our_venv(made_venv.parent.parent)  # a Stop meanwhile: nothing stays
                 raise JobError(reason)
             ledger = JobLedger.create(spec)
             job = self._make_job(ledger)

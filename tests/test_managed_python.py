@@ -276,13 +276,58 @@ class ManagedPythonTests(unittest.TestCase):
         self.assertIsNone(mp.ensure_project_venv(bare, run=never))  # no SpeS runtime: nothing is made
         self.assertFalse((bare / ".venv").exists())
 
-    def test_venv_a_failed_creation_leaves_no_half_environment(self):
+    def test_venv_a_failed_creation_deletes_nothing_and_is_never_used(self):
         self.install()
         project = Path(self.tmp.name) / "yarim"
         project.mkdir()
         self.assertIsNone(mp.ensure_project_venv(project, run=self.fake_venv_run(fail=True)))
-        self.assertFalse((project / ".venv").exists())
+        # Something was left (an empty Scripts): kept, marked incomplete, never taken as a venv.
+        self.assertTrue((project / ".venv" / mp.INCOMPLETE).is_file())
+        self.assertTrue((project / ".venv" / "Scripts").is_dir())
+        self.assertIsNone(mp.project_venv(project))
         self.assertFalse((project / ".gitignore").exists())
+        empty = Path(self.tmp.name) / "bos-kaldi"
+        empty.mkdir()
+        nothing = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "")
+        self.assertIsNone(mp.ensure_project_venv(empty, run=nothing))
+        self.assertFalse((empty / ".venv").exists())  # an empty reservation is simply given back
+
+    def test_v2r_a_foreign_file_deep_inside_is_kept_on_failure(self):
+        self.install()
+        project = Path(self.tmp.name) / "derin"
+        project.mkdir()
+
+        def nested_foreign(cmd, **kwargs):
+            scripts = Path(cmd[4]) / "Scripts"
+            scripts.mkdir(parents=True)
+            (scripts / "external-user-data.txt").write_text("benim", encoding="utf-8")
+            return subprocess.CompletedProcess(cmd, 1, "", "")
+        self.assertIsNone(mp.ensure_project_venv(project, run=nested_foreign))
+        self.assertEqual((project / ".venv" / "Scripts" / "external-user-data.txt").read_text(encoding="utf-8"),
+                         "benim")
+
+    def test_v1r_a_refused_second_start_never_removes_the_first_jobs_venv(self):
+        self.install()
+        from core.long_job import JobError
+        from core.long_job_chat import LongJobChatMixin
+        import threading
+        project = Path(self.tmp.name) / "iki-baslatma"
+        project.mkdir()
+        made = mp.ensure_project_venv(project, run=self.fake_venv_run())
+        running = type("J", (), {"ledger": type("L", (), {"data": {"status": "running"}})()})()
+        chat = LongJobChatMixin.__new__(LongJobChatMixin)
+        chat._lock = threading.RLock()
+        chat.__dict__.update(_plan_generation=0, _closed=False, _long_jobs={"first": running})
+        conv = {"id": "c1", "space": "work", "project_id": "p1"}
+        chat.store = type("S", (), {"get": lambda self, cid: conv, "get_active": lambda self: conv,
+                                    "get_agent_model": lambda self, c, a: {}})()
+        chat.agent_service = type("A", (), {"projects": type("P", (), {
+            "get": lambda self, pid: {"path": str(project)}})()})()
+        chat._jobs = lambda: chat.__dict__["_long_jobs"]
+        with self.assertRaises(JobError):
+            chat.job_start({"goal": "oyun", "milestones": [{"title": "a", "acceptance": "b"}],
+                            "permission_level": "full", "conversation_id": "c1"})
+        self.assertEqual(mp.project_venv(project), made)
 
     def test_venv_the_check_the_writer_and_pip_all_use_the_project_environment(self):
         self.install()

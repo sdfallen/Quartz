@@ -94,7 +94,8 @@ def project_venv(project) -> Path | None:
     pyvenv.cfg and python.exe, whoever made it. None when there is none."""
     folder = Path(str(project or "")) / VENV
     exe = folder / "Scripts" / "python.exe"
-    return exe if (folder / "pyvenv.cfg").is_file() and exe.is_file() else None
+    return exe if ((folder / "pyvenv.cfg").is_file() and exe.is_file()
+                   and not (folder / INCOMPLETE).exists()) else None
 
 
 def project_interpreter(project, base=None) -> str | None:
@@ -119,22 +120,20 @@ def _ignore_in_git(project: Path) -> None:
 
 _VENV_LOCKS: dict = {}
 _VENV_LOCKS_GUARD = __import__("threading").Lock()
-_VENV_PARTS = ("pyvenv.cfg", "Scripts", "Lib", "Include", "spes-created.txt", ".gitignore")
+INCOMPLETE = "spes-incomplete.txt"
 
 
-def _remove_our_venv(folder: Path) -> None:
-    """Only what venv itself makes goes; anything else someone put there stays (Fides V2)."""
-    for name in _VENV_PARTS:
-        target = folder / name
-        if target.is_dir():
-            shutil.rmtree(target, ignore_errors=True)
-        else:
-            try:
-                target.unlink()
-            except OSError:
-                pass
+def _leave_failed_venv(folder: Path) -> None:
+    """Fides V2-R (27 Nov): nothing in a failed environment is deleted by name. An empty reserved
+    folder is removed; anything else stays, marked incomplete, and is never used as a venv."""
     try:
-        folder.rmdir()  # only when nothing foreign is left
+        folder.rmdir()  # succeeds only when the folder is empty
+        return
+    except OSError:
+        pass
+    try:
+        (folder / INCOMPLETE).write_text("SpeS bu sanal ortamı kuramadı; içindekiler silinmedi. "
+                                         "Klasörü inceleyip kendin silebilirsin.\n", encoding="utf-8")
     except OSError:
         pass
 
@@ -179,7 +178,7 @@ def ensure_project_venv(project, run=None, base=None, cancelled=None) -> Path | 
             _ignore_in_git(root_dir)
             return made
         except Exception:
-            _remove_our_venv(folder)
+            _leave_failed_venv(folder)
             return None
 
 
