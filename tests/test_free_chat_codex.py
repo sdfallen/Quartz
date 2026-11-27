@@ -66,8 +66,25 @@ class Clock:
         self.now += seconds
 
 
+class ClosedTests(unittest.TestCase):
+    def test_the_account_channel_is_closed_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            account = CodexAccountChannel(lambda: FakeRuntime(), Path(tmp) / "rooms")
+            free = fc.FreeChat(fc.SecretStore(Path(tmp), protect=xor), fc.Settings(Path(tmp)), account=account)
+            account.check()
+            free.settings.update("chatgpt", send=True, backup=True)
+            self.assertNotIn("chatgpt", [c["id"] for c in free.status()["channels"]])
+            self.assertFalse(free.allowed("chatgpt", as_backup=False))
+            self.assertNotIn("chatgpt", free.speakers() + free.backups())
+            with self.assertRaises(fc.FreeChatError):
+                free.connect("chatgpt", "", send=True)
+
+
 class Base(unittest.TestCase):
     def setUp(self):
+        opened = patch.object(fc, "ACCOUNT_CHANNEL_OPEN", True)
+        opened.start()
+        self.addCleanup(opened.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)

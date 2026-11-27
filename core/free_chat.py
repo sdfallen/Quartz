@@ -55,6 +55,11 @@ CHANNELS = {
 ORDER = ("gemini", "openrouter", "groq", "chatgpt")
 
 
+# Fides RED 20261127-1629 (CG1/CG2): the account channel stays closed - not offered, not sendable -
+# until a verified tool-less profile and a run-time ChatGPT-only sign-in gate exist.
+ACCOUNT_CHANNEL_OPEN = False
+
+
 def is_account(channel: str) -> bool:
     return (CHANNELS.get(channel) or {}).get("kind") == "account"
 GROQ_PREFERRED = ("openai/gpt-oss-120b", "llama-3.3-70b-versatile", "openai/gpt-oss-20b")
@@ -309,7 +314,7 @@ class FreeChat:
         data = self.settings.read()
         channels = []
         for c in data["order"]:
-            if is_account(c) and self.account is None:
+            if is_account(c) and (self.account is None or not ACCOUNT_CHANNEL_OPEN):
                 continue  # no Codex runtime in this process (tests, previews): the channel is not offered
             entry = {"id": c, **{k: CHANNELS[c][k] for k in ("label", "persona", "key_page", "privacy")},
                      "kind": CHANNELS[c].get("kind", "key"), "connected": self._has_access(c), **data["channels"][c]}
@@ -324,7 +329,8 @@ class FreeChat:
         """A key channel: a stored key. The account channel: Codex present and the last check said
         "signed in with ChatGPT" (passive; every message checks again before sending)."""
         if is_account(channel):
-            return bool(self.account is not None and self.account.installed() and self.account.last().get("chatgpt"))
+            return bool(ACCOUNT_CHANNEL_OPEN and self.account is not None and self.account.installed()
+                        and self.account.last().get("chatgpt"))
         return self.store.has(channel)
 
     def connect(self, channel: str, key: str, send=False, backup=False) -> dict:
@@ -333,7 +339,7 @@ class FreeChat:
             raise FreeChatError("Bilinmeyen kanal.")
         if is_account(channel):
             # The user's explicit check: Codex there and signed in with ChatGPT. Never a sign-in itself.
-            if self.account is None:
+            if self.account is None or not ACCOUNT_CHANNEL_OPEN:
                 raise FreeChatError("Bu kanal şu an kullanılamıyor.")
             state = self.account.check()
             if not state["installed"]:
