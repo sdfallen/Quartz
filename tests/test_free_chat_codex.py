@@ -1,58 +1,117 @@
-"""The "ChatGPT hesabın (Codex)" channel of Ücretsiz sohbet (27 Nov 2026, Fides design ŞARTLI KABUL).
+"""The "ChatGPT hesabın (Codex)" channel of Ücretsiz sohbet (27 Nov 2026; Fides design 2, D2-1..D2-4).
 
-Fake runtime and fake processes only: no Codex is run, no account is read or changed.
+Fake CLI, fake runtime and fake processes only: no Codex runs, no account is read or changed.
 """
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from core import free_chat as fc
-from core.codex_runtime import CodexRuntime, account_only_environment
-from core.free_chat_codex import AccountChatError, CodexAccountChannel, classify_record
+from core import codex_runtime as cr
+from core.codex_runtime import (ACCOUNT_FEATURES_ALLOWED_ON, ACCOUNT_FEATURES_OFF, CodexRuntime,
+                                account_only_environment, account_profile_flags)
+from core.free_chat_codex import (AccountChatError, CodexAccountChannel, SIGNED_IN, classify_record,
+                                  features_problem, home_problem, parse_features)
 
 
 def xor(data: bytes) -> bytes:
     return bytes(b ^ 0x5A for b in data)
 
 
+def feature_table(overrides=None):
+    rows = {name: False for name in ACCOUNT_FEATURES_OFF}
+    rows.update({name: True for name in ACCOUNT_FEATURES_ALLOWED_ON})
+    rows.update(overrides or {})
+    return "\n".join(f"{name:40} stable  {'true' if on else 'false'}" for name, on in rows.items())
+
+
+class FakeCli:
+    """Answers the commands the channel runs, by their arguments after the profile flags."""
+
+    def __init__(self, home: Path):
+        self.home = home
+        self.version = "codex-cli 0.163.0"
+        self.mcp = "[]"
+        self.features = feature_table()
+        self.status = SIGNED_IN
+        self.calls = []
+        self.login_gate = None
+
+    def __call__(self, command, **kwargs):
+        args = list(command[1:])
+        self.calls.append({"args": args, "env": dict(kwargs["env"]), "timeout": kwargs.get("timeout")})
+        rest = args[len(account_profile_flags()):]
+        out = ""
+        if rest == ["--version"]:
+            out = self.version
+        elif rest == ["mcp", "list", "--json"]:
+            out = self.mcp
+        elif rest == ["features", "list"]:
+            out = self.features
+        elif rest == ["login", "status"]:
+            out = self.status
+        elif rest == ["login"]:
+            if self.login_gate:
+                self.login_gate.wait(5)
+            (self.home / "auth.json").write_text("{}", encoding="utf-8")
+            self.status = SIGNED_IN
+        return subprocess.CompletedProcess(command, 0, out, "")
+
+
 class FakeRuntime:
-    def __init__(self, method="chatgpt", installed=True):
-        self.executable = "C:/fake/codex.exe" if installed else None
-        self.method, self.installed = method, installed
-        self.probes = 0
+    def __init__(self, exe: Path):
+        self.executable = str(exe)
         self.starts, self.cancels = [], []
-        self.record = {"status": "completed", "result": "Merhaba, ben Nova.", "process_exit_confirmed": True,
-                       "cleanup_pending": False, "errors": [], "error_events": []}
+        self.records = {}
+        self.finish_after = 0
+        self.answer = {"status": "completed", "result": "Merhaba, ben Nova.", "errors": [], "error_events": []}
+        self.exit_confirmed = True
+        self.confirm_on_cancel = True
+        self.start_error = None
         self.on_start = None
         self.gets = 0
-        self.finish_after = 0
 
-    def probe(self, force=False):
-        self.probes += 1
-        return {"installed": self.installed, "authenticated": self.method is not None,
-                "authentication": self.method or "required"}
+    def _command(self, args):
+        return [self.executable, *args]
 
     def start(self, prompt, project_path, **kwargs):
         self.starts.append({"prompt": prompt, "room": project_path, **kwargs})
         assert Path(project_path).is_dir() and not any(Path(project_path).iterdir())
+        if self.start_error:
+            record, error = self.start_error
+            if record is not None:
+                self.records[kwargs["run_id"]] = record
+            raise error
+        self.records[kwargs["run_id"]] = {"status": "running"}
         if self.on_start:
             self.on_start()
-        return {"id": f"r{len(self.starts)}"}
+        return {"id": kwargs["run_id"]}
 
     def get(self, run_id):
+        if run_id not in self.records:
+            raise KeyError(run_id)
         self.gets += 1
-        if self.gets <= self.finish_after:
-            return {"status": "running"}
-        return dict(self.record)
+        record = self.records[run_id]
+        if record.get("status") == "running" and self.gets > self.finish_after:
+            record = self.records[run_id] = {**self.answer, "process_exit_confirmed": self.exit_confirmed,
+                                             "cleanup_pending": not self.exit_confirmed}
+        return dict(record)
 
     def cancel(self, run_id, timeout=5):
         self.cancels.append(run_id)
-        return {"status": "cancelling"}
+        record = self.records.get(run_id, {})
+        record.update(status="cancelled" if record.get("status") == "running" else record.get("status"))
+        if self.confirm_on_cancel:
+            record.update(process_exit_confirmed=True, cleanup_pending=False)
+        self.records[run_id] = record
+        return dict(record)
 
 
 class Clock:
@@ -66,33 +125,200 @@ class Clock:
         self.now += seconds
 
 
-class ClosedTests(unittest.TestCase):
-    def test_the_account_channel_is_closed_by_default(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            account = CodexAccountChannel(lambda: FakeRuntime(), Path(tmp) / "rooms")
-            free = fc.FreeChat(fc.SecretStore(Path(tmp), protect=xor), fc.Settings(Path(tmp)), account=account)
-            account.check()
-            free.settings.update("chatgpt", send=True, backup=True)
-            self.assertNotIn("chatgpt", [c["id"] for c in free.status()["channels"]])
-            self.assertFalse(free.allowed("chatgpt", as_backup=False))
-            self.assertNotIn("chatgpt", free.speakers() + free.backups())
-            with self.assertRaises(fc.FreeChatError):
-                free.connect("chatgpt", "", send=True)
+class ProfileTests(unittest.TestCase):
+    def test_account_environment_drops_keys_and_uses_only_the_channels_home(self):
+        env = {"OPENAI_API_KEY": "sk", "codex_api_key": "x", "OPENAI_BASE_URL": "u", "CODEX_HOME": "ortak",
+               "PATH": "p"}
+        self.assertEqual(account_only_environment(env, "C:/kanal"), {"CODEX_HOME": "C:/kanal", "PATH": "p"})
+        self.assertEqual(env["CODEX_HOME"], "ortak")
+
+    def test_profile_flags_carry_the_policy_and_cut_every_listed_feature(self):
+        flags = account_profile_flags()
+        for value in ('forced_login_method="chatgpt"', 'cli_auth_credentials_store="file"', "project_doc_max_bytes=0",
+                      'web_search="disabled"', 'history.persistence="none"'):
+            self.assertIn(value, flags)
+        for name in ("shell_tool", "hooks", "plugins", "apps", "computer_use", "secret_auth_storage"):
+            self.assertIn(f"features.{name}=false", flags)
+        self.assertFalse(set(ACCOUNT_FEATURES_OFF) & ACCOUNT_FEATURES_ALLOWED_ON)
+
+    def runtime(self):
+        rt = CodexRuntime.__new__(CodexRuntime)
+        rt.executable, rt._init_error = "C:/fake/codex.exe", ""
+        rt.lock = rt._lock = threading.RLock()
+        rt._runs, rt._processes, rt._writers = {}, {}, {}
+        return rt
+
+    def test_the_account_profile_is_one_fixed_shape_in_its_own_home(self):
+        rt = self.runtime()
+        fixed = dict(sandbox="read-only", approval="never", tool_guard=True, account_chat=True, codex_home="C:/k")
+        for change in ({"tool_guard": False}, {"sandbox": "workspace-write"}, {"approval": "on-request"},
+                       {"web": True}, {"desktop_connection": object()}, {"project_read": True},
+                       {"resume_thread_id": "t"}, {"model": "gpt-x"}, {"effort": "high"}, {"codex_home": None},
+                       {"run_id": "kisa"}):
+            with self.subTest(change=change):
+                with self.assertRaises((ValueError, PermissionError)):
+                    rt.start("selam", ".", **{**fixed, **change})
+
+    def start_capturing(self, rt, room, home, popen):
+        seen = {}
+
+        def verified(flags, cwd, allowed, should_abort=None, env=None):
+            seen.update(preflight_flags=list(flags), preflight_env=dict(env), allowed=set(allowed))
+            return list(flags)
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test", "CODEX_HOME": "C:/ortak-fides"}), \
+                patch.object(rt, "_verified_mcp_flags", verified), patch.object(rt, "_command", lambda a: list(a)), \
+                patch.object(cr.subprocess, "Popen", lambda command, **kw: popen(seen, command, kw)):
+            run_id = "ab" * 16
+            try:
+                rt.start("selam", room, sandbox="read-only", approval="never", tool_guard=True, account_chat=True,
+                         codex_home=home, run_id=run_id)
+            except Exception as exc:
+                seen["error"] = exc
+        seen["run_id"] = run_id
+        return seen
+
+    def test_preflight_and_exec_share_the_home_the_keyless_env_and_the_policy(self):
+        class Stop(Exception):
+            pass
+
+        def popen(seen, command, kw):
+            seen["command"], seen["env"] = list(command), dict(kw["env"])
+            raise Stop()
+        with tempfile.TemporaryDirectory() as room:
+            seen = self.start_capturing(self.runtime(), room, "C:/kanal-evi", popen)
+        for env in (seen["preflight_env"], seen["env"]):
+            self.assertEqual(env["CODEX_HOME"], "C:/kanal-evi")
+            self.assertNotIn("OPENAI_API_KEY", env)
+        self.assertEqual(seen["allowed"], set())
+        cmd = seen["command"]
+        for flag in account_profile_flags():
+            self.assertIn(flag, seen["preflight_flags"])
+        self.assertIn('forced_login_method="chatgpt"', cmd)
+        self.assertIn("features.hooks=false", cmd)
+        after = cmd[cmd.index("exec") + 1:]
+        self.assertIn("--ephemeral", after)
+        self.assertIn("--ignore-user-config", after)
+        self.assertNotIn("-m", cmd)
+
+    def test_d24_no_process_is_a_verified_never_started(self):
+        def popen(seen, command, kw):
+            raise OSError("başlatılamadı")
+        rt = self.runtime()
+        with tempfile.TemporaryDirectory() as room:
+            seen = self.start_capturing(rt, room, "C:/k", popen)
+        record = rt.get(seen["run_id"])
+        self.assertEqual((record["process_started"], record["process_exit_confirmed"]), (False, True))
+
+    def test_d24_a_failure_after_the_process_exists_keeps_it_owned(self):
+        process = SimpleNamespace(pid=4242, poll=lambda: None, stdin=None)
+
+        def popen(seen, command, kw):
+            return process
+        rt = self.runtime()
+        with tempfile.TemporaryDirectory() as room, \
+                patch.object(cr, "bind_kill_on_close_job", side_effect=OSError("job")), \
+                patch.object(cr, "stop_process_tree", lambda *a, **k: False), \
+                patch.object(cr, "owned_cleanup_pending", lambda *a, **k: True):
+            seen = self.start_capturing(rt, room, "C:/k", popen)
+        record = rt.get(seen["run_id"])
+        self.assertTrue(record["process_started"])
+        self.assertEqual((record["process_exit_confirmed"], record["cleanup_pending"]), (False, True))
+        self.assertIs(rt._processes[seen["run_id"]], process)  # cancel() can retry its cleanup
 
 
-class Base(unittest.TestCase):
+class GateFixture(unittest.TestCase):
     def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name) / "free_chat"
+        self.base.mkdir()
+        exe = Path(self.tmp.name) / "codex.exe"
+        exe.write_bytes(b"MZ codex")
+        self.exe = exe
+        self.runtime = FakeRuntime(exe)
+        self.cli = FakeCli(self.base / "codex-home")
+        self.clock = Clock()
+        self.account = CodexAccountChannel(lambda: self.runtime, self.base, clock=self.clock, sleep=self.clock.sleep,
+                                           run=self.cli, environment=lambda: {"OPENAI_API_KEY": "sk", "PATH": "p",
+                                                                              "CODEX_HOME": "C:/ortak"})
+        (self.base / "codex-home").mkdir()
+        (self.base / "codex-home" / "auth.json").write_text("{}", encoding="utf-8")
+
+
+
+class GateTests(GateFixture):
+    def closed_because(self, text):
+        state = self.account.check()
+        self.assertFalse(state["chatgpt"])
+        self.assertIn(text, state["reason"])
+        return state
+
+    def test_the_happy_gate_runs_every_call_in_the_channels_home_without_keys(self):
+        state = self.account.check()
+        self.assertTrue(state["chatgpt"], state)
+        names = [c["args"][len(account_profile_flags()):] for c in self.cli.calls]
+        self.assertEqual(names, [["--version"], ["mcp", "list", "--json"], ["features", "list"], ["login", "status"]])
+        for call in self.cli.calls:
+            self.assertEqual(call["env"]["CODEX_HOME"], str(self.base / "codex-home"))
+            self.assertNotIn("OPENAI_API_KEY", call["env"])
+            self.assertEqual(call["args"][:len(account_profile_flags())], account_profile_flags())
+
+    def test_each_failed_condition_keeps_it_closed(self):
+        cases = [
+            (lambda: setattr(self.cli, "version", "codex-cli 0.164.0"), "sürüm"),
+            (lambda: setattr(self.cli, "mcp", '[{"name": "x"}]'), "araç sunucusu"),
+            (lambda: setattr(self.cli, "mcp", "bozuk"), "araç sunucusu"),
+            (lambda: setattr(self.cli, "features", feature_table({"hooks": True})), "hooks"),
+            (lambda: setattr(self.cli, "features", feature_table({"yeni_arac": True})), "yeni_arac"),
+            (lambda: setattr(self.cli, "features", "\n".join(l for l in feature_table().splitlines()
+                                                                if not l.startswith("shell_tool"))), "shell_tool"),
+            (lambda: setattr(self.cli, "status", "Logged in using an API key - sk-***"), "giriş"),
+            (lambda: setattr(self.cli, "status", SIGNED_IN + "\nbaşka bir satır"), "giriş"),
+            (lambda: setattr(self.cli, "status", "Logged in using ChatGPT (ayrıca)"), "giriş"),
+        ]
+        for change, reason in cases:
+            with self.subTest(reason=reason):
+                self.setUp()
+                change()
+                self.closed_because(reason)
+
+    def test_the_home_holds_nothing_unexpected(self):
+        home = self.base / "codex-home"
+        for name, make in (("config.toml", "file"), ("AGENTS.md", "file"), ("skills", "dir"), ("hooks.json", "file"),
+                           ("plugins", "dir"), ("tmp/arg0-windows/a/b/c", "file")):
+            with self.subTest(name=name):
+                self.setUp()
+                target = self.base / "codex-home" / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.mkdir() if make == "dir" else target.write_text("x", encoding="utf-8")
+                self.closed_because("beklenmeyen")
+        self.setUp()
+        home = self.base / "codex-home"
+        (home / "tmp" / "arg0-windows" / "alias").mkdir(parents=True)
+        (home / "tmp" / "arg0-windows" / "alias" / "apply_patch.exe").write_bytes(b"MZ")
+        (home / "log").mkdir()
+        (home / "log" / "codex-tui.log").write_text("", encoding="utf-8")
+        self.assertEqual(home_problem(home), "")
+
+    def test_the_receipt_is_bound_to_the_launchers_bytes(self):
+        first = self.account.check()["receipt"]
+        self.exe.write_bytes(b"MZ codex changed")
+        self.assertNotEqual(self.account.check()["receipt"], first)
+
+    def test_features_parsing(self):
+        self.assertEqual(features_problem(parse_features(feature_table())), "")
+        self.assertIn("okunamadı", features_problem(parse_features("")))
+        self.assertEqual(classify_record({"error_events": [{"message": "You've hit your usage limit"}]}), "quota")
+        self.assertEqual(classify_record({"errors": ["401 Unauthorized"]}), "key")
+
+
+class ChannelBase(GateFixture):
+    def setUp(self):
+        super().setUp()
         opened = patch.object(fc, "ACCOUNT_CHANNEL_OPEN", True)
         opened.start()
         self.addCleanup(opened.stop)
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
-        self.runtime = FakeRuntime()
-        self.clock = Clock()
-        self.rooms = self.root / "codex-rooms"
-        self.account = CodexAccountChannel(lambda: self.runtime, self.rooms, clock=self.clock, sleep=self.clock.sleep)
-        self.free = fc.FreeChat(fc.SecretStore(self.root, protect=xor), fc.Settings(self.root),
+        self.free = fc.FreeChat(fc.SecretStore(self.base, protect=xor), fc.Settings(self.base),
                                 client=lambda *a: self.fail("no HTTP for the account channel"), account=self.account)
 
     def ask(self, cancel=None):
@@ -100,201 +326,150 @@ class Base(unittest.TestCase):
                                            {"role": "user", "content": "selam"}], cancel or threading.Event())
 
 
-class ProfileTests(unittest.TestCase):
-    def test_account_environment_drops_every_api_key_and_endpoint_but_keeps_codex_home(self):
-        env = {"OPENAI_API_KEY": "sk", "codex_api_key": "x", "OPENAI_BASE_URL": "u", "CODEX_HOME": "h", "PATH": "p"}
-        clean = account_only_environment(env)
-        self.assertEqual(clean, {"CODEX_HOME": "h", "PATH": "p"})
-        self.assertIn("OPENAI_API_KEY", env)  # the given dict is not changed
+class ClosedTests(ChannelBase):
+    def test_the_channel_is_closed_by_default(self):
+        with patch.object(fc, "ACCOUNT_CHANNEL_OPEN", False):
+            self.account.check()
+            self.free.settings.update("chatgpt", send=True, backup=True)
+            self.assertNotIn("chatgpt", [c["id"] for c in self.free.status()["channels"]])
+            self.assertFalse(self.free.allowed("chatgpt", as_backup=False))
+            for call in (lambda: self.free.connect("chatgpt", "", send=True), self.free.account_login):
+                with self.assertRaises(fc.FreeChatError):
+                    call()
 
-    def runtime(self):
-        rt = CodexRuntime.__new__(CodexRuntime)
-        rt.executable, rt._init_error = "C:/fake/codex.exe", ""
-        return rt
-
-    def test_the_account_profile_is_one_fixed_shape(self):
-        rt = self.runtime()
-        fixed = dict(sandbox="read-only", approval="never", tool_guard=True, account_chat=True)
-        for change in ({"tool_guard": False}, {"sandbox": "workspace-write"}, {"approval": "on-request"},
-                       {"web": True}, {"desktop_connection": object()}, {"project_read": True},
-                       {"resume_thread_id": "t"}, {"model": "gpt-x"}, {"effort": "high"}):
-            with self.subTest(change=change):
-                with self.assertRaises((ValueError, PermissionError)):
-                    rt.start("selam", ".", **{**fixed, **change})
-
-    def test_preflight_and_exec_share_the_key_free_environment_and_exec_is_ephemeral(self):
-        import core.codex_runtime as cr
-        rt = CodexRuntime("C:/Windows/System32/cmd.exe") if os.name == "nt" else self.runtime()
-        rt.executable = "C:/fake/codex.exe"
-        seen = {}
-
-        def guarded(cwd, desktop_connection=None, should_abort=None, env=None, web=False):
-            seen["preflight_env"] = dict(env)
-            return ["-c", "features.shell_tool=false"]
-
-        class Stop(Exception):
-            pass
-
-        def popen(command, **kwargs):
-            seen["command"], seen["env"] = list(command), dict(kwargs["env"])
-            raise Stop()
-        with tempfile.TemporaryDirectory() as room, \
-                patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test", "CODEX_HOME": "h"}), \
-                patch.object(rt, "_guarded_config", guarded), patch.object(rt, "_command", lambda a: list(a)), \
-                patch.object(cr.subprocess, "Popen", popen):
-            with self.assertRaises(Stop):
-                rt.start("selam", room, sandbox="read-only", approval="never", tool_guard=True, account_chat=True)
-            self.assertNotIn("OPENAI_API_KEY", seen["preflight_env"])
-            self.assertNotIn("OPENAI_API_KEY", seen["env"])
-            self.assertEqual(seen["env"].get("CODEX_HOME"), "h")
-            cmd = seen["command"]
-            after = cmd[cmd.index("exec") + 1:]
-            self.assertIn("--ephemeral", after)
-            self.assertIn("--ignore-user-config", after)
-            self.assertNotIn("-m", cmd)
-            self.assertIn("features.shell_tool=false", cmd)  # the verified tool cut, unchanged
-            self.assertEqual(cmd[cmd.index("--sandbox") + 1], "read-only")
-            # A normal run keeps its old shape.
-            seen.clear()
-            with self.assertRaises(Stop):
-                rt.start("selam", room, sandbox="read-only", approval="never", tool_guard=True)
-            self.assertNotIn("--ephemeral", seen["command"])
+    def test_status_is_passive(self):
+        self.free.status()
+        self.assertEqual(self.cli.calls, [])
 
 
-class StatusAndConnectTests(Base):
-    def test_status_is_passive_and_starts_with_no_consent(self):
-        status = self.free.status()
-        self.assertEqual(self.runtime.probes, 0)
-        chatgpt = next(c for c in status["channels"] if c["id"] == "chatgpt")
-        self.assertEqual((chatgpt["kind"], chatgpt["connected"], chatgpt["send"], chatgpt["backup"]),
-                         ("account", False, False, False))
-        self.assertNotIn("ücretsiz", chatgpt["label"].lower())
-        self.assertIn("Codex kullanım hakkından", chatgpt["privacy"])
-
-    def test_without_a_codex_runtime_the_channel_is_not_offered(self):
-        free = fc.FreeChat(fc.SecretStore(self.root, protect=xor), fc.Settings(self.root))
-        self.assertNotIn("chatgpt", [c["id"] for c in free.status()["channels"]])
-        self.assertFalse(free.allowed("chatgpt", as_backup=False))
-
-    def test_connect_needs_codex_and_a_chatgpt_sign_in(self):
-        self.runtime.installed, self.runtime.executable = False, None
-        with self.assertRaises(fc.FreeChatError):
-            self.free.connect("chatgpt", "", send=True)
-        self.runtime.installed, self.runtime.executable = True, "C:/fake/codex.exe"
-        self.runtime.method = "unknown"  # an API-key sign-in: separately billed, never used here
-        with self.assertRaises(fc.FreeChatError):
-            self.free.connect("chatgpt", "", send=True)
-        self.assertFalse(self.free.settings.read()["channels"]["chatgpt"]["send"])
-        self.runtime.method = "chatgpt"
-        status = self.free.connect("chatgpt", "", send=True)
-        chatgpt = next(c for c in status["channels"] if c["id"] == "chatgpt")
-        self.assertTrue(chatgpt["connected"] and chatgpt["send"] and chatgpt["signed_in"])
-        self.assertEqual(self.runtime.starts, [])  # connecting never sends a message
-
-    def test_codex_installed_while_spes_runs_is_found_on_the_users_check(self):
-        self.runtime.installed, self.runtime.executable = True, None
-        self.runtime._find_executable = lambda: "C:/late/codex.exe"
-        self.assertFalse(self.account.installed())  # passive: nothing looked up
-        self.free.connect("chatgpt", "", send=True)
-        self.assertEqual(self.runtime.executable, "C:/late/codex.exe")
-
-    def test_disconnect_only_closes_the_consents(self):
-        self.free.connect("chatgpt", "", send=True, backup=True)
-        self.free.disconnect("chatgpt")
-        saved = self.free.settings.read()["channels"]["chatgpt"]
-        self.assertEqual((saved["send"], saved["backup"]), (False, False))
-        self.assertTrue(self.account.last()["chatgpt"])  # Codex stays signed in (Fides uses it)
-
-
-class AskTests(Base):
+class TurnTests(ChannelBase):
     def setUp(self):
         super().setUp()
         self.free.connect("chatgpt", "", send=True)
+        self.cli.calls.clear()
 
-    def test_an_answer_runs_the_fixed_profile_in_a_new_owned_room_that_is_removed(self):
+    def test_an_answer_runs_in_the_channels_home_with_a_chosen_run_id_and_its_room_goes(self):
         result = self.ask()
         self.assertEqual((result["outcome"], result["text"]), ("ok", "Merhaba, ben Nova."))
         start = self.runtime.starts[0]
-        self.assertEqual({k: start[k] for k in ("sandbox", "approval", "tool_guard", "web", "account_chat")},
-                         {"sandbox": "read-only", "approval": "never", "tool_guard": True, "web": False,
-                          "account_chat": True})
-        self.assertEqual(Path(start["room"]).parent, self.rooms)
-        self.assertFalse(Path(start["room"]).exists())  # exit confirmed: removed
+        self.assertEqual(start["codex_home"], str(self.base / "codex-home"))
+        self.assertEqual(len(start["run_id"]), 32)
+        self.assertTrue(start["account_chat"])
+        self.assertEqual(Path(start["room"]).parent, self.base / "codex-rooms")
+        self.assertFalse(Path(start["room"]).exists())
         self.assertIn("<UNTRUSTED_HISTORY>", start["prompt"])
-        self.assertTrue(start["prompt"].rstrip().endswith("selam"))
-        self.ask()
-        self.assertNotEqual(self.runtime.starts[0]["room"], self.runtime.starts[1]["room"])
+        self.assertEqual(len([c for c in self.cli.calls if c["args"][-2:] == ["login", "status"]]), 1)  # fresh
 
-    def test_a_room_whose_process_exit_is_not_confirmed_is_kept_not_reused(self):
-        self.runtime.record.update(process_exit_confirmed=False, cleanup_pending=True)
+    def test_cg3_an_unconfirmed_exit_publishes_nothing_and_blocks_the_next_turn(self):
+        self.runtime.exit_confirmed = False
+        self.runtime.confirm_on_cancel = False
+        first = self.ask()
+        self.assertNotEqual(first["outcome"], "ok")
+        self.assertEqual(first["attempts"][0]["result"], "busy")
+        room = Path(self.runtime.starts[0]["room"])
+        self.assertTrue(room.exists())
+        second = self.ask()
+        self.assertEqual(second["attempts"][0]["result"], "busy")
+        self.assertEqual(len(self.runtime.starts), 1)  # nothing new while the old one is pending
+        with self.assertRaises(fc.FreeChatError):
+            self.free.account_login()  # sign-in is blocked too
+        self.runtime.confirm_on_cancel = True  # the cleanup retry now confirms the exit
+        self.runtime.exit_confirmed = True
+        self.assertEqual(self.ask()["outcome"], "ok")
+        self.assertFalse(room.exists())
+
+    def test_cg3_a_timed_out_turn_stays_pending_until_its_exit_is_confirmed(self):
+        self.runtime.finish_after = 10 ** 6
+        self.runtime.confirm_on_cancel = False
+        self.assertEqual(self.ask()["attempts"][0]["result"], "unreachable")
+        self.assertEqual(self.ask()["attempts"][0]["result"], "busy")
+        self.assertEqual(len(self.runtime.starts), 1)
+
+    def test_cg4_a_start_failure_without_a_record_releases_the_room(self):
+        self.runtime.start_error = (None, RuntimeError("başlamadı"))
+        self.assertEqual(self.ask()["attempts"][0]["result"], "other")
+        self.assertFalse(Path(self.runtime.starts[0]["room"]).exists())
+        self.runtime.start_error = None
+        self.assertEqual(self.ask()["outcome"], "ok")
+
+    def test_cg4_a_partial_start_keeps_the_room_and_blocks(self):
+        self.runtime.confirm_on_cancel = False
+        self.runtime.start_error = ({"status": "failed", "process_started": True, "process_exit_confirmed": False,
+                                     "cleanup_pending": True}, OSError("stdin"))
         self.ask()
         self.assertTrue(Path(self.runtime.starts[0]["room"]).exists())
-        self.ask()
-        self.assertNotEqual(self.runtime.starts[0]["room"], self.runtime.starts[1]["room"])
+        self.runtime.start_error = None
+        self.assertEqual(self.ask()["attempts"][0]["result"], "busy")
+        self.assertEqual(len(self.runtime.starts), 1)
 
-    def test_every_message_checks_the_sign_in_method_again(self):
-        self.runtime.method = "unknown"  # switched to an API key after the last check
-        result = self.ask()
-        self.assertEqual(result["attempts"][0]["result"], "account")
+    def test_cg4_a_verified_never_started_record_releases_the_room(self):
+        self.runtime.start_error = ({"status": "failed", "process_started": False, "process_exit_confirmed": True},
+                                    OSError("popen"))
+        self.ask()
+        self.assertFalse(Path(self.runtime.starts[0]["room"]).exists())
+
+    def test_a_sign_in_and_a_turn_never_run_together(self):
+        gate = threading.Event()
+        self.cli.login_gate = gate
+        self.free.account_login()
+        self.assertTrue(self.account.last()["login"])
+        self.assertEqual(self.ask()["attempts"][0]["result"], "busy")
         self.assertEqual(self.runtime.starts, [])
-        self.runtime.method = None  # signed out
-        self.assertEqual(self.ask()["attempts"][0]["result"], "not_allowed")  # the fresh check closed access
+        gate.set()
+        for _ in range(200):
+            if not self.account.last()["login"]:
+                break
+            threading.Event().wait(0.01)
+        login = [c for c in self.cli.calls if c["args"][-1:] == ["login"]][0]
+        self.assertEqual(login["env"]["CODEX_HOME"], str(self.base / "codex-home"))
+        self.assertIn('forced_login_method="chatgpt"', login["args"])
+        self.assertNotIn("OPENAI_API_KEY", login["env"])
+
+    def test_a_closed_gate_sends_nothing(self):
+        self.cli.status = "Not logged in"
+        self.assertEqual(self.ask()["attempts"][0]["result"], "account")
+        self.assertEqual(self.runtime.starts, [])
 
     def test_a_consent_withdrawn_before_the_start_sends_nothing(self):
-        original = self.account.check
+        original = self.account._gate_locked
 
-        def check_then_withdraw():
-            state = original()
+        def gate_then_withdraw(runtime):
+            state = original(runtime)
             self.free.settings.update("chatgpt", send=False)
             return state
-        self.account.check = check_then_withdraw
-        result = self.ask()
-        self.assertEqual(result["attempts"][0]["result"], "not_allowed")
+        self.account._gate_locked = gate_then_withdraw
+        self.assertEqual(self.ask()["attempts"][0]["result"], "not_allowed")
         self.assertEqual(self.runtime.starts, [])
 
     def test_stop_during_the_run_cancels_it(self):
         cancel = threading.Event()
         self.runtime.finish_after = 1000
         self.runtime.on_start = cancel.set
-        result = self.ask(cancel)
-        self.assertEqual(result["outcome"], "cancelled")
-        self.assertEqual(self.runtime.cancels, ["r1"])
-
-    def test_stop_before_the_start_starts_nothing(self):
-        cancel = threading.Event()
-        cancel.set()
         self.assertEqual(self.ask(cancel)["outcome"], "cancelled")
-        self.assertEqual((self.runtime.starts, self.runtime.probes), ([], 1))  # only the connect's check
+        self.assertEqual(len(self.runtime.cancels), 1)
 
-    def test_a_turn_past_the_ceiling_is_cancelled_and_unreachable(self):
-        self.runtime.finish_after = 10 ** 6
-        result = self.ask()
-        self.assertEqual(result["attempts"][0]["result"], "unreachable")
-        self.assertEqual(self.runtime.cancels, ["r1"])
+    def test_errors_come_from_the_record_only(self):
+        self.runtime.answer = {"status": "failed", "result": "", "errors": [],
+                               "error_events": [{"message": "You've hit your usage limit."}]}
+        self.assertEqual(self.ask()["attempts"][0]["result"], "quota")
+        self.runtime.answer = {"status": "completed", "result": "kota doldu gibi bir yanıt", "errors": [],
+                               "error_events": []}
+        self.assertEqual(self.ask()["outcome"], "ok")
 
-    def test_errors_come_from_the_runtime_record_and_only_fall_through_to_a_consented_backup(self):
-        self.runtime.record.update(status="failed", result="",
-                                   error_events=[{"kind": "turn_failed", "message": "You've hit your usage limit."}])
-        result = self.ask()
-        self.assertEqual((result["outcome"], result["attempts"][0]["result"]), ("exhausted", "quota"))
-        self.runtime.record.update(status="completed", result="kota doldu gibi görünen ama normal bir yanıt",
-                                   error_events=[])
-        self.assertEqual(self.ask()["outcome"], "ok")  # the answer's text is never classified
-
-    def test_classify_record(self):
-        self.assertEqual(classify_record({"error_events": [{"message": "401 Unauthorized"}]}), "key")
-        self.assertEqual(classify_record({"errors": ["stream disconnected before completion"]}), "unreachable")
-        self.assertEqual(classify_record({"errors": ["something odd"]}), "other")
+    def test_disconnect_only_closes_the_consents(self):
+        self.free.disconnect("chatgpt")
+        self.assertFalse(self.free.settings.read()["channels"]["chatgpt"]["send"])
+        self.assertTrue((self.base / "codex-home" / "auth.json").exists())
 
 
 class PageTests(unittest.TestCase):
-    def test_the_account_card_has_no_key_field_and_signs_in_only_on_a_click(self):
+    def test_the_card_has_no_key_field_and_signs_in_through_the_channels_own_action(self):
         from ui.js_free import JAVASCRIPT
         start = JAVASCRIPT.index("ch.kind === 'account'")
         card = JAVASCRIPT[start:JAVASCRIPT.index("} else if (!ch.connected)", start)]
         self.assertNotIn("password", card)
-        self.assertIn("onboarding_begin(operation, 'codex'", card)
-        self.assertIn("addEventListener('click'", card)
+        self.assertIn("freeCall('account_login'", card)
+        self.assertNotIn("begin('account'", card)  # never the shared sign-in
 
 
 if __name__ == "__main__":

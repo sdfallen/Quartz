@@ -38,7 +38,7 @@ class FreeChatMixin:
             service = getattr(self, "agent_service", None)
             # The ChatGPT-account channel runs on the app's own CodexRuntime (one owner of Codex
             # processes); its turns get folders under free_chat\codex-rooms.
-            account = CodexAccountChannel(lambda: getattr(service, "codex", None), home() / "codex-rooms")
+            account = CodexAccountChannel(lambda: getattr(service, "codex", None), home())
             self._free_chat_service = FreeChat(account=account)
         return self._free_chat_service
 
@@ -57,6 +57,8 @@ class FreeChatMixin:
         if action == "connect":
             return free.connect(str(data.get("channel") or ""), str(data.get("key") or ""),
                                 send=bool(data.get("send")), backup=bool(data.get("backup")))
+        if action == "account_login":
+            return free.account_login()
         if action == "disconnect":
             return free.disconnect(str(data.get("channel") or ""))
         if action == "consent":

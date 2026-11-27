@@ -23,14 +23,62 @@ ACCOUNT_ONLY_DROP = ("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "OPEN
                      "OPENAI_ORG_ID", "OPENAI_ORGANIZATION", "OPENAI_PROJECT_ID", "AZURE_OPENAI_API_KEY")
 
 
-def account_only_environment(env) -> dict:
+def account_only_environment(env, codex_home=None) -> dict:
     """27 Nov (Fides): the ChatGPT-account chat never carries an API key or another endpoint, so
-    Codex can only use the account's own sign-in; nothing on disk changes."""
+    Codex can only use the account's own sign-in; with ``codex_home`` every call uses the channel's
+    OWN Codex home (design 2, D2-2), never the shared one. Nothing on disk changes."""
     clean = dict(env)
     for name in list(clean):
-        if name.upper() in ACCOUNT_ONLY_DROP:
+        if name.upper() in ACCOUNT_ONLY_DROP or name.upper() == "CODEX_HOME":
             clean.pop(name)
+    if codex_home is not None:
+        clean["CODEX_HOME"] = str(codex_home)
+    elif "CODEX_HOME" in env:
+        clean["CODEX_HOME"] = env["CODEX_HOME"]
     return clean
+
+
+# Fides design 2 (D2-1/D2-3): the account chat's capability matrix for codex-cli 0.163.0.
+# Every feature below is turned off on every call (listing, status, login and exec); the opening
+# gate then reads `codex features list` back and stays closed unless each of them reads false AND
+# nothing outside ACCOUNT_FEATURES_ALLOWED_ON reads true (an unknown or new feature closes it).
+ACCOUNT_FEATURES_OFF = (
+    # run code / commands / files
+    "shell_tool", "unified_exec", "unified_exec_tty", "shell_snapshot", "code_mode_host", "write_stdin_approval",
+    "worktrees", "workspace_dependencies", "in_app_local_automation", "sleep_tool", "goals",
+    # tools from outside: apps, plugins, skills, hooks, MCP prompts
+    "apps", "plugins", "remote_plugin", "plugin_sharing", "skill_mcp_dependency_install", "skill_search",
+    "tool_suggest", "tool_call_mcp_elicitation", "hooks",
+    # other agents, browser, computer, images, voice, memory
+    "multi_agent", "multi_agent_v2", "computer_use", "browser_use", "browser_use_external",
+    "browser_use_full_cdp_access", "browser_annotation_api", "in_app_browser", "image_generation", "view_image",
+    "realtime_conversation", "in_app_voice", "in_app_dictation", "in_app_chat", "in_app_updates", "memories",
+    "mentions_v2", "daemon_auto_start", "guardian_approval",
+    # API-key paths and the OS key store (this channel keeps its sign-in in its own home's file)
+    "api_key_model_discovery", "api_key_cyber_access_programs", "secret_auth_storage",
+)
+ACCOUNT_FEATURES_ALLOWED_ON = frozenset({
+    "auth_elicitation", "cli_daybreak", "code_mode_interrupt", "compaction_image_budget", "content_item_kinds",
+    "enable_request_compression", "fast_mode", "guardian_reuse_parent_compaction", "instant_interrupt",
+    "system_proxy_fallback", "ultrafast_mode", "unbounded_connection_retries",
+})
+ACCOUNT_POLICY = (
+    'forced_login_method="chatgpt"',  # Codex's own policy, on the command line (config.toml is ignored)
+    'cli_auth_credentials_store="file"',  # the sign-in lives in the channel's home, not the OS key store
+    'web_search="disabled"',
+    "project_doc_max_bytes=0",  # no AGENTS.md from the room's ancestors
+    'history.persistence="none"',
+)
+
+
+def account_profile_flags() -> list:
+    """The same flags for every account-chat call (D2-1): policy and the feature cut."""
+    flags = []
+    for value in ACCOUNT_POLICY:
+        flags += ["-c", value]
+    for feature in ACCOUNT_FEATURES_OFF:
+        flags += ["-c", f"features.{feature}=false"]
+    return flags
 
 
 class CodexRuntime:
@@ -345,7 +393,7 @@ class CodexRuntime:
               squad_task_id=None, squad_agent_id=None, resume_thread_id=None,
               timeout=None, model: str | None = None, effort: str | None = None,
               desktop_connection=None, tool_guard=False, project_read=False, should_abort=None,
-              web=False, account_chat=False) -> dict:
+              web=False, account_chat=False, codex_home=None, run_id=None) -> dict:
         if not self.executable:
             raise RuntimeError(self._init_error or "Codex CLI was not found")
         if account_chat and not (tool_guard and sandbox == "read-only" and approval == "never" and not web
@@ -353,6 +401,11 @@ class CodexRuntime:
                                  and not model and not effort):
             # 27 Nov (Fides ChatGPT-channel design): the free chat's account profile is one fixed shape.
             raise ValueError("ChatGPT hesabı sohbeti yalnız araçsız, salt okunur, taze bir çalışmadır")
+        if account_chat and not codex_home:
+            raise ValueError("ChatGPT hesabı sohbeti kendi Codex evinde çalışır")
+        if run_id is not None and not (isinstance(run_id, str) and len(run_id) == 32
+                                       and all(c in "0123456789abcdef" for c in run_id)):
+            raise ValueError("Geçersiz çalışma kimliği")
         if web and (not tool_guard or desktop_connection is not None or project_read or sandbox != "read-only"):
             raise PermissionError("Codex web araması yalnız araçsız, salt okunur sohbette açılır.")
         text = str(prompt or "").strip()
@@ -403,8 +456,12 @@ class CodexRuntime:
             from core.cli_installer import cli_environment
             base_env = cli_environment()
             if account_chat:
-                base_env = account_only_environment(base_env)  # the probe and the real run alike
-            guard_config = self._guarded_config(project, desktop_connection, should_abort, base_env, web=web)
+                # The channel's own home, no keys, and the policy + feature cut for the probe AND the run.
+                base_env = account_only_environment(base_env, codex_home)
+                guard_config = self._verified_mcp_flags(account_profile_flags(), project, set(), should_abort,
+                                                        base_env)
+            else:
+                guard_config = self._guarded_config(project, desktop_connection, should_abort, base_env, web=web)
 
         clean_model = str(model or "").strip() or None
         clean_effort = str(effort or "").strip().lower() or None
@@ -412,11 +469,13 @@ class CodexRuntime:
             raise ValueError(f"Unsupported Codex reasoning effort: {clean_effort}")
 
         is_writer = sandbox in {"workspace-write", "danger-full-access"}
-        run_id = uuid.uuid4().hex
+        run_id = run_id or uuid.uuid4().hex
         project_key = os.path.normcase(str(project))
         started_wall = time.time()
         timeout_seconds = self._parse_timeout_seconds(timeout)
         with self._lock:
+            if run_id in self._runs:
+                raise ValueError("Bu çalışma kimliği zaten kullanıldı")
             if is_writer and project_key in self._writers:
                 raise RuntimeError("This project already has an active write-capable agent")
             record = {
@@ -517,23 +576,37 @@ class CodexRuntime:
                 encoding="utf-8", errors="replace", creationflags=flags,
                 **process_options,
             )
-            job_bound = bind_kill_on_close_job(process, resume=True, error_sink=job_errors.append)
         except Exception:
+            # No process was created: a verified "never started" (Fides D2-4).
             with self._lock:
-                record["status"] = "failed"
-                record["finished_at"] = time.time()
+                record.update(status="failed", finished_at=time.time(), process_started=False,
+                              cleanup_pending=False, process_exit_confirmed=True)
                 if self._writers.get(project_key) == run_id:
                     self._writers.pop(project_key, None)
             raise
-
+        with self._lock:
+            # From here the process is owned by this run: a later failure keeps it reachable for
+            # cancel()'s cleanup retry instead of forgetting it (Fides D2-4).
+            record.update(process_started=True, pid=process.pid)
+            self._processes[run_id] = process
         try:
+            job_bound = bind_kill_on_close_job(process, resume=True, error_sink=job_errors.append)
             process.stdin.write(text)
             process.stdin.close()
         except Exception:
-            process.terminate()
+            try:
+                stop_process_tree(process, timeout=5)  # the whole tree, as cancel() does
+            except Exception:
+                pass
+            try:
+                exited = process.poll() is not None and not owned_cleanup_pending(process)
+            except Exception:
+                exited = False
             with self._lock:
-                record["status"] = "failed"
-                record["finished_at"] = time.time()
+                record.update(status="failed", finished_at=time.time(), cleanup_pending=not exited,
+                              process_exit_confirmed=exited)
+                if exited:
+                    self._processes.pop(run_id, None)
                 if self._writers.get(project_key) == run_id:
                     self._writers.pop(project_key, None)
             raise

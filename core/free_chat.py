@@ -49,7 +49,9 @@ CHANNELS = {
         "key_page": "https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan",
         "privacy": ("Yazdıkların OpenAI'a gider ve ChatGPT hesabının Codex kullanım hakkından düşer (ücretli "
                     "hesapta bu, Fides'in kullandığı Codex hakkıyla aynıdır). Ücretsiz planda Codex sınırlı olabilir. "
-                    "SpeS bu sohbet için Codex'in oturum dosyalarını yazdırmaz; SpeS kendi sohbet kaydını tutar."),
+                    "Bu kanal için ayrıca bir kez ChatGPT ile giriş yapılır; giriş SpeS'in kendi Codex klasöründe "
+                    "durur (SpeS okumaz) ve kaldırırken verilerini de silmeyi seçersen o da silinir. Codex bu "
+                    "sohbetin oturum dosyalarını yazmaz; SpeS kendi sohbet kaydını tutar."),
     },
 }
 ORDER = ("gemini", "openrouter", "groq", "chatgpt")
@@ -288,8 +290,9 @@ EXPLAIN = {
     "no_model": "ücretsiz bir model bulunamadı",
     "not_allowed": "iznin kapalı olduğu için gönderilmedi",
     "account": "ChatGPT ile giriş yapılmamış ya da bu hesapta Codex kullanılamıyor",
+    "busy": "önceki yanıtın Codex süreci henüz kapanmadı",
 }
-FALLS_THROUGH = {"quota", "key", "unreachable", "no_model", "account"}
+FALLS_THROUGH = {"quota", "key", "unreachable", "no_model", "account", "busy"}
 
 
 def _client(channel, key):
@@ -321,7 +324,8 @@ class FreeChat:
             if is_account(c):
                 last = self.account.last()
                 entry.update(installed=self.account.installed(), checked=last.get("checked"),
-                             signed_in=bool(last.get("chatgpt")))
+                             signed_in=bool(last.get("chatgpt")), reason=last.get("reason") or "",
+                             login_running=bool(last.get("login")), pending=bool(last.get("pending")))
             channels.append(entry)
         return {"order": [c["id"] for c in channels], "channels": channels}
 
@@ -345,8 +349,8 @@ class FreeChat:
             if not state["installed"]:
                 raise FreeChatError("ChatGPT hesabın: önce Codex'in kurulması gerekiyor.")
             if not state["chatgpt"]:
-                raise FreeChatError("ChatGPT hesabın: Codex'te ChatGPT ile giriş yapılmamış (API anahtarıyla giriş "
-                                    "bu kanalda kullanılmaz).")
+                reason = state.get("reason") or "ChatGPT ile giriş yapılmamış"
+                raise FreeChatError(f"ChatGPT hesabın: {reason}.")
             self.settings.update(channel, send=send, backup=backup)
             return self.status()
         key = str(key or "").strip()
@@ -359,6 +363,18 @@ class FreeChat:
             raise FreeChatError(f"{CHANNELS[channel]['label']}: {EXPLAIN['no_model']}.")
         self.store.set(channel, key)
         self.settings.update(channel, send=send, backup=backup, model=models[0], alternates=models[1:])
+        return self.status()
+
+    def account_login(self) -> dict:
+        """The user's click on the channel's own "ChatGPT ile giriş" (its own Codex home)."""
+        if self.account is None or not ACCOUNT_CHANNEL_OPEN:
+            raise FreeChatError("Bu kanal şu an kullanılamıyor.")
+        from core.free_chat_codex import AccountChatError
+        try:
+            self.account.login()
+        except AccountChatError as exc:
+            kind = str(exc)
+            raise FreeChatError("ChatGPT hesabın: " + (EXPLAIN.get(kind) or kind.removeprefix("closed:")) + ".") from None
         return self.status()
 
     def disconnect(self, channel: str) -> dict:
