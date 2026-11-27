@@ -103,8 +103,36 @@ def interpreter(base=None) -> str | None:
     managed = published(base)
     if managed is not None:
         return str(managed)
-    found = shutil.which("python")
-    return str(Path(found).resolve()) if found else None
+    return _user_python(base)
+
+
+def _same(a: Path, b: Path) -> bool:
+    try:
+        return os.path.normcase(str(a.resolve())) == os.path.normcase(str(b.resolve()))
+    except OSError:
+        return False
+
+
+def _user_python(base=None) -> str | None:
+    """Fides RE1-F: the first python on PATH that is NOT one of SpeS's own runtimes (an unpublished,
+    unproven or older copy under SpeS's folder is never "the user's Python"). Reading only."""
+    packages = root(base) / "packages"
+    failed = [Path(p) for p in _UNPROVEN]
+    for folder in os.environ.get("PATH", "").split(os.pathsep):
+        if not folder.strip():
+            continue
+        found = shutil.which("python", path=folder)
+        if not found:
+            continue
+        exe = Path(found).resolve()
+        try:
+            inside = os.path.normcase(str(exe)).startswith(os.path.normcase(str(packages.resolve())) + os.sep)
+        except OSError:
+            inside = False
+        if inside or any(_same(exe, bad) for bad in failed):
+            continue
+        return str(exe)
+    return None
 
 
 def safe_extract(archive: Path, target: Path) -> None:

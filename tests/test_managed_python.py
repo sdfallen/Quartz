@@ -139,6 +139,22 @@ class ManagedPythonTests(unittest.TestCase):
         self.assertEqual(mp.published(), fresh)
         self.assertNotIn("unproven", json.loads((self.root / "installed.json").read_text(encoding="utf-8"))["python"])
 
+    def test_ref_a_failed_runtime_is_not_selected_through_path(self):
+        old = Path(self.install()["executable"])
+        self.download = self.offline
+        with self.assertRaises(OSError):
+            self.install(run=self.broken_for(old))
+        user = Path(self.tmp.name) / "kullanici-python"
+        user.mkdir()
+        (user / "python.exe").write_bytes(b"MZ")
+        with patch.dict(os.environ, {"PATH": os.pathsep.join([str(old.parent), str(user)]), "PATHEXT": ".EXE"}):
+            self.assertEqual(Path(mp.interpreter()), (user / "python.exe").resolve())
+        with patch.dict(os.environ, {"PATH": str(old.parent), "PATHEXT": ".EXE"}):
+            self.assertIsNone(mp.interpreter())
+        mp._UNPROVEN.discard(str(old))  # even without the in-process mark: SpeS's own folder is never "the user's"
+        with patch.dict(os.environ, {"PATH": str(old.parent), "PATHEXT": ".EXE"}):
+            self.assertIsNone(mp.interpreter())
+
     def test_reading_the_runtime_runs_nothing(self):
         self.install()
         with patch.object(mp, "prove", side_effect=AssertionError("no proof while reading")):
