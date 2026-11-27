@@ -306,6 +306,52 @@ class ManagedPythonTests(unittest.TestCase):
         self.assertEqual((project / ".venv" / "Scripts" / "external-user-data.txt").read_text(encoding="utf-8"),
                          "benim")
 
+    def test_vr1_a_failed_venv_is_never_used_even_when_no_mark_can_be_written(self):
+        self.install()
+        project = Path(self.tmp.name) / "isaretsiz"
+        project.mkdir()
+
+        def complete_but_failed(cmd, **kwargs):
+            folder = Path(cmd[4])
+            (folder / "Scripts").mkdir(parents=True)
+            (folder / "pyvenv.cfg").write_text("home = x\n", encoding="utf-8")
+            (folder / "Scripts" / "python.exe").write_bytes(b"MZ")
+            return subprocess.CompletedProcess(cmd, 1, "", "")
+        original = Path.write_text
+
+        def no_incomplete_mark(path, *args, **kwargs):
+            if path.name == mp.INCOMPLETE:
+                raise OSError("disk dolu")
+            return original(path, *args, **kwargs)
+        with patch.object(Path, "write_text", no_incomplete_mark):
+            self.assertIsNone(mp.ensure_project_venv(project, run=complete_but_failed))
+        self.assertFalse((project / ".venv" / mp.INCOMPLETE).exists())
+        self.assertIsNone(mp.project_venv(project))  # the CREATING mark written first keeps it unused
+        self.assertNotEqual(mp.project_interpreter(project), str(project / ".venv" / "Scripts" / "python.exe"))
+
+    def test_vr1_without_the_first_mark_nothing_is_run(self):
+        self.install()
+        project = Path(self.tmp.name) / "isaret-yok"
+        project.mkdir()
+        original = Path.write_text
+
+        def no_creating_mark(path, *args, **kwargs):
+            if path.name == mp.CREATING:
+                raise OSError("yazılamadı")
+            return original(path, *args, **kwargs)
+        with patch.object(Path, "write_text", no_creating_mark):
+            self.assertIsNone(mp.ensure_project_venv(project, run=lambda *a, **k: self.fail("no run")))
+        self.assertFalse((project / ".venv").exists())
+
+    def test_vr1_a_proven_venv_carries_only_the_created_mark(self):
+        self.install()
+        project = Path(self.tmp.name) / "tamam"
+        project.mkdir()
+        made = mp.ensure_project_venv(project, run=self.fake_venv_run())
+        self.assertIsNotNone(made)
+        self.assertFalse((project / ".venv" / mp.CREATING).exists())
+        self.assertTrue((project / ".venv" / "spes-created.txt").is_file())
+
     def test_v1r_a_refused_second_start_never_removes_the_first_jobs_venv(self):
         self.install()
         from core.long_job import JobError

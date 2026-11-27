@@ -94,8 +94,10 @@ def project_venv(project) -> Path | None:
     pyvenv.cfg and python.exe, whoever made it. None when there is none."""
     folder = Path(str(project or "")) / VENV
     exe = folder / "Scripts" / "python.exe"
+    # Fides VR1: a venv SpeS is (or was) creating carries CREATING until it is proven; a venv
+    # with that mark, or one SpeS left incomplete, is never used.
     return exe if ((folder / "pyvenv.cfg").is_file() and exe.is_file()
-                   and not (folder / INCOMPLETE).exists()) else None
+                   and not (folder / CREATING).exists() and not (folder / INCOMPLETE).exists()) else None
 
 
 def project_interpreter(project, base=None) -> str | None:
@@ -121,17 +123,20 @@ def _ignore_in_git(project: Path) -> None:
 _VENV_LOCKS: dict = {}
 _VENV_LOCKS_GUARD = __import__("threading").Lock()
 INCOMPLETE = "spes-incomplete.txt"
+CREATING = "spes-creating.txt"
 
 
 def _leave_failed_venv(folder: Path) -> None:
     """Fides V2-R (27 Nov): nothing in a failed environment is deleted by name. An empty reserved
     folder is removed; anything else stays, marked incomplete, and is never used as a venv."""
     try:
+        if [entry.name for entry in folder.iterdir()] == [CREATING]:
+            (folder / CREATING).unlink()  # only our own mark was there: give the folder back
         folder.rmdir()  # succeeds only when the folder is empty
         return
     except OSError:
         pass
-    try:
+    try:  # best effort: CREATING already keeps this folder from ever being used
         (folder / INCOMPLETE).write_text("SpeS bu sanal ortamı kuramadı; içindekiler silinmedi. "
                                          "Klasörü inceleyip kendin silebilirsin.\n", encoding="utf-8")
     except OSError:
@@ -162,6 +167,15 @@ def ensure_project_venv(project, run=None, base=None, cancelled=None) -> Path | 
             folder.mkdir()  # Fides V2: an exclusive reservation; anything already there is not ours
         except OSError:
             return None
+        try:
+            # Fides VR1: the mark goes first; without it nothing is run.
+            (folder / CREATING).write_text("SpeS bu sanal ortamı kuruyor.\n", encoding="utf-8")
+        except OSError:
+            try:
+                folder.rmdir()
+            except OSError:
+                pass
+            return None
         from core.cli_installer import owned_run
         run = run or owned_run
         env = {k: v for k, v in os.environ.items() if k not in {"PYTHONHOME", "PYTHONPATH"}}
@@ -170,13 +184,13 @@ def ensure_project_venv(project, run=None, base=None, cancelled=None) -> Path | 
                 raise RuntimeError("durduruldu")
             result = run([str(managed), "-I", "-m", "venv", str(folder)], capture_output=True, text=True,
                          timeout=180, env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            made = project_venv(project)
-            if result.returncode or made is None or (callable(cancelled) and cancelled()):
+            ready = (folder / "pyvenv.cfg").is_file() and (folder / "Scripts" / "python.exe").is_file()
+            if result.returncode or not ready or (callable(cancelled) and cancelled()):
                 raise RuntimeError("venv oluşturulamadı")
-            (folder / "spes-created.txt").write_text("SpeS bu sanal ortamı projenin paketleri için oluşturdu.\n",
-                                                     encoding="utf-8")
+            # Proven: the mark becomes "created" in one step; if that fails the venv stays unused.
+            os.replace(folder / CREATING, folder / "spes-created.txt")
             _ignore_in_git(root_dir)
-            return made
+            return project_venv(project)
         except Exception:
             _leave_failed_venv(folder)
             return None
